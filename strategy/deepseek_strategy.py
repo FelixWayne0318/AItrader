@@ -1055,21 +1055,48 @@ class DeepSeekAIStrategy(Strategy):
         resistance = self.latest_technical_data.get('resistance', 0.0)
 
         # Calculate Stop Loss price
+        # CRITICAL: Stop loss MUST be on the correct side of entry price
+        # - For BUY (LONG): SL must be BELOW entry price
+        # - For SELL (SHORT): SL must be ABOVE entry price
         if side == OrderSide.BUY:
-            # BUY: Stop loss below support
+            # BUY: Stop loss below entry price
+            default_sl = entry_price * 0.98  # Default 2% below entry
+
             if self.sl_use_support_resistance and support > 0:
-                stop_loss_price = support * (1 - self.sl_buffer_pct)
-                self.log.info(f"📍 Using support level for SL: ${support:,.2f} → ${stop_loss_price:,.2f}")
+                potential_sl = support * (1 - self.sl_buffer_pct)
+                # VALIDATION: Ensure SL is BELOW entry price
+                if potential_sl < entry_price:
+                    stop_loss_price = potential_sl
+                    self.log.info(f"📍 Using support level for SL: ${support:,.2f} → ${stop_loss_price:,.2f}")
+                else:
+                    # Support is above entry (market dropped rapidly) - use default
+                    stop_loss_price = default_sl
+                    self.log.warning(
+                        f"⚠️ Support ${support:,.2f} is above entry ${entry_price:,.2f}, "
+                        f"using default SL: ${stop_loss_price:,.2f}"
+                    )
             else:
-                stop_loss_price = entry_price * 0.98  # Default 2% below entry
+                stop_loss_price = default_sl
                 self.log.info(f"📍 Using default 2% SL: ${stop_loss_price:,.2f}")
         else:
-            # SELL: Stop loss above resistance
+            # SELL: Stop loss above entry price
+            default_sl = entry_price * 1.02  # Default 2% above entry
+
             if self.sl_use_support_resistance and resistance > 0:
-                stop_loss_price = resistance * (1 + self.sl_buffer_pct)
-                self.log.info(f"📍 Using resistance level for SL: ${resistance:,.2f} → ${stop_loss_price:,.2f}")
+                potential_sl = resistance * (1 + self.sl_buffer_pct)
+                # VALIDATION: Ensure SL is ABOVE entry price
+                if potential_sl > entry_price:
+                    stop_loss_price = potential_sl
+                    self.log.info(f"📍 Using resistance level for SL: ${resistance:,.2f} → ${stop_loss_price:,.2f}")
+                else:
+                    # Resistance is below entry (market rallied rapidly) - use default
+                    stop_loss_price = default_sl
+                    self.log.warning(
+                        f"⚠️ Resistance ${resistance:,.2f} is below entry ${entry_price:,.2f}, "
+                        f"using default SL: ${stop_loss_price:,.2f}"
+                    )
             else:
-                stop_loss_price = entry_price * 1.02  # Default 2% above entry
+                stop_loss_price = default_sl
                 self.log.info(f"📍 Using default 2% SL: ${stop_loss_price:,.2f}")
 
         # Calculate Take Profit price (use first level for bracket order)
