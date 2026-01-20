@@ -1,23 +1,24 @@
 """
-CryptoOracle Sentiment Data Fetcher for NautilusTrader
+Sentiment Data Fetcher for NautilusTrader
 
-Fetches market sentiment indicators from CryptoOracle API.
+Fetches market sentiment indicators from Binance Long/Short Ratio API.
+(Replaced CryptoOracle with Binance due to invalid API key)
 """
 
 import requests
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
 class SentimentDataFetcher:
     """
-    Fetches BTC market sentiment data from CryptoOracle API.
+    Fetches BTC market sentiment data from Binance Futures API.
 
-    Provides positive/negative sentiment ratios and net sentiment scores.
+    Uses the global long/short account ratio as sentiment indicator.
     """
 
-    API_URL = "https://service.cryptoracle.network/openapi/v2/endpoint"
-    API_KEY = "2b144650-4a16-4eb5-bbcd-70824577687b"
+    # Binance Futures API (free, no API key required)
+    BINANCE_URL = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
 
     def __init__(self, lookback_hours: int = 4, timeframe: str = "15m"):
         """
@@ -26,12 +27,26 @@ class SentimentDataFetcher:
         Parameters
         ----------
         lookback_hours : int
-            How many hours of historical data to fetch (default: 4)
+            Not used for Binance API (kept for compatibility)
         timeframe : str
-            Time interval for data (default: "15m")
+            Time interval for data: "5m", "15m", "30m", "1h", "4h", "1d"
         """
         self.lookback_hours = lookback_hours
-        self.timeframe = timeframe
+        # Map timeframe to Binance period format
+        self.timeframe = self._map_timeframe(timeframe)
+
+    def _map_timeframe(self, timeframe: str) -> str:
+        """Map common timeframe formats to Binance period format."""
+        mapping = {
+            "1m": "5m",    # Binance minimum is 5m
+            "5m": "5m",
+            "15m": "15m",
+            "30m": "30m",
+            "1h": "1h",
+            "4h": "4h",
+            "1d": "1d",
+        }
+        return mapping.get(timeframe, "15m")
 
     def fetch(self, token: str = "BTC") -> Optional[Dict[str, Any]]:
         """
@@ -47,98 +62,66 @@ class SentimentDataFetcher:
         Dict or None
             Sentiment data with structure:
             {
-                'positive_ratio': float,
-                'negative_ratio': float,
-                'net_sentiment': float,
+                'positive_ratio': float,  # Long ratio (bullish)
+                'negative_ratio': float,  # Short ratio (bearish)
+                'net_sentiment': float,   # Long - Short
                 'data_time': str,
                 'data_delay_minutes': int
             }
         """
         try:
-            # Calculate time range
-            end_time = datetime.now()
-            start_time = end_time - timedelta(hours=self.lookback_hours)
-
             # Build request
-            request_body = {
-                "apiKey": self.API_KEY,
-                "endpoints": ["CO-A-02-01", "CO-A-02-02"],  # Positive and Negative ratios
-                "startTime": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "endTime": end_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "timeType": self.timeframe,
-                "token": [token]
+            params = {
+                "symbol": f"{token}USDT",
+                "period": self.timeframe,
+                "limit": 1
             }
 
-            headers = {
-                "Content-Type": "application/json",
-                "X-API-KEY": self.API_KEY
-            }
-
-            # Make request with timeout to prevent hanging
-            response = requests.post(self.API_URL, json=request_body, headers=headers, timeout=10)
+            # Make request
+            response = requests.get(
+                self.BINANCE_URL,
+                params=params,
+                timeout=10
+            )
 
             if response.status_code == 200:
                 data = response.json()
+                if data and len(data) > 0:
+                    return self._parse_binance_data(data[0])
 
-                if data.get("code") == 200 and data.get("data"):
-                    return self._parse_sentiment_data(data)
-
-            print(f"⚠️ CryptoOracle API returned unexpected response: {response.status_code}")
+            print(f"⚠️ Binance API returned unexpected response: {response.status_code}")
             return None
 
         except Exception as e:
             print(f"❌ Sentiment data fetch failed: {e}")
             return None
 
-    def _parse_sentiment_data(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Parse sentiment data from API response."""
+    def _parse_binance_data(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Parse sentiment data from Binance API response."""
         try:
-            time_periods = data["data"][0]["timePeriods"]
+            # Extract long/short ratios
+            long_ratio = float(data["longAccount"])
+            short_ratio = float(data["shortAccount"])
+            net_sentiment = long_ratio - short_ratio
 
-            # Find first time period with valid data
-            for period in time_periods:
-                period_data = period.get("data", [])
+            # Parse timestamp
+            timestamp_ms = data["timestamp"]
+            data_time = datetime.fromtimestamp(timestamp_ms / 1000)
 
-                sentiment = {}
-                valid_data_found = False
+            # Calculate delay
+            data_delay = int((datetime.now() - data_time).total_seconds() // 60)
 
-                for item in period_data:
-                    endpoint = item.get("endpoint")
-                    value = item.get("value", "").strip()
+            print(f"✅ Using Binance sentiment data from: {data_time.strftime('%Y-%m-%d %H:%M:%S')} (delay: {data_delay} minutes)")
 
-                    if value:  # Only process non-empty values
-                        try:
-                            if endpoint in ["CO-A-02-01", "CO-A-02-02"]:
-                                sentiment[endpoint] = float(value)
-                                valid_data_found = True
-                        except (ValueError, TypeError):
-                            continue
-
-                # If found valid data with both positive and negative
-                if valid_data_found and "CO-A-02-01" in sentiment and "CO-A-02-02" in sentiment:
-                    positive = sentiment['CO-A-02-01']
-                    negative = sentiment['CO-A-02-02']
-                    net_sentiment = positive - negative
-
-                    # Calculate data delay
-                    data_delay = int(
-                        (datetime.now() - datetime.strptime(
-                            period['startTime'], '%Y-%m-%d %H:%M:%S'
-                        )).total_seconds() // 60
-                    )
-
-                    print(f"✅ Using sentiment data from: {period['startTime']} (delay: {data_delay} minutes)")
-
-                    return {
-                        'positive_ratio': positive,
-                        'negative_ratio': negative,
-                        'net_sentiment': net_sentiment,
-                        'data_time': period['startTime'],
-                        'data_delay_minutes': data_delay
-                    }
-
-            print("❌ All time periods have empty data")
-            return None
+            return {
+                'positive_ratio': long_ratio,
+                'negative_ratio': short_ratio,
+                'net_sentiment': net_sentiment,
+                'data_time': data_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'data_delay_minutes': data_delay,
+                'source': 'binance',
+                'long_short_ratio': float(data["longShortRatio"])
+            }
 
         except Exception as e:
             print(f"❌ Sentiment data parsing failed: {e}")
@@ -163,9 +146,9 @@ class SentimentDataFetcher:
 
         sign = '+' if sentiment_data['net_sentiment'] >= 0 else ''
         return (
-            f"Market Sentiment: "
-            f"Bullish {sentiment_data['positive_ratio']:.1%} | "
-            f"Bearish {sentiment_data['negative_ratio']:.1%} | "
+            f"Market Sentiment (Binance): "
+            f"Long {sentiment_data['positive_ratio']:.1%} | "
+            f"Short {sentiment_data['negative_ratio']:.1%} | "
             f"Net {sign}{sentiment_data['net_sentiment']:.3f} | "
-            f"Delay {sentiment_data['data_delay_minutes']}min"
+            f"Ratio {sentiment_data.get('long_short_ratio', 0):.2f}"
         )
