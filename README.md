@@ -11,6 +11,33 @@
 
 ---
 
+## ⚡ 部署快速参考 (Deployment Quick Reference)
+
+> **重要**: 入口文件是 `main_live.py`，不是 `main.py`
+
+| 项目 | 值 |
+|------|-----|
+| 入口文件 | `main_live.py` |
+| 服务器路径 | `/home/linuxuser/nautilus_AItrader` |
+| 服务名 | `nautilus-trader` |
+| 分支 | `claude/clone-nautilus-aitrader-SFBz9` |
+
+```bash
+# 常用命令
+sudo systemctl restart nautilus-trader          # 重启
+sudo journalctl -u nautilus-trader -f           # 查看日志
+git pull origin claude/clone-nautilus-aitrader-SFBz9  # 更新代码
+python test_sl_fix.py                           # 测试修复
+```
+
+**已修复问题**:
+- ✅ 止损Bug: 验证止损在入场价正确一侧 (commit 7f940fb)
+- ✅ CryptoOracle: 替换为 Binance 多空比 API (commit 07cd27f)
+
+详细部署指南见 [DEPLOYMENT.md](DEPLOYMENT.md)
+
+---
+
 ## Table of Contents
 
 - [Features](#features)
