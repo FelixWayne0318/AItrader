@@ -1,4 +1,5 @@
 ---
+name: server-status
 description: 检查服务器状态和交易机器人运行情况。
 ---
 

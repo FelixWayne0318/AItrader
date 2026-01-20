@@ -1,4 +1,5 @@
 ---
+name: stop-loss-check
 description: 验证止损设置是否正确，确保止损在入场价正确一侧。
 ---
 
