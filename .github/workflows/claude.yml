@@ -2,21 +2,20 @@ name: Claude Code
 
 on:
   issue_comment:
-    types: [created]
+    types: [created, edited]
   pull_request_review_comment:
     types: [created]
   issues:
     types: [opened, assigned]
-  pull_request_review:
-    types: [submitted]
+  pull_request:
+    types: [opened, synchronize]
 
 jobs:
   claude:
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || github.event.action == 'assigned'))
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -24,16 +23,14 @@ jobs:
       pull-requests: write
       id-token: write
       actions: write
-      checks: write
-      statuses: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Run Claude
-        uses: anthropics/claude-code-action@beta
+        uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          trigger_phrase: "@claude"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
