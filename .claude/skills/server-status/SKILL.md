@@ -1,23 +1,30 @@
 ---
 name: server-status
-description: 检查服务器状态和交易机器人运行情况。
+description: 检查服务器状态和交易机器人运行情况。Use when checking server status, bot health, viewing logs, or monitoring the trading system.
+allowed-tools:
+  - Bash
+  - Read
 ---
 
 # 检查服务器状态
 
 ## 服务器信息
-- **IP**: 139.180.157.152
-- **用户**: linuxuser
-- **服务名**: nautilus-trader
+
+| 项目 | 值 |
+|------|-----|
+| **IP** | 139.180.157.152 |
+| **用户** | linuxuser |
+| **服务名** | nautilus-trader |
+| **路径** | /home/linuxuser/nautilus_AItrader |
 
 ## 检查命令
 
-### 1. 服务状态
+### 服务状态
 ```bash
 sudo systemctl status nautilus-trader
 ```
 
-### 2. 查看日志
+### 查看日志
 ```bash
 # 最近50行
 sudo journalctl -u nautilus-trader -n 50 --no-hostname
@@ -26,39 +33,33 @@ sudo journalctl -u nautilus-trader -n 50 --no-hostname
 sudo journalctl -u nautilus-trader -f --no-hostname
 ```
 
-### 3. 检查进程
+### 检查进程
 ```bash
 ps aux | grep main_live.py
 ```
 
-### 4. 检查端口
-```bash
-netstat -tlnp | grep python
-```
+## 状态判断
 
-## 常见状态
-
-### ✅ 正常运行
+### ✅ 正常运行标志
 ```
 🚀 *Strategy Started*
 📊 *Instrument*: BTCUSDT-PERP
+Active: active (running)
 ```
 
-### ❌ 入口文件错误
-```
-can't open file 'main.py': No such file or directory
-```
-**解决**: 确保 ExecStart 使用 `main_live.py`
+### ❌ 常见错误
 
-### ❌ 确认提示卡住
-```
-Are you sure you want to continue? (yes/no):
-EOFError: EOF when reading a line
-```
-**解决**: 添加 `Environment=AUTO_CONFIRM=true`
+| 错误信息 | 原因 | 解决方案 |
+|----------|------|----------|
+| `can't open file 'main.py'` | 入口文件错误 | ExecStart 改为 `main_live.py` |
+| `EOFError: EOF when reading a line` | 缺少确认环境变量 | 添加 `Environment=AUTO_CONFIRM=true` |
+| `telegram.error.Conflict` | Telegram 冲突 | 不影响交易，可忽略 |
 
-### ⚠️ Telegram 冲突
-```
-telegram.error.Conflict: terminated by other...
-```
-**说明**: 不影响交易，只是 Telegram 命令监听有问题
+## 快速诊断
+
+如果服务异常，按以下顺序检查：
+
+1. **服务状态**: `sudo systemctl status nautilus-trader`
+2. **最近日志**: `sudo journalctl -u nautilus-trader -n 100 --no-hostname`
+3. **配置文件**: `cat /etc/systemd/system/nautilus-trader.service`
+4. **入口文件**: 确认是 `main_live.py`
