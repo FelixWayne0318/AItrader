@@ -87,22 +87,24 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     tp_medium_confidence_pct: float = 0.02
     tp_low_confidence_pct: float = 0.01
     
-    # OCO (One-Cancels-the-Other)
-    enable_oco: bool = True
-    oco_redis_host: str = "localhost"
-    oco_redis_port: int = 6379
-    oco_redis_db: int = 0
-    oco_redis_password: Optional[str] = None
-    oco_group_ttl_hours: int = 24
-    
+    # OCO (One-Cancels-the-Other) - now handled by NautilusTrader bracket orders
+    enable_oco: bool = True  # Controls orphan order cleanup
+    # Note: Redis-based OCO manager deprecated - bracket orders handle OCO automatically
+    oco_redis_host: str = "localhost"  # DEPRECATED: not used
+    oco_redis_port: int = 6379  # DEPRECATED: not used
+    oco_redis_db: int = 0  # DEPRECATED: not used
+    oco_redis_password: Optional[str] = None  # DEPRECATED: not used
+    oco_group_ttl_hours: int = 24  # DEPRECATED: not used
+
     # Trailing Stop Loss
     enable_trailing_stop: bool = True
     trailing_activation_pct: float = 0.01
     trailing_distance_pct: float = 0.005
     trailing_update_threshold_pct: float = 0.002
-    
-    # Partial Take Profit
-    enable_partial_tp: bool = True
+
+    # Partial Take Profit - NOT YET IMPLEMENTED
+    # Note: Config exists but partial TP logic is not implemented in strategy code
+    enable_partial_tp: bool = True  # TODO: implement partial TP logic
     partial_tp_levels: Tuple[Dict[str, float], ...] = (
         {"profit_pct": 0.02, "position_pct": 0.5},
         {"profit_pct": 0.04, "position_pct": 0.5},
@@ -697,8 +699,8 @@ class DeepSeekAIStrategy(Strategy):
         # Execute trade
         self._execute_trade(signal_data, price_data, technical_data, current_position)
         
-        # OCO maintenance: cleanup orphan orders and expired groups
-        if self.enable_oco and self.oco_manager:
+        # Orphan order cleanup: cancel reduce-only orders when no position exists
+        if self.enable_oco:
             self._cleanup_oco_orphans()
         
         # Trailing stop maintenance: check and update trailing stops
@@ -926,15 +928,15 @@ class DeepSeekAIStrategy(Strategy):
                 return
 
             if size_diff > 0:
-                # Add to position
-                self._submit_order(
-                    side=OrderSide.BUY if target_side == 'long' else OrderSide.SELL,
+                # Add to position with bracket order (includes SL/TP protection)
+                order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
+                self._submit_bracket_order(
+                    side=order_side,
                     quantity=abs(size_diff),
-                    reduce_only=False,
                 )
                 self.log.info(
                     f"📈 Adding to {target_side} position: {abs(size_diff):.3f} BTC "
-                    f"({current_qty:.3f} → {target_quantity:.3f})"
+                    f"({current_qty:.3f} → {target_quantity:.3f}) [with SL/TP]"
                 )
             else:
                 # Reduce position
@@ -967,11 +969,14 @@ class DeepSeekAIStrategy(Strategy):
                 reduce_only=True,
             )
 
-            # Open opposite position
-            self._submit_order(
-                side=OrderSide.BUY if target_side == 'long' else OrderSide.SELL,
+            # Open opposite position with bracket order (includes SL/TP protection)
+            new_order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
+            self._submit_bracket_order(
+                side=new_order_side,
                 quantity=target_quantity,
-                reduce_only=False,
+            )
+            self.log.info(
+                f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC [with SL/TP]"
             )
 
         else:
