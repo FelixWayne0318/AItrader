@@ -24,6 +24,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Track already-warned values to avoid log spam
+_warned_unknown_values: set = set()
+
 
 def apply_binance_enum_patches() -> bool:
     """
@@ -71,11 +74,17 @@ def apply_binance_enum_patches() -> bool:
             BinanceSymbolFilterType
                 A new enum member for the unknown value
             """
-            # Log the unknown value for debugging
-            logger.warning(
-                f"Unknown BinanceSymbolFilterType value encountered: '{value}'. "
-                f"Creating dynamic member. Consider updating NautilusTrader."
-            )
+            # Check if already cached (should not reach here if cached, but double-check)
+            if value in cls._value2member_map_:
+                return cls._value2member_map_[value]
+
+            # Log warning only once per unique unknown value
+            if value not in _warned_unknown_values:
+                _warned_unknown_values.add(value)
+                logger.warning(
+                    f"Unknown BinanceSymbolFilterType value encountered: '{value}'. "
+                    f"Creating dynamic member. Consider updating NautilusTrader."
+                )
 
             # Create a pseudo-member for the unknown value
             # This approach creates a new enum member dynamically
