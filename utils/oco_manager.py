@@ -1,6 +1,14 @@
 """
 OCO (One-Cancels-the-Other) Order Manager with Redis Persistence
 
+⚠️ DEPRECATED: This module is no longer used.
+NautilusTrader's built-in bracket orders now handle OCO functionality automatically.
+The order_factory.bracket() method creates linked SL/TP orders with native OCO support.
+
+This file is kept for reference and backwards compatibility with documentation.
+Do NOT import or use this class in new code.
+
+Original Purpose:
 Manages OCO order groups with event-driven cancellation and Redis persistence
 to prevent order orphaning across strategy restarts.
 """

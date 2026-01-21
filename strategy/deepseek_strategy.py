@@ -197,6 +197,9 @@ class DeepSeekAIStrategy(Strategy):
         self.trailing_distance_pct = config.trailing_distance_pct
         self.trailing_update_threshold_pct = config.trailing_update_threshold_pct
         
+        # Thread lock for shared state (Telegram thread safety)
+        self._state_lock = threading.Lock()
+
         # Track trailing stop state for each position
         self.trailing_stop_state: Dict[str, Dict[str, Any]] = {}
         # Format: {
@@ -287,16 +290,27 @@ class DeepSeekAIStrategy(Strategy):
                             logger=self.log
                         )
                         
-                        # Start command handler in background thread
+                        # Start command handler in background thread with isolated event loop
                         def run_command_handler():
-                            """Run command handler in background thread."""
+                            """Run command handler in background thread with proper event loop isolation."""
+                            loop = None
                             try:
+                                # Create isolated event loop for this thread
                                 loop = asyncio.new_event_loop()
                                 asyncio.set_event_loop(loop)
                                 # Start polling (this will run indefinitely via idle())
                                 loop.run_until_complete(self.telegram_command_handler.start_polling())
+                            except asyncio.CancelledError:
+                                self.log.info("🔌 Telegram command handler cancelled")
                             except Exception as e:
                                 self.log.error(f"❌ Command handler thread error: {e}")
+                            finally:
+                                # Cleanup event loop
+                                if loop is not None:
+                                    try:
+                                        loop.close()
+                                    except Exception:
+                                        pass
                         
                         # Start background thread for command listening
                         command_thread = threading.Thread(
@@ -577,7 +591,7 @@ class DeepSeekAIStrategy(Strategy):
         kline_data = self.indicator_manager.get_kline_data(count=10)
         self.log.debug(f"Retrieved {len(kline_data)} K-lines for analysis")
 
-        # Get sentiment data
+        # Get sentiment data (with default neutral values as fallback)
         sentiment_data = None
         if self.sentiment_enabled and self.sentiment_fetcher:
             try:
@@ -586,6 +600,17 @@ class DeepSeekAIStrategy(Strategy):
                     self.log.info(self.sentiment_fetcher.format_for_display(sentiment_data))
             except Exception as e:
                 self.log.warning(f"Failed to fetch sentiment data: {e}")
+
+        # Provide default neutral sentiment if unavailable (prevents None being passed to AI)
+        if sentiment_data is None:
+            sentiment_data = {
+                'long_short_ratio': 1.0,  # Neutral (equal longs and shorts)
+                'long_account_pct': 50.0,
+                'short_account_pct': 50.0,
+                'source': 'default_neutral',
+                'timestamp': None,
+            }
+            self.log.info("📊 Using neutral sentiment data (no data available)")
 
         # Build price data for AI
         price_data = {
@@ -644,18 +669,27 @@ class DeepSeekAIStrategy(Strategy):
                 if signal_multi.get('debate_summary'):
                     self.log.info(f"📋 Debate: {signal_multi['debate_summary'][:200]}...")
 
-                # Log comparison result
+                # Log comparison result and apply MultiAgent SL/TP when consensus exists
                 if signal_deepseek['signal'] == signal_multi['signal']:
                     self.log.info("✅ Consensus: Both analyzers agree")
+                    # When consensus, use MultiAgent's SL/TP if available (more refined from debate)
+                    if signal_multi.get('stop_loss') and signal_multi.get('take_profit'):
+                        signal_deepseek['stop_loss_multi'] = signal_multi['stop_loss']
+                        signal_deepseek['take_profit_multi'] = signal_multi['take_profit']
+                        self.log.info(
+                            f"📊 Using MultiAgent SL/TP: SL=${signal_multi['stop_loss']:,.2f}, "
+                            f"TP=${signal_multi['take_profit']:,.2f}"
+                        )
                 else:
                     self.log.warning(
                         f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
-                        f"MultiAgent={signal_multi['signal']}"
+                        f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
                     )
             except Exception as e:
                 self.log.warning(f"⚠️ Multi-Agent comparison failed (non-critical): {e}")
 
             # Use DeepSeek signal for actual trading (safe during validation period)
+            # MultiAgent's SL/TP may be attached when consensus exists
             signal_data = signal_deepseek
 
             # Send Telegram signal notification (only for actionable signals)
@@ -773,8 +807,10 @@ class DeepSeekAIStrategy(Strategy):
         current_position : Dict or None
             Current position info
         """
-        # Check if trading is paused
-        if self.is_trading_paused:
+        # Check if trading is paused (thread-safe read)
+        with self._state_lock:
+            is_paused = self.is_trading_paused
+        if is_paused:
             self.log.info("⏸️ Trading is paused - skipping signal execution")
             return
         
@@ -884,16 +920,25 @@ class DeepSeekAIStrategy(Strategy):
 
         # CRITICAL: Re-check notional after rounding to ensure still >= $100
         # Rounding can reduce the quantity below minimum notional threshold
+        # Add safety margin to avoid boundary rejection by exchange
+        MIN_NOTIONAL_SAFETY_MARGIN = 1.01  # 1% safety margin
+        MIN_NOTIONAL_WITH_MARGIN = MIN_NOTIONAL_USDT * MIN_NOTIONAL_SAFETY_MARGIN
+
         actual_notional = btc_quantity * current_price
-        if actual_notional < MIN_NOTIONAL_USDT:
-            # Increase quantity to meet minimum notional (round UP)
-            btc_quantity = MIN_NOTIONAL_USDT / current_price
-            # Round up to next 0.001 to ensure we stay above minimum
+        if actual_notional < MIN_NOTIONAL_WITH_MARGIN:
+            # Increase quantity to meet minimum notional with safety margin (round UP)
             import math
+            btc_quantity = MIN_NOTIONAL_WITH_MARGIN / current_price
+            # Round up to next 0.001 to ensure we stay above minimum
             btc_quantity = math.ceil(btc_quantity * 1000) / 1000
+            # Final verification
+            final_notional = btc_quantity * current_price
+            if final_notional < MIN_NOTIONAL_USDT:
+                # If still below minimum after rounding, add one more tick
+                btc_quantity += 0.001
             self.log.warning(
                 f"⚠️ Adjusted quantity after rounding: {btc_quantity:.3f} BTC "
-                f"to meet ${MIN_NOTIONAL_USDT} minimum notional"
+                f"to meet ${MIN_NOTIONAL_USDT} minimum notional (actual: ${btc_quantity * current_price:.2f})"
             )
 
         self.log.info(
@@ -1102,58 +1147,91 @@ class DeepSeekAIStrategy(Strategy):
         support = self.latest_technical_data.get('support', 0.0)
         resistance = self.latest_technical_data.get('resistance', 0.0)
 
-        # Calculate Stop Loss price
-        # CRITICAL: Stop loss MUST be on the correct side of entry price
-        # - For BUY (LONG): SL must be BELOW entry price
-        # - For SELL (SHORT): SL must be ABOVE entry price
-        if side == OrderSide.BUY:
-            # BUY: Stop loss below entry price
-            default_sl = entry_price * 0.98  # Default 2% below entry
+        # Check for MultiAgent SL/TP (from consensus)
+        multi_sl = self.latest_signal_data.get('stop_loss_multi')
+        multi_tp = self.latest_signal_data.get('take_profit_multi')
+        use_multi_sltp = False
 
-            if self.sl_use_support_resistance and support > 0:
-                potential_sl = support * (1 - self.sl_buffer_pct)
-                # VALIDATION: Ensure SL is BELOW entry price
-                if potential_sl < entry_price:
-                    stop_loss_price = potential_sl
-                    self.log.info(f"📍 Using support level for SL: ${support:,.2f} → ${stop_loss_price:,.2f}")
-                else:
-                    # Support is above entry (market dropped rapidly) - use default
-                    stop_loss_price = default_sl
-                    self.log.warning(
-                        f"⚠️ Support ${support:,.2f} is above entry ${entry_price:,.2f}, "
-                        f"using default SL: ${stop_loss_price:,.2f}"
-                    )
+        # Validate MultiAgent SL/TP values
+        if multi_sl and multi_tp and multi_sl > 0 and multi_tp > 0:
+            # Verify SL is on correct side of entry price
+            if side == OrderSide.BUY and multi_sl < entry_price and multi_tp > entry_price:
+                use_multi_sltp = True
+                self.log.info(
+                    f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f}, TP=${multi_tp:,.2f}"
+                )
+            elif side == OrderSide.SELL and multi_sl > entry_price and multi_tp < entry_price:
+                use_multi_sltp = True
+                self.log.info(
+                    f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f}, TP=${multi_tp:,.2f}"
+                )
             else:
-                stop_loss_price = default_sl
-                self.log.info(f"📍 Using default 2% SL: ${stop_loss_price:,.2f}")
-        else:
-            # SELL: Stop loss above entry price
-            default_sl = entry_price * 1.02  # Default 2% above entry
+                self.log.warning(
+                    f"⚠️ MultiAgent SL/TP invalid for {side.name} "
+                    f"(SL=${multi_sl:,.2f}, TP=${multi_tp:,.2f}, Entry=${entry_price:,.2f}), "
+                    f"falling back to technical analysis"
+                )
 
-            if self.sl_use_support_resistance and resistance > 0:
-                potential_sl = resistance * (1 + self.sl_buffer_pct)
-                # VALIDATION: Ensure SL is ABOVE entry price
-                if potential_sl > entry_price:
-                    stop_loss_price = potential_sl
-                    self.log.info(f"📍 Using resistance level for SL: ${resistance:,.2f} → ${stop_loss_price:,.2f}")
+        # If MultiAgent values are valid, use them directly
+        if use_multi_sltp:
+            stop_loss_price = multi_sl
+            tp_price = multi_tp
+        else:
+            # Calculate Stop Loss price using technical analysis
+            # CRITICAL: Stop loss MUST be on the correct side of entry price
+            # - For BUY (LONG): SL must be BELOW entry price
+            # - For SELL (SHORT): SL must be ABOVE entry price
+            # Use epsilon for floating point comparison to avoid precision issues
+            PRICE_EPSILON = entry_price * 1e-8  # Relative tolerance for price comparison
+
+            if side == OrderSide.BUY:
+                # BUY: Stop loss below entry price
+                default_sl = entry_price * 0.98  # Default 2% below entry
+
+                if self.sl_use_support_resistance and support > 0:
+                    potential_sl = support * (1 - self.sl_buffer_pct)
+                    # VALIDATION: Ensure SL is BELOW entry price (with epsilon tolerance)
+                    if potential_sl < entry_price - PRICE_EPSILON:
+                        stop_loss_price = potential_sl
+                        self.log.info(f"📍 Using support level for SL: ${support:,.2f} → ${stop_loss_price:,.2f}")
+                    else:
+                        # Support is above entry (market dropped rapidly) - use default
+                        stop_loss_price = default_sl
+                        self.log.warning(
+                            f"⚠️ Support ${support:,.2f} is above entry ${entry_price:,.2f}, "
+                            f"using default SL: ${stop_loss_price:,.2f}"
+                        )
                 else:
-                    # Resistance is below entry (market rallied rapidly) - use default
                     stop_loss_price = default_sl
-                    self.log.warning(
-                        f"⚠️ Resistance ${resistance:,.2f} is below entry ${entry_price:,.2f}, "
-                        f"using default SL: ${stop_loss_price:,.2f}"
-                    )
+                    self.log.info(f"📍 Using default 2% SL: ${stop_loss_price:,.2f}")
             else:
-                stop_loss_price = default_sl
-                self.log.info(f"📍 Using default 2% SL: ${stop_loss_price:,.2f}")
+                # SELL: Stop loss above entry price
+                default_sl = entry_price * 1.02  # Default 2% above entry
 
-        # Calculate Take Profit price (use first level for bracket order)
-        # Note: Bracket orders support single TP. For multiple TPs, we'll submit additional orders after entry fills
-        tp_pct = self.tp_pct_config.get(confidence, 0.02)
-        if side == OrderSide.BUY:
-            tp_price = entry_price * (1 + tp_pct)
-        else:
-            tp_price = entry_price * (1 - tp_pct)
+                if self.sl_use_support_resistance and resistance > 0:
+                    potential_sl = resistance * (1 + self.sl_buffer_pct)
+                    # VALIDATION: Ensure SL is ABOVE entry price (with epsilon tolerance)
+                    if potential_sl > entry_price + PRICE_EPSILON:
+                        stop_loss_price = potential_sl
+                        self.log.info(f"📍 Using resistance level for SL: ${resistance:,.2f} → ${stop_loss_price:,.2f}")
+                    else:
+                        # Resistance is below entry (market rallied rapidly) - use default
+                        stop_loss_price = default_sl
+                        self.log.warning(
+                            f"⚠️ Resistance ${resistance:,.2f} is below entry ${entry_price:,.2f}, "
+                            f"using default SL: ${stop_loss_price:,.2f}"
+                        )
+                else:
+                    stop_loss_price = default_sl
+                    self.log.info(f"📍 Using default 2% SL: ${stop_loss_price:,.2f}")
+
+            # Calculate Take Profit price (use first level for bracket order)
+            # Note: Bracket orders support single TP. For multiple TPs, we'll submit additional orders after entry fills
+            tp_pct = self.tp_pct_config.get(confidence, 0.02)
+            if side == OrderSide.BUY:
+                tp_price = entry_price * (1 + tp_pct)
+            else:
+                tp_price = entry_price * (1 - tp_pct)
 
         # Log SL/TP summary
         self.log.info(
@@ -1723,15 +1801,16 @@ class DeepSeekAIStrategy(Strategy):
             }
     
     def _cmd_pause(self) -> Dict[str, Any]:
-        """Handle /pause command."""
+        """Handle /pause command (thread-safe)."""
         try:
-            if self.is_trading_paused:
-                message = self.telegram_bot.format_pause_response(False, "Trading is already paused") if self.telegram_bot else "Already paused"
-            else:
-                self.is_trading_paused = True
-                self.log.info("⏸️ Trading paused by Telegram command")
-                message = self.telegram_bot.format_pause_response(True) if self.telegram_bot else "Trading paused"
-            
+            with self._state_lock:
+                if self.is_trading_paused:
+                    message = self.telegram_bot.format_pause_response(False, "Trading is already paused") if self.telegram_bot else "Already paused"
+                else:
+                    self.is_trading_paused = True
+                    self.log.info("⏸️ Trading paused by Telegram command")
+                    message = self.telegram_bot.format_pause_response(True) if self.telegram_bot else "Trading paused"
+
             return {
                 'success': True,
                 'message': message
@@ -1741,17 +1820,18 @@ class DeepSeekAIStrategy(Strategy):
                 'success': False,
                 'error': str(e)
             }
-    
+
     def _cmd_resume(self) -> Dict[str, Any]:
-        """Handle /resume command."""
+        """Handle /resume command (thread-safe)."""
         try:
-            if not self.is_trading_paused:
-                message = self.telegram_bot.format_resume_response(False, "Trading is not paused") if self.telegram_bot else "Not paused"
-            else:
-                self.is_trading_paused = False
-                self.log.info("▶️ Trading resumed by Telegram command")
-                message = self.telegram_bot.format_resume_response(True) if self.telegram_bot else "Trading resumed"
-            
+            with self._state_lock:
+                if not self.is_trading_paused:
+                    message = self.telegram_bot.format_resume_response(False, "Trading is not paused") if self.telegram_bot else "Not paused"
+                else:
+                    self.is_trading_paused = False
+                    self.log.info("▶️ Trading resumed by Telegram command")
+                    message = self.telegram_bot.format_resume_response(True) if self.telegram_bot else "Trading resumed"
+
             return {
                 'success': True,
                 'message': message

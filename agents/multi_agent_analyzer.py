@@ -17,6 +17,7 @@ Key Features:
 
 import json
 import logging
+import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
@@ -68,6 +69,59 @@ class MultiAgentAnalyzer:
 
         # Track debate history for debugging
         self.last_debate_transcript: str = ""
+
+        # Retry configuration (same as DeepSeekAnalyzer)
+        self.max_retries = 2
+        self.retry_delay = 1.0
+
+    def _call_api_with_retry(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: Optional[float] = None,
+    ) -> str:
+        """
+        Call DeepSeek API with retry logic for robustness.
+
+        Parameters
+        ----------
+        messages : List[Dict]
+            Chat messages to send
+        temperature : float, optional
+            Override default temperature
+
+        Returns
+        -------
+        str
+            API response content
+
+        Raises
+        ------
+        Exception
+            If all retries fail
+        """
+        last_error = None
+        temp = temperature if temperature is not None else self.temperature
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temp,
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    self.logger.warning(
+                        f"API call failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
+                        f"Retrying in {self.retry_delay}s..."
+                    )
+                    time.sleep(self.retry_delay)
+                else:
+                    self.logger.error(f"API call failed after {self.max_retries + 1} attempts: {e}")
+
+        raise last_error
 
     def analyze(
         self,
@@ -219,15 +273,10 @@ INSTRUCTIONS:
 
 Deliver your argument now (2-3 paragraphs):"""
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "You are a professional Bull Analyst in a trading debate. Be persuasive and data-driven."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=self.temperature,
-        )
-        return response.choices[0].message.content
+        return self._call_api_with_retry([
+            {"role": "system", "content": "You are a professional Bull Analyst in a trading debate. Be persuasive and data-driven."},
+            {"role": "user", "content": prompt}
+        ])
 
     def _get_bear_argument(
         self,
@@ -271,15 +320,10 @@ INSTRUCTIONS:
 
 Deliver your argument now (2-3 paragraphs):"""
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "You are a professional Bear Analyst in a trading debate. Be skeptical and highlight risks."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=self.temperature,
-        )
-        return response.choices[0].message.content
+        return self._call_api_with_retry([
+            {"role": "system", "content": "You are a professional Bear Analyst in a trading debate. Be skeptical and highlight risks."},
+            {"role": "user", "content": prompt}
+        ])
 
     def _get_judge_decision(
         self,
@@ -323,16 +367,13 @@ Provide your decision in this exact JSON format:
 
 JSON response only:"""
 
-        response = self.client.chat.completions.create(
-            model=self.model,
+        result = self._call_api_with_retry(
             messages=[
                 {"role": "system", "content": "You are a decisive Portfolio Manager. Make clear trading decisions based on debate evidence. Avoid excessive hedging."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,  # Lower temperature for more decisive output
         )
-
-        result = response.choices[0].message.content
         self.logger.debug(f"Judge raw response: {result}")
 
         try:
@@ -420,16 +461,13 @@ MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD
 
 JSON response only:"""
 
-        response = self.client.chat.completions.create(
-            model=self.model,
+        result = self._call_api_with_retry(
             messages=[
                 {"role": "system", "content": "You are a Risk Manager. Provide precise trade parameters with specific price levels."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
         )
-
-        result = response.choices[0].message.content
         self.logger.debug(f"Risk evaluation raw response: {result}")
 
         try:

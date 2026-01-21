@@ -7,6 +7,7 @@ position updates, and system status via Telegram.
 
 import asyncio
 import logging
+import concurrent.futures
 from typing import Optional, Dict, Any
 from datetime import datetime
 
@@ -155,10 +156,15 @@ class TelegramBot:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(self._run_sync_in_new_loop, message, kwargs)
-                    return future.result(timeout=10)
+                    # Increased timeout to 30s to handle slow Telegram API responses
+                    return future.result(timeout=30)
             except RuntimeError:
                 # No running loop - create a new one
                 return self._run_sync_in_new_loop(message, kwargs)
+        except concurrent.futures.TimeoutError:
+            # Telegram API timeout - log but don't crash strategy
+            self.logger.warning("⚠️ Telegram message timed out (30s) - message may not have been sent")
+            return False
         except Exception as e:
             self.logger.error(f"❌ Error in send_message_sync: {e}")
             return False
