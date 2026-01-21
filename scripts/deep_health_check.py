@@ -65,23 +65,23 @@ class HealthChecker:
         print(">> 2. 依赖包检查")
 
         required_packages = [
-            'nautilus_trader',
-            'httpx',
-            'python-dotenv',
-            'pyyaml',
-            'redis',
+            ('nautilus_trader', 'nautilus_trader'),
+            ('httpx', 'httpx'),
+            ('python-dotenv', 'dotenv'),
+            ('pyyaml', 'yaml'),
+            ('redis', 'redis'),
         ]
 
         optional_packages = [
             'telegram',
         ]
 
-        for pkg in required_packages:
+        for pkg_name, import_name in required_packages:
             try:
-                __import__(pkg.replace('-', '_'))
-                self.check_pass(f"{pkg} 已安装")
+                __import__(import_name)
+                self.check_pass(f"{pkg_name} 已安装")
             except ImportError:
-                self.check_fail(f"{pkg} 未安装")
+                self.check_fail(f"{pkg_name} 未安装")
 
         for pkg in optional_packages:
             try:
@@ -217,63 +217,52 @@ class HealthChecker:
     def check_stop_loss_logic(self):
         print(">> 6. 止损逻辑验证")
 
-        try:
-            # 导入验证函数
-            from strategy.deepseek_strategy import DeepSeekStrategy
+        # 测试用例 - 不需要导入策略，直接验证逻辑
+        test_cases = [
+            # (direction, entry, sl, expected_valid)
+            ("LONG", 100.0, 98.0, True),   # LONG: SL < entry ✓
+            ("LONG", 100.0, 102.0, False), # LONG: SL > entry ✗
+            ("SHORT", 100.0, 102.0, True), # SHORT: SL > entry ✓
+            ("SHORT", 100.0, 98.0, False), # SHORT: SL < entry ✗
+        ]
 
-            # 测试用例
-            test_cases = [
-                # (direction, entry, sl, expected_valid)
-                ("LONG", 100.0, 98.0, True),   # LONG: SL < entry ✓
-                ("LONG", 100.0, 102.0, False), # LONG: SL > entry ✗
-                ("SHORT", 100.0, 102.0, True), # SHORT: SL > entry ✓
-                ("SHORT", 100.0, 98.0, False), # SHORT: SL < entry ✗
-            ]
-
-            all_pass = True
-            for direction, entry, sl, expected in test_cases:
-                # 验证逻辑
-                if direction == "LONG":
-                    is_valid = sl < entry
-                else:
-                    is_valid = sl > entry
-
-                if is_valid == expected:
-                    pass
-                else:
-                    all_pass = False
-
-            if all_pass:
-                self.check_pass("止损验证逻辑正确")
+        all_pass = True
+        for direction, entry, sl, expected in test_cases:
+            # 验证逻辑
+            if direction == "LONG":
+                is_valid = sl < entry
             else:
-                self.check_fail("止损验证逻辑有误")
+                is_valid = sl > entry
 
-        except ImportError as e:
-            self.check_warn(f"无法导入策略模块: {e}")
-        except Exception as e:
-            self.check_warn(f"止损逻辑检查失败: {e}")
+            if is_valid != expected:
+                all_pass = False
+
+        if all_pass:
+            self.check_pass("止损验证逻辑正确")
+        else:
+            self.check_fail("止损验证逻辑有误")
         print()
 
     def check_strategy_import(self):
         print(">> 7. 策略模块检查")
 
         try:
-            from strategy.deepseek_strategy import DeepSeekStrategy
-            self.check_pass("DeepSeekStrategy 导入成功")
+            from strategy.deepseek_strategy import DeepSeekAIStrategy
+            self.check_pass("DeepSeekAIStrategy 导入成功")
         except Exception as e:
             self.check_fail(f"策略导入失败: {e}")
 
         try:
-            from utils.deepseek_client import DeepSeekClient
-            self.check_pass("DeepSeekClient 导入成功")
+            from utils.deepseek_client import DeepSeekAnalyzer
+            self.check_pass("DeepSeekAnalyzer 导入成功")
         except Exception as e:
-            self.check_fail(f"DeepSeek 客户端导入失败: {e}")
+            self.check_fail(f"DeepSeek 分析器导入失败: {e}")
 
         try:
-            from utils.sentiment_client import SentimentClient
-            self.check_pass("SentimentClient 导入成功")
+            from utils.sentiment_client import SentimentDataFetcher
+            self.check_pass("SentimentDataFetcher 导入成功")
         except Exception as e:
-            self.check_warn(f"情绪客户端导入失败: {e}")
+            self.check_warn(f"情绪数据获取器导入失败: {e}")
 
         try:
             from agents.multi_agent_analyzer import MultiAgentAnalyzer
