@@ -126,15 +126,17 @@ def apply_all_patches() -> bool:
     -------
     bool
         True if all patches were applied successfully.
+
+    IMPORTANT: Order matters!
+    1. First apply aiohttp patch (BEFORE any NautilusTrader imports)
+    2. Then apply enum patch (which imports NautilusTrader)
     """
     success = True
 
-    # Apply BinanceSymbolFilterType patch (for POSITION_RISK_CONTROL etc.)
-    if not apply_binance_enum_patches():
-        success = False
-
-    # Apply position filter patch (for non-ASCII symbols like 币安人生USDT)
-    # This is CRITICAL for accounts that receive '币安人生USDT' in API responses
+    # =========================================================================
+    # STEP 1: Apply aiohttp position filter patch FIRST
+    # This MUST happen before NautilusTrader imports aiohttp
+    # =========================================================================
     try:
         from patches.binance_positions import apply_http_response_filter, AIOHTTP_AVAILABLE
 
@@ -145,14 +147,22 @@ def apply_all_patches() -> bool:
                 "   Install with: pip install aiohttp\n"
                 "   Then restart the service."
             )
-            # Don't fail completely, but warn strongly
         elif not apply_http_response_filter():
             logger.warning("Position filter patch not applied")
+            success = False
         else:
             logger.info("✅ Position filter patch applied successfully")
 
     except ImportError as e:
         logger.warning(f"Could not import position filter patch: {e}")
+        success = False
+
+    # =========================================================================
+    # STEP 2: Apply BinanceSymbolFilterType patch
+    # This imports NautilusTrader, so must come AFTER aiohttp patch
+    # =========================================================================
+    if not apply_binance_enum_patches():
+        success = False
 
     return success
 
