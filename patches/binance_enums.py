@@ -134,10 +134,23 @@ def apply_all_patches() -> bool:
         success = False
 
     # Apply position filter patch (for non-ASCII symbols like 币安人生USDT)
+    # This is CRITICAL for accounts that receive '币安人生USDT' in API responses
     try:
-        from patches.binance_positions import apply_http_response_filter
-        if not apply_http_response_filter():
-            logger.warning("Position filter patch not applied (may not be critical)")
+        from patches.binance_positions import apply_http_response_filter, AIOHTTP_AVAILABLE
+
+        if not AIOHTTP_AVAILABLE:
+            logger.error(
+                "❌ CRITICAL: aiohttp is not installed!\n"
+                "   This will cause crashes if Binance returns non-ASCII symbols.\n"
+                "   Install with: pip install aiohttp\n"
+                "   Then restart the service."
+            )
+            # Don't fail completely, but warn strongly
+        elif not apply_http_response_filter():
+            logger.warning("Position filter patch not applied")
+        else:
+            logger.info("✅ Position filter patch applied successfully")
+
     except ImportError as e:
         logger.warning(f"Could not import position filter patch: {e}")
 

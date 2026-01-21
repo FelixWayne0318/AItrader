@@ -13,13 +13,27 @@ Why this is needed:
 Usage:
     from patches.binance_positions import apply_position_filter_patch
     apply_position_filter_patch()
+
+Important:
+    - Requires aiohttp to be installed
+    - Install with: pip install aiohttp
 """
 
 import logging
-import json
 from functools import wraps
 
 logger = logging.getLogger(__name__)
+
+# Check if aiohttp is available
+try:
+    import aiohttp
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+    logger.warning(
+        "aiohttp is not installed. Position filter patch cannot be applied. "
+        "Install with: pip install aiohttp"
+    )
 
 _position_patch_applied = False
 _warned_symbols = set()
@@ -93,9 +107,16 @@ def apply_position_filter_patch() -> bool:
         logger.debug("Position filter patch already applied")
         return True
 
-    try:
-        import aiohttp
+    # Check if aiohttp is available
+    if not AIOHTTP_AVAILABLE:
+        logger.error(
+            "❌ Cannot apply position filter patch: aiohttp is not installed.\n"
+            "   This is required to filter non-ASCII symbols like '币安人生USDT'.\n"
+            "   Install with: pip install aiohttp"
+        )
+        return False
 
+    try:
         # Store original json method
         original_json = aiohttp.ClientResponse.json
 
