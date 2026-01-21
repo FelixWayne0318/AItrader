@@ -232,7 +232,8 @@ def get_binance_config() -> tuple:
 
     # Filter to only load BTCUSDT perpetual
     # CRITICAL: load_all=False prevents loading non-ASCII symbols like '币安人生USDT-PERP'
-    instrument_filters = frozenset({"symbol=BTCUSDT"})
+    # NOTE: filters must be a dict, not frozenset (NautilusTrader expects dict.items())
+    instrument_filters = {"symbol": "BTCUSDT"}
 
     # Data client config
     data_config = BinanceDataClientConfig(
