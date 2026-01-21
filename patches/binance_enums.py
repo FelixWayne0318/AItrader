@@ -131,7 +131,7 @@ def apply_all_patches() -> bool:
     1. First apply aiohttp patch (BEFORE any NautilusTrader imports)
     2. Then apply enum patch (which imports NautilusTrader)
     """
-    print("[PATCH] apply_all_patches() starting...")
+    print("[PATCH] apply_all_patches() starting...", flush=True)
     success = True
 
     # =========================================================================
@@ -139,11 +139,11 @@ def apply_all_patches() -> bool:
     # This MUST happen before NautilusTrader imports aiohttp
     # =========================================================================
     try:
-        print("[PATCH] Step 1: Importing binance_positions module...")
+        print("[PATCH] Step 1: Importing binance_positions module...", flush=True)
         from patches.binance_positions import apply_http_response_filter, AIOHTTP_AVAILABLE
 
         if not AIOHTTP_AVAILABLE:
-            print("[PATCH] ERROR: aiohttp is not installed!")
+            print("[PATCH] ERROR: aiohttp is not installed!", flush=True)
             logger.error(
                 "❌ CRITICAL: aiohttp is not installed!\n"
                 "   This will cause crashes if Binance returns non-ASCII symbols.\n"
@@ -151,15 +151,15 @@ def apply_all_patches() -> bool:
                 "   Then restart the service."
             )
         elif not apply_http_response_filter():
-            print("[PATCH] WARNING: Position filter patch not applied")
+            print("[PATCH] WARNING: Position filter patch not applied", flush=True)
             logger.warning("Position filter patch not applied")
             success = False
         else:
-            print("[PATCH] ✅ Position filter patch applied successfully")
+            print("[PATCH] ✅ Position filter patch applied successfully", flush=True)
             logger.info("✅ Position filter patch applied successfully")
 
     except ImportError as e:
-        print(f"[PATCH] ERROR: Could not import position filter patch: {e}")
+        print(f"[PATCH] ERROR: Could not import position filter patch: {e}", flush=True)
         import traceback
         traceback.print_exc()
         logger.warning(f"Could not import position filter patch: {e}")
@@ -169,11 +169,11 @@ def apply_all_patches() -> bool:
     # STEP 2: Apply BinanceSymbolFilterType patch
     # This imports NautilusTrader, so must come AFTER aiohttp patch
     # =========================================================================
-    print("[PATCH] Step 2: Applying BinanceSymbolFilterType patch...")
+    print("[PATCH] Step 2: Applying BinanceSymbolFilterType patch...", flush=True)
     if not apply_binance_enum_patches():
         success = False
 
-    print(f"[PATCH] apply_all_patches() completed, success={success}")
+    print(f"[PATCH] apply_all_patches() completed, success={success}", flush=True)
     return success
 
 

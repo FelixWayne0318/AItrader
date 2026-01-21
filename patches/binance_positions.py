@@ -27,16 +27,18 @@ from functools import wraps
 logger = logging.getLogger(__name__)
 
 # Use print for early debugging (before logging is configured)
-print("[PATCH] Loading binance_positions.py patch module...")
+# flush=True ensures output is captured by journalctl
+import sys
+print("[PATCH] Loading binance_positions.py patch module...", flush=True)
 
 # Check if aiohttp is available
 try:
     import aiohttp
     AIOHTTP_AVAILABLE = True
-    print(f"[PATCH] aiohttp version {aiohttp.__version__} is available")
+    print(f"[PATCH] aiohttp version {aiohttp.__version__} is available", flush=True)
 except ImportError:
     AIOHTTP_AVAILABLE = False
-    print("[PATCH] ERROR: aiohttp is not installed!")
+    print("[PATCH] ERROR: aiohttp is not installed!", flush=True)
     logger.warning(
         "aiohttp is not installed. Position filter patch cannot be applied. "
         "Install with: pip install aiohttp"
@@ -95,14 +97,14 @@ def filter_non_ascii_from_json_bytes(data: bytes, url: str) -> bytes:
                     if symbol and not is_ascii_symbol(symbol):
                         if symbol not in _warned_symbols:
                             _warned_symbols.add(symbol)
-                            print(f"[PATCH] Filtering non-ASCII symbol: {symbol}")
+                            print(f"[PATCH] Filtering non-ASCII symbol: {symbol}", flush=True)
                             logger.warning(f"Filtering non-ASCII symbol: {symbol}")
                         continue
                 filtered.append(item)
             if len(filtered) != original_len:
                 parsed = filtered
                 modified = True
-                print(f"[PATCH] Filtered {original_len - len(filtered)} non-ASCII entries from list response (URL: {url})")
+                print(f"[PATCH] Filtered {original_len - len(filtered)} non-ASCII entries from list response (URL: {url})", flush=True)
                 logger.info(f"Filtered {original_len - len(filtered)} non-ASCII entries from list response")
 
         # Handle dict response (e.g., /account)
@@ -117,14 +119,14 @@ def filter_non_ascii_from_json_bytes(data: bytes, url: str) -> bytes:
                         if symbol and not is_ascii_symbol(symbol):
                             if symbol not in _warned_symbols:
                                 _warned_symbols.add(symbol)
-                                print(f"[PATCH] Filtering non-ASCII symbol from positions: {symbol}")
+                                print(f"[PATCH] Filtering non-ASCII symbol from positions: {symbol}", flush=True)
                                 logger.warning(f"Filtering non-ASCII symbol from positions: {symbol}")
                             continue
                     filtered.append(item)
                 if len(filtered) != original_len:
                     parsed['positions'] = filtered
                     modified = True
-                    print(f"[PATCH] Filtered {original_len - len(filtered)} non-ASCII positions (URL: {url})")
+                    print(f"[PATCH] Filtered {original_len - len(filtered)} non-ASCII positions (URL: {url})", flush=True)
                     logger.info(f"Filtered {original_len - len(filtered)} non-ASCII positions")
 
         if modified:
@@ -138,7 +140,7 @@ def filter_non_ascii_from_json_bytes(data: bytes, url: str) -> bytes:
         logger.debug(f"Could not parse response as JSON: {e}")
         return data
     except Exception as e:
-        print(f"[PATCH] Error filtering response: {e}")
+        print(f"[PATCH] Error filtering response: {e}", flush=True)
         logger.error(f"Error filtering response: {e}")
         return data
 
@@ -157,15 +159,15 @@ def apply_position_filter_patch() -> bool:
     """
     global _position_patch_applied
 
-    print("[PATCH] apply_position_filter_patch() called")
+    print("[PATCH] apply_position_filter_patch() called", flush=True)
 
     if _position_patch_applied:
-        print("[PATCH] Already applied, skipping")
+        print("[PATCH] Already applied, skipping", flush=True)
         logger.debug("Position filter patch already applied")
         return True
 
     if not AIOHTTP_AVAILABLE:
-        print("[PATCH] ERROR: aiohttp not available!")
+        print("[PATCH] ERROR: aiohttp not available!", flush=True)
         logger.error(
             "❌ Cannot apply position filter patch: aiohttp is not installed.\n"
             "   This is required to filter non-ASCII symbols like '币安人生USDT'.\n"
@@ -174,8 +176,8 @@ def apply_position_filter_patch() -> bool:
         return False
 
     try:
-        print(f"[PATCH] Patching aiohttp.ClientResponse.read...")
-        print(f"[PATCH] Original read method: {aiohttp.ClientResponse.read}")
+        print(f"[PATCH] Patching aiohttp.ClientResponse.read...", flush=True)
+        print(f"[PATCH] Original read method: {aiohttp.ClientResponse.read}", flush=True)
 
         # Store original read method
         original_read = aiohttp.ClientResponse.read
@@ -189,14 +191,20 @@ def apply_position_filter_patch() -> bool:
             # Only process Binance Futures API responses
             url = str(self.url)
             if 'fapi.binance.com' in url or 'dapi.binance.com' in url:
-                # Filter ALL JSON endpoints that might contain positions
-                # Be more aggressive - filter any endpoint that might have symbol data
-                content_type = self.headers.get('Content-Type', '')
-                if 'application/json' in content_type:
-                    # Check for position-related endpoints
-                    if any(ep in url for ep in ['/positionRisk', '/account', '/v2/account', '/position']):
-                        print(f"[PATCH] Filtering response from: {url}")
-                        data = filter_non_ascii_from_json_bytes(data, url)
+                # Log ALL Binance API requests for debugging
+                print(f"[PATCH] Binance API request: {url}", flush=True)
+
+                # Be VERY aggressive - filter ANY Binance response that looks like JSON
+                # Don't check content-type, some responses might not set it correctly
+                try:
+                    # Try to filter regardless of endpoint - any response with symbols
+                    filtered_data = filter_non_ascii_from_json_bytes(data, url)
+                    if filtered_data != data:
+                        print(f"[PATCH] Filtered non-ASCII symbols from: {url}", flush=True)
+                    data = filtered_data
+                except Exception as e:
+                    # If filtering fails, just use original data
+                    print(f"[PATCH] Filter error (using original): {e}", flush=True)
 
             return data
 
@@ -204,8 +212,8 @@ def apply_position_filter_patch() -> bool:
         aiohttp.ClientResponse.read = filtered_read
 
         _position_patch_applied = True
-        print(f"[PATCH] ✅ Successfully patched aiohttp.ClientResponse.read")
-        print(f"[PATCH] New read method: {aiohttp.ClientResponse.read}")
+        print(f"[PATCH] ✅ Successfully patched aiohttp.ClientResponse.read", flush=True)
+        print(f"[PATCH] New read method: {aiohttp.ClientResponse.read}", flush=True)
         logger.info("✅ Patched aiohttp.ClientResponse.read() for non-ASCII symbol filtering")
         return True
 

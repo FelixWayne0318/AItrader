@@ -723,8 +723,8 @@ class DeepSeekAIStrategy(Strategy):
                         'context': 'on_timer'
                     })
                     self.telegram_bot.send_message_sync(error_msg)
-                except:
-                    pass
+                except Exception as e:
+                    self.log.warning(f"Failed to send Telegram error notification: {e}")
             return
 
         # Store signal
