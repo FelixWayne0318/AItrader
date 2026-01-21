@@ -232,7 +232,9 @@ def get_binance_config() -> tuple:
 
     # Only load the specific instrument we need
     # This avoids issues with non-ASCII currency codes (e.g., '币安人生') and speeds up startup
+    # Use frozenset because InstrumentProviderConfig needs to be hashable for caching
     instrument_id = InstrumentId.from_str("BTCUSDT-PERP.BINANCE")
+    load_ids = frozenset([instrument_id])
 
     # Data client config
     data_config = BinanceDataClientConfig(
@@ -240,7 +242,7 @@ def get_binance_config() -> tuple:
         api_secret=api_secret,
         account_type=BinanceAccountType.USDT_FUTURE,  # Binance Futures
         testnet=False,  # Set to True for testnet
-        instrument_provider=InstrumentProviderConfig(load_ids=[instrument_id]),
+        instrument_provider=InstrumentProviderConfig(load_ids=load_ids),
     )
 
     # Execution client config
@@ -249,7 +251,7 @@ def get_binance_config() -> tuple:
         api_secret=api_secret,
         account_type=BinanceAccountType.USDT_FUTURE,
         testnet=False,
-        instrument_provider=InstrumentProviderConfig(load_ids=[instrument_id]),
+        instrument_provider=InstrumentProviderConfig(load_ids=load_ids),
     )
 
     return data_config, exec_config
