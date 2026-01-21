@@ -220,7 +220,7 @@ def get_binance_config() -> tuple:
     data_config = BinanceDataClientConfig(
         api_key=api_key,
         api_secret=api_secret,
-        account_type=BinanceAccountType.USDT_FUTURES,  # Binance Futures
+        account_type=BinanceAccountType.USDT_FUTURE,  # Binance Futures
         testnet=False,  # Set to True for testnet
         instrument_provider=InstrumentProviderConfig(load_all=True),
     )
@@ -229,7 +229,7 @@ def get_binance_config() -> tuple:
     exec_config = BinanceExecClientConfig(
         api_key=api_key,
         api_secret=api_secret,
-        account_type=BinanceAccountType.USDT_FUTURES,
+        account_type=BinanceAccountType.USDT_FUTURE,
         testnet=False,
         instrument_provider=InstrumentProviderConfig(load_all=True),
     )
