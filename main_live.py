@@ -5,10 +5,24 @@ Runs the DeepSeek AI strategy on Binance Futures (BTCUSDT-PERP) with live market
 """
 
 import os
+import sys
 import asyncio
 import yaml
 from decimal import Decimal
 from pathlib import Path
+
+# =============================================================================
+# CRITICAL: Apply patches BEFORE importing NautilusTrader
+# This fixes Binance enum compatibility issues (e.g., POSITION_RISK_CONTROL)
+# =============================================================================
+# Ensure project root is in path for patches import
+project_root = Path(__file__).parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from patches.binance_enums import apply_all_patches
+apply_all_patches()
+# =============================================================================
 
 from dotenv import load_dotenv
 
@@ -370,13 +384,7 @@ def main():
 
 
 if __name__ == "__main__":
-    # Check Python path
-    import sys
-    project_root = Path(__file__).parent
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-
-    # Run the trading bot
+    # Run the trading bot (Python path already configured at module level)
     try:
         main()
     except KeyboardInterrupt:
