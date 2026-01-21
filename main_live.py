@@ -230,11 +230,9 @@ def get_binance_config() -> tuple:
     if not api_key or not api_secret:
         raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET required in .env")
 
-    # Only load the specific instrument we need
-    # This avoids issues with non-ASCII currency codes (e.g., '币安人生') and speeds up startup
-    # Use frozenset because InstrumentProviderConfig needs to be hashable for caching
-    instrument_id = InstrumentId.from_str("BTCUSDT-PERP.BINANCE")
-    load_ids = frozenset([instrument_id])
+    # Filter to only load BTCUSDT perpetual - use symbol filter instead of load_ids
+    # This avoids issues with non-ASCII symbols (e.g., '币安人生USDT-PERP') from Binance
+    instrument_filters = frozenset({"symbol=BTCUSDT"})
 
     # Data client config
     data_config = BinanceDataClientConfig(
@@ -242,7 +240,10 @@ def get_binance_config() -> tuple:
         api_secret=api_secret,
         account_type=BinanceAccountType.USDT_FUTURE,  # Binance Futures
         testnet=False,  # Set to True for testnet
-        instrument_provider=InstrumentProviderConfig(load_ids=load_ids),
+        instrument_provider=InstrumentProviderConfig(
+            load_all=True,
+            filters=instrument_filters,
+        ),
     )
 
     # Execution client config
@@ -251,7 +252,10 @@ def get_binance_config() -> tuple:
         api_secret=api_secret,
         account_type=BinanceAccountType.USDT_FUTURE,
         testnet=False,
-        instrument_provider=InstrumentProviderConfig(load_ids=load_ids),
+        instrument_provider=InstrumentProviderConfig(
+            load_all=True,
+            filters=instrument_filters,
+        ),
     )
 
     return data_config, exec_config
@@ -291,12 +295,17 @@ def setup_trading_node() -> TradingNodeConfig:
     )
 
     # Trading node config
+    # NOTE: reconciliation=False is a temporary workaround for Binance non-ASCII symbol crash
+    # The crash is caused by '币安人生USDT-PERP' (Binance Simple Earn product) in the API response
+    # TODO: Re-enable reconciliation after clearing Binance account of non-ASCII products
     config = TradingNodeConfig(
         trader_id=TraderId("DeepSeekTrader-001"),
         logging=logging_config,
         exec_engine=LiveExecEngineConfig(
-            reconciliation=True,  # Enable position reconciliation
+            reconciliation=False,  # TEMP: Disabled due to non-ASCII symbol crash
             inflight_check_interval_ms=5000,  # Check in-flight orders every 5s
+            filter_position_reports=True,  # Filter positions to only known instruments
+            filter_unclaimed_external_orders=True,  # Filter unknown external orders
         ),
         # Data clients
         data_clients={
