@@ -48,6 +48,13 @@ Environment=AUTO_CONFIRM=true
    - 问题：API key 失效
    - 修复：替换为 Binance 多空比 API
 
+3. **Binance POSITION_RISK_CONTROL** (commit 1ed1357)
+   - 问题：Binance 新增 filter type，NautilusTrader 1.202.0 不支持
+   - 错误：`msgspec.ValidationError: Invalid enum value 'POSITION_RISK_CONTROL'`
+   - 修复：添加 `_missing_` 钩子动态处理未知枚举值
+   - 文件：`patches/binance_enums.py`
+   - 参考：[msgspec 官方方案](https://github.com/jcrist/msgspec/issues/531)
+
 ## 常见错误避免
 
 - ❌ 使用 `main.py` 作为入口 → ✅ 使用 `main_live.py`
@@ -64,9 +71,12 @@ Environment=AUTO_CONFIRM=true
 ├── utils/
 │   ├── deepseek_client.py    # DeepSeek AI 客户端
 │   └── sentiment_client.py   # Binance 多空比 (替代 CryptoOracle)
+├── patches/
+│   └── binance_enums.py      # Binance枚举兼容性补丁
 ├── configs/
 │   └── strategy_config.yaml  # 策略配置
 ├── test_sl_fix.py        # 止损修复测试
+├── test_binance_patch.py # 枚举补丁测试
 ├── DEPLOYMENT.md         # 部署指南
 └── README.md             # 项目文档
 ```
