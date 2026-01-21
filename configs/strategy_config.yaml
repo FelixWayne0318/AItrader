@@ -37,8 +37,9 @@ strategy:
   # AI configuration
   deepseek:
     model: "deepseek-chat"
-    temperature: 0.1
+    temperature: 0.3  # Increased for debate diversity
     max_retries: 2
+    debate_rounds: 2  # Bull/Bear debate rounds (1-3)
     base_url: "https://api.deepseek.com"
 
   # Sentiment data

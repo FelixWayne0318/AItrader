@@ -27,6 +27,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from indicators.technical_manager import TechnicalIndicatorManager
 from utils.deepseek_client import DeepSeekAnalyzer
 from utils.sentiment_client import SentimentDataFetcher
+from agents.multi_agent_analyzer import MultiAgentAnalyzer
 # OCOManager no longer needed - using NautilusTrader's built-in bracket orders
 
 
@@ -61,8 +62,9 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     # AI configuration
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-chat"
-    deepseek_temperature: float = 0.1
+    deepseek_temperature: float = 0.3  # Increased for debate diversity
     deepseek_max_retries: int = 2
+    debate_rounds: int = 2  # Bull/Bear debate rounds (1-3)
 
     # Sentiment
     sentiment_enabled: bool = True
@@ -229,7 +231,16 @@ class DeepSeekAIStrategy(Strategy):
             temperature=config.deepseek_temperature,
             max_retries=config.deepseek_max_retries,
         )
-        
+
+        # Multi-Agent AI analyzer (Bull/Bear Debate) - for parallel comparison
+        self.multi_agent = MultiAgentAnalyzer(
+            api_key=api_key,
+            model=config.deepseek_model,
+            temperature=config.deepseek_temperature,
+            debate_rounds=config.debate_rounds,
+        )
+        self.log.info(f"✅ Multi-Agent analyzer initialized (debate_rounds={config.debate_rounds})")
+
         # Telegram Bot
         self.telegram_bot = None
         self.enable_telegram = config.enable_telegram
@@ -601,18 +612,50 @@ class DeepSeekAIStrategy(Strategy):
         # Analyze with DeepSeek AI
         try:
             self.log.info("Calling DeepSeek AI for analysis...")
-            signal_data = self.deepseek.analyze(
+            signal_deepseek = self.deepseek.analyze(
                 price_data=price_data,
                 technical_data=technical_data,
                 sentiment_data=sentiment_data,
                 current_position=current_position,
             )
             self.log.info(
-                f"🤖 Signal: {signal_data['signal']} | "
-                f"Confidence: {signal_data['confidence']} | "
-                f"Reason: {signal_data['reason']}"
+                f"🤖 DeepSeek: {signal_deepseek['signal']} | "
+                f"Confidence: {signal_deepseek['confidence']} | "
+                f"Reason: {signal_deepseek['reason']}"
             )
-            
+
+            # Multi-Agent parallel analysis (Bull/Bear debate) for comparison
+            signal_multi = None
+            try:
+                self.log.info("🎭 Starting Multi-Agent analysis (Bull/Bear debate)...")
+                signal_multi = self.multi_agent.analyze(
+                    symbol="BTCUSDT",
+                    technical_report=technical_data,
+                    sentiment_report=sentiment_data,
+                    current_position=current_position,
+                    price_data=price_data,
+                )
+                self.log.info(
+                    f"🎯 MultiAgent: {signal_multi['signal']} | "
+                    f"Confidence: {signal_multi['confidence']}"
+                )
+                if signal_multi.get('debate_summary'):
+                    self.log.info(f"📋 Debate: {signal_multi['debate_summary'][:200]}...")
+
+                # Log comparison result
+                if signal_deepseek['signal'] == signal_multi['signal']:
+                    self.log.info("✅ Consensus: Both analyzers agree")
+                else:
+                    self.log.warning(
+                        f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
+                        f"MultiAgent={signal_multi['signal']}"
+                    )
+            except Exception as e:
+                self.log.warning(f"⚠️ Multi-Agent comparison failed (non-critical): {e}")
+
+            # Use DeepSeek signal for actual trading (safe during validation period)
+            signal_data = signal_deepseek
+
             # Send Telegram signal notification (only for actionable signals)
             if self.telegram_bot and self.enable_telegram and self.telegram_notify_signals:
                 if signal_data['signal'] in ['BUY', 'SELL']:
