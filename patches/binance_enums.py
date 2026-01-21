@@ -120,7 +120,7 @@ def apply_binance_enum_patches() -> bool:
 
 def apply_all_patches() -> bool:
     """
-    Apply all Binance-related enum patches.
+    Apply all Binance-related patches.
 
     Returns
     -------
@@ -129,12 +129,17 @@ def apply_all_patches() -> bool:
     """
     success = True
 
-    # Apply BinanceSymbolFilterType patch
+    # Apply BinanceSymbolFilterType patch (for POSITION_RISK_CONTROL etc.)
     if not apply_binance_enum_patches():
         success = False
 
-    # Future patches can be added here
-    # e.g., apply_binance_order_type_patches()
+    # Apply position filter patch (for non-ASCII symbols like 币安人生USDT)
+    try:
+        from patches.binance_positions import apply_http_response_filter
+        if not apply_http_response_filter():
+            logger.warning("Position filter patch not applied (may not be critical)")
+    except ImportError as e:
+        logger.warning(f"Could not import position filter patch: {e}")
 
     return success
 
