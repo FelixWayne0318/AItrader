@@ -1,8 +1,8 @@
 # NautilusTrader DeepSeek AI Strategy Dependencies
 # Python >= 3.11 required
 
-# Core framework - 1.211.0 fixes non-ASCII symbol crash (e.g., 币安人生USDT)
-nautilus_trader==1.211.0
+# Core framework - 1.221.0 includes complete non-ASCII symbol fix (Issue #3053, #3105)
+nautilus_trader==1.221.0
 
 # AI and API clients
 openai>=1.0.0

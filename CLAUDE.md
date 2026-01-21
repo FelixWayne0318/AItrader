@@ -14,7 +14,7 @@
 | **服务名** | nautilus-trader |
 | **分支** | claude/clone-nautilus-aitrader-SFBz9 |
 | **Python** | 3.11+ (必须) |
-| **NautilusTrader** | 1.211.0 |
+| **NautilusTrader** | 1.221.0 |
 
 ## 部署/升级命令
 
@@ -79,9 +79,10 @@ Environment=AUTO_CONFIRM=true
 4. **非 ASCII 符号崩溃** (币安人生USDT-PERP) - **彻底修复**
    - 问题：Binance API 返回非 ASCII 符号导致 Rust 代码 panic
    - 错误：`Condition failed: invalid string for 'value' contained a non-ASCII char`
-   - 根因：NautilusTrader 1.202.0 Rust 代码只接受 ASCII
-   - **最终修复**：升级到 Python 3.11 + NautilusTrader 1.211.0
-   - 官方修复：[GitHub Issue #3053](https://github.com/nautechsystems/nautilus_trader/issues/3053)
+   - 根因：NautilusTrader 旧版本 Rust 代码只接受 ASCII
+   - **最终修复**：升级到 Python 3.11 + NautilusTrader 1.221.0
+   - 官方修复：[GitHub Issue #3053](https://github.com/nautechsystems/nautilus_trader/issues/3053), [PR #3105](https://github.com/nautechsystems/nautilus_trader/pull/3105)
+   - 注意：1.211.0 只修复了 Currency，1.221.0 才完整修复 Symbol/PositionId
 
 5. **LoggingConfig 兼容性** (NautilusTrader 1.202.0)
    - 问题：`log_file_format` 和 `log_colors` 参数不被支持
