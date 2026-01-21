@@ -55,6 +55,16 @@ Environment=AUTO_CONFIRM=true
    - 文件：`patches/binance_enums.py`
    - 参考：[msgspec 官方方案](https://github.com/jcrist/msgspec/issues/531)
 
+4. **非 ASCII 符号崩溃** (币安人生USDT-PERP)
+   - 问题：Binance API 返回非 ASCII 符号导致 Rust 代码 panic
+   - 错误：`Condition failed: invalid string for 'value' contained a non-ASCII char`
+   - 修复：`InstrumentProviderConfig(load_all=False, filters=...)` 只加载 BTCUSDT
+   - 关键：`load_all` 必须设为 `False`，否则会加载所有符号
+
+5. **LoggingConfig 兼容性** (NautilusTrader 1.202.0)
+   - 问题：`log_file_format` 和 `log_colors` 参数不被支持
+   - 修复：移除这两个参数
+
 ## 常见错误避免
 
 - ❌ 使用 `main.py` 作为入口 → ✅ 使用 `main_live.py`

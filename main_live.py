@@ -230,8 +230,8 @@ def get_binance_config() -> tuple:
     if not api_key or not api_secret:
         raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET required in .env")
 
-    # Filter to only load BTCUSDT perpetual - use symbol filter instead of load_ids
-    # This avoids issues with non-ASCII symbols (e.g., '币安人生USDT-PERP') from Binance
+    # Filter to only load BTCUSDT perpetual
+    # CRITICAL: load_all=False prevents loading non-ASCII symbols like '币安人生USDT-PERP'
     instrument_filters = frozenset({"symbol=BTCUSDT"})
 
     # Data client config
@@ -241,7 +241,7 @@ def get_binance_config() -> tuple:
         account_type=BinanceAccountType.USDT_FUTURE,  # Binance Futures
         testnet=False,  # Set to True for testnet
         instrument_provider=InstrumentProviderConfig(
-            load_all=True,
+            load_all=False,  # CRITICAL: Must be False to avoid loading all symbols
             filters=instrument_filters,
         ),
     )
@@ -253,7 +253,7 @@ def get_binance_config() -> tuple:
         account_type=BinanceAccountType.USDT_FUTURE,
         testnet=False,
         instrument_provider=InstrumentProviderConfig(
-            load_all=True,
+            load_all=False,  # CRITICAL: Must be False to avoid loading all symbols
             filters=instrument_filters,
         ),
     )
@@ -284,25 +284,22 @@ def setup_trading_node() -> TradingNodeConfig:
     # Logging configuration
     log_level = get_env_str('LOG_LEVEL', 'INFO')
 
+    # LoggingConfig - only use parameters supported by NautilusTrader 1.202.0
     logging_config = LoggingConfig(
         log_level=log_level,
         log_level_file=log_level,
         log_directory="logs",
         log_file_name="deepseek_trader",
-        log_file_format="json",
-        log_colors=True,
         bypass_logging=False,
     )
 
     # Trading node config
-    # NOTE: reconciliation=False is a temporary workaround for Binance non-ASCII symbol crash
-    # The crash is caused by '币安人生USDT-PERP' (Binance Simple Earn product) in the API response
-    # TODO: Re-enable reconciliation after clearing Binance account of non-ASCII products
+    # Reconciliation enabled - ASCII issue solved by load_all=False in InstrumentProviderConfig
     config = TradingNodeConfig(
         trader_id=TraderId("DeepSeekTrader-001"),
         logging=logging_config,
         exec_engine=LiveExecEngineConfig(
-            reconciliation=False,  # TEMP: Disabled due to non-ASCII symbol crash
+            reconciliation=True,  # Re-enabled after fixing instrument loading
             inflight_check_interval_ms=5000,  # Check in-flight orders every 5s
             filter_position_reports=True,  # Filter positions to only known instruments
             filter_unclaimed_external_orders=True,  # Filter unknown external orders
