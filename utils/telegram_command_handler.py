@@ -218,7 +218,8 @@ class TelegramCommandHandler:
             await self.application.initialize()
             await self.application.start()
             await self.application.updater.start_polling(
-                allowed_updates=["message"]  # Only listen to messages
+                allowed_updates=["message"],  # Only listen to messages
+                drop_pending_updates=True,  # Clear stale updates to avoid conflicts on restart
             )
 
             self.is_running = True

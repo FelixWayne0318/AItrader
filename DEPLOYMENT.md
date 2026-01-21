@@ -11,6 +11,36 @@
 | 服务名 | nautilus-trader |
 | 分支 | claude/clone-nautilus-aitrader-SFBz9 |
 
+## 同步代码到服务器
+
+### 方法一：快速同步（推荐）
+
+```bash
+# 在服务器上执行，强制覆盖本地修改
+cd /home/linuxuser/nautilus_AItrader
+git fetch origin claude/clone-nautilus-aitrader-SFBz9
+git reset --hard origin/claude/clone-nautilus-aitrader-SFBz9
+sudo systemctl restart nautilus-trader
+```
+
+### 方法二：使用同步脚本
+
+```bash
+# 交互式同步（会询问确认）
+./scripts/sync_from_repo.sh
+
+# 快速同步（无需确认）
+./scripts/quick_sync.sh
+```
+
+### 方法三：普通更新（有本地修改时可能失败）
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+git pull origin claude/clone-nautilus-aitrader-SFBz9
+sudo systemctl restart nautilus-trader
+```
+
 ## 常用命令
 
 ```bash
@@ -23,10 +53,8 @@ sudo systemctl restart nautilus-trader
 # 查看日志
 sudo journalctl -u nautilus-trader -f --no-hostname
 
-# 更新代码
-cd /home/linuxuser/nautilus_AItrader
-git pull origin claude/clone-nautilus-aitrader-SFBz9
-sudo systemctl restart nautilus-trader
+# 查看最近50行日志
+sudo journalctl -u nautilus-trader -n 50 --no-hostname
 ```
 
 ## systemd 服务配置

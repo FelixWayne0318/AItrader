@@ -42,10 +42,10 @@ strategy:
     debate_rounds: 2  # Bull/Bear debate rounds (1-3)
     base_url: "https://api.deepseek.com"
 
-  # Sentiment data
+  # Sentiment data (情绪数据)
   sentiment:
     enabled: true
-    provider: "cryptoracle"
+    provider: "binance"  # 使用 Binance 多空比 API (CryptoOracle 已弃用)
     update_interval_minutes: 15
     lookback_hours: 4
     weight: 0.30  # 30% weight in decision making
@@ -68,13 +68,14 @@ strategy:
     tp_medium_confidence_pct: 0.02  # 中等信心止盈: 2%
     tp_low_confidence_pct: 0.01  # 低信心止盈: 1%
     
-    # OCO (One-Cancels-the-Other) Management
-    enable_oco: true  # 启用 OCO 自动取消机制
-    oco_redis_host: "localhost"  # Redis 服务器地址
-    oco_redis_port: 6379  # Redis 端口
-    oco_redis_db: 0  # Redis 数据库编号
-    oco_redis_password: null  # Redis 密码 (如果需要)
-    oco_group_ttl_hours: 24  # OCO 组过期时间（小时）
+    # OCO (One-Cancels-the-Other) - 现在由 NautilusTrader bracket orders 自动处理
+    enable_oco: true  # 控制孤儿订单清理
+    # 注意: Redis OCO 管理器已弃用 - bracket orders 自动处理 OCO
+    oco_redis_host: "localhost"  # 已弃用: 不再使用
+    oco_redis_port: 6379  # 已弃用: 不再使用
+    oco_redis_db: 0  # 已弃用: 不再使用
+    oco_redis_password: null  # 已弃用: 不再使用
+    oco_group_ttl_hours: 24  # 已弃用: 不再使用
     
     # Trailing Stop Loss (移动止损)
     enable_trailing_stop: true  # 启用移动止损
@@ -82,9 +83,10 @@ strategy:
     trailing_distance_pct: 0.005  # 跟踪距离: 距离当前价 0.5%
     trailing_update_threshold_pct: 0.002  # 更新阈值: 价格移动 0.2% 才更新止损
     
-    # Partial Take Profit (部分止盈)
-    enable_partial_tp: true  # 启用部分止盈
-    partial_tp_levels:  # 止盈级别配置 (百分比, 仓位比例)
+    # Partial Take Profit (部分止盈) - 尚未实现
+    # 注意: 配置已存在但策略代码中未实现部分止盈逻辑
+    enable_partial_tp: true  # TODO: 需要在策略代码中实现
+    partial_tp_levels:  # 止盈级别配置 (百分比, 仓位比例) - 尚未生效
       - {profit_pct: 0.02, position_pct: 0.5}  # 盈利2%时平50%仓位
       - {profit_pct: 0.04, position_pct: 0.5}  # 盈利4%时平剩余50%仓位
 
