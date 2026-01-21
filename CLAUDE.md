@@ -13,6 +13,26 @@
 | **安装路径** | /home/linuxuser/nautilus_AItrader |
 | **服务名** | nautilus-trader |
 | **分支** | claude/clone-nautilus-aitrader-SFBz9 |
+| **Python** | 3.11+ (必须) |
+| **NautilusTrader** | 1.211.0 |
+
+## 部署/升级命令
+
+```bash
+# 一键部署/升级 (推荐)
+cd /home/linuxuser/nautilus_AItrader
+git pull origin claude/clone-nautilus-aitrader-SFBz9
+chmod +x setup.sh && ./setup.sh
+
+# 安装/更新 systemd 服务
+sudo cp nautilus-trader.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable nautilus-trader
+sudo systemctl restart nautilus-trader
+
+# 查看日志
+sudo journalctl -u nautilus-trader -f --no-hostname
+```
 
 ## 常用命令
 
@@ -24,6 +44,7 @@ sudo journalctl -u nautilus-trader -f --no-hostname
 # 更新代码
 cd /home/linuxuser/nautilus_AItrader
 git pull origin claude/clone-nautilus-aitrader-SFBz9
+./setup.sh
 sudo systemctl restart nautilus-trader
 
 # 测试修复
@@ -55,11 +76,12 @@ Environment=AUTO_CONFIRM=true
    - 文件：`patches/binance_enums.py`
    - 参考：[msgspec 官方方案](https://github.com/jcrist/msgspec/issues/531)
 
-4. **非 ASCII 符号崩溃** (币安人生USDT-PERP)
+4. **非 ASCII 符号崩溃** (币安人生USDT-PERP) - **彻底修复**
    - 问题：Binance API 返回非 ASCII 符号导致 Rust 代码 panic
    - 错误：`Condition failed: invalid string for 'value' contained a non-ASCII char`
-   - 修复：`InstrumentProviderConfig(load_all=False, filters=...)` 只加载 BTCUSDT
-   - 关键：`load_all` 必须设为 `False`，否则会加载所有符号
+   - 根因：NautilusTrader 1.202.0 Rust 代码只接受 ASCII
+   - **最终修复**：升级到 Python 3.11 + NautilusTrader 1.211.0
+   - 官方修复：[GitHub Issue #3053](https://github.com/nautechsystems/nautilus_trader/issues/3053)
 
 5. **LoggingConfig 兼容性** (NautilusTrader 1.202.0)
    - 问题：`log_file_format` 和 `log_colors` 参数不被支持
@@ -70,12 +92,16 @@ Environment=AUTO_CONFIRM=true
 - ❌ 使用 `main.py` 作为入口 → ✅ 使用 `main_live.py`
 - ❌ 忘记设置 `AUTO_CONFIRM=true` → 会卡在确认提示
 - ❌ 止损在入场价错误一侧 → 已修复，会自动回退到默认2%
+- ❌ 使用 Python 3.10 → ✅ 必须使用 Python 3.11+
 
 ## 文件结构
 
 ```
 /home/user/AItrader/
-├── main_live.py          # 入口文件
+├── main_live.py              # 入口文件
+├── setup.sh                  # 一键部署脚本
+├── requirements.txt          # Python 依赖
+├── nautilus-trader.service   # systemd 服务文件
 ├── strategy/
 │   └── deepseek_strategy.py  # 主策略 (含止损修复)
 ├── utils/
@@ -85,10 +111,10 @@ Environment=AUTO_CONFIRM=true
 │   └── binance_enums.py      # Binance枚举兼容性补丁
 ├── configs/
 │   └── strategy_config.yaml  # 策略配置
-├── test_sl_fix.py        # 止损修复测试
-├── test_binance_patch.py # 枚举补丁测试
-├── DEPLOYMENT.md         # 部署指南
-└── README.md             # 项目文档
+├── test_sl_fix.py            # 止损修复测试
+├── test_binance_patch.py     # 枚举补丁测试
+├── DEPLOYMENT.md             # 部署指南
+└── README.md                 # 项目文档
 ```
 
 ## API 密钥 (保存在 .env)
