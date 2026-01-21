@@ -274,8 +274,8 @@ class DeepSeekAIStrategy(Strategy):
                     # Initialize command handler for remote control
                     try:
                         from utils.telegram_command_handler import TelegramCommandHandler
-                        import threading
-                        
+                        # Note: threading is already imported at module level (line 10)
+
                         # Create callback function for commands
                         def command_callback(command: str, args: Dict[str, Any]) -> Dict[str, Any]:
                             """Callback function for Telegram commands."""
