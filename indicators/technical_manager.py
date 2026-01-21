@@ -7,13 +7,13 @@ Manages all technical indicators using NautilusTrader's built-in indicators.
 from typing import Dict, Any, List
 from decimal import Decimal
 
-from nautilus_trader.indicators import (
+from nautilus_trader.indicators.average import (
     SimpleMovingAverage,
     ExponentialMovingAverage,
-    RelativeStrengthIndex,
-    MovingAverageConvergenceDivergence,
-    AverageTrueRange,
 )
+from nautilus_trader.indicators.momentum import RelativeStrengthIndex
+from nautilus_trader.indicators.macd import MovingAverageConvergenceDivergence
+from nautilus_trader.indicators.volatility import AverageTrueRange
 from nautilus_trader.model.data import Bar
 
 
