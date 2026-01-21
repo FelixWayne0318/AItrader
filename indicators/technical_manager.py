@@ -7,7 +7,7 @@ Manages all technical indicators using NautilusTrader's built-in indicators.
 from typing import Dict, Any, List
 from decimal import Decimal
 
-from nautilus_trader.indicators import (
+from nautilus_trader.core.nautilus_pyo3 import (
     SimpleMovingAverage,
     ExponentialMovingAverage,
     RelativeStrengthIndex,

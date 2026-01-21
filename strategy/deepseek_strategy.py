@@ -380,10 +380,31 @@ class DeepSeekAIStrategy(Strategy):
         """Actions to be performed on strategy start."""
         self.log.info("Starting DeepSeek AI Strategy...")
 
-        # Load instrument
-        self.instrument = self.cache.instrument(self.instrument_id)
+        # Load instrument with retry mechanism
+        # The instrument may not be immediately available as the data client
+        # loads instruments asynchronously from Binance
+        import time
+        max_retries = 30  # Wait up to 30 seconds
+        retry_interval = 1.0  # Check every second
+
+        self.instrument = None
+        for attempt in range(max_retries):
+            self.instrument = self.cache.instrument(self.instrument_id)
+            if self.instrument is not None:
+                break
+
+            if attempt == 0:
+                self.log.info(f"Waiting for instrument {self.instrument_id} to be loaded...")
+            elif attempt % 5 == 0:
+                self.log.info(f"Still waiting for instrument... (attempt {attempt + 1}/{max_retries})")
+
+            time.sleep(retry_interval)
+
         if self.instrument is None:
-            self.log.error(f"Could not find instrument {self.instrument_id}")
+            self.log.error(
+                f"Could not find instrument {self.instrument_id} after {max_retries} seconds. "
+                f"Check that the instrument provider is configured correctly and Binance API is accessible."
+            )
             self.stop()
             return
 
@@ -723,8 +744,8 @@ class DeepSeekAIStrategy(Strategy):
                         'context': 'on_timer'
                     })
                     self.telegram_bot.send_message_sync(error_msg)
-                except:
-                    pass
+                except Exception as e:
+                    self.log.warning(f"Failed to send Telegram error notification: {e}")
             return
 
         # Store signal

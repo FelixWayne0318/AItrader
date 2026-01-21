@@ -12,6 +12,7 @@ from datetime import datetime
 try:
     from telegram import Update
     from telegram.ext import Application, CommandHandler, ContextTypes
+    from telegram.error import Conflict as TelegramConflict
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
@@ -19,6 +20,7 @@ except ImportError:
     CommandHandler = None
     Update = None
     ContextTypes = None
+    TelegramConflict = Exception
 
 
 class TelegramCommandHandler:
@@ -195,45 +197,81 @@ class TelegramCommandHandler:
         await self._send_response(update, help_msg)
     
     async def start_polling(self):
-        """Start the command handler polling loop."""
+        """Start the command handler polling loop with conflict handling."""
         if not TELEGRAM_AVAILABLE:
             self.logger.error("Telegram not available")
             return
 
-        try:
-            # Create application
-            self.application = Application.builder().token(self.token).build()
+        # Initial delay to allow previous session to expire on Telegram servers
+        # This helps avoid Conflict errors on quick restarts
+        startup_delay = 5
+        self.logger.info(f"⏳ Waiting {startup_delay}s before starting Telegram polling (conflict prevention)...")
+        await asyncio.sleep(startup_delay)
 
-            # Register command handlers
-            self.application.add_handler(CommandHandler("status", self.cmd_status))
-            self.application.add_handler(CommandHandler("position", self.cmd_position))
-            self.application.add_handler(CommandHandler("pause", self.cmd_pause))
-            self.application.add_handler(CommandHandler("resume", self.cmd_resume))
-            self.application.add_handler(CommandHandler("help", self.cmd_help))
-            self.application.add_handler(CommandHandler("start", self.cmd_help))  # Alias for help
+        max_retries = 5
+        retry_count = 0
+        base_delay = 10  # Initial retry delay in seconds
 
-            self.logger.info("🤖 Starting Telegram command handler...")
+        while retry_count < max_retries:
+            try:
+                # Create application
+                self.application = Application.builder().token(self.token).build()
 
-            # Start polling - compatible with python-telegram-bot v20+
-            await self.application.initialize()
-            await self.application.start()
-            await self.application.updater.start_polling(
-                allowed_updates=["message"],  # Only listen to messages
-                drop_pending_updates=True,  # Clear stale updates to avoid conflicts on restart
-            )
+                # Register command handlers
+                self.application.add_handler(CommandHandler("status", self.cmd_status))
+                self.application.add_handler(CommandHandler("position", self.cmd_position))
+                self.application.add_handler(CommandHandler("pause", self.cmd_pause))
+                self.application.add_handler(CommandHandler("resume", self.cmd_resume))
+                self.application.add_handler(CommandHandler("help", self.cmd_help))
+                self.application.add_handler(CommandHandler("start", self.cmd_help))  # Alias for help
 
-            self.is_running = True
-            self.logger.info("✅ Telegram command handler started successfully")
+                self.logger.info("🤖 Starting Telegram command handler...")
 
-            # Keep the event loop running
-            # Create a never-ending task to keep polling alive
-            stop_signal = asyncio.Event()
-            await stop_signal.wait()  # This will wait forever until explicitly set
+                # Start polling - compatible with python-telegram-bot v20+
+                await self.application.initialize()
+                await self.application.start()
+                await self.application.updater.start_polling(
+                    allowed_updates=["message"],  # Only listen to messages
+                    drop_pending_updates=True,  # Clear stale updates to avoid conflicts on restart
+                )
 
-        except Exception as e:
-            self.logger.error(f"❌ Failed to start command handler: {e}")
-            self.is_running = False
-            raise
+                self.is_running = True
+                self.logger.info("✅ Telegram command handler started successfully")
+
+                # Keep the event loop running
+                # Create a never-ending task to keep polling alive
+                stop_signal = asyncio.Event()
+                await stop_signal.wait()  # This will wait forever until explicitly set
+
+            except TelegramConflict as e:
+                retry_count += 1
+                delay = base_delay * (2 ** (retry_count - 1))  # Exponential backoff: 10, 20, 40, 80, 160 seconds
+
+                if retry_count < max_retries:
+                    self.logger.warning(
+                        f"⚠️ Telegram Conflict error (another instance running?). "
+                        f"Retry {retry_count}/{max_retries} in {delay}s: {e}"
+                    )
+                    # Clean up current application before retry
+                    if self.application:
+                        try:
+                            await self.application.shutdown()
+                        except Exception:
+                            pass
+                        self.application = None
+                    await asyncio.sleep(delay)
+                else:
+                    self.logger.error(
+                        f"❌ Telegram Conflict error persists after {max_retries} retries. "
+                        f"Command handler disabled. Check for other running bot instances."
+                    )
+                    self.is_running = False
+                    return  # Give up after max retries
+
+            except Exception as e:
+                self.logger.error(f"❌ Failed to start command handler: {e}")
+                self.is_running = False
+                raise
     
     async def stop_polling(self):
         """Stop the command handler."""

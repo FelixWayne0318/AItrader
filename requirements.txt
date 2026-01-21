@@ -1,7 +1,8 @@
 # NautilusTrader DeepSeek AI Strategy Dependencies
+# Python >= 3.11 required
 
-# Core framework
-nautilus_trader>=1.200.0
+# Core framework - 1.221.0 includes complete non-ASCII symbol fix (Issue #3053, #3105)
+nautilus_trader==1.221.0
 
 # AI and API clients
 openai>=1.0.0
@@ -18,14 +19,12 @@ pyyaml>=6.0
 # Cache and persistence
 redis>=5.0.0
 
-# Exchange connectors (included with nautilus_trader)
-# ccxt is included as dependency of nautilus_trader
-
 # Optional: For enhanced logging
 rich>=13.0.0
 
 # Notifications and monitoring
-python-telegram-bot>=22.0
+python-telegram-bot>=21.0
 
-# Optional: For Discord notifications
-# discord.py>=2.0
+# HTTP client
+httpx>=0.27.0
+aiohttp>=3.9.0

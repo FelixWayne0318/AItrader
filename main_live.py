@@ -5,10 +5,24 @@ Runs the DeepSeek AI strategy on Binance Futures (BTCUSDT-PERP) with live market
 """
 
 import os
+import sys
 import asyncio
 import yaml
 from decimal import Decimal
 from pathlib import Path
+
+# =============================================================================
+# CRITICAL: Apply patches BEFORE importing NautilusTrader
+# This fixes Binance enum compatibility issues (e.g., POSITION_RISK_CONTROL)
+# =============================================================================
+# Ensure project root is in path for patches import
+project_root = Path(__file__).parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from patches.binance_enums import apply_all_patches
+apply_all_patches()
+# =============================================================================
 
 from dotenv import load_dotenv
 
@@ -30,17 +44,30 @@ load_dotenv()
 def load_yaml_config() -> dict:
     """
     Load strategy configuration from YAML file.
-    
+
     Returns
     -------
     dict
-        Configuration dictionary from YAML
+        Configuration dictionary from YAML, or empty dict if loading fails
     """
     config_path = Path(__file__).parent / "configs" / "strategy_config.yaml"
-    if config_path.exists():
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
-    return {}
+    if not config_path.exists():
+        print(f"[CONFIG] Warning: {config_path} not found, using defaults")
+        return {}
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+            if config is None:
+                print(f"[CONFIG] Warning: {config_path} is empty, using defaults")
+                return {}
+            return config
+    except yaml.YAMLError as e:
+        print(f"[CONFIG] Error parsing YAML config: {e}")
+        raise
+    except Exception as e:
+        print(f"[CONFIG] Error loading config file: {e}")
+        raise
 
 
 def get_env_float(key: str, default: str) -> float:
@@ -99,10 +126,11 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
     yaml_config = load_yaml_config()
     strategy_yaml = yaml_config.get('strategy', {})
     
-    # Get strategy parameters from env or use defaults
+    # Get strategy parameters from env or YAML or use defaults
+    position_config = strategy_yaml.get('position_management', {})
     equity = get_env_float('EQUITY', str(strategy_yaml.get('equity', '400')))
     leverage = get_env_float('LEVERAGE', str(strategy_yaml.get('leverage', '10')))
-    base_position = get_env_float('BASE_POSITION_USDT', str(strategy_yaml.get('position_management', {}).get('base_usdt_amount', '30')))
+    base_position = get_env_float('BASE_POSITION_USDT', str(position_config.get('base_usdt_amount', '100')))
     timeframe = get_env_str('TIMEFRAME', '15m')  # Production: 15-minute timeframe
     
     # Debug output
@@ -110,32 +138,17 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
     print(f"[CONFIG] Base Position: {base_position}")
     print(f"[CONFIG] Timeframe: {timeframe}")
 
-    # Map timeframe to bar aggregation
-    timeframe_map = {
-        '1m': 'MINUTE',
-        '5m': 'MINUTE',
-        '15m': 'MINUTE',
-        '1h': 'HOUR',
-        '4h': 'HOUR',
-        '1d': 'DAY',
+    # Parse timeframe to bar specification
+    timeframe_to_bar_spec = {
+        '1m': '1-MINUTE-LAST',
+        '5m': '5-MINUTE-LAST',
+        '15m': '15-MINUTE-LAST',
+        '1h': '1-HOUR-LAST',
+        '4h': '4-HOUR-LAST',
+        '1d': '1-DAY-LAST',
     }
-
-    # Parse timeframe
-    print(f"DEBUG: timeframe = '{timeframe}'")  # Debug
-    if timeframe == '1m':
-        bar_spec = '1-MINUTE-LAST'
-    elif timeframe == '5m':
-        bar_spec = '5-MINUTE-LAST'
-    elif timeframe == '15m':
-        bar_spec = '15-MINUTE-LAST'
-    elif timeframe == '1h':
-        bar_spec = '1-HOUR-LAST'
-    else:
-        bar_spec = '15-MINUTE-LAST'  # Default
-    
-    print(f"DEBUG: bar_spec = '{bar_spec}'")  # Debug
+    bar_spec = timeframe_to_bar_spec.get(timeframe, '15-MINUTE-LAST')
     final_bar_type = f"BTCUSDT-PERP.BINANCE-{bar_spec}-EXTERNAL"
-    print(f"DEBUG: final_bar_type = '{final_bar_type}'")  # Debug
 
     return DeepSeekAIStrategyConfig(
         instrument_id="BTCUSDT-PERP.BINANCE",
@@ -147,11 +160,11 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
 
         # Position sizing
         base_usdt_amount=base_position,
-        high_confidence_multiplier=get_env_float('HIGH_CONFIDENCE_MULTIPLIER', '1.5'),
-        medium_confidence_multiplier=get_env_float('MEDIUM_CONFIDENCE_MULTIPLIER', '1.0'),
-        low_confidence_multiplier=get_env_float('LOW_CONFIDENCE_MULTIPLIER', '0.5'),
-        max_position_ratio=get_env_float('MAX_POSITION_RATIO', '0.10'),
-        trend_strength_multiplier=get_env_float('TREND_STRENGTH_MULTIPLIER', '1.2'),
+        high_confidence_multiplier=get_env_float('HIGH_CONFIDENCE_MULTIPLIER', str(position_config.get('high_confidence_multiplier', '1.5'))),
+        medium_confidence_multiplier=get_env_float('MEDIUM_CONFIDENCE_MULTIPLIER', str(position_config.get('medium_confidence_multiplier', '1.0'))),
+        low_confidence_multiplier=get_env_float('LOW_CONFIDENCE_MULTIPLIER', str(position_config.get('low_confidence_multiplier', '0.5'))),
+        max_position_ratio=get_env_float('MAX_POSITION_RATIO', str(position_config.get('max_position_ratio', '0.30'))),
+        trend_strength_multiplier=get_env_float('TREND_STRENGTH_MULTIPLIER', str(position_config.get('trend_strength_multiplier', '1.2'))),
         min_trade_amount=0.001,  # Binance minimum
 
         # Technical indicators - Production mode (standard periods)
@@ -216,13 +229,21 @@ def get_binance_config() -> tuple:
     if not api_key or not api_secret:
         raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET required in .env")
 
+    # Filter to only load BTCUSDT perpetual
+    # CRITICAL: load_all=False prevents loading non-ASCII symbols like '币安人生USDT-PERP'
+    # NOTE: filters must be a dict, not frozenset (NautilusTrader expects dict.items())
+    instrument_filters = {"symbol": "BTCUSDT"}
+
     # Data client config
     data_config = BinanceDataClientConfig(
         api_key=api_key,
         api_secret=api_secret,
         account_type=BinanceAccountType.USDT_FUTURES,  # Binance Futures
         testnet=False,  # Set to True for testnet
-        instrument_provider=InstrumentProviderConfig(load_all=True),
+        instrument_provider=InstrumentProviderConfig(
+            load_all=False,  # CRITICAL: Must be False to avoid loading all symbols
+            filters=instrument_filters,
+        ),
     )
 
     # Execution client config
@@ -231,7 +252,10 @@ def get_binance_config() -> tuple:
         api_secret=api_secret,
         account_type=BinanceAccountType.USDT_FUTURES,
         testnet=False,
-        instrument_provider=InstrumentProviderConfig(load_all=True),
+        instrument_provider=InstrumentProviderConfig(
+            load_all=False,  # CRITICAL: Must be False to avoid loading all symbols
+            filters=instrument_filters,
+        ),
     )
 
     return data_config, exec_config
@@ -260,25 +284,28 @@ def setup_trading_node() -> TradingNodeConfig:
     # Logging configuration
     log_level = get_env_str('LOG_LEVEL', 'INFO')
 
+    # LoggingConfig - only use parameters supported by NautilusTrader 1.202.0
     logging_config = LoggingConfig(
         log_level=log_level,
         log_level_file=log_level,
         log_directory="logs",
         log_file_name="deepseek_trader",
-        log_file_format="json",
-        log_colors=True,
         bypass_logging=False,
-        log_file_max_size=10_485_760,  # 10MB in bytes (10 * 1024 * 1024)
-        log_file_max_backup_count=3,   # Keep 3 backup files (total: 40MB max)
     )
 
     # Trading node config
+    # IMPORTANT: reconciliation=False because Binance account has non-ASCII positions
+    # (e.g., '币安人生USDT-PERP') that cause Rust panic during parsing.
+    # The filter_position_reports happens AFTER parsing, so it doesn't prevent the crash.
+    # Solution: Remove '币安人生' product from Binance account, then re-enable reconciliation.
     config = TradingNodeConfig(
         trader_id=TraderId("DeepSeekTrader-001"),
         logging=logging_config,
         exec_engine=LiveExecEngineConfig(
-            reconciliation=True,  # Enable position reconciliation
+            reconciliation=False,  # Disabled - Binance has non-ASCII position '币安人生USDT-PERP'
             inflight_check_interval_ms=5000,  # Check in-flight orders every 5s
+            filter_position_reports=True,  # Filter positions to only known instruments
+            filter_unclaimed_external_orders=True,  # Filter unknown external orders
         ),
         # Data clients
         data_clients={
@@ -372,13 +399,7 @@ def main():
 
 
 if __name__ == "__main__":
-    # Check Python path
-    import sys
-    project_root = Path(__file__).parent
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-
-    # Run the trading bot
+    # Run the trading bot (Python path already configured at module level)
     try:
         main()
     except KeyboardInterrupt:
