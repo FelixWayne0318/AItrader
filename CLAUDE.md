@@ -106,6 +106,7 @@ Environment=AUTO_CONFIRM=true
 ├── .claude/                  # Claude Code 配置
 │   ├── settings.json         # 权限配置
 │   └── skills/               # 自定义技能
+│       ├── code-review/      # 代码审查 (多维度: bugs/安全/架构)
 │       ├── deploy/           # 部署技能
 │       ├── server-status/    # 服务器状态检查
 │       ├── stop-loss-check/  # 止损验证
