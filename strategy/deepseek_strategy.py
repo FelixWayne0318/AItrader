@@ -835,16 +835,17 @@ class DeepSeekAIStrategy(Strategy):
 
         return ((current - previous) / previous) * 100
 
-    def _get_current_position_data(self, current_price: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    def _get_current_position_data(self, current_price: Optional[float] = None, from_telegram: bool = False) -> Optional[Dict[str, Any]]:
         """
         Get current position information.
 
         Parameters
         ----------
         current_price : float, optional
-            If provided, use this price instead of accessing indicator_manager.
-            IMPORTANT: When calling from Telegram thread, MUST pass current_price
-            to avoid Rust panic (indicator_manager contains non-thread-safe Rust objects).
+            If provided, use this price for PnL calculation.
+        from_telegram : bool, default False
+            If True, NEVER access indicator_manager (Telegram thread safety).
+            When True, will use cache.price() as fallback instead of indicator_manager.
         """
         # Get open positions for this instrument
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
@@ -857,18 +858,24 @@ class DeepSeekAIStrategy(Strategy):
 
         if position and position.is_open:
             # Get current price for PnL calculation
-            if current_price is None:
-                # Only access indicator_manager from main thread!
-                # Telegram thread must pass current_price parameter
-                bars = self.indicator_manager.recent_bars
-                if bars:
-                    current_price = bars[-1].close
-                else:
-                    # Fallback: try cache.price() if bars not available
+            if current_price is None or current_price == 0:
+                if from_telegram:
+                    # CRITICAL: Never access indicator_manager from Telegram thread!
+                    # Rust indicators (RSI, MACD) are not Send/Sync and will panic
                     try:
                         current_price = self.cache.price(self.instrument_id, PriceType.LAST)
                     except (TypeError, AttributeError):
                         current_price = None
+                else:
+                    # Main thread: safe to access indicator_manager
+                    bars = self.indicator_manager.recent_bars
+                    if bars:
+                        current_price = bars[-1].close
+                    else:
+                        try:
+                            current_price = self.cache.price(self.instrument_id, PriceType.LAST)
+                        except (TypeError, AttributeError):
+                            current_price = None
 
             return {
                 'side': 'long' if position.side == PositionSide.LONG else 'short',
@@ -1866,8 +1873,8 @@ class DeepSeekAIStrategy(Strategy):
             with self._state_lock:
                 cached_price = self._cached_current_price
 
-            # Get current position - pass cached price to avoid indicator_manager access
-            current_position = self._get_current_position_data(current_price=cached_price if cached_price > 0 else None)
+            # Get current position - from_telegram=True ensures we NEVER access indicator_manager
+            current_position = self._get_current_position_data(current_price=cached_price, from_telegram=True)
 
             position_info = {
                 'has_position': current_position is not None,
