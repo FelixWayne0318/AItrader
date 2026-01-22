@@ -50,14 +50,15 @@ def main():
     print("🔐 Environment Variables:")
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
     chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
-    print(f"  TELEGRAM_BOT_TOKEN: {'✅ Set (' + bot_token[:10] + '...)' if bot_token else '❌ NOT SET'}")
-    print(f"  TELEGRAM_CHAT_ID: {'✅ Set (' + chat_id + ')' if chat_id else '❌ NOT SET'}")
+    # Only show status, not actual token content (security)
+    print(f"  TELEGRAM_BOT_TOKEN: {'✅ Set (' + str(len(bot_token)) + ' chars)' if bot_token else '❌ NOT SET'}")
+    print(f"  TELEGRAM_CHAT_ID: {'✅ Set (' + str(len(chat_id)) + ' chars)' if chat_id else '❌ NOT SET'}")
     print()
-    
+
     print("🔍 What main_live.py will load:")
     print(f"  enable_telegram: {strategy_cfg.get('enable_telegram', False)}")
-    print(f"  telegram_bot_token: {bot_token[:15] + '...' if bot_token else 'EMPTY'}")
-    print(f"  telegram_chat_id: {chat_id if chat_id else 'EMPTY'}")
+    print(f"  telegram_bot_token: {'[SET]' if bot_token else 'EMPTY'}")
+    print(f"  telegram_chat_id: {'[SET]' if chat_id else 'EMPTY'}")
     print()
     
     if strategy_cfg.get('enable_telegram'):

@@ -88,13 +88,7 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     tp_low_confidence_pct: float = 0.01
     
     # OCO (One-Cancels-the-Other) - now handled by NautilusTrader bracket orders
-    enable_oco: bool = True  # Controls orphan order cleanup
-    # Note: Redis-based OCO manager deprecated - bracket orders handle OCO automatically
-    oco_redis_host: str = "localhost"  # DEPRECATED: not used
-    oco_redis_port: int = 6379  # DEPRECATED: not used
-    oco_redis_db: int = 0  # DEPRECATED: not used
-    oco_redis_password: Optional[str] = None  # DEPRECATED: not used
-    oco_group_ttl_hours: int = 24  # DEPRECATED: not used
+    enable_oco: bool = True  # Controls orphan order cleanup (bracket orders handle OCO automatically)
 
     # Trailing Stop Loss
     enable_trailing_stop: bool = True
@@ -102,9 +96,10 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     trailing_distance_pct: float = 0.005
     trailing_update_threshold_pct: float = 0.002
 
-    # Partial Take Profit - NOT YET IMPLEMENTED
-    # Note: Config exists but partial TP logic is not implemented in strategy code
-    enable_partial_tp: bool = True  # TODO: implement partial TP logic
+    # Partial Take Profit - NOT IMPLEMENTED
+    # WARNING: This feature is NOT YET IMPLEMENTED. Setting to True has no effect.
+    # The config is preserved for future implementation.
+    enable_partial_tp: bool = False  # Not implemented - keep False
     partial_tp_levels: Tuple[Dict[str, float], ...] = (
         {"profit_pct": 0.02, "position_pct": 0.5},
         {"profit_pct": 0.04, "position_pct": 0.5},

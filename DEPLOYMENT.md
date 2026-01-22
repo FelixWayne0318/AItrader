@@ -9,7 +9,7 @@
 | 用户名 | linuxuser |
 | 安装路径 | /home/linuxuser/nautilus_AItrader |
 | 服务名 | nautilus-trader |
-| 分支 | claude/clone-nautilus-aitrader-SFBz9 |
+| 分支 | main |
 
 ## 同步代码到服务器
 
@@ -18,8 +18,8 @@
 ```bash
 # 在服务器上执行，强制覆盖本地修改
 cd /home/linuxuser/nautilus_AItrader
-git fetch origin claude/clone-nautilus-aitrader-SFBz9
-git reset --hard origin/claude/clone-nautilus-aitrader-SFBz9
+git fetch origin main
+git reset --hard origin/main
 sudo systemctl restart nautilus-trader
 ```
 
@@ -37,7 +37,7 @@ sudo systemctl restart nautilus-trader
 
 ```bash
 cd /home/linuxuser/nautilus_AItrader
-git pull origin claude/clone-nautilus-aitrader-SFBz9
+git pull origin main
 sudo systemctl restart nautilus-trader
 ```
 

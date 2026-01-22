@@ -6,7 +6,7 @@
 # 服务器: 139.180.157.152
 # 用户: linuxuser
 # 仓库: https://github.com/FelixWayne0318/AItrader
-# 分支: claude/clone-nautilus-aitrader-SFBz9
+# 分支: main
 #
 # .env 管理策略:
 #   - 永久存储: ~/.env.aitrader (不会被删除)
@@ -15,7 +15,7 @@
 #
 # 使用方法:
 #   方法1: 直接从 GitHub 下载并执行
-#     curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/claude/clone-nautilus-aitrader-SFBz9/reinstall.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/main/reinstall.sh | bash
 #
 #   方法2: 本地执行
 #     chmod +x reinstall.sh && ./reinstall.sh
@@ -36,7 +36,7 @@ INSTALL_DIR="/home/linuxuser/nautilus_AItrader"
 HOME_DIR="/home/linuxuser"
 ENV_PERMANENT="${HOME_DIR}/.env.aitrader"  # 永久存储位置
 REPO_URL="https://github.com/FelixWayne0318/AItrader.git"
-BRANCH="claude/clone-nautilus-aitrader-SFBz9"
+BRANCH="main"
 SERVICE_NAME="nautilus-trader"
 
 echo ""

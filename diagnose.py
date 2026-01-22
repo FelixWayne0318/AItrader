@@ -54,7 +54,7 @@ ensure_venv()
 # 配置
 # ============================================================
 VERSION = "2.0"
-BRANCH = "claude/clone-nautilus-aitrader-SFBz9"
+BRANCH = "main"
 PROJECT_DIR = Path(__file__).parent.absolute()
 SERVICE_NAME = "nautilus-trader"
 

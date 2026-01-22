@@ -84,6 +84,6 @@ created instead of causing msgspec.ValidationError.
 
 You can now deploy this to the server:
   cd /home/linuxuser/nautilus_AItrader
-  git pull origin claude/clone-nautilus-aitrader-SFBz9
+  git pull origin main
   sudo systemctl restart nautilus-trader
 """)

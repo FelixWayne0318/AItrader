@@ -9,7 +9,7 @@ set -e
 # 配置
 # ============================================================================
 INSTALL_DIR="/home/linuxuser/nautilus_AItrader"
-BRANCH="claude/clone-nautilus-aitrader-SFBz9"
+BRANCH="main"
 SERVICE_NAME="nautilus-trader"
 REPO_URL="https://github.com/FelixWayne0318/AItrader.git"
 BACKUP_DIR="/home/linuxuser/backup_$(date +%Y%m%d_%H%M%S)"
