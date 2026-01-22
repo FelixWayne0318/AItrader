@@ -181,11 +181,23 @@ def check_dependencies():
 
         try:
             mod = importlib.import_module(import_name)
-            version = getattr(mod, "__version__", "?")
+            # 优先使用 importlib.metadata 获取版本 (Python 3.8+ 内置)
+            try:
+                from importlib.metadata import version as get_version
+                version = get_version(pkg_name)
+            except Exception:
+                version = getattr(mod, "__version__", "?")
 
             if min_version:
-                from packaging import version as pkg_v
-                if pkg_v.parse(str(version)) >= pkg_v.parse(min_version):
+                # 简单版本比较，不依赖 packaging
+                def parse_version(v):
+                    """解析版本号为元组，例如 '1.221.0' -> (1, 221, 0)"""
+                    try:
+                        return tuple(int(x) for x in str(v).split('.')[:3])
+                    except (ValueError, AttributeError):
+                        return (0, 0, 0)
+
+                if parse_version(version) >= parse_version(min_version):
                     ok(f"{pkg_name}: {version}")
                 else:
                     fail(f"{pkg_name}: {version} (需要 >= {min_version})")
