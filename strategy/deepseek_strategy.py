@@ -78,6 +78,12 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     rsi_extreme_threshold_upper: float = 75.0
     rsi_extreme_threshold_lower: float = 25.0
     rsi_extreme_multiplier: float = 0.7
+
+    # Multi-Agent Divergence Handling
+    # When DeepSeek and MultiAgent have opposing signals (BUY vs SELL),
+    # skip the trade for safety. Based on industry best practices:
+    # "High-confidence conflicting signals result in trade abstention"
+    skip_on_divergence: bool = True
     
     # Stop Loss & Take Profit
     enable_auto_sl_tp: bool = True
@@ -165,7 +171,10 @@ class DeepSeekAIStrategy(Strategy):
         self.rsi_extreme_upper = config.rsi_extreme_threshold_upper
         self.rsi_extreme_lower = config.rsi_extreme_threshold_lower
         self.rsi_extreme_mult = config.rsi_extreme_multiplier
-        
+
+        # Multi-Agent Divergence Handling
+        self.skip_on_divergence = config.skip_on_divergence
+
         # Stop Loss & Take Profit
         self.enable_auto_sl_tp = config.enable_auto_sl_tp
         self.sl_use_support_resistance = config.sl_use_support_resistance
@@ -727,10 +736,28 @@ class DeepSeekAIStrategy(Strategy):
                             f"TP=${signal_multi['take_profit']:,.2f}"
                         )
                 else:
-                    self.log.warning(
-                        f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
-                        f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
-                    )
+                    # Check for opposing actionable signals (BUY vs SELL)
+                    opposing_signals = {signal_deepseek['signal'], signal_multi['signal']} == {'BUY', 'SELL'}
+
+                    if opposing_signals and self.skip_on_divergence:
+                        # Industry best practice: skip trade when AI systems have opposing views
+                        self.log.warning(
+                            f"🚫 Opposing signals: DeepSeek={signal_deepseek['signal']}, "
+                            f"MultiAgent={signal_multi['signal']} - SKIPPING trade (skip_on_divergence=True)"
+                        )
+                        # Override to HOLD
+                        signal_deepseek = {
+                            'signal': 'HOLD',
+                            'confidence': 'LOW',
+                            'reason': f"Trade skipped: opposing signals (DeepSeek={signal_deepseek['signal']}, MultiAgent={signal_multi['signal']})",
+                            'stop_loss': None,
+                            'take_profit': None,
+                        }
+                    else:
+                        self.log.warning(
+                            f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
+                            f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
+                        )
             except Exception as e:
                 self.log.warning(f"⚠️ Multi-Agent comparison failed (non-critical): {e}")
 

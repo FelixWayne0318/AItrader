@@ -436,17 +436,34 @@ print(f"  MultiAgent Signal: {multi_signal}")
 print()
 
 # 共识检查 (与 on_timer 相同)
+# 获取 skip_on_divergence 配置 (默认 True)
+skip_on_divergence = getattr(strategy_config, 'skip_on_divergence', True)
+print(f"  skip_on_divergence: {skip_on_divergence}")
+print()
+
 if deepseek_signal == multi_signal:
     print("  ✅ Consensus: Both analyzers agree")
     consensus = True
+    final_signal = deepseek_signal
     # 当共识时，使用 MultiAgent 的 SL/TP
     if signal_multi.get('stop_loss') and signal_multi.get('take_profit'):
         print(f"  📊 Using MultiAgent SL/TP:")
         print(f"     SL: ${signal_multi['stop_loss']:,.2f}")
         print(f"     TP: ${signal_multi['take_profit']:,.2f}")
 else:
-    print(f"  ⚠️ Divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
-    print("     → Using DeepSeek signal (as per on_timer logic)")
+    # 检查是否是 BUY vs SELL 完全对立
+    opposing_signals = {deepseek_signal, multi_signal} == {'BUY', 'SELL'}
+
+    if opposing_signals and skip_on_divergence:
+        print(f"  🚫 Opposing signals: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
+        print("     → SKIPPING trade (skip_on_divergence=True)")
+        final_signal = 'HOLD'  # 转为 HOLD
+        confidence = 'LOW'
+        signal_deepseek['reason'] = f"Trade skipped: opposing signals"
+    else:
+        print(f"  ⚠️ Divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
+        print("     → Using DeepSeek signal")
+        final_signal = deepseek_signal
     consensus = False
 
 print()
@@ -467,18 +484,18 @@ else:
     print(f"  ✅ Confidence {confidence} >= minimum {strategy_config.min_confidence_to_trade}")
     would_trade = True
 
-# 2. 检查是否 HOLD
-if deepseek_signal == 'HOLD':
+# 2. 检查是否 HOLD (使用 final_signal，考虑分歧跳过)
+if final_signal == 'HOLD':
     print("  ℹ️ Signal is HOLD → No action")
     would_trade = False
-elif deepseek_signal in ['BUY', 'SELL']:
-    print(f"  ✅ Signal is {deepseek_signal} → Actionable")
+elif final_signal in ['BUY', 'SELL']:
+    print(f"  ✅ Signal is {final_signal} → Actionable")
 else:
-    print(f"  ❌ Signal is {deepseek_signal} → Error state")
+    print(f"  ❌ Signal is {final_signal} → Error state")
     would_trade = False
 
 # 3. 计算仓位大小 (模拟 _calculate_position_size)
-if would_trade and deepseek_signal in ['BUY', 'SELL']:
+if would_trade and final_signal in ['BUY', 'SELL']:
     print()
     print("  模拟仓位计算 (_calculate_position_size):")
 
@@ -531,10 +548,11 @@ print("  诊断总结 (实盘代码路径)")
 print("=" * 70)
 print()
 
-final_signal = deepseek_signal
+# final_signal 已在共识检查阶段设置，考虑了 skip_on_divergence 逻辑
 print(f"  📊 Final Signal: {final_signal}")
 print(f"  📊 Confidence: {confidence}")
 print(f"  📊 Consensus: {'Yes' if consensus else 'No (Divergence)'}")
+print(f"  📊 skip_on_divergence: {skip_on_divergence}")
 print()
 
 if would_trade and final_signal in ['BUY', 'SELL']:
