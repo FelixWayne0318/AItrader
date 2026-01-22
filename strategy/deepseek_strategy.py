@@ -78,6 +78,12 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     rsi_extreme_threshold_upper: float = 75.0
     rsi_extreme_threshold_lower: float = 25.0
     rsi_extreme_multiplier: float = 0.7
+
+    # Multi-Agent Divergence Handling
+    # When DeepSeek and MultiAgent have opposing signals (BUY vs SELL),
+    # skip the trade for safety. Based on industry best practices:
+    # "High-confidence conflicting signals result in trade abstention"
+    skip_on_divergence: bool = True
     
     # Stop Loss & Take Profit
     enable_auto_sl_tp: bool = True
@@ -165,7 +171,10 @@ class DeepSeekAIStrategy(Strategy):
         self.rsi_extreme_upper = config.rsi_extreme_threshold_upper
         self.rsi_extreme_lower = config.rsi_extreme_threshold_lower
         self.rsi_extreme_mult = config.rsi_extreme_multiplier
-        
+
+        # Multi-Agent Divergence Handling
+        self.skip_on_divergence = config.skip_on_divergence
+
         # Stop Loss & Take Profit
         self.enable_auto_sl_tp = config.enable_auto_sl_tp
         self.sl_use_support_resistance = config.sl_use_support_resistance
@@ -194,6 +203,11 @@ class DeepSeekAIStrategy(Strategy):
         
         # Thread lock for shared state (Telegram thread safety)
         self._state_lock = threading.Lock()
+
+        # Thread-safe cached price (updated in on_bar, read by Telegram commands)
+        # IMPORTANT: Do NOT access indicator_manager from Telegram thread - it contains
+        # Rust indicators (RSI, MACD) that are not Send/Sync and will cause panic
+        self._cached_current_price: float = 0.0
 
         # Track trailing stop state for each position
         self.trailing_stop_state: Dict[str, Dict[str, Any]] = {}
@@ -347,14 +361,17 @@ class DeepSeekAIStrategy(Strategy):
             # Use sentiment_timeframe from config, or derive from bar_type if not specified
             sentiment_tf = config.sentiment_timeframe
             if not sentiment_tf or sentiment_tf == "":
-                # Extract timeframe from bar_type (e.g., "1-MINUTE" -> "1m")
+                # Extract timeframe from bar_type (e.g., "15-MINUTE" -> "15m")
+                # NOTE: Must check longer strings first (15-MINUTE before 5-MINUTE)
                 bar_str = str(self.bar_type)
-                if "1-MINUTE" in bar_str:
-                    sentiment_tf = "1m"
+                if "15-MINUTE" in bar_str:
+                    sentiment_tf = "15m"
                 elif "5-MINUTE" in bar_str:
                     sentiment_tf = "5m"
-                elif "15-MINUTE" in bar_str:
-                    sentiment_tf = "15m"
+                elif "1-MINUTE" in bar_str:
+                    sentiment_tf = "1m"
+                elif "4-HOUR" in bar_str:
+                    sentiment_tf = "4h"
                 elif "1-HOUR" in bar_str:
                     sentiment_tf = "1h"
                 else:
@@ -506,21 +523,22 @@ class DeepSeekAIStrategy(Strategy):
             symbol = symbol_str.split('-')[0]
 
             # Convert bar type to Binance interval
+            # NOTE: Must check longer strings first (15-MINUTE before 5-MINUTE)
             bar_type_str = str(self.bar_type)
-            if '1-MINUTE' in bar_type_str:
-                interval = '1m'
+            if '15-MINUTE' in bar_type_str:
+                interval = '15m'
             elif '5-MINUTE' in bar_type_str:
                 interval = '5m'
-            elif '15-MINUTE' in bar_type_str:
-                interval = '15m'
-            elif '1-HOUR' in bar_type_str:
-                interval = '1h'
+            elif '1-MINUTE' in bar_type_str:
+                interval = '1m'
             elif '4-HOUR' in bar_type_str:
                 interval = '4h'
+            elif '1-HOUR' in bar_type_str:
+                interval = '1h'
             elif '1-DAY' in bar_type_str:
                 interval = '1d'
             else:
-                interval = '5m'  # Default fallback
+                interval = '15m'  # Default fallback
 
             self.log.info(
                 f"📡 Pre-fetching {limit} historical bars from Binance "
@@ -591,6 +609,11 @@ class DeepSeekAIStrategy(Strategy):
 
         # Update technical indicators
         self.indicator_manager.update(bar)
+
+        # Update cached price (thread-safe for Telegram commands)
+        # This avoids accessing indicator_manager from Telegram thread which causes Rust panic
+        with self._state_lock:
+            self._cached_current_price = float(bar.close)
 
         # Log bar data
         if self.bars_received % 10 == 0:
@@ -723,10 +746,28 @@ class DeepSeekAIStrategy(Strategy):
                             f"TP=${signal_multi['take_profit']:,.2f}"
                         )
                 else:
-                    self.log.warning(
-                        f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
-                        f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
-                    )
+                    # Check for opposing actionable signals (BUY vs SELL)
+                    opposing_signals = {signal_deepseek['signal'], signal_multi['signal']} == {'BUY', 'SELL'}
+
+                    if opposing_signals and self.skip_on_divergence:
+                        # Industry best practice: skip trade when AI systems have opposing views
+                        self.log.warning(
+                            f"🚫 Opposing signals: DeepSeek={signal_deepseek['signal']}, "
+                            f"MultiAgent={signal_multi['signal']} - SKIPPING trade (skip_on_divergence=True)"
+                        )
+                        # Override to HOLD
+                        signal_deepseek = {
+                            'signal': 'HOLD',
+                            'confidence': 'LOW',
+                            'reason': f"Trade skipped: opposing signals (DeepSeek={signal_deepseek['signal']}, MultiAgent={signal_multi['signal']})",
+                            'stop_loss': None,
+                            'take_profit': None,
+                        }
+                    else:
+                        self.log.warning(
+                            f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
+                            f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
+                        )
             except Exception as e:
                 self.log.warning(f"⚠️ Multi-Agent comparison failed (non-critical): {e}")
 
@@ -1752,12 +1793,12 @@ class DeepSeekAIStrategy(Strategy):
         """Handle /status command."""
         try:
             from datetime import datetime
-            
-            # Get current price
-            current_price = 0
-            bars = self.indicator_manager.recent_bars if hasattr(self, 'indicator_manager') else []
-            if bars:
-                current_price = float(bars[-1].close)
+
+            # Get current price from thread-safe cache
+            # IMPORTANT: Do NOT access indicator_manager here - it's called from
+            # Telegram thread and Rust indicators (RSI) are not thread-safe
+            with self._state_lock:
+                current_price = self._cached_current_price
             
             # Get unrealized PnL
             unrealized_pnl = 0
@@ -1817,8 +1858,14 @@ class DeepSeekAIStrategy(Strategy):
             }
             
             if current_position:
-                bars = self.indicator_manager.recent_bars if hasattr(self, 'indicator_manager') else []
-                current_price = float(bars[-1].close) if bars else current_position['avg_px']
+                # Get current price from thread-safe cache
+                # IMPORTANT: Do NOT access indicator_manager here - it's called from
+                # Telegram thread and Rust indicators (RSI) are not thread-safe
+                with self._state_lock:
+                    current_price = self._cached_current_price
+                # Fallback to entry price if no price cached yet
+                if current_price == 0:
+                    current_price = current_position['avg_px']
                 
                 entry_price = current_position['avg_px']
                 pnl = current_position['unrealized_pnl']
