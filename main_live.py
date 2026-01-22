@@ -81,16 +81,31 @@ def load_yaml_config() -> dict:
         raise
 
 
+def _strip_env_comment(value: str) -> str:
+    """
+    Safely strip inline comments from environment variable value.
+
+    Only strips comments that are clearly separated (space + #).
+    This preserves values that legitimately contain '#' (like API keys).
+
+    Examples:
+        "abc123"       -> "abc123"       (no comment)
+        "abc#123"      -> "abc#123"      (# is part of value, no space before)
+        "abc123 #note" -> "abc123"       (space+# indicates comment)
+        "abc # test"   -> "abc"          (space+# indicates comment)
+    """
+    # Only strip if there's " #" (space followed by #)
+    if ' #' in value:
+        value = value.split(' #')[0]
+    return value.strip()
+
+
 def get_env_float(key: str, default: str) -> float:
     """
     Safely get float environment variable, removing any inline comments.
     """
     value = os.getenv(key, default)
-    # Remove inline comments (anything after #)
-    if '#' in value:
-        value = value.split('#')[0]
-    # Strip whitespace
-    value = value.strip()
+    value = _strip_env_comment(value)
     return float(value)
 
 
@@ -99,11 +114,7 @@ def get_env_str(key: str, default: str) -> str:
     Safely get string environment variable, removing any inline comments.
     """
     value = os.getenv(key, default)
-    # Remove inline comments (anything after #)
-    if '#' in value:
-        value = value.split('#')[0]
-    # Strip whitespace
-    return value.strip()
+    return _strip_env_comment(value)
 
 
 def get_env_int(key: str, default: str) -> int:
@@ -111,11 +122,7 @@ def get_env_int(key: str, default: str) -> int:
     Safely get integer environment variable, removing any inline comments.
     """
     value = os.getenv(key, default)
-    # Remove inline comments (anything after #)
-    if '#' in value:
-        value = value.split('#')[0]
-    # Strip whitespace
-    value = value.strip()
+    value = _strip_env_comment(value)
     return int(value)
 
 

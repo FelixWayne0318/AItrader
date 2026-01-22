@@ -197,7 +197,7 @@ echo ""
 # 检查是否需要配置
 if [ -f "${ENV_PERMANENT}" ]; then
     # 检查是否有有效的 API 密钥
-    if grep -q "^BINANCE_API_KEY=.\+" "${ENV_PERMANENT}" 2>/dev/null; then
+    if grep -E -q "^BINANCE_API_KEY=.+" "${ENV_PERMANENT}" 2>/dev/null; then
         echo -e "${GREEN}✓ API 密钥已配置${NC}"
     else
         echo -e "${YELLOW}⚠ 请编辑配置文件填入 API 密钥:${NC}"

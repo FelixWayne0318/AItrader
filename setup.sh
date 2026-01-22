@@ -142,21 +142,43 @@ NT_VERSION=$(python -c "import nautilus_trader; print(nautilus_trader.__version_
 echo "NautilusTrader version: $NT_VERSION"
 
 # =============================================================================
-# Step 4: Create .env if needed
+# Step 4: Create .env if needed (支持永久存储)
 # =============================================================================
 echo ""
 echo "Step 4: Checking configuration..."
 
-if [ ! -f ".env" ]; then
-    if [ -f ".env.template" ]; then
-        echo "Creating .env from template..."
-        cp .env.template .env
-        echo ".env created - PLEASE EDIT WITH YOUR API KEYS"
+# 永久存储位置
+ENV_PERMANENT="$HOME/.env.aitrader"
+
+# 检查是否已有永久配置
+if [ -f "${ENV_PERMANENT}" ]; then
+    echo "Found permanent config: ${ENV_PERMANENT}"
+    # 确保软链接存在
+    if [ ! -L ".env" ] || [ "$(readlink -f .env)" != "${ENV_PERMANENT}" ]; then
+        rm -f .env 2>/dev/null || true
+        ln -sf "${ENV_PERMANENT}" .env
+        echo "Created symlink: .env -> ${ENV_PERMANENT}"
     else
-        echo "Warning: .env.template not found"
+        echo "Symlink already correct"
     fi
+elif [ -f ".env" ] && [ ! -L ".env" ]; then
+    # 存在旧的 .env 文件（非软链接），迁移到永久位置
+    echo "Migrating existing .env to permanent location..."
+    cp .env "${ENV_PERMANENT}"
+    chmod 600 "${ENV_PERMANENT}"
+    rm -f .env
+    ln -sf "${ENV_PERMANENT}" .env
+    echo "Migrated to ${ENV_PERMANENT}"
+elif [ -f ".env.template" ]; then
+    # 首次安装，从模板创建
+    echo "First time setup, creating config from template..."
+    cp .env.template "${ENV_PERMANENT}"
+    chmod 600 "${ENV_PERMANENT}"
+    ln -sf "${ENV_PERMANENT}" .env
+    echo "Created ${ENV_PERMANENT} - PLEASE EDIT WITH YOUR API KEYS"
+    echo "  nano ${ENV_PERMANENT}"
 else
-    echo ".env already exists"
+    echo "Warning: .env.template not found"
 fi
 
 # Create logs directory
