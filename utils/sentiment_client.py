@@ -7,7 +7,7 @@ Fetches market sentiment indicators from Binance Long/Short Ratio API.
 
 import requests
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class SentimentDataFetcher:
@@ -99,28 +99,38 @@ class SentimentDataFetcher:
     def _parse_binance_data(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Parse sentiment data from Binance API response."""
         try:
-            # Extract long/short ratios
-            long_ratio = float(data["longAccount"])
-            short_ratio = float(data["shortAccount"])
+            # Extract long/short ratios with safe access
+            long_account = data.get("longAccount")
+            short_account = data.get("shortAccount")
+            timestamp_ms = data.get("timestamp")
+            long_short_ratio = data.get("longShortRatio")
+
+            # Validate required fields
+            if long_account is None or short_account is None or timestamp_ms is None:
+                print(f"⚠️ Binance API response missing required fields: {data.keys()}")
+                return None
+
+            long_ratio = float(long_account)
+            short_ratio = float(short_account)
             net_sentiment = long_ratio - short_ratio
 
-            # Parse timestamp
-            timestamp_ms = data["timestamp"]
-            data_time = datetime.fromtimestamp(timestamp_ms / 1000)
+            # Parse timestamp (Binance returns UTC timestamp)
+            data_time_utc = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
 
-            # Calculate delay
-            data_delay = int((datetime.now() - data_time).total_seconds() // 60)
+            # Calculate delay using UTC for consistency
+            now_utc = datetime.now(timezone.utc)
+            data_delay = int((now_utc - data_time_utc).total_seconds() // 60)
 
-            print(f"✅ Using Binance sentiment data from: {data_time.strftime('%Y-%m-%d %H:%M:%S')} (delay: {data_delay} minutes)")
+            print(f"✅ Using Binance sentiment data from: {data_time_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC (delay: {data_delay} minutes)")
 
             return {
                 'positive_ratio': long_ratio,
                 'negative_ratio': short_ratio,
                 'net_sentiment': net_sentiment,
-                'data_time': data_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'data_time': data_time_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
                 'data_delay_minutes': data_delay,
                 'source': 'binance',
-                'long_short_ratio': float(data["longShortRatio"])
+                'long_short_ratio': float(long_short_ratio) if long_short_ratio is not None else 0.0
             }
 
         except Exception as e:
