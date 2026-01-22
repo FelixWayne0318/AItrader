@@ -1,8 +1,9 @@
 {
   "permissions": {
     "allow": [
+      "Skill",
       "Bash(git:*)",
-      "Bash(python:*)",
+      "Bash(python3:*)",
       "Bash(pip:*)",
       "Bash(sudo systemctl:*)",
       "Bash(sudo journalctl:*)",
@@ -13,6 +14,7 @@
       "Grep"
     ],
     "deny": [
+      "Skill(deploy:*)",
       "Bash(rm -rf /)",
       "Bash(shutdown)",
       "Bash(reboot)"

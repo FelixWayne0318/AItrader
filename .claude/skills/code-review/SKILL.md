@@ -2,13 +2,7 @@
 name: code-review
 description: 代码审查 - 多维度审查代码变更，检查 bugs、安全问题、架构合规性。Use for reviewing code changes, PR reviews, or pre-commit checks.
 argument-hint: "[--staged|--all|--pr <number>|--branch|--file <path>]"
-allowed-tools:
-  - Bash
-  - Read
-  - Grep
-  - Glob
-  - Task
-  - WebFetch
+allowed-tools: Bash, Read, Grep, Glob, Task, WebFetch
 ---
 
 # 代码审查 (Code Review)

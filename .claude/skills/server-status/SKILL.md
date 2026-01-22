@@ -1,9 +1,7 @@
 ---
 name: server-status
 description: 检查服务器状态和交易机器人运行情况。Use when checking server status, bot health, viewing logs, or monitoring the trading system.
-allowed-tools:
-  - Bash
-  - Read
+allowed-tools: Bash, Read
 ---
 
 # 检查服务器状态
