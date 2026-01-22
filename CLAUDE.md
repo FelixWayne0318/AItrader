@@ -150,6 +150,14 @@ Environment=AUTO_CONFIRM=true
 - ❌ 止损在入场价错误一侧 → 已修复，会自动回退到默认2%
 - ❌ 使用 Python 3.10 → ✅ 必须使用 Python 3.11+
 - ❌ 从后台线程访问 `indicator_manager` → ✅ 使用 `_cached_current_price` (Rust 指标不可跨线程)
+- ❌ **服务器命令不带 cd** → ✅ **始终先 cd 到项目目录**
+  ```bash
+  # 错误：直接执行命令会报 "not a git repository"
+  git status
+
+  # 正确：始终以 cd 开头
+  cd /home/linuxuser/nautilus_AItrader && git status
+  ```
 
 ## 文件结构
 
