@@ -20,13 +20,13 @@
 | 入口文件 | `main_live.py` |
 | 服务器路径 | `/home/linuxuser/nautilus_AItrader` |
 | 服务名 | `nautilus-trader` |
-| 分支 | `claude/clone-nautilus-aitrader-SFBz9` |
+| 分支 | `main` |
 
 ```bash
 # 常用命令
 sudo systemctl restart nautilus-trader          # 重启
 sudo journalctl -u nautilus-trader -f           # 查看日志
-git pull origin claude/clone-nautilus-aitrader-SFBz9  # 更新代码
+git pull origin main  # 更新代码
 python test_sl_fix.py                           # 测试修复
 ```
 

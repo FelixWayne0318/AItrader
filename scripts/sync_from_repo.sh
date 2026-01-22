@@ -5,7 +5,7 @@
 set -e
 
 # 配置
-BRANCH="claude/clone-nautilus-aitrader-SFBz9"
+BRANCH="main"
 INSTALL_DIR="/home/linuxuser/nautilus_AItrader"
 SERVICE_NAME="nautilus-trader"
 

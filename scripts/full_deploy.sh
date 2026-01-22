@@ -10,7 +10,7 @@ set -e
 SERVER_IP="139.180.157.152"
 SERVER_USER="linuxuser"
 INSTALL_DIR="/home/linuxuser/nautilus_AItrader"
-BRANCH="claude/clone-nautilus-aitrader-SFBz9"
+BRANCH="main"
 SERVICE_NAME="nautilus-trader"
 REPO_URL="https://github.com/FelixWayne0318/AItrader.git"
 

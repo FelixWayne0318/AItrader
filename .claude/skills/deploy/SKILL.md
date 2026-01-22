@@ -18,7 +18,7 @@ allowed-tools:
 | **用户** | linuxuser |
 | **路径** | /home/linuxuser/nautilus_AItrader |
 | **服务名** | nautilus-trader |
-| **分支** | claude/clone-nautilus-aitrader-SFBz9 |
+| **分支** | main |
 | **配置文件** | ~/.env.aitrader (永久存储) |
 
 ## .env 配置管理
@@ -47,13 +47,13 @@ ls -la /home/linuxuser/nautilus_AItrader/.env
 
 ### 完全重装
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/claude/clone-nautilus-aitrader-SFBz9/reinstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/main/reinstall.sh | bash
 ```
 
 ### 更新代码并重启
 ```bash
 cd /home/linuxuser/nautilus_AItrader
-git pull origin claude/clone-nautilus-aitrader-SFBz9
+git pull origin main
 sudo systemctl restart nautilus-trader
 ```
 
