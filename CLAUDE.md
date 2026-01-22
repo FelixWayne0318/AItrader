@@ -12,7 +12,7 @@
 | **用户名** | linuxuser |
 | **安装路径** | /home/linuxuser/nautilus_AItrader |
 | **服务名** | nautilus-trader |
-| **分支** | claude/clone-nautilus-aitrader-SFBz9 |
+| **分支** | main |
 | **Python** | 3.11+ (必须) |
 | **NautilusTrader** | 1.221.0 |
 | **配置文件** | ~/.env.aitrader (永久存储) |
@@ -44,7 +44,7 @@ ls -la /home/linuxuser/nautilus_AItrader/.env
 
 ```bash
 # 一键清空重装 (完全重新安装)
-curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/claude/clone-nautilus-aitrader-SFBz9/reinstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/main/reinstall.sh | bash
 
 # 或者本地执行
 cd /home/linuxuser/nautilus_AItrader
@@ -52,7 +52,7 @@ chmod +x reinstall.sh && ./reinstall.sh
 
 # 普通升级 (保留现有配置)
 cd /home/linuxuser/nautilus_AItrader
-git pull origin claude/clone-nautilus-aitrader-SFBz9
+git pull origin main
 chmod +x setup.sh && ./setup.sh
 
 # 安装/更新 systemd 服务
