@@ -9,6 +9,7 @@ import re
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
+from collections import deque
 
 from openai import OpenAI
 
@@ -53,8 +54,8 @@ class DeepSeekAnalyzer:
         # Setup logger
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
-        # Track signal history
-        self.signal_history = []
+        # Track signal history (use deque for efficient O(1) operations)
+        self.signal_history = deque(maxlen=30)
 
     def analyze(
         self,
@@ -169,10 +170,8 @@ class DeepSeekAnalyzer:
         # Add metadata
         signal_data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Store in history
+        # Store in history (deque automatically maintains maxlen)
         self.signal_history.append(signal_data)
-        if len(self.signal_history) > 30:
-            self.signal_history.pop(0)
 
         # Log signal statistics
         self._log_signal_stats(signal_data)
@@ -505,8 +504,13 @@ Remember: Be decisive but not reckless. Quality over quantity.
     def _safe_parse_json(self, json_str: str) -> Optional[Dict[str, Any]]:
         """Safely parse JSON response, handling format issues."""
         try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
+            parsed = json.loads(json_str)
+            # Validate that the result is a dictionary
+            if not isinstance(parsed, dict):
+                self.logger.error(f"❌ JSON parsing returned non-dict type: {type(parsed)}")
+                return None
+            return parsed
+        except json.JSONDecodeError as initial_error:
             # Try to extract JSON from response
             start_idx = json_str.find('{')
             end_idx = json_str.rfind('}') + 1
@@ -518,7 +522,7 @@ Remember: Be decisive but not reckless. Quality over quantity.
                     # Parse line by line and fix quotes in string values
                     lines = json_str_original.split('\n')
                     fixed_lines = []
-                    
+
                     for line in lines:
                         # Check if this is a line with a key-value pair containing quotes
                         if '": "' in line and line.strip().endswith((',', '",')):
@@ -528,12 +532,12 @@ Remember: Be decisive but not reckless. Quality over quantity.
                                 value_end = line.rfind('",')
                             else:
                                 value_end = line.rfind('"')
-                            
+
                             if key_end > 4 and value_end > key_end:
                                 prefix = line[:key_end]
                                 value = line[key_end:value_end]
                                 suffix = line[value_end:]
-                                
+
                                 # Replace internal quotes with single quotes
                                 fixed_value = value.replace('"', "'")
                                 fixed_line = prefix + fixed_value + suffix
@@ -542,16 +546,31 @@ Remember: Be decisive but not reckless. Quality over quantity.
                                 fixed_lines.append(line)
                         else:
                             fixed_lines.append(line)
-                    
+
                     json_str = '\n'.join(fixed_lines)
-                    
-                    # Try parsing
-                    return json.loads(json_str)
+
+                    # Try parsing the fixed JSON
+                    parsed = json.loads(json_str)
+
+                    # Validate structure
+                    if not isinstance(parsed, dict):
+                        self.logger.error(f"❌ Fixed JSON is not a dictionary: {type(parsed)}")
+                        return None
+
+                    # Validate that it has expected signal fields
+                    required_fields = ['signal', 'confidence']
+                    missing_fields = [f for f in required_fields if f not in parsed]
+                    if missing_fields:
+                        self.logger.warning(f"⚠️ Parsed JSON missing required fields: {missing_fields}")
+                        # Still return it, as fallback logic will handle missing fields
+
+                    return parsed
                 except json.JSONDecodeError as e:
-                    self.logger.error(f"❌ JSON parse failed: {e}")
+                    self.logger.error(f"❌ JSON parse failed after fixes: {e}")
                     self.logger.debug(f"Original content: {json_str_original[:500]}...")
+                    self.logger.debug(f"Initial error was: {initial_error}")
                 except Exception as e:
-                    self.logger.error(f"❌ JSON fix error: {e}")
+                    self.logger.error(f"❌ Unexpected error during JSON fix: {type(e).__name__}: {e}")
 
             return None
 
