@@ -1,6 +1,12 @@
 ---
-name: nautilus-trader
+name: nautilustrader
 description: NautilusTrader algorithmic trading platform. Use for building trading strategies, backtesting, live trading, data handling, and quantitative finance applications.
+allowed-tools:
+  - Read
+  - Grep
+  - Glob
+  - WebFetch
+  - WebSearch
 ---
 
 # Nautilus-Trader Skill

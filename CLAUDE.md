@@ -99,21 +99,44 @@ Environment=AUTO_CONFIRM=true
 
 ```
 /home/user/AItrader/
-├── main_live.py              # 入口文件
+├── main_live.py              # 入口文件 (不是 main.py!)
 ├── setup.sh                  # 一键部署脚本
 ├── requirements.txt          # Python 依赖
 ├── nautilus-trader.service   # systemd 服务文件
+├── .claude/                  # Claude Code 配置
+│   ├── settings.json         # 权限配置
+│   └── skills/               # 自定义技能
+│       ├── deploy/           # 部署技能
+│       ├── server-status/    # 服务器状态检查
+│       ├── stop-loss-check/  # 止损验证
+│       └── nautilustrader/   # NautilusTrader 参考文档
 ├── strategy/
 │   └── deepseek_strategy.py  # 主策略 (含止损修复)
+├── agents/
+│   └── multi_agent_analyzer.py # 多代理分析 (Bull/Bear/Judge)
+├── indicators/
+│   └── technical_manager.py  # 技术指标管理器
 ├── utils/
 │   ├── deepseek_client.py    # DeepSeek AI 客户端
-│   └── sentiment_client.py   # Binance 多空比 (替代 CryptoOracle)
+│   ├── sentiment_client.py   # Binance 多空比 (替代 CryptoOracle)
+│   ├── telegram_bot.py       # Telegram 通知
+│   ├── telegram_command_handler.py # Telegram 命令处理
+│   ├── bar_persistence.py    # K线数据持久化
+│   └── oco_manager.py        # OCO 订单管理 (已由 NautilusTrader 内置替代)
 ├── patches/
-│   └── binance_enums.py      # Binance枚举兼容性补丁
+│   ├── binance_enums.py      # Binance枚举兼容性补丁
+│   └── binance_positions.py  # Binance持仓处理补丁
 ├── configs/
-│   └── strategy_config.yaml  # 策略配置
-├── test_sl_fix.py            # 止损修复测试
-├── test_binance_patch.py     # 枚举补丁测试
+│   ├── strategy_config.yaml  # 策略配置
+│   └── telegram_config.yaml  # Telegram 配置
+├── tests/                    # 测试目录
+│   ├── test_sl_fix.py        # 止损修复测试
+│   ├── test_binance_patch.py # 枚举补丁测试
+│   ├── test_multi_agent.py   # 多代理测试
+│   └── test_bracket_order.py # 括号订单测试
+├── scripts/                  # 工具脚本
+│   └── deep_health_check.py  # 深度健康检查
+├── diagnose.py               # 系统诊断脚本
 ├── DEPLOYMENT.md             # 部署指南
 └── README.md                 # 项目文档
 ```
