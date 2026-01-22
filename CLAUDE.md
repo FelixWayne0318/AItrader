@@ -37,18 +37,19 @@ sudo journalctl -u nautilus-trader -f --no-hostname
 ## 常用命令
 
 ```bash
+# 全面诊断 (唯一需要的检测工具)
+python diagnose.py              # 运行全部检查
+python diagnose.py --quick      # 快速检查 (跳过网络测试)
+python diagnose.py --update     # 先更新代码再检查
+python diagnose.py --restart    # 检查后重启服务
+python diagnose.py --json       # 输出JSON格式
+
 # 服务器操作
 sudo systemctl restart nautilus-trader
 sudo journalctl -u nautilus-trader -f --no-hostname
 
-# 更新代码
-cd /home/linuxuser/nautilus_AItrader
-git pull origin claude/clone-nautilus-aitrader-SFBz9
-./setup.sh
-sudo systemctl restart nautilus-trader
-
-# 测试修复
-python test_sl_fix.py
+# 一键更新 + 重启
+python diagnose.py --update --restart
 ```
 
 ## systemd 服务配置
@@ -135,9 +136,7 @@ Environment=AUTO_CONFIRM=true
 │   ├── test_binance_patch.py # 枚举补丁测试
 │   ├── test_multi_agent.py   # 多代理测试
 │   └── test_bracket_order.py # 括号订单测试
-├── scripts/                  # 工具脚本
-│   └── deep_health_check.py  # 深度健康检查
-├── diagnose.py               # 系统诊断脚本
+├── diagnose.py               # 全面诊断工具 v2.0 (唯一检测脚本)
 ├── DEPLOYMENT.md             # 部署指南
 └── README.md                 # 项目文档
 ```
