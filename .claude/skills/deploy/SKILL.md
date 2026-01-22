@@ -19,6 +19,22 @@ allowed-tools:
 | **路径** | /home/linuxuser/nautilus_AItrader |
 | **服务名** | nautilus-trader |
 | **分支** | claude/clone-nautilus-aitrader-SFBz9 |
+| **配置文件** | ~/.env.aitrader (永久存储) |
+
+## .env 配置管理
+
+| 位置 | 说明 |
+|------|------|
+| `~/.env.aitrader` | 永久存储位置，重装不会删除 |
+| `.env` | 软链接，指向 ~/.env.aitrader |
+
+```bash
+# 编辑配置
+nano ~/.env.aitrader
+
+# 查看软链接
+ls -la /home/linuxuser/nautilus_AItrader/.env
+```
 
 ## 部署命令
 
@@ -26,7 +42,13 @@ allowed-tools:
 - `$ARGUMENTS` 包含 "restart" → 重启服务
 - `$ARGUMENTS` 包含 "status" → 检查状态
 - `$ARGUMENTS` 包含 "update" → 更新代码并重启
+- `$ARGUMENTS` 包含 "reinstall" → 完全重装
 - 无参数 → 显示部署信息
+
+### 完全重装
+```bash
+curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/claude/clone-nautilus-aitrader-SFBz9/reinstall.sh | bash
+```
 
 ### 更新代码并重启
 ```bash
@@ -76,3 +98,4 @@ WantedBy=multi-user.target
 | `can't open file 'main.py'` | 入口文件错误 | 使用 `main_live.py` |
 | `EOFError: EOF when reading a line` | 缺少 AUTO_CONFIRM | 添加 `Environment=AUTO_CONFIRM=true` |
 | 服务不断重启 | 配置错误 | 检查 ExecStart 路径 |
+| `.env` 丢失 | 软链接断开 | `ln -sf ~/.env.aitrader .env` |

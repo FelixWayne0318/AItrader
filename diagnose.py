@@ -3,12 +3,12 @@
 AItrader 全面诊断工具 v2.0
 
 用法:
-    python diagnose.py              # 运行全部检查
-    python diagnose.py --quick      # 快速检查 (跳过网络测试)
-    python diagnose.py --update     # 先更新代码再检查
-    python diagnose.py --restart    # 检查后重启服务
-    python diagnose.py --json       # 输出JSON格式
-    python diagnose.py --help       # 显示帮助
+    python3 diagnose.py              # 运行全部检查
+    python3 diagnose.py --quick      # 快速检查 (跳过网络测试)
+    python3 diagnose.py --update     # 先更新代码再检查
+    python3 diagnose.py --restart    # 检查后重启服务
+    python3 diagnose.py --json       # 输出JSON格式
+    python3 diagnose.py --help       # 显示帮助
 """
 
 import os
@@ -254,6 +254,8 @@ def check_dependencies():
                 else:
                     fail(f"{pkg_name}: {version} (需要 >= {min_version})")
                     all_ok = False
+            elif min_version and version == "unknown":
+                warn(f"{pkg_name}: 版本未知 (需要 >= {min_version})")
             else:
                 ok(f"{pkg_name}: {version}")
 
@@ -941,10 +943,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python diagnose.py              # 运行全部检查
-  python diagnose.py --quick      # 快速检查
-  python diagnose.py --update     # 先更新再检查
-  python diagnose.py --restart    # 检查后重启服务
+  python3 diagnose.py              # 运行全部检查
+  python3 diagnose.py --quick      # 快速检查
+  python3 diagnose.py --update     # 先更新再检查
+  python3 diagnose.py --restart    # 检查后重启服务
 """
     )
     parser.add_argument("--quick", "-q", action="store_true", help="快速检查 (跳过网络测试)")
@@ -1026,10 +1028,12 @@ def main():
 
         # 保存 JSON 报告
         report_path = PROJECT_DIR / "diagnose_report.json"
-        with open(report_path, "w") as f:
-            json.dump(results.to_dict(), f, indent=2, ensure_ascii=False)
-
-        print(f"\n{Colors.BLUE}详细报告已保存: {report_path}{Colors.RESET}")
+        try:
+            with open(report_path, "w") as f:
+                json.dump(results.to_dict(), f, indent=2, ensure_ascii=False)
+            print(f"\n{Colors.BLUE}详细报告已保存: {report_path}{Colors.RESET}")
+        except IOError as e:
+            warn(f"保存报告失败: {e}")
 
         # 建议
         if results.failed > 0:
@@ -1038,8 +1042,8 @@ def main():
 1. 查看上面的错误信息
 2. 检查 .env 文件配置
 3. 运行 ./setup.sh 重新安装依赖
-4. 如需更新代码: python diagnose.py --update
-5. 如需重启服务: python diagnose.py --restart
+4. 如需更新代码: python3 diagnose.py --update
+5. 如需重启服务: python3 diagnose.py --restart
 """)
         else:
             print(f"""
