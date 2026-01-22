@@ -835,31 +835,41 @@ class DeepSeekAIStrategy(Strategy):
 
         return ((current - previous) / previous) * 100
 
-    def _get_current_position_data(self) -> Optional[Dict[str, Any]]:
-        """Get current position information."""
+    def _get_current_position_data(self, current_price: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """
+        Get current position information.
+
+        Parameters
+        ----------
+        current_price : float, optional
+            If provided, use this price instead of accessing indicator_manager.
+            IMPORTANT: When calling from Telegram thread, MUST pass current_price
+            to avoid Rust panic (indicator_manager contains non-thread-safe Rust objects).
+        """
         # Get open positions for this instrument
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
-        
+
         if not positions:
             return None
-        
+
         # Get the first open position (should only be one for netting OMS)
         position = positions[0]
-        
+
         if position and position.is_open:
             # Get current price for PnL calculation
-            # Use last bar close price as it's more reliable than cache.price()
-            # cache.price() requires tick data which may not be available
-            bars = self.indicator_manager.recent_bars
-            if bars:
-                current_price = bars[-1].close
-            else:
-                # Fallback: try cache.price() if bars not available
-                try:
-                    current_price = self.cache.price(self.instrument_id, PriceType.LAST)
-                except (TypeError, AttributeError):
-                    current_price = None
-            
+            if current_price is None:
+                # Only access indicator_manager from main thread!
+                # Telegram thread must pass current_price parameter
+                bars = self.indicator_manager.recent_bars
+                if bars:
+                    current_price = bars[-1].close
+                else:
+                    # Fallback: try cache.price() if bars not available
+                    try:
+                        current_price = self.cache.price(self.instrument_id, PriceType.LAST)
+                    except (TypeError, AttributeError):
+                        current_price = None
+
             return {
                 'side': 'long' if position.side == PositionSide.LONG else 'short',
                 'quantity': float(position.quantity),
@@ -1850,27 +1860,27 @@ class DeepSeekAIStrategy(Strategy):
     def _cmd_position(self) -> Dict[str, Any]:
         """Handle /position command."""
         try:
-            # Get current position
-            current_position = self._get_current_position_data()
-            
+            # Get current price from thread-safe cache FIRST
+            # IMPORTANT: Do NOT access indicator_manager here - it's called from
+            # Telegram thread and Rust indicators (RSI) are not thread-safe
+            with self._state_lock:
+                cached_price = self._cached_current_price
+
+            # Get current position - pass cached price to avoid indicator_manager access
+            current_position = self._get_current_position_data(current_price=cached_price if cached_price > 0 else None)
+
             position_info = {
                 'has_position': current_position is not None,
             }
-            
+
             if current_position:
-                # Get current price from thread-safe cache
-                # IMPORTANT: Do NOT access indicator_manager here - it's called from
-                # Telegram thread and Rust indicators (RSI) are not thread-safe
-                with self._state_lock:
-                    current_price = self._cached_current_price
-                # Fallback to entry price if no price cached yet
-                if current_price == 0:
-                    current_price = current_position['avg_px']
-                
+                # Use cached price, fallback to entry price
+                current_price = cached_price if cached_price > 0 else current_position['avg_px']
+
                 entry_price = current_position['avg_px']
                 pnl = current_position['unrealized_pnl']
                 pnl_pct = (pnl / (entry_price * current_position['quantity'])) * 100 if entry_price > 0 else 0
-                
+
                 position_info.update({
                     'side': current_position['side'].upper(),
                     'quantity': current_position['quantity'],
