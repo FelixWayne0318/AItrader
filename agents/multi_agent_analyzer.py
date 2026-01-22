@@ -563,13 +563,15 @@ VOLUME:
         if not data:
             return "SENTIMENT: Data not available"
 
-        net = data.get('net_sentiment', 0)
+        net = data.get('net_sentiment') or 0
+        pos_ratio = data.get('positive_ratio') or 0
+        neg_ratio = data.get('negative_ratio') or 0
         sign = '+' if net >= 0 else ''
 
         return f"""
 MARKET SENTIMENT (Long/Short Ratio):
-- Bullish Ratio: {data.get('positive_ratio', 0):.1%}
-- Bearish Ratio: {data.get('negative_ratio', 0):.1%}
+- Bullish Ratio: {pos_ratio:.1%}
+- Bearish Ratio: {neg_ratio:.1%}
 - Net Sentiment: {sign}{net:.3f}
 - Interpretation: {'Bullish bias' if net > 0.1 else 'Bearish bias' if net < -0.1 else 'Neutral'}
 """
@@ -579,11 +581,15 @@ MARKET SENTIMENT (Long/Short Ratio):
         if not position:
             return "No current position (FLAT)"
 
+        qty = position.get('quantity') or 0
+        avg_px = position.get('avg_px') or 0
+        unrealized_pnl = position.get('unrealized_pnl') or 0
+
         return f"""
 Side: {position.get('side', 'N/A')}
-Size: {position.get('quantity', 0):.4f} BTC
-Avg Entry: ${position.get('avg_px', 0):,.2f}
-Unrealized P&L: ${position.get('unrealized_pnl', 0):,.2f}
+Size: {qty:.4f} BTC
+Avg Entry: ${avg_px:,.2f}
+Unrealized P&L: ${unrealized_pnl:,.2f}
 """
 
     def _get_past_memories(self) -> str:

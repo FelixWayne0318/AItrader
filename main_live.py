@@ -6,7 +6,6 @@ Runs the DeepSeek AI strategy on Binance Futures (BTCUSDT-PERP) with live market
 
 import os
 import sys
-import asyncio
 import yaml
 from decimal import Decimal
 from pathlib import Path

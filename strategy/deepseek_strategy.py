@@ -1456,18 +1456,22 @@ class DeepSeekAIStrategy(Strategy):
         # Send Telegram position closed notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
-                # Calculate P&L percentage (approximate)
+                # Calculate P&L percentage
                 pnl = float(event.realized_pnl)
-                # Get rough position size estimate for percentage
-                # Note: This is approximate, actual calculation would require more data
-                pnl_pct = (pnl / 100.0) * 100 if pnl != 0 else 0.0  # Rough estimate
-                
+                quantity = float(event.quantity) if hasattr(event, 'quantity') else 0.0
+                entry_price = float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0
+                exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
+
+                # Calculate position value for percentage: PnL / (entry_price * quantity) * 100
+                position_value = entry_price * quantity
+                pnl_pct = (pnl / position_value * 100) if position_value > 0 else 0.0
+
                 position_msg = self.telegram_bot.format_position_update({
                     'action': 'CLOSED',
                     'side': event.side.name,
-                    'quantity': float(event.quantity) if hasattr(event, 'quantity') else 0.0,
-                    'entry_price': float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0,
-                    'current_price': float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0,
+                    'quantity': quantity,
+                    'entry_price': entry_price,
+                    'current_price': exit_price,
                     'pnl': pnl,
                     'pnl_pct': pnl_pct,
                 })
@@ -1577,7 +1581,7 @@ class DeepSeekAIStrategy(Strategy):
                         price_move_pct = (new_sl_price - current_sl_price) / current_sl_price
                         should_update = price_move_pct >= self.trailing_update_threshold_pct
                     
-                    if should_update and new_sl_price > current_sl_price:
+                    if should_update and (current_sl_price is None or new_sl_price > current_sl_price):
                         self._execute_trailing_stop_update(
                             instrument_key=instrument_key,
                             new_sl_price=new_sl_price,
@@ -1616,7 +1620,7 @@ class DeepSeekAIStrategy(Strategy):
                         price_move_pct = (current_sl_price - new_sl_price) / current_sl_price
                         should_update = price_move_pct >= self.trailing_update_threshold_pct
                     
-                    if should_update and new_sl_price < current_sl_price:
+                    if should_update and (current_sl_price is None or new_sl_price < current_sl_price):
                         self._execute_trailing_stop_update(
                             instrument_key=instrument_key,
                             new_sl_price=new_sl_price,
