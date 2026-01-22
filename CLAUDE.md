@@ -19,7 +19,14 @@
 ## 部署/升级命令
 
 ```bash
-# 一键部署/升级 (推荐)
+# 一键清空重装 (完全重新安装)
+curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/claude/clone-nautilus-aitrader-SFBz9/reinstall.sh | bash
+
+# 或者本地执行
+cd /home/linuxuser/nautilus_AItrader
+chmod +x reinstall.sh && ./reinstall.sh
+
+# 普通升级 (保留现有配置)
 cd /home/linuxuser/nautilus_AItrader
 git pull origin claude/clone-nautilus-aitrader-SFBz9
 chmod +x setup.sh && ./setup.sh
@@ -101,7 +108,8 @@ Environment=AUTO_CONFIRM=true
 ```
 /home/user/AItrader/
 ├── main_live.py              # 入口文件 (不是 main.py!)
-├── setup.sh                  # 一键部署脚本
+├── setup.sh                  # 一键部署脚本 (普通升级)
+├── reinstall.sh              # 一键清空重装脚本 (完全重新安装)
 ├── requirements.txt          # Python 依赖
 ├── nautilus-trader.service   # systemd 服务文件
 ├── .claude/                  # Claude Code 配置
