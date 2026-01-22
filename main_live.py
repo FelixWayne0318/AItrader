@@ -6,7 +6,6 @@ Runs the DeepSeek AI strategy on Binance Futures (BTCUSDT-PERP) with live market
 
 import os
 import sys
-import asyncio
 import yaml
 from decimal import Decimal
 from pathlib import Path
@@ -229,10 +228,10 @@ def get_binance_config() -> tuple:
     if not api_key or not api_secret:
         raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET required in .env")
 
-    # Filter to only load BTCUSDT perpetual
-    # CRITICAL: load_all=False prevents loading non-ASCII symbols like '币安人生USDT-PERP'
-    # NOTE: filters must be a dict, not frozenset (NautilusTrader expects dict.items())
-    instrument_filters = {"symbol": "BTCUSDT"}
+    # CRITICAL: Explicitly specify which instruments to load
+    # Using load_ids is more reliable than filters for loading specific instruments
+    # This prevents loading non-ASCII symbols like '币安人生USDT-PERP' that cause crashes
+    instrument_id = "BTCUSDT-PERP.BINANCE"
 
     # Data client config
     data_config = BinanceDataClientConfig(
@@ -242,7 +241,7 @@ def get_binance_config() -> tuple:
         testnet=False,  # Set to True for testnet
         instrument_provider=InstrumentProviderConfig(
             load_all=False,  # CRITICAL: Must be False to avoid loading all symbols
-            filters=instrument_filters,
+            load_ids=frozenset([instrument_id]),  # Explicitly load only BTCUSDT-PERP
         ),
     )
 
@@ -254,7 +253,7 @@ def get_binance_config() -> tuple:
         testnet=False,
         instrument_provider=InstrumentProviderConfig(
             load_all=False,  # CRITICAL: Must be False to avoid loading all symbols
-            filters=instrument_filters,
+            load_ids=frozenset([instrument_id]),  # Explicitly load only BTCUSDT-PERP
         ),
     )
 

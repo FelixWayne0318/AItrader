@@ -204,13 +204,14 @@ class TelegramCommandHandler:
 
         # Initial delay to allow previous session to expire on Telegram servers
         # This helps avoid Conflict errors on quick restarts
-        startup_delay = 5
+        # Telegram's getUpdates has a default timeout of 10 seconds, so we wait longer
+        startup_delay = 15
         self.logger.info(f"⏳ Waiting {startup_delay}s before starting Telegram polling (conflict prevention)...")
         await asyncio.sleep(startup_delay)
 
-        max_retries = 5
+        max_retries = 3  # Reduced retries to fail faster when another instance is running
         retry_count = 0
-        base_delay = 10  # Initial retry delay in seconds
+        base_delay = 30  # Initial retry delay in seconds (longer to allow old session to expire)
 
         while retry_count < max_retries:
             try:
@@ -229,6 +230,13 @@ class TelegramCommandHandler:
 
                 # Start polling - compatible with python-telegram-bot v20+
                 await self.application.initialize()
+
+                # Delete any existing webhook before starting polling
+                # This is required because webhook and polling modes are mutually exclusive
+                self.logger.info("🔄 Deleting any existing webhook...")
+                await self.application.bot.delete_webhook(drop_pending_updates=True)
+                self.logger.info("✅ Webhook deleted (if any)")
+
                 await self.application.start()
                 await self.application.updater.start_polling(
                     allowed_updates=["message"],  # Only listen to messages

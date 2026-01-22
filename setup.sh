@@ -10,6 +10,35 @@ echo "DeepSeek AI Trading Strategy - Setup Script"
 echo "======================================================================"
 echo ""
 
+# =============================================================================
+# Step 0: 停止所有运行中的实例 (防止多实例冲突)
+# =============================================================================
+echo "Step 0: 停止运行中的实例..."
+
+# 停止 systemd 服务 (如果存在)
+if systemctl is-active --quiet nautilus-trader 2>/dev/null; then
+    echo "停止 systemd 服务..."
+    sudo systemctl stop nautilus-trader
+fi
+
+# 清理所有 main_live.py 进程
+if pgrep -f "main_live.py" > /dev/null 2>&1; then
+    echo "发现运行中的 main_live.py 进程，正在停止..."
+    sudo pkill -f "main_live.py" || true
+    sleep 2
+    # 如果还有残留，强制杀掉
+    if pgrep -f "main_live.py" > /dev/null 2>&1; then
+        echo "强制终止残留进程..."
+        sudo pkill -9 -f "main_live.py" || true
+        sleep 1
+    fi
+    echo "已清理所有旧进程"
+else
+    echo "没有运行中的实例"
+fi
+
+echo ""
+
 # Detect OS
 if [ -f /etc/os-release ]; then
     . /etc/os-release

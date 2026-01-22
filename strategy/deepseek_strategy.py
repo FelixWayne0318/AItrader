@@ -272,6 +272,8 @@ class DeepSeekAIStrategy(Strategy):
                     self.log.info("✅ Telegram Bot initialized successfully")
                     
                     # Initialize command handler for remote control
+                    # Note: The command handler runs in a separate thread with its own event loop
+                    # and handles Telegram Conflict errors gracefully with retries
                     try:
                         from utils.telegram_command_handler import TelegramCommandHandler
                         # Note: threading is already imported at module level (line 10)
@@ -280,7 +282,7 @@ class DeepSeekAIStrategy(Strategy):
                         def command_callback(command: str, args: Dict[str, Any]) -> Dict[str, Any]:
                             """Callback function for Telegram commands."""
                             return self.handle_telegram_command(command, args)
-                        
+
                         # Initialize command handler
                         allowed_chat_ids = [chat_id]  # Only allow the configured chat ID
                         self.telegram_command_handler = TelegramCommandHandler(
@@ -289,7 +291,7 @@ class DeepSeekAIStrategy(Strategy):
                             strategy_callback=command_callback,
                             logger=self.log
                         )
-                        
+
                         # Start command handler in background thread with isolated event loop
                         def run_command_handler():
                             """Run command handler in background thread with proper event loop isolation."""
@@ -298,12 +300,14 @@ class DeepSeekAIStrategy(Strategy):
                                 # Create isolated event loop for this thread
                                 loop = asyncio.new_event_loop()
                                 asyncio.set_event_loop(loop)
-                                # Start polling (this will run indefinitely via idle())
+                                # Start polling (this will run indefinitely)
+                                # Note: start_polling() handles Telegram Conflict errors with retries
                                 loop.run_until_complete(self.telegram_command_handler.start_polling())
                             except asyncio.CancelledError:
                                 self.log.info("🔌 Telegram command handler cancelled")
                             except Exception as e:
-                                self.log.error(f"❌ Command handler thread error: {e}")
+                                # Log as warning, not error - command handler is non-critical
+                                self.log.warning(f"⚠️ Telegram command handler stopped: {e}")
                             finally:
                                 # Cleanup event loop
                                 if loop is not None:
@@ -311,7 +315,7 @@ class DeepSeekAIStrategy(Strategy):
                                         loop.close()
                                     except Exception:
                                         pass
-                        
+
                         # Start background thread for command listening
                         command_thread = threading.Thread(
                             target=run_command_handler,
@@ -319,13 +323,13 @@ class DeepSeekAIStrategy(Strategy):
                             name="TelegramCommandHandler"
                         )
                         command_thread.start()
-                        self.log.info("✅ Telegram Command Handler started in background thread")
-                        
+                        self.log.info("✅ Telegram Command Handler starting in background thread (conflicts will be retried)")
+
                     except ImportError:
                         self.log.warning("⚠️ Telegram command handler not available")
                         self.telegram_command_handler = None
                     except Exception as e:
-                        self.log.error(f"❌ Failed to initialize command handler: {e}")
+                        self.log.warning(f"⚠️ Could not initialize command handler (non-critical): {e}")
                         self.telegram_command_handler = None
                     
                 else:
@@ -384,7 +388,7 @@ class DeepSeekAIStrategy(Strategy):
         # The instrument may not be immediately available as the data client
         # loads instruments asynchronously from Binance
         import time
-        max_retries = 30  # Wait up to 30 seconds
+        max_retries = 60  # Wait up to 60 seconds (increased for network latency)
         retry_interval = 1.0  # Check every second
 
         self.instrument = None
@@ -395,16 +399,38 @@ class DeepSeekAIStrategy(Strategy):
 
             if attempt == 0:
                 self.log.info(f"Waiting for instrument {self.instrument_id} to be loaded...")
-            elif attempt % 5 == 0:
+                # Log cache state for debugging
+                all_instruments = self.cache.instruments()
+                if all_instruments:
+                    self.log.info(f"Currently loaded instruments: {[str(i.id) for i in all_instruments]}")
+                else:
+                    self.log.info("No instruments loaded yet in cache")
+            elif attempt % 10 == 0:
                 self.log.info(f"Still waiting for instrument... (attempt {attempt + 1}/{max_retries})")
+                # Log cache state periodically for debugging
+                all_instruments = self.cache.instruments()
+                if all_instruments:
+                    self.log.info(f"Currently loaded instruments: {[str(i.id) for i in all_instruments]}")
 
             time.sleep(retry_interval)
 
         if self.instrument is None:
-            self.log.error(
-                f"Could not find instrument {self.instrument_id} after {max_retries} seconds. "
-                f"Check that the instrument provider is configured correctly and Binance API is accessible."
-            )
+            # Final diagnostic: list all instruments in cache
+            all_instruments = self.cache.instruments()
+            if all_instruments:
+                available_ids = [str(i.id) for i in all_instruments]
+                self.log.error(
+                    f"Could not find instrument {self.instrument_id} after {max_retries} seconds. "
+                    f"Available instruments: {available_ids}"
+                )
+            else:
+                self.log.error(
+                    f"Could not find instrument {self.instrument_id} after {max_retries} seconds. "
+                    f"No instruments loaded in cache! Check that: "
+                    f"1) Binance API keys are valid, "
+                    f"2) Network connectivity to api.binance.com is working, "
+                    f"3) InstrumentProviderConfig.load_ids contains the correct instrument ID."
+                )
             self.stop()
             return
 
@@ -1430,18 +1456,22 @@ class DeepSeekAIStrategy(Strategy):
         # Send Telegram position closed notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
-                # Calculate P&L percentage (approximate)
+                # Calculate P&L percentage
                 pnl = float(event.realized_pnl)
-                # Get rough position size estimate for percentage
-                # Note: This is approximate, actual calculation would require more data
-                pnl_pct = (pnl / 100.0) * 100 if pnl != 0 else 0.0  # Rough estimate
-                
+                quantity = float(event.quantity) if hasattr(event, 'quantity') else 0.0
+                entry_price = float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0
+                exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
+
+                # Calculate position value for percentage: PnL / (entry_price * quantity) * 100
+                position_value = entry_price * quantity
+                pnl_pct = (pnl / position_value * 100) if position_value > 0 else 0.0
+
                 position_msg = self.telegram_bot.format_position_update({
                     'action': 'CLOSED',
                     'side': event.side.name,
-                    'quantity': float(event.quantity) if hasattr(event, 'quantity') else 0.0,
-                    'entry_price': float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0,
-                    'current_price': float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0,
+                    'quantity': quantity,
+                    'entry_price': entry_price,
+                    'current_price': exit_price,
                     'pnl': pnl,
                     'pnl_pct': pnl_pct,
                 })
@@ -1551,7 +1581,7 @@ class DeepSeekAIStrategy(Strategy):
                         price_move_pct = (new_sl_price - current_sl_price) / current_sl_price
                         should_update = price_move_pct >= self.trailing_update_threshold_pct
                     
-                    if should_update and new_sl_price > current_sl_price:
+                    if should_update and (current_sl_price is None or new_sl_price > current_sl_price):
                         self._execute_trailing_stop_update(
                             instrument_key=instrument_key,
                             new_sl_price=new_sl_price,
@@ -1590,7 +1620,7 @@ class DeepSeekAIStrategy(Strategy):
                         price_move_pct = (current_sl_price - new_sl_price) / current_sl_price
                         should_update = price_move_pct >= self.trailing_update_threshold_pct
                     
-                    if should_update and new_sl_price < current_sl_price:
+                    if should_update and (current_sl_price is None or new_sl_price < current_sl_price):
                         self._execute_trailing_stop_update(
                             instrument_key=instrument_key,
                             new_sl_price=new_sl_price,

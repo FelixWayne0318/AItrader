@@ -52,11 +52,18 @@ After=network.target
 Type=simple
 User=linuxuser
 WorkingDirectory=/home/linuxuser/nautilus_AItrader
+Environment="PATH=/home/linuxuser/nautilus_AItrader/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="AUTO_CONFIRM=true"
+EnvironmentFile=-/home/linuxuser/nautilus_AItrader/.env
 ExecStart=/home/linuxuser/nautilus_AItrader/venv/bin/python main_live.py
-Restart=always
+
+# Auto-restart on failure
+Restart=on-failure
 RestartSec=10
-Environment=PYTHONUNBUFFERED=1
-Environment=AUTO_CONFIRM=true
+
+# Logging (use journalctl to view)
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
