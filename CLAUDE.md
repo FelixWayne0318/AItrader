@@ -69,18 +69,18 @@ sudo journalctl -u nautilus-trader -f --no-hostname
 
 ```bash
 # 全面诊断 (唯一需要的检测工具)
-python diagnose.py              # 运行全部检查
-python diagnose.py --quick      # 快速检查 (跳过网络测试)
-python diagnose.py --update     # 先更新代码再检查
-python diagnose.py --restart    # 检查后重启服务
-python diagnose.py --json       # 输出JSON格式
+python3 diagnose.py              # 运行全部检查
+python3 diagnose.py --quick      # 快速检查 (跳过网络测试)
+python3 diagnose.py --update     # 先更新代码再检查
+python3 diagnose.py --restart    # 检查后重启服务
+python3 diagnose.py --json       # 输出JSON格式
 
 # 服务器操作
 sudo systemctl restart nautilus-trader
 sudo journalctl -u nautilus-trader -f --no-hostname
 
 # 一键更新 + 重启
-python diagnose.py --update --restart
+python3 diagnose.py --update --restart
 ```
 
 ## systemd 服务配置
@@ -122,6 +122,7 @@ Environment=AUTO_CONFIRM=true
 
 ## 常见错误避免
 
+- ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
 - ❌ 使用 `main.py` 作为入口 → ✅ 使用 `main_live.py`
 - ❌ 忘记设置 `AUTO_CONFIRM=true` → 会卡在确认提示
 - ❌ 止损在入场价错误一侧 → 已修复，会自动回退到默认2%
