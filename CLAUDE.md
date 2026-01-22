@@ -134,6 +134,14 @@ Environment=AUTO_CONFIRM=true
    - 修复：调整检查顺序，先检查更长的字符串
    - 影响文件：`deepseek_strategy.py`, `diagnose_realtime.py`
 
+8. **Rust RSI 线程安全崩溃** (Telegram 命令处理)
+   - 问题：服务崩溃，Rust panic: `RelativeStrengthIndex is unsendable, but sent to another thread`
+   - 原因：Telegram 命令处理在后台线程 (Thread 7) 运行，访问了 `indicator_manager`
+   - 根因：NautilusTrader 的 Rust 指标 (RSI, MACD) 不是 Send/Sync，不能跨线程访问
+   - 修复：添加 `_cached_current_price` 变量，在 `on_bar` 中线程安全更新
+   - 影响方法：`_cmd_status()`, `_cmd_position()` 改用缓存价格
+   - 文件：`strategy/deepseek_strategy.py`
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
@@ -141,6 +149,7 @@ Environment=AUTO_CONFIRM=true
 - ❌ 忘记设置 `AUTO_CONFIRM=true` → 会卡在确认提示
 - ❌ 止损在入场价错误一侧 → 已修复，会自动回退到默认2%
 - ❌ 使用 Python 3.10 → ✅ 必须使用 Python 3.11+
+- ❌ 从后台线程访问 `indicator_manager` → ✅ 使用 `_cached_current_price` (Rust 指标不可跨线程)
 
 ## 文件结构
 

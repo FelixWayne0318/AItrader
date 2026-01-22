@@ -204,6 +204,11 @@ class DeepSeekAIStrategy(Strategy):
         # Thread lock for shared state (Telegram thread safety)
         self._state_lock = threading.Lock()
 
+        # Thread-safe cached price (updated in on_bar, read by Telegram commands)
+        # IMPORTANT: Do NOT access indicator_manager from Telegram thread - it contains
+        # Rust indicators (RSI, MACD) that are not Send/Sync and will cause panic
+        self._cached_current_price: float = 0.0
+
         # Track trailing stop state for each position
         self.trailing_stop_state: Dict[str, Dict[str, Any]] = {}
         # Format: {
@@ -604,6 +609,11 @@ class DeepSeekAIStrategy(Strategy):
 
         # Update technical indicators
         self.indicator_manager.update(bar)
+
+        # Update cached price (thread-safe for Telegram commands)
+        # This avoids accessing indicator_manager from Telegram thread which causes Rust panic
+        with self._state_lock:
+            self._cached_current_price = float(bar.close)
 
         # Log bar data
         if self.bars_received % 10 == 0:
@@ -1783,12 +1793,12 @@ class DeepSeekAIStrategy(Strategy):
         """Handle /status command."""
         try:
             from datetime import datetime
-            
-            # Get current price
-            current_price = 0
-            bars = self.indicator_manager.recent_bars if hasattr(self, 'indicator_manager') else []
-            if bars:
-                current_price = float(bars[-1].close)
+
+            # Get current price from thread-safe cache
+            # IMPORTANT: Do NOT access indicator_manager here - it's called from
+            # Telegram thread and Rust indicators (RSI) are not thread-safe
+            with self._state_lock:
+                current_price = self._cached_current_price
             
             # Get unrealized PnL
             unrealized_pnl = 0
@@ -1848,8 +1858,14 @@ class DeepSeekAIStrategy(Strategy):
             }
             
             if current_position:
-                bars = self.indicator_manager.recent_bars if hasattr(self, 'indicator_manager') else []
-                current_price = float(bars[-1].close) if bars else current_position['avg_px']
+                # Get current price from thread-safe cache
+                # IMPORTANT: Do NOT access indicator_manager here - it's called from
+                # Telegram thread and Rust indicators (RSI) are not thread-safe
+                with self._state_lock:
+                    current_price = self._cached_current_price
+                # Fallback to entry price if no price cached yet
+                if current_price == 0:
+                    current_price = current_position['avg_px']
                 
                 entry_price = current_position['avg_px']
                 pnl = current_position['unrealized_pnl']
