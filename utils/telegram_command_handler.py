@@ -230,6 +230,13 @@ class TelegramCommandHandler:
 
                 # Start polling - compatible with python-telegram-bot v20+
                 await self.application.initialize()
+
+                # Delete any existing webhook before starting polling
+                # This is required because webhook and polling modes are mutually exclusive
+                self.logger.info("🔄 Deleting any existing webhook...")
+                await self.application.bot.delete_webhook(drop_pending_updates=True)
+                self.logger.info("✅ Webhook deleted (if any)")
+
                 await self.application.start()
                 await self.application.updater.start_polling(
                     allowed_updates=["message"],  # Only listen to messages
