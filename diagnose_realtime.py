@@ -91,16 +91,20 @@ print("[2/9] 获取市场数据 (Binance Futures)...")
 
 import requests
 
-# 从 bar_type 解析时间周期
+# 从 bar_type 解析时间周期 (注意: 必须先检查更长的字符串)
 bar_type_str = strategy_config.bar_type
-if "1-MINUTE" in bar_type_str:
-    interval = "1m"
+if "15-MINUTE" in bar_type_str:
+    interval = "15m"
 elif "5-MINUTE" in bar_type_str:
     interval = "5m"
-elif "15-MINUTE" in bar_type_str:
-    interval = "15m"
+elif "1-MINUTE" in bar_type_str:
+    interval = "1m"
+elif "4-HOUR" in bar_type_str:
+    interval = "4h"
 elif "1-HOUR" in bar_type_str:
     interval = "1h"
+elif "1-DAY" in bar_type_str:
+    interval = "1d"
 else:
     interval = "15m"
 
