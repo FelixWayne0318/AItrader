@@ -132,10 +132,13 @@ Environment=AUTO_CONFIRM=true
 │   ├── strategy_config.yaml  # 策略配置
 │   └── telegram_config.yaml  # Telegram 配置
 ├── tests/                    # 测试目录
-│   ├── test_sl_fix.py        # 止损修复测试
-│   ├── test_binance_patch.py # 枚举补丁测试
-│   ├── test_multi_agent.py   # 多代理测试
-│   └── test_bracket_order.py # 括号订单测试
+│   ├── test_bracket_order.py # 括号订单测试
+│   ├── test_integration_mock.py # 集成测试 (Mock)
+│   ├── test_rounding_fix.py  # 四舍五入修复测试
+│   └── test_strategy_components.py # 策略组件测试
+├── test_sl_fix.py            # 止损修复测试 (根目录)
+├── test_binance_patch.py     # 枚举补丁测试 (根目录)
+├── test_multi_agent.py       # 多代理测试 (根目录)
 ├── diagnose.py               # 全面诊断工具 v2.0 (唯一检测脚本)
 ├── DEPLOYMENT.md             # 部署指南
 └── README.md                 # 项目文档
