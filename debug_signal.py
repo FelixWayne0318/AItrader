@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-交易信号诊断脚本 v2.0
+交易信号诊断脚本 v2.1
 
 用途: 使用真实组件诊断信号产生全流程
-- 使用真实的 TechnicalManager 计算指标
+- 使用真实的 TechnicalIndicatorManager 计算指标
 - 使用真实的 SentimentDataFetcher 获取情绪数据
 - 使用真实的 DeepSeekAnalyzer 分析 (阶段6)
 - 使用真实的 MultiAgentAnalyzer 辩论 (阶段7)
@@ -29,7 +29,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 print("=" * 70)
-print("  交易信号诊断工具 v2.0 (使用真实组件)")
+print("  交易信号诊断工具 v2.1 (使用真实组件)")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -96,22 +96,25 @@ except Exception as e:
 print()
 
 # ============================================================
-# 3. 使用真实的 TechnicalManager 计算指标
+# 3. 使用真实的 TechnicalIndicatorManager 计算指标
 # ============================================================
-print("[3/8] 使用 TechnicalManager 计算技术指标...")
+print("[3/8] 使用 TechnicalIndicatorManager 计算技术指标...")
 
 try:
-    from indicators.technical_manager import TechnicalManager
+    from indicators.technical_manager import TechnicalIndicatorManager
 
-    # 初始化技术指标管理器
-    tech_manager = TechnicalManager(
-        ema_periods=[9, 21, 50],
+    # 初始化技术指标管理器 (使用实际类的参数签名)
+    tech_manager = TechnicalIndicatorManager(
+        sma_periods=[5, 20, 50],
+        ema_periods=[12, 26],
         rsi_period=14,
         macd_fast=12,
         macd_slow=26,
         macd_signal=9,
-        atr_period=14,
-        lookback_bars=100,
+        bb_period=20,
+        bb_std=2.0,
+        volume_ma_period=20,
+        support_resistance_lookback=20,
     )
 
     # 转换 K 线数据为管理器需要的格式
@@ -127,53 +130,68 @@ try:
         df[col] = df[col].astype(float)
 
     # 模拟添加 K 线到管理器
-    for _, row in df.iterrows():
-        # 创建简单的 bar 对象模拟
+    for idx, row in df.iterrows():
+        # 创建简单的 bar 对象模拟 (包含 ts_init 用于 get_kline_data)
         class MockBar:
-            def __init__(self, o, h, l, c, v):
+            def __init__(self, o, h, l, c, v, ts):
                 self.open = Decimal(str(o))
                 self.high = Decimal(str(h))
                 self.low = Decimal(str(l))
                 self.close = Decimal(str(c))
                 self.volume = Decimal(str(v))
+                self.ts_init = ts
 
-        bar = MockBar(row['open'], row['high'], row['low'], row['close'], row['volume'])
+        bar = MockBar(
+            row['open'], row['high'], row['low'], row['close'], row['volume'],
+            int(row['timestamp'])
+        )
         tech_manager.update(bar)
 
     # 获取技术数据
     technical_data = tech_manager.get_technical_data(current_price)
 
-    print(f"  EMA(9):  ${technical_data.get('ema_9', 0):,.2f}")
-    print(f"  EMA(21): ${technical_data.get('ema_21', 0):,.2f}")
-    print(f"  EMA(50): ${technical_data.get('ema_50', 0):,.2f}")
+    print(f"  SMA(5):  ${technical_data.get('sma_5', 0):,.2f}")
+    print(f"  SMA(20): ${technical_data.get('sma_20', 0):,.2f}")
+    print(f"  SMA(50): ${technical_data.get('sma_50', 0):,.2f}")
+    print(f"  EMA(12): ${technical_data.get('ema_12', 0):,.2f}")
+    print(f"  EMA(26): ${technical_data.get('ema_26', 0):,.2f}")
     print(f"  RSI(14): {technical_data.get('rsi', 0):.2f}")
     print(f"  MACD:    {technical_data.get('macd', 0):.4f}")
     print(f"  MACD Signal: {technical_data.get('macd_signal', 0):.4f}")
-    print(f"  MACD Hist:   {technical_data.get('macd_hist', 0):.4f}")
-    print(f"  ATR:     {technical_data.get('atr', 0):.2f}")
+    print(f"  MACD Hist:   {technical_data.get('macd_histogram', 0):.4f}")
+    print(f"  BB Upper:    ${technical_data.get('bb_upper', 0):,.2f}")
+    print(f"  BB Lower:    ${technical_data.get('bb_lower', 0):,.2f}")
     print(f"  支撑位:  ${technical_data.get('support', 0):,.2f}")
     print(f"  阻力位:  ${technical_data.get('resistance', 0):,.2f}")
     print(f"  趋势判断: {technical_data.get('overall_trend', 'N/A')}")
-    print("  ✅ TechnicalManager 指标计算成功")
+    print("  ✅ TechnicalIndicatorManager 指标计算成功")
 
 except Exception as e:
-    print(f"  ❌ TechnicalManager 初始化/计算失败: {e}")
+    print(f"  ❌ TechnicalIndicatorManager 初始化/计算失败: {e}")
     import traceback
     traceback.print_exc()
     # 使用简化版本作为备份
     print("  ⚠️ 使用简化版本计算...")
     technical_data = {
-        'ema_9': current_price * 0.999,
-        'ema_21': current_price * 0.998,
-        'ema_50': current_price * 0.995,
+        'sma_5': current_price * 0.999,
+        'sma_20': current_price * 0.998,
+        'sma_50': current_price * 0.995,
+        'ema_12': current_price * 0.999,
+        'ema_26': current_price * 0.997,
         'rsi': 50.0,
         'macd': 0.0,
         'macd_signal': 0.0,
-        'macd_hist': 0.0,
-        'atr': current_price * 0.01,
+        'macd_histogram': 0.0,
+        'bb_upper': current_price * 1.02,
+        'bb_middle': current_price,
+        'bb_lower': current_price * 0.98,
         'support': current_price * 0.98,
         'resistance': current_price * 1.02,
         'overall_trend': '震荡整理',
+        'short_term_trend': '震荡',
+        'medium_term_trend': '震荡',
+        'macd_trend': 'neutral',
+        'volume_ratio': 1.0,
     }
 
 print()
