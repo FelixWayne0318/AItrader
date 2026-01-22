@@ -15,6 +15,30 @@
 | **分支** | claude/clone-nautilus-aitrader-SFBz9 |
 | **Python** | 3.11+ (必须) |
 | **NautilusTrader** | 1.221.0 |
+| **配置文件** | ~/.env.aitrader (永久存储) |
+
+## 配置文件管理
+
+```
+~/.env.aitrader          # 永久存储 (重装不删除)
+     ↑
+     │ 软链接
+     │
+.env ─┘                  # 项目目录中的软链接
+```
+
+| 位置 | 说明 |
+|------|------|
+| `~/.env.aitrader` | 永久存储，重装时自动保留 |
+| `.env` | 软链接，指向 ~/.env.aitrader |
+
+```bash
+# 编辑配置
+nano ~/.env.aitrader
+
+# 查看软链接
+ls -la /home/linuxuser/nautilus_AItrader/.env
+```
 
 ## 部署/升级命令
 
@@ -152,7 +176,12 @@ Environment=AUTO_CONFIRM=true
 └── README.md                 # 项目文档
 ```
 
-## API 密钥 (保存在 .env)
+## API 密钥 (保存在 ~/.env.aitrader)
+
+```bash
+# 编辑配置文件
+nano ~/.env.aitrader
+```
 
 ```
 BINANCE_API_KEY=xxx

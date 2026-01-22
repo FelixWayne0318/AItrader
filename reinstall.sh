@@ -8,6 +8,11 @@
 # 仓库: https://github.com/FelixWayne0318/AItrader
 # 分支: claude/clone-nautilus-aitrader-SFBz9
 #
+# .env 管理策略:
+#   - 永久存储: ~/.env.aitrader (不会被删除)
+#   - 项目目录: .env -> ~/.env.aitrader (软链接)
+#   - 重装时自动保留配置
+#
 # 使用方法:
 #   方法1: 直接从 GitHub 下载并执行
 #     curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/claude/clone-nautilus-aitrader-SFBz9/reinstall.sh | bash
@@ -28,7 +33,8 @@ NC='\033[0m' # No Color
 
 # 配置变量
 INSTALL_DIR="/home/linuxuser/nautilus_AItrader"
-BACKUP_DIR="/home/linuxuser"
+HOME_DIR="/home/linuxuser"
+ENV_PERMANENT="${HOME_DIR}/.env.aitrader"  # 永久存储位置
 REPO_URL="https://github.com/FelixWayne0318/AItrader.git"
 BRANCH="claude/clone-nautilus-aitrader-SFBz9"
 SERVICE_NAME="nautilus-trader"
@@ -39,16 +45,23 @@ echo -e "${BLUE}   AItrader 一键清空重装脚本${NC}"
 echo -e "${BLUE}==========================================${NC}"
 echo ""
 
-# ========== 第一步：备份 .env ==========
-echo -e "${YELLOW}[1/8] 备份 API 密钥...${NC}"
-ENV_BACKUP="${BACKUP_DIR}/env_backup_$(date +%Y%m%d_%H%M%S).txt"
-if [ -f "${INSTALL_DIR}/.env" ]; then
-    cp "${INSTALL_DIR}/.env" "${ENV_BACKUP}"
-    cp "${INSTALL_DIR}/.env" "${BACKUP_DIR}/env_backup.txt"
-    echo -e "${GREEN}✓ 已备份到 ${ENV_BACKUP}${NC}"
-    echo -e "${GREEN}✓ 已备份到 ${BACKUP_DIR}/env_backup.txt${NC}"
+# ========== 第一步：处理 .env 配置 ==========
+echo -e "${YELLOW}[1/8] 处理 .env 配置...${NC}"
+
+# 检查是否已有永久配置
+if [ -f "${ENV_PERMANENT}" ]; then
+    echo -e "${GREEN}✓ 发现永久配置文件: ${ENV_PERMANENT}${NC}"
+    echo -e "${GREEN}  (重装不会影响此文件)${NC}"
 else
-    echo -e "${YELLOW}⚠ 未找到 .env 文件，跳过备份${NC}"
+    # 检查项目目录中是否有 .env (非软链接)
+    if [ -f "${INSTALL_DIR}/.env" ] && [ ! -L "${INSTALL_DIR}/.env" ]; then
+        echo -e "${YELLOW}  迁移现有 .env 到永久位置...${NC}"
+        cp "${INSTALL_DIR}/.env" "${ENV_PERMANENT}"
+        chmod 600 "${ENV_PERMANENT}"
+        echo -e "${GREEN}✓ 已迁移到 ${ENV_PERMANENT}${NC}"
+    else
+        echo -e "${YELLOW}⚠ 未找到现有配置，稍后需要手动配置${NC}"
+    fi
 fi
 
 # ========== 第二步：停止并清理旧服务 ==========
@@ -90,28 +103,37 @@ echo -e "${YELLOW}[3/8] 删除旧目录...${NC}"
 rm -rf "${INSTALL_DIR}"
 rm -rf "${INSTALL_DIR}_backup"
 echo -e "${GREEN}✓ 旧目录已删除${NC}"
+echo -e "${GREEN}  (永久配置 ${ENV_PERMANENT} 保持不变)${NC}"
 
 # ========== 第四步：克隆仓库 ==========
 echo ""
 echo -e "${YELLOW}[4/8] 克隆仓库...${NC}"
-cd "${BACKUP_DIR}"
+cd "${HOME_DIR}"
 git clone -b "${BRANCH}" "${REPO_URL}" nautilus_AItrader
 echo -e "${GREEN}✓ 仓库已克隆 (分支: ${BRANCH})${NC}"
 
-# ========== 第五步：恢复 .env ==========
+# ========== 第五步：配置 .env 软链接 ==========
 echo ""
-echo -e "${YELLOW}[5/8] 恢复 .env 配置...${NC}"
+echo -e "${YELLOW}[5/8] 配置 .env...${NC}"
 cd "${INSTALL_DIR}"
-if [ -f "${BACKUP_DIR}/env_backup.txt" ]; then
-    cp "${BACKUP_DIR}/env_backup.txt" .env
-    chmod 600 .env
-    echo -e "${GREEN}✓ 已从备份恢复 .env${NC}"
+
+# 删除克隆时可能带来的 .env 或 .env.template
+rm -f .env 2>/dev/null || true
+
+if [ -f "${ENV_PERMANENT}" ]; then
+    # 创建软链接
+    ln -sf "${ENV_PERMANENT}" .env
+    echo -e "${GREEN}✓ 已创建软链接: .env -> ${ENV_PERMANENT}${NC}"
 else
+    # 首次安装，从模板创建
     if [ -f .env.template ]; then
-        cp .env.template .env
-        chmod 600 .env
-        echo -e "${YELLOW}⚠ 使用模板创建 .env，请稍后编辑填入 API 密钥:${NC}"
-        echo -e "${YELLOW}  nano ${INSTALL_DIR}/.env${NC}"
+        cp .env.template "${ENV_PERMANENT}"
+        chmod 600 "${ENV_PERMANENT}"
+        ln -sf "${ENV_PERMANENT}" .env
+        echo -e "${YELLOW}⚠ 首次安装，已从模板创建配置${NC}"
+        echo -e "${YELLOW}  请编辑 ${ENV_PERMANENT} 填入 API 密钥${NC}"
+    else
+        echo -e "${RED}✗ 未找到 .env.template${NC}"
     fi
 fi
 
@@ -156,19 +178,34 @@ echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}   ✅ 安装完成！${NC}"
 echo -e "${GREEN}==========================================${NC}"
 echo ""
+echo -e "${BLUE}配置文件位置:${NC}"
+echo -e "  永久存储: ${YELLOW}${ENV_PERMANENT}${NC}"
+echo -e "  软链接:   ${YELLOW}${INSTALL_DIR}/.env -> ${ENV_PERMANENT}${NC}"
+echo ""
 echo -e "${BLUE}常用命令:${NC}"
 echo -e "  查看日志:   ${YELLOW}sudo journalctl -u ${SERVICE_NAME} -f --no-hostname${NC}"
 echo -e "  重启服务:   ${YELLOW}sudo systemctl restart ${SERVICE_NAME}${NC}"
 echo -e "  停止服务:   ${YELLOW}sudo systemctl stop ${SERVICE_NAME}${NC}"
 echo -e "  全面诊断:   ${YELLOW}cd ${INSTALL_DIR} && python diagnose.py${NC}"
-echo -e "  编辑密钥:   ${YELLOW}nano ${INSTALL_DIR}/.env${NC}"
+echo -e "  编辑密钥:   ${YELLOW}nano ${ENV_PERMANENT}${NC}"
 echo ""
 echo -e "${BLUE}安装路径:${NC} ${INSTALL_DIR}"
 echo -e "${BLUE}服务名称:${NC} ${SERVICE_NAME}"
 echo -e "${BLUE}分支:${NC} ${BRANCH}"
 echo ""
 
-# 提示查看日志
+# 检查是否需要配置
+if [ -f "${ENV_PERMANENT}" ]; then
+    # 检查是否有有效的 API 密钥
+    if grep -q "^BINANCE_API_KEY=.\+" "${ENV_PERMANENT}" 2>/dev/null; then
+        echo -e "${GREEN}✓ API 密钥已配置${NC}"
+    else
+        echo -e "${YELLOW}⚠ 请编辑配置文件填入 API 密钥:${NC}"
+        echo -e "  ${YELLOW}nano ${ENV_PERMANENT}${NC}"
+        echo ""
+    fi
+fi
+
 echo -e "${YELLOW}提示: 运行以下命令查看实时日志:${NC}"
 echo -e "  sudo journalctl -u ${SERVICE_NAME} -f --no-hostname"
 echo ""

@@ -37,7 +37,19 @@ from strategy.deepseek_strategy import DeepSeekAIStrategy, DeepSeekAIStrategyCon
 
 
 # Load environment variables
-load_dotenv()
+# Priority: 1. ~/.env.aitrader (permanent) 2. .env (local/symlink)
+env_permanent = Path.home() / ".env.aitrader"
+env_local = project_root / ".env"
+
+if env_permanent.exists():
+    load_dotenv(env_permanent)
+    print(f"[CONFIG] Loaded environment from {env_permanent}")
+elif env_local.exists():
+    load_dotenv(env_local)
+    print(f"[CONFIG] Loaded environment from {env_local}")
+else:
+    load_dotenv()  # Try default locations
+    print("[CONFIG] Warning: No .env file found, using system environment")
 
 
 def load_yaml_config() -> dict:
