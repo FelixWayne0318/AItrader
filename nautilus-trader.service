@@ -9,6 +9,11 @@ WorkingDirectory=/home/linuxuser/nautilus_AItrader
 Environment="PATH=/home/linuxuser/nautilus_AItrader/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="AUTO_CONFIRM=true"
 EnvironmentFile=-/home/linuxuser/nautilus_AItrader/.env
+
+# 启动前清理所有 main_live.py 进程，防止多实例冲突
+ExecStartPre=-/usr/bin/pkill -f "main_live.py"
+ExecStartPre=/bin/sleep 2
+
 ExecStart=/home/linuxuser/nautilus_AItrader/venv/bin/python main_live.py
 
 # Auto-restart on failure
