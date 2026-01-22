@@ -347,14 +347,17 @@ class DeepSeekAIStrategy(Strategy):
             # Use sentiment_timeframe from config, or derive from bar_type if not specified
             sentiment_tf = config.sentiment_timeframe
             if not sentiment_tf or sentiment_tf == "":
-                # Extract timeframe from bar_type (e.g., "1-MINUTE" -> "1m")
+                # Extract timeframe from bar_type (e.g., "15-MINUTE" -> "15m")
+                # NOTE: Must check longer strings first (15-MINUTE before 5-MINUTE)
                 bar_str = str(self.bar_type)
-                if "1-MINUTE" in bar_str:
-                    sentiment_tf = "1m"
+                if "15-MINUTE" in bar_str:
+                    sentiment_tf = "15m"
                 elif "5-MINUTE" in bar_str:
                     sentiment_tf = "5m"
-                elif "15-MINUTE" in bar_str:
-                    sentiment_tf = "15m"
+                elif "1-MINUTE" in bar_str:
+                    sentiment_tf = "1m"
+                elif "4-HOUR" in bar_str:
+                    sentiment_tf = "4h"
                 elif "1-HOUR" in bar_str:
                     sentiment_tf = "1h"
                 else:
@@ -506,21 +509,22 @@ class DeepSeekAIStrategy(Strategy):
             symbol = symbol_str.split('-')[0]
 
             # Convert bar type to Binance interval
+            # NOTE: Must check longer strings first (15-MINUTE before 5-MINUTE)
             bar_type_str = str(self.bar_type)
-            if '1-MINUTE' in bar_type_str:
-                interval = '1m'
+            if '15-MINUTE' in bar_type_str:
+                interval = '15m'
             elif '5-MINUTE' in bar_type_str:
                 interval = '5m'
-            elif '15-MINUTE' in bar_type_str:
-                interval = '15m'
-            elif '1-HOUR' in bar_type_str:
-                interval = '1h'
+            elif '1-MINUTE' in bar_type_str:
+                interval = '1m'
             elif '4-HOUR' in bar_type_str:
                 interval = '4h'
+            elif '1-HOUR' in bar_type_str:
+                interval = '1h'
             elif '1-DAY' in bar_type_str:
                 interval = '1d'
             else:
-                interval = '5m'  # Default fallback
+                interval = '15m'  # Default fallback
 
             self.log.info(
                 f"📡 Pre-fetching {limit} historical bars from Binance "
