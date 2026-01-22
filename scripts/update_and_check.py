@@ -19,8 +19,39 @@ import subprocess
 import json
 import importlib
 import traceback
+import time
+import hmac
+import hashlib
+import urllib.request
+import urllib.error
+import urllib.parse
+import ssl
 from datetime import datetime
 from pathlib import Path
+
+# ============================================================
+# 自动切换到 venv (解决环境变量检测问题)
+# ============================================================
+def ensure_venv():
+    """确保在 venv 中运行，否则自动切换"""
+    project_dir = Path(__file__).parent.parent.absolute()
+    venv_python = project_dir / "venv" / "bin" / "python"
+
+    # 检查是否已在 venv 中
+    in_venv = (
+        hasattr(sys, 'real_prefix') or
+        (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix)
+    )
+
+    if not in_venv and venv_python.exists():
+        print(f"\033[93m[!]\033[0m 检测到未使用 venv，自动切换...")
+        print(f"\033[94m[i]\033[0m 使用: {venv_python}")
+        os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+
+    return in_venv
+
+# 在导入其他模块前先确保 venv
+_in_venv = ensure_venv()
 
 # 颜色输出
 class C:
@@ -127,6 +158,14 @@ def check_dependencies():
 
     all_ok = True
 
+    # 检查 Python 版本 (CLAUDE.md 要求 >= 3.11)
+    py_ver = f"{sys.version_info.major}.{sys.version_info.minor}"
+    if sys.version_info >= (3, 11):
+        ok(f"Python: {py_ver}")
+    else:
+        fail(f"Python: {py_ver} (需要 >= 3.11)")
+        all_ok = False
+
     # 必需包
     required = [
         ("nautilus_trader", "1.221.0"),
@@ -175,8 +214,21 @@ def check_env_variables():
             ok(".env 文件已加载")
         else:
             warn(".env 文件不存在")
-    except:
-        pass
+    except ImportError:
+        warn("python-dotenv 未安装，尝试手动解析 .env")
+        # 手动解析 .env 文件作为后备方案
+        env_file = PROJECT_DIR / ".env"
+        if env_file.exists():
+            try:
+                with open(env_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, _, value = line.partition('=')
+                            os.environ.setdefault(key.strip(), value.strip().strip('"\''))
+                ok(".env 文件已手动加载")
+            except Exception as e:
+                warn(f".env 解析失败: {e}")
 
     all_ok = True
     required_vars = ["BINANCE_API_KEY", "BINANCE_API_SECRET", "DEEPSEEK_API_KEY"]
