@@ -313,8 +313,8 @@ class DeepSeekAIStrategy(Strategy):
                                 if loop is not None:
                                     try:
                                         loop.close()
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        self.log.warning(f"⚠️ Failed to close event loop: {e}")
 
                         # Start background thread for command listening
                         command_thread = threading.Thread(
@@ -856,10 +856,9 @@ class DeepSeekAIStrategy(Strategy):
         """
         # Check if trading is paused (thread-safe read)
         with self._state_lock:
-            is_paused = self.is_trading_paused
-        if is_paused:
-            self.log.info("⏸️ Trading is paused - skipping signal execution")
-            return
+            if self.is_trading_paused:
+                self.log.info("⏸️ Trading is paused - skipping signal execution")
+                return
         
         # Store signal and technical data for SL/TP calculation
         self.latest_signal_data = signal_data
@@ -1229,7 +1228,8 @@ class DeepSeekAIStrategy(Strategy):
             # - For BUY (LONG): SL must be BELOW entry price
             # - For SELL (SHORT): SL must be ABOVE entry price
             # Use epsilon for floating point comparison to avoid precision issues
-            PRICE_EPSILON = entry_price * 1e-8  # Relative tolerance for price comparison
+            # Add absolute minimum to handle extreme price scenarios
+            PRICE_EPSILON = max(entry_price * 1e-8, 1e-8)  # Relative tolerance with absolute floor
 
             if side == OrderSide.BUY:
                 # BUY: Stop loss below entry price
