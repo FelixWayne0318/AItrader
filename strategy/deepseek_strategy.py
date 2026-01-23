@@ -27,6 +27,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from indicators.technical_manager import TechnicalIndicatorManager
 from utils.deepseek_client import DeepSeekAnalyzer
 from utils.sentiment_client import SentimentDataFetcher
+from utils.binance_account import BinanceAccountFetcher
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
 # OCOManager no longer needed - using NautilusTrader's built-in bracket orders
 
@@ -208,6 +209,10 @@ class DeepSeekAIStrategy(Strategy):
         # IMPORTANT: Do NOT access indicator_manager from Telegram thread - it contains
         # Rust indicators (RSI, MACD) that are not Send/Sync and will cause panic
         self._cached_current_price: float = 0.0
+
+        # Real-time Binance account fetcher for accurate balance info
+        self.binance_account = BinanceAccountFetcher(logger=self.log)
+        self._real_balance: Dict[str, float] = {}  # Cached real balance from Binance
 
         # Track trailing stop state for each position
         self.trailing_stop_state: Dict[str, Dict[str, Any]] = {}
@@ -464,6 +469,9 @@ class DeepSeekAIStrategy(Strategy):
 
         self.log.info("Strategy started successfully")
 
+        # Fetch real account balance from Binance
+        self._update_real_balance()
+
         # Record start time for uptime tracking
         from datetime import datetime
         self.strategy_start_time = datetime.utcnow()
@@ -500,6 +508,45 @@ class DeepSeekAIStrategy(Strategy):
         self.unsubscribe_bars(self.bar_type)
 
         self.log.info("Strategy stopped")
+
+    def _update_real_balance(self) -> Dict[str, float]:
+        """
+        Fetch real account balance from Binance and update internal state.
+
+        This method is called:
+        - On strategy startup
+        - Periodically by Telegram /risk command
+        - Before position size calculation (optional)
+
+        Returns
+        -------
+        dict
+            Balance info with total_balance, available_balance, etc.
+        """
+        try:
+            balance = self.binance_account.get_balance()
+
+            if 'error' not in balance:
+                self._real_balance = balance
+
+                # Update equity if real balance is significantly different
+                real_total = balance.get('total_balance', 0)
+                if real_total > 0:
+                    # Log if there's a significant difference
+                    if abs(real_total - self.equity) > 10:
+                        self.log.info(
+                            f"💰 Real balance from Binance: ${real_total:.2f} "
+                            f"(configured equity: ${self.equity:.2f})"
+                        )
+
+                return balance
+            else:
+                self.log.warning(f"Failed to fetch real balance: {balance.get('error')}")
+                return {}
+
+        except Exception as e:
+            self.log.error(f"Error fetching real balance: {e}")
+            return {}
 
     def _prefetch_historical_bars(self, limit: int = 200):
         """
@@ -835,31 +882,48 @@ class DeepSeekAIStrategy(Strategy):
 
         return ((current - previous) / previous) * 100
 
-    def _get_current_position_data(self) -> Optional[Dict[str, Any]]:
-        """Get current position information."""
+    def _get_current_position_data(self, current_price: Optional[float] = None, from_telegram: bool = False) -> Optional[Dict[str, Any]]:
+        """
+        Get current position information.
+
+        Parameters
+        ----------
+        current_price : float, optional
+            If provided, use this price for PnL calculation.
+        from_telegram : bool, default False
+            If True, NEVER access indicator_manager (Telegram thread safety).
+            When True, will use cache.price() as fallback instead of indicator_manager.
+        """
         # Get open positions for this instrument
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
-        
+
         if not positions:
             return None
-        
+
         # Get the first open position (should only be one for netting OMS)
         position = positions[0]
-        
+
         if position and position.is_open:
             # Get current price for PnL calculation
-            # Use last bar close price as it's more reliable than cache.price()
-            # cache.price() requires tick data which may not be available
-            bars = self.indicator_manager.recent_bars
-            if bars:
-                current_price = bars[-1].close
-            else:
-                # Fallback: try cache.price() if bars not available
-                try:
-                    current_price = self.cache.price(self.instrument_id, PriceType.LAST)
-                except (TypeError, AttributeError):
-                    current_price = None
-            
+            if current_price is None or current_price == 0:
+                if from_telegram:
+                    # CRITICAL: Never access indicator_manager from Telegram thread!
+                    # Rust indicators (RSI, MACD) are not Send/Sync and will panic
+                    try:
+                        current_price = self.cache.price(self.instrument_id, PriceType.LAST)
+                    except (TypeError, AttributeError):
+                        current_price = None
+                else:
+                    # Main thread: safe to access indicator_manager
+                    bars = self.indicator_manager.recent_bars
+                    if bars:
+                        current_price = bars[-1].close
+                    else:
+                        try:
+                            current_price = self.cache.price(self.instrument_id, PriceType.LAST)
+                        except (TypeError, AttributeError):
+                            current_price = None
+
             return {
                 'side': 'long' if position.side == PositionSide.LONG else 'short',
                 'quantity': float(position.quantity),
@@ -1773,10 +1837,18 @@ class DeepSeekAIStrategy(Strategy):
                 return self._cmd_status()
             elif command == 'position':
                 return self._cmd_position()
+            elif command == 'orders':
+                return self._cmd_orders()
+            elif command == 'history':
+                return self._cmd_history()
+            elif command == 'risk':
+                return self._cmd_risk()
             elif command == 'pause':
                 return self._cmd_pause()
             elif command == 'resume':
                 return self._cmd_resume()
+            elif command == 'close':
+                return self._cmd_close()
             else:
                 return {
                     'success': False,
@@ -1790,7 +1862,7 @@ class DeepSeekAIStrategy(Strategy):
             }
     
     def _cmd_status(self) -> Dict[str, Any]:
-        """Handle /status command."""
+        """Handle /status command - shows REAL account balance."""
         try:
             from datetime import datetime
 
@@ -1799,15 +1871,21 @@ class DeepSeekAIStrategy(Strategy):
             # Telegram thread and Rust indicators (RSI) are not thread-safe
             with self._state_lock:
                 current_price = self._cached_current_price
-            
-            # Get unrealized PnL
-            unrealized_pnl = 0
+
+            # Fetch REAL balance from Binance
+            real_balance = self.binance_account.get_balance()
+            total_balance = real_balance.get('total_balance', 0)
+
+            # Get unrealized PnL from real balance or calculate from position
+            unrealized_pnl = real_balance.get('unrealized_pnl', 0)
             positions = self.cache.positions_open(instrument_id=self.instrument_id)
-            if positions:
+            if positions and current_price > 0:
                 position = positions[0]
-                if current_price > 0:
-                    unrealized_pnl = float(position.unrealized_pnl(current_price))
-            
+                # Use position-specific PnL if available
+                position_pnl = float(position.unrealized_pnl(current_price))
+                if position_pnl != 0:
+                    unrealized_pnl = position_pnl
+
             # Calculate uptime
             uptime_str = "N/A"
             if self.strategy_start_time:
@@ -1815,26 +1893,28 @@ class DeepSeekAIStrategy(Strategy):
                 hours = uptime_delta.total_seconds() // 3600
                 minutes = (uptime_delta.total_seconds() % 3600) // 60
                 uptime_str = f"{int(hours)}h {int(minutes)}m"
-            
+
             # Get last signal
             last_signal = "N/A"
             last_signal_time = "N/A"
             if hasattr(self, 'last_signal') and self.last_signal:
                 last_signal = f"{self.last_signal.get('signal', 'N/A')} ({self.last_signal.get('confidence', 'N/A')})"
-                # You could store timestamp if needed
-            
+
+            # Use real balance if available, otherwise fall back to configured equity
+            display_equity = total_balance if total_balance > 0 else self.equity
+
             status_info = {
                 'is_running': True,  # If this method is called, strategy is running
                 'is_paused': self.is_trading_paused,
                 'instrument_id': str(self.instrument_id),
                 'current_price': current_price,
-                'equity': self.equity,
+                'equity': display_equity,  # Now shows REAL balance
                 'unrealized_pnl': unrealized_pnl,
                 'last_signal': last_signal,
                 'last_signal_time': last_signal_time,
                 'uptime': uptime_str,
             }
-            
+
             message = self.telegram_bot.format_status_response(status_info) if self.telegram_bot else "Status unavailable"
             
             return {
@@ -1850,27 +1930,27 @@ class DeepSeekAIStrategy(Strategy):
     def _cmd_position(self) -> Dict[str, Any]:
         """Handle /position command."""
         try:
-            # Get current position
-            current_position = self._get_current_position_data()
-            
+            # Get current price from thread-safe cache FIRST
+            # IMPORTANT: Do NOT access indicator_manager here - it's called from
+            # Telegram thread and Rust indicators (RSI) are not thread-safe
+            with self._state_lock:
+                cached_price = self._cached_current_price
+
+            # Get current position - from_telegram=True ensures we NEVER access indicator_manager
+            current_position = self._get_current_position_data(current_price=cached_price, from_telegram=True)
+
             position_info = {
                 'has_position': current_position is not None,
             }
-            
+
             if current_position:
-                # Get current price from thread-safe cache
-                # IMPORTANT: Do NOT access indicator_manager here - it's called from
-                # Telegram thread and Rust indicators (RSI) are not thread-safe
-                with self._state_lock:
-                    current_price = self._cached_current_price
-                # Fallback to entry price if no price cached yet
-                if current_price == 0:
-                    current_price = current_position['avg_px']
-                
+                # Use cached price, fallback to entry price
+                current_price = cached_price if cached_price > 0 else current_position['avg_px']
+
                 entry_price = current_position['avg_px']
                 pnl = current_position['unrealized_pnl']
                 pnl_pct = (pnl / (entry_price * current_position['quantity'])) * 100 if entry_price > 0 else 0
-                
+
                 position_info.update({
                     'side': current_position['side'].upper(),
                     'quantity': current_position['quantity'],
@@ -1928,6 +2008,244 @@ class DeepSeekAIStrategy(Strategy):
             return {
                 'success': True,
                 'message': message
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_close(self) -> Dict[str, Any]:
+        """
+        Handle /close command - close current position.
+
+        Thread-safe: Does not access indicator_manager.
+        """
+        try:
+            from nautilus_trader.model.enums import OrderSide
+
+            # Get open positions
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+
+            if not positions:
+                return {
+                    'success': True,
+                    'message': "ℹ️ *No Open Position*\n\nThere is no position to close."
+                }
+
+            position = positions[0]
+            quantity = float(position.quantity)
+
+            # Determine closing side (opposite of position)
+            if position.side.name == 'LONG':
+                close_side = OrderSide.SELL
+                side_str = "LONG"
+            else:
+                close_side = OrderSide.BUY
+                side_str = "SHORT"
+
+            # Submit close order
+            self._submit_order(
+                side=close_side,
+                quantity=quantity,
+                reduce_only=True,
+            )
+
+            self.log.info(f"🔴 Position closed by Telegram command: {side_str} {quantity:.4f} BTC")
+
+            return {
+                'success': True,
+                'message': f"✅ *Position Closing*\n\n"
+                          f"Closing {side_str} position\n"
+                          f"Quantity: {quantity:.4f} BTC\n\n"
+                          f"⏳ Order submitted, waiting for fill..."
+            }
+        except Exception as e:
+            self.log.error(f"Error closing position: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_orders(self) -> Dict[str, Any]:
+        """
+        Handle /orders command - view open orders.
+
+        Thread-safe: Does not access indicator_manager.
+        """
+        try:
+            # Get open orders
+            orders = self.cache.orders_open(instrument_id=self.instrument_id)
+
+            if not orders:
+                return {
+                    'success': True,
+                    'message': "ℹ️ *No Open Orders*\n\nThere are no pending orders."
+                }
+
+            msg = f"📋 *Open Orders* ({len(orders)})\n\n"
+
+            for i, order in enumerate(orders, 1):
+                order_type = order.order_type.name
+                side = order.side.name
+                qty = float(order.quantity)
+
+                # Get price for limit/stop orders
+                price_str = ""
+                if hasattr(order, 'price') and order.price:
+                    price_str = f"@ ${float(order.price):,.2f}"
+                elif hasattr(order, 'trigger_price') and order.trigger_price:
+                    price_str = f"trigger @ ${float(order.trigger_price):,.2f}"
+
+                # Order status
+                status = order.status.name
+                reduce_only = "🔻" if order.is_reduce_only else ""
+
+                msg += f"{i}. {side} {order_type} {reduce_only}\n"
+                msg += f"   Qty: {qty:.4f} BTC {price_str}\n"
+                msg += f"   Status: {status}\n\n"
+
+            return {
+                'success': True,
+                'message': msg
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_history(self) -> Dict[str, Any]:
+        """
+        Handle /history command - view recent trade history.
+
+        Thread-safe: Does not access indicator_manager.
+        """
+        try:
+            # Get recent fills (last 10)
+            fills = list(self.cache.order_fills())[-10:]
+
+            if not fills:
+                return {
+                    'success': True,
+                    'message': "ℹ️ *No Trade History*\n\nNo trades have been executed yet."
+                }
+
+            msg = f"📊 *Recent Trades* (last {len(fills)})\n\n"
+
+            for fill in reversed(fills):  # Most recent first
+                side = fill.order_side.name
+                side_emoji = "🟢" if side == "BUY" else "🔴"
+                qty = float(fill.last_qty)
+                price = float(fill.last_px)
+                ts = fill.ts_event
+
+                # Format timestamp
+                from datetime import datetime
+                dt = datetime.utcfromtimestamp(ts / 1e9)
+                time_str = dt.strftime("%m-%d %H:%M")
+
+                msg += f"{side_emoji} {side} {qty:.4f} @ ${price:,.2f}\n"
+                msg += f"   Time: {time_str} UTC\n\n"
+
+            return {
+                'success': True,
+                'message': msg
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_risk(self) -> Dict[str, Any]:
+        """
+        Handle /risk command - view risk metrics.
+
+        Thread-safe: Does not access indicator_manager.
+        Shows REAL account balance from Binance API.
+        """
+        try:
+            with self._state_lock:
+                cached_price = self._cached_current_price
+
+            # Fetch REAL balance from Binance (with cache)
+            real_balance = self.binance_account.get_balance()
+            total_balance = real_balance.get('total_balance', 0)
+            available_balance = real_balance.get('available_balance', 0)
+            unrealized_pnl_total = real_balance.get('unrealized_pnl', 0)
+
+            # Get position info from NautilusTrader cache
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+
+            msg = "📊 *Risk Metrics*\n\n"
+
+            # Real Account Balance from Binance
+            msg += "*Account (Real-time)*:\n"
+            if total_balance > 0:
+                msg += f"• Balance: ${total_balance:,.2f} USDT\n"
+                msg += f"• Available: ${available_balance:,.2f} USDT\n"
+                if unrealized_pnl_total != 0:
+                    pnl_emoji = "📈" if unrealized_pnl_total >= 0 else "📉"
+                    msg += f"• Unrealized P&L: {pnl_emoji} ${unrealized_pnl_total:,.2f}\n"
+            else:
+                msg += f"• Balance: ⚠️ Unable to fetch (configured: ${self.equity:,.2f})\n"
+            msg += f"• Leverage: {self.leverage}x\n"
+            msg += f"• Max Position: {self.position_config.get('max_position_ratio', 0.3)*100:.0f}%\n\n"
+
+            # Use real balance for calculations if available, otherwise fall back to configured equity
+            effective_equity = total_balance if total_balance > 0 else self.equity
+
+            # Position risk
+            if positions:
+                position = positions[0]
+                qty = float(position.quantity)
+                entry_price = float(position.avg_px_open)
+                side = position.side.name
+
+                # Calculate position value
+                position_value = qty * cached_price if cached_price > 0 else qty * entry_price
+
+                # Calculate unrealized PnL
+                if cached_price > 0:
+                    if side == 'LONG':
+                        pnl = (cached_price - entry_price) * qty
+                        pnl_pct = ((cached_price / entry_price) - 1) * 100
+                    else:
+                        pnl = (entry_price - cached_price) * qty
+                        pnl_pct = ((entry_price / cached_price) - 1) * 100
+                else:
+                    pnl = 0
+                    pnl_pct = 0
+
+                pnl_emoji = "📈" if pnl >= 0 else "📉"
+
+                msg += "*Current Position*:\n"
+                msg += f"• Side: {side}\n"
+                msg += f"• Size: {qty:.4f} BTC (${position_value:,.2f})\n"
+                msg += f"• Entry: ${entry_price:,.2f}\n"
+                msg += f"• Current: ${cached_price:,.2f}\n"
+                msg += f"• P&L: {pnl_emoji} ${pnl:,.2f} ({pnl_pct:+.2f}%)\n\n"
+
+                # Risk exposure using real balance
+                exposure_pct = (position_value / effective_equity) * 100 if effective_equity > 0 else 0
+                msg += "*Risk Exposure*:\n"
+                msg += f"• Position/Balance: {exposure_pct:.1f}%\n"
+                msg += f"• Leveraged Exposure: {exposure_pct * self.leverage:.1f}%\n"
+            else:
+                msg += "*Current Position*: None\n"
+                msg += "*Risk Exposure*: 0%\n"
+
+            # Strategy settings
+            msg += f"\n*Strategy Settings*:\n"
+            msg += f"• Min Confidence: {self.min_confidence}\n"
+            msg += f"• Auto SL/TP: {'✅' if self.enable_auto_sl_tp else '❌'}\n"
+            msg += f"• Trailing Stop: {'✅' if self.enable_trailing_stop else '❌'}\n"
+            msg += f"• Trading Paused: {'⏸️ Yes' if self.is_trading_paused else '▶️ No'}\n"
+
+            return {
+                'success': True,
+                'message': msg
             }
         except Exception as e:
             return {

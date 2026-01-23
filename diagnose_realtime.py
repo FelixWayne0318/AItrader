@@ -574,3 +574,230 @@ print()
 print("=" * 70)
 print("  诊断完成 - 以上结果与实盘运行完全一致")
 print("=" * 70)
+
+# =============================================================================
+# 深入分析: 为什么没有交易信号?
+# =============================================================================
+print()
+print("=" * 70)
+print("  📋 深入分析: 信号产生条件")
+print("=" * 70)
+print()
+
+# 1. 技术指标详细分析
+print("[分析1] 技术指标阈值检查")
+print("-" * 50)
+
+rsi = technical_data.get('rsi', 50)
+rsi_upper = strategy_config.rsi_extreme_threshold_upper if hasattr(strategy_config, 'rsi_extreme_threshold_upper') else 70
+rsi_lower = strategy_config.rsi_extreme_threshold_lower if hasattr(strategy_config, 'rsi_extreme_threshold_lower') else 30
+
+print(f"  RSI: {rsi:.2f}")
+if rsi > rsi_upper:
+    print(f"    → 🔴 超买区 (>{rsi_upper}) - 可能触发 SELL")
+elif rsi < rsi_lower:
+    print(f"    → 🟢 超卖区 (<{rsi_lower}) - 可能触发 BUY")
+else:
+    print(f"    → ⚪ 中性区间 ({rsi_lower}-{rsi_upper}) - 无明确方向")
+    print(f"    → 距离超买: {rsi_upper - rsi:.2f} 点")
+    print(f"    → 距离超卖: {rsi - rsi_lower:.2f} 点")
+
+macd = technical_data.get('macd', 0)
+macd_signal = technical_data.get('macd_signal', 0)
+macd_hist = technical_data.get('macd_histogram', 0)
+print()
+print(f"  MACD: {macd:.4f}")
+print(f"  MACD Signal: {macd_signal:.4f}")
+print(f"  MACD Histogram: {macd_hist:.4f}")
+if macd > macd_signal:
+    print("    → 🟢 MACD 在信号线上方 - 看涨")
+else:
+    print("    → 🔴 MACD 在信号线下方 - 看跌")
+
+if macd_hist > 0:
+    print(f"    → 🟢 柱状图为正 (+{macd_hist:.4f}) - 上涨动能")
+else:
+    print(f"    → 🔴 柱状图为负 ({macd_hist:.4f}) - 下跌动能")
+
+# SMA 分析
+print()
+sma_5 = technical_data.get('sma_5', 0)
+sma_20 = technical_data.get('sma_20', 0)
+sma_50 = technical_data.get('sma_50', 0)
+print(f"  SMA_5: ${sma_5:,.2f}")
+print(f"  SMA_20: ${sma_20:,.2f}")
+print(f"  SMA_50: ${sma_50:,.2f}")
+print(f"  当前价格: ${current_price:,.2f}")
+
+if current_price > sma_5 > sma_20 > sma_50:
+    print("    → 🟢 完美多头排列 (价格 > SMA5 > SMA20 > SMA50)")
+elif current_price < sma_5 < sma_20 < sma_50:
+    print("    → 🔴 完美空头排列 (价格 < SMA5 < SMA20 < SMA50)")
+else:
+    print("    → ⚪ 无明确趋势排列")
+    if current_price > sma_20:
+        print(f"       价格在 SMA20 上方 (+{((current_price/sma_20)-1)*100:.2f}%)")
+    else:
+        print(f"       价格在 SMA20 下方 ({((current_price/sma_20)-1)*100:.2f}%)")
+
+# 布林带分析
+print()
+bb_upper = technical_data.get('bb_upper', 0)
+bb_lower = technical_data.get('bb_lower', 0)
+bb_width = bb_upper - bb_lower if bb_upper and bb_lower else 0
+bb_position = ((current_price - bb_lower) / bb_width * 100) if bb_width > 0 else 50
+
+print(f"  BB Upper: ${bb_upper:,.2f}")
+print(f"  BB Lower: ${bb_lower:,.2f}")
+print(f"  BB Width: ${bb_width:,.2f} ({bb_width/current_price*100:.2f}%)")
+print(f"  价格在带内位置: {bb_position:.1f}%")
+
+if bb_position > 80:
+    print("    → 🔴 接近上轨 (可能超买)")
+elif bb_position < 20:
+    print("    → 🟢 接近下轨 (可能超卖)")
+else:
+    print("    → ⚪ 带内中间区域")
+
+# 2. 趋势分析
+print()
+print("[分析2] 趋势强度分析")
+print("-" * 50)
+
+trend = technical_data.get('overall_trend', 'N/A')
+print(f"  整体趋势判断: {trend}")
+
+# 计算近期价格变化
+if len(bars) >= 10:
+    price_10_bars_ago = float(bars[-10].close)
+    price_change_10 = ((current_price - price_10_bars_ago) / price_10_bars_ago) * 100
+    print(f"  近10根K线变化: {price_change_10:+.2f}%")
+
+if len(bars) >= 20:
+    price_20_bars_ago = float(bars[-20].close)
+    price_change_20 = ((current_price - price_20_bars_ago) / price_20_bars_ago) * 100
+    print(f"  近20根K线变化: {price_change_20:+.2f}%")
+
+# 3. 情绪分析
+print()
+print("[分析3] 市场情绪分析")
+print("-" * 50)
+
+ls_ratio = sentiment_data.get('long_short_ratio', 1.0)
+print(f"  多空比: {ls_ratio:.4f}")
+
+if ls_ratio > 2.0:
+    print("    → 🔴 极度看多 (逆向指标: 可能下跌)")
+elif ls_ratio > 1.5:
+    print("    → 🟡 偏多 (市场乐观)")
+elif ls_ratio < 0.5:
+    print("    → 🔴 极度看空 (逆向指标: 可能上涨)")
+elif ls_ratio < 0.7:
+    print("    → 🟡 偏空 (市场悲观)")
+else:
+    print("    → ⚪ 多空平衡")
+
+# 4. 为什么 AI 返回 HOLD
+print()
+print("[分析4] AI 决策原因分析")
+print("-" * 50)
+
+print(f"  DeepSeek 完整理由:")
+deepseek_reason = signal_deepseek.get('reason', 'N/A')
+# 分行显示
+for i in range(0, len(deepseek_reason), 80):
+    print(f"    {deepseek_reason[i:i+80]}")
+
+print()
+print(f"  MultiAgent 辩论摘要:")
+multi_summary = signal_multi.get('debate_summary', signal_multi.get('reason', 'N/A'))
+for i in range(0, len(str(multi_summary)), 80):
+    print(f"    {str(multi_summary)[i:i+80]}")
+
+# 5. 触发交易的条件
+print()
+print("[分析5] 触发交易所需条件")
+print("-" * 50)
+
+print("  要触发 BUY 信号，通常需要:")
+print(f"    • RSI < {rsi_lower} (当前: {rsi:.2f}, 差 {rsi - rsi_lower:.2f})")
+print(f"    • MACD 金叉 (MACD > Signal, 当前: {macd:.4f} vs {macd_signal:.4f})")
+print(f"    • 价格在 BB 下轨附近 (当前位置: {bb_position:.1f}%)")
+print(f"    • 趋势转多 (当前: {trend})")
+print()
+print("  要触发 SELL 信号，通常需要:")
+print(f"    • RSI > {rsi_upper} (当前: {rsi:.2f}, 差 {rsi_upper - rsi:.2f})")
+print(f"    • MACD 死叉 (MACD < Signal, 当前: {'是' if macd < macd_signal else '否'})")
+print(f"    • 价格在 BB 上轨附近 (当前位置: {bb_position:.1f}%)")
+print(f"    • 趋势转空 (当前: {trend})")
+
+# 6. 建议
+print()
+print("[分析6] 诊断建议")
+print("-" * 50)
+
+if final_signal == 'HOLD':
+    print("  📌 当前市场状态分析:")
+
+    # 综合评分
+    bullish_score = 0
+    bearish_score = 0
+
+    # RSI
+    if rsi < 40:
+        bullish_score += 1
+    elif rsi > 60:
+        bearish_score += 1
+
+    # MACD
+    if macd > macd_signal:
+        bullish_score += 1
+    else:
+        bearish_score += 1
+
+    # Price vs SMA20
+    if current_price > sma_20:
+        bullish_score += 1
+    else:
+        bearish_score += 1
+
+    # BB position
+    if bb_position < 30:
+        bullish_score += 1
+    elif bb_position > 70:
+        bearish_score += 1
+
+    # Long/Short ratio (逆向)
+    if ls_ratio > 2.0:
+        bearish_score += 1
+    elif ls_ratio < 0.7:
+        bullish_score += 1
+
+    print(f"    多头信号得分: {bullish_score}/5")
+    print(f"    空头信号得分: {bearish_score}/5")
+
+    if bullish_score > bearish_score + 1:
+        print("    → 偏多头，但信号不够强烈")
+    elif bearish_score > bullish_score + 1:
+        print("    → 偏空头，但信号不够强烈")
+    else:
+        print("    → 多空信号混杂，无明确方向")
+
+    print()
+    print("  💡 HOLD 的常见原因:")
+    print("    1. 技术指标处于中性区间 (RSI 30-70)")
+    print("    2. 趋势不明确 (震荡整理)")
+    print("    3. 多头和空头信号相互矛盾")
+    print("    4. 市场波动率低，缺乏明确方向")
+    print()
+    print("  ⏳ 等待以下情况之一发生:")
+    print("    • RSI 突破 30 或 70")
+    print("    • MACD 形成明确金叉/死叉")
+    print("    • 价格突破关键支撑/阻力位")
+    print(f"      支撑: ${technical_data.get('support', 0):,.2f}")
+    print(f"      阻力: ${technical_data.get('resistance', 0):,.2f}")
+
+print()
+print("=" * 70)
+print("  深入分析完成")
+print("=" * 70)

@@ -142,6 +142,15 @@ Environment=AUTO_CONFIRM=true
    - 影响方法：`_cmd_status()`, `_cmd_position()` 改用缓存价格
    - 文件：`strategy/deepseek_strategy.py`
 
+9. **Telegram Webhook 冲突** (polling 模式失败)
+   - 问题：服务启动后持续报错 `can't use getUpdates method while webhook is active`
+   - 原因：Bot 之前被设置了 webhook，与 polling 模式冲突
+   - 根因：`delete_webhook()` 调用时机太晚，在 `Application.initialize()` 之后
+   - 修复：添加 `_delete_webhook_standalone()` 方法，在初始化前先删除 webhook
+   - 改进：双重删除 (初始化前 + 初始化后)，冲突重试时也删除
+   - 文件：`utils/telegram_command_handler.py`
+   - 手动修复：`curl "https://api.telegram.org/bot<TOKEN>/deleteWebhook"`
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
@@ -150,6 +159,14 @@ Environment=AUTO_CONFIRM=true
 - ❌ 止损在入场价错误一侧 → 已修复，会自动回退到默认2%
 - ❌ 使用 Python 3.10 → ✅ 必须使用 Python 3.11+
 - ❌ 从后台线程访问 `indicator_manager` → ✅ 使用 `_cached_current_price` (Rust 指标不可跨线程)
+- ❌ **服务器命令不带 cd** → ✅ **始终先 cd 到项目目录**
+  ```bash
+  # 错误：直接执行命令会报 "not a git repository"
+  git status
+
+  # 正确：始终以 cd 开头
+  cd /home/linuxuser/nautilus_AItrader && git status
+  ```
 
 ## 文件结构
 
