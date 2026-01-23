@@ -30,13 +30,9 @@ from utils.sentiment_client import SentimentDataFetcher
 from utils.binance_account import BinanceAccountFetcher
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
 from strategy.trading_logic import (
-    check_divergence,
-    resolve_divergence_by_confidence,
     check_confidence_threshold,
     calculate_position_size,
-    create_hold_signal,
     process_signals,
-    CONFIDENCE_LEVELS,
 )
 # OCOManager no longer needed - using NautilusTrader's built-in bracket orders
 
@@ -808,78 +804,33 @@ class DeepSeekAIStrategy(Strategy):
                 if signal_multi.get('debate_summary'):
                     self.log.info(f"📋 Debate: {signal_multi['debate_summary'][:200]}...")
 
-                # Log comparison result and apply MultiAgent SL/TP when consensus exists
-                if signal_deepseek['signal'] == signal_multi['signal']:
-                    self.log.info("✅ Consensus: Both analyzers agree")
-                    # When consensus, use MultiAgent's SL/TP if available (more refined from debate)
-                    if signal_multi.get('stop_loss') and signal_multi.get('take_profit'):
-                        signal_deepseek['stop_loss_multi'] = signal_multi['stop_loss']
-                        signal_deepseek['take_profit_multi'] = signal_multi['take_profit']
-                        self.log.info(
-                            f"📊 Using MultiAgent SL/TP: SL=${signal_multi['stop_loss']:,.2f}, "
-                            f"TP=${signal_multi['take_profit']:,.2f}"
-                        )
-                else:
-                    # Check for opposing actionable signals (BUY vs SELL)
-                    opposing_signals = {signal_deepseek['signal'], signal_multi['signal']} == {'BUY', 'SELL'}
+                # Use shared process_signals for 100% consistency with diagnostic
+                # This ensures diagnose_realtime.py and live trading use identical logic
+                class LogAdapter:
+                    """Adapter to make self.log compatible with trading_logic module."""
+                    def __init__(self, strategy_log):
+                        self._log = strategy_log
+                    def info(self, msg):
+                        self._log.info(msg)
+                    def warning(self, msg):
+                        self._log.warning(msg)
+                    def error(self, msg):
+                        self._log.error(msg)
 
-                    # Check for HOLD vs actionable signal (HOLD vs BUY or HOLD vs SELL)
-                    hold_vs_action = (
-                        (signal_deepseek['signal'] == 'HOLD' and signal_multi['signal'] in ['BUY', 'SELL']) or
-                        (signal_multi['signal'] == 'HOLD' and signal_deepseek['signal'] in ['BUY', 'SELL'])
-                    )
+                logger = LogAdapter(self.log)
+                signal_deepseek, _, _ = process_signals(
+                    signal_deepseek=signal_deepseek,
+                    signal_multi=signal_multi,
+                    use_confidence_fusion=self.use_confidence_fusion,
+                    skip_on_divergence=self.skip_on_divergence,
+                    logger=logger,
+                )
 
-                    if opposing_signals or hold_vs_action:
-                        # Use weighted confidence fusion if enabled (recommended)
-                        if self.use_confidence_fusion:
-                            resolved_signal = self._resolve_divergence_by_confidence(
-                                signal_deepseek, signal_multi
-                            )
-                            if resolved_signal:
-                                signal_deepseek = resolved_signal
-                            # If fusion returns None, fall through to skip_on_divergence check
-                            elif self.skip_on_divergence:
-                                self.log.warning(
-                                    f"🚫 Equal confidence divergence: "
-                                    f"DeepSeek={signal_deepseek['signal']}({signal_deepseek['confidence']}), "
-                                    f"MultiAgent={signal_multi['signal']}({signal_multi['confidence']}) - SKIPPING"
-                                )
-                                signal_deepseek = self._create_hold_signal(
-                                    "Equal confidence divergence - trade skipped for safety"
-                                )
-                            else:
-                                # Equal confidence but skip_on_divergence=False - use DeepSeek signal
-                                self.log.warning(
-                                    f"⚠️ Equal confidence divergence: "
-                                    f"DeepSeek={signal_deepseek['signal']}({signal_deepseek.get('confidence', 'N/A')}), "
-                                    f"MultiAgent={signal_multi['signal']}({signal_multi.get('confidence', 'N/A')}) "
-                                    f"- using DeepSeek signal (skip_on_divergence=False)"
-                                )
-                        elif self.skip_on_divergence:
-                            # Legacy behavior: skip all opposing signals
-                            self.log.warning(
-                                f"🚫 Opposing signals: DeepSeek={signal_deepseek['signal']}, "
-                                f"MultiAgent={signal_multi['signal']} - SKIPPING trade (skip_on_divergence=True)"
-                            )
-                            signal_deepseek = self._create_hold_signal(
-                                f"Trade skipped: opposing signals (DeepSeek={signal_deepseek['signal']}, MultiAgent={signal_multi['signal']})"
-                            )
-                        else:
-                            self.log.warning(
-                                f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
-                                f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
-                            )
-                    else:
-                        # Non-actionable divergence (e.g., both HOLD with different reasons)
-                        self.log.info(
-                            f"ℹ️ Minor divergence: DeepSeek={signal_deepseek['signal']}, "
-                            f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
-                        )
             except Exception as e:
                 self.log.warning(f"⚠️ Multi-Agent comparison failed (non-critical): {e}")
 
-            # Use DeepSeek signal for actual trading (safe during validation period)
-            # MultiAgent's SL/TP may be attached when consensus exists
+            # Use processed signal for actual trading
+            # Signal has been merged/resolved by process_signals()
             signal_data = signal_deepseek
 
             # Send Telegram signal notification (only for actionable signals)
@@ -993,66 +944,10 @@ class DeepSeekAIStrategy(Strategy):
 
         return None
 
-    def _create_hold_signal(self, reason: str) -> Dict[str, Any]:
-        """
-        Create a standardized HOLD signal dictionary.
-
-        Parameters
-        ----------
-        reason : str
-            The reason for holding (skipping trade)
-
-        Returns
-        -------
-        Dict[str, Any]
-            Standardized HOLD signal with LOW confidence
-        """
-        return {
-            'signal': 'HOLD',
-            'confidence': 'LOW',
-            'reason': reason,
-            'stop_loss': None,
-            'take_profit': None,
-        }
-
-    def _resolve_divergence_by_confidence(
-        self,
-        signal_deepseek: Dict[str, Any],
-        signal_multi: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Resolve opposing signals using weighted confidence fusion.
-
-        Uses shared trading_logic module to ensure consistency with diagnostic tool.
-
-        Parameters
-        ----------
-        signal_deepseek : Dict
-            DeepSeek AI signal with 'signal' and 'confidence'
-        signal_multi : Dict
-            MultiAgent signal with 'signal' and 'confidence'
-
-        Returns
-        -------
-        Optional[Dict]
-            Resolved signal dict, or None if equal confidence (should skip)
-        """
-        # Create a simple logger adapter that uses self.log
-        class LogAdapter:
-            def __init__(self, strategy_log):
-                self._log = strategy_log
-            def info(self, msg):
-                self._log.info(msg)
-            def warning(self, msg):
-                self._log.warning(msg)
-            def error(self, msg):
-                self._log.error(msg)
-
-        logger = LogAdapter(self.log)
-        resolved, _ = resolve_divergence_by_confidence(
-            signal_deepseek, signal_multi, logger
-        )
-        return resolved
+    # NOTE: _create_hold_signal and _resolve_divergence_by_confidence methods
+    # have been removed. Signal processing now uses the shared process_signals()
+    # function from strategy.trading_logic module for 100% consistency with
+    # diagnose_realtime.py diagnostic tool.
 
     def _execute_trade(
         self,
