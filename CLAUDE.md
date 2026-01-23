@@ -217,19 +217,110 @@ Environment=AUTO_CONFIRM=true
 └── README.md                 # 项目文档
 ```
 
-## API 密钥 (保存在 ~/.env.aitrader)
+## 配置参数完整列表
+
+配置分为两部分：
+- **敏感信息**: `~/.env.aitrader` (API 密钥等)
+- **策略参数**: `configs/strategy_config.yaml`
+
+### 环境变量 (~/.env.aitrader)
 
 ```bash
-# 编辑配置文件
-nano ~/.env.aitrader
+# 必填
+BINANCE_API_KEY=xxx           # Binance API Key
+BINANCE_API_SECRET=xxx        # Binance API Secret
+DEEPSEEK_API_KEY=xxx          # DeepSeek AI API Key
+
+# Telegram (可选，启用通知需要)
+TELEGRAM_BOT_TOKEN=xxx        # Telegram Bot Token
+TELEGRAM_CHAT_ID=xxx          # 你的个人用户 ID
 ```
 
-```
-BINANCE_API_KEY=xxx
-BINANCE_API_SECRET=xxx
-DEEPSEEK_API_KEY=xxx
-TELEGRAM_BOT_TOKEN=xxx
-TELEGRAM_CHAT_ID=xxx
+### 策略参数 (configs/strategy_config.yaml)
+
+#### 资金配置
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `equity` | 1000 | 备用资金值 (自动获取真实余额时不用) |
+| `leverage` | 5 | 杠杆倍数 (建议 3-10) |
+| `use_real_balance_as_equity` | true | 自动从 Binance 获取真实余额 |
+
+#### 仓位管理
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `base_usdt_amount` | 100 | 基础仓位 USDT (Binance 最低 $100) |
+| `high_confidence_multiplier` | 1.5 | 高信心仓位乘数 → $150 |
+| `medium_confidence_multiplier` | 1.0 | 中等信心 → $100 |
+| `low_confidence_multiplier` | 0.5 | 低信心 → $50 |
+| `max_position_ratio` | 0.30 | 最大仓位比例 (30% of equity) |
+
+#### 风险管理
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `min_confidence_to_trade` | MEDIUM | 最低交易信心 (LOW/MEDIUM/HIGH) |
+| `skip_on_divergence` | true | AI 分歧时跳过交易 (保守模式后备) |
+| `use_confidence_fusion` | true | 启用加权信心融合 (推荐) |
+| `rsi_extreme_threshold_upper` | 75 | RSI 超买阈值 |
+| `rsi_extreme_threshold_lower` | 25 | RSI 超卖阈值 |
+
+**加权信心融合说明**：当 DeepSeek 和 MultiAgent 信号相反时 (BUY vs SELL)，使用信心更高的信号：
+- HIGH 权重=3, MEDIUM=2, LOW=1
+- 例：DeepSeek=BUY(HIGH) vs MultiAgent=SELL(MEDIUM) → 使用 BUY
+- 只有权重相等时才跳过交易
+
+#### 止损止盈
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `enable_auto_sl_tp` | true | 启用自动止损止盈 |
+| `sl_buffer_pct` | 0.001 | 止损缓冲 (0.1%) |
+| `tp_high_confidence_pct` | 0.03 | 高信心止盈 3% |
+| `tp_medium_confidence_pct` | 0.02 | 中等信心止盈 2% |
+| `tp_low_confidence_pct` | 0.01 | 低信心止盈 1% |
+
+#### 移动止损
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `enable_trailing_stop` | true | 启用移动止损 |
+| `trailing_activation_pct` | 0.01 | 盈利 1% 后启动 |
+| `trailing_distance_pct` | 0.005 | 跟踪距离 0.5% |
+
+#### AI 配置
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `deepseek.model` | deepseek-chat | DeepSeek 模型 |
+| `deepseek.temperature` | 0.3 | 温度参数 |
+| `debate_rounds` | 2 | 多代理辩论轮数 (1-3) |
+
+#### 定时器
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `timer_interval_sec` | 900 | 分析间隔 (秒)，15分钟 |
+
+### Telegram 命令
+
+| 命令 | 说明 |
+|------|------|
+| `/menu` | 显示交互按钮菜单 |
+| `/status` | 查看系统状态和真实余额 |
+| `/position` | 查看当前持仓 |
+| `/orders` | 查看挂单 |
+| `/history` | 最近交易记录 |
+| `/risk` | 风险指标 |
+| `/pause` | 暂停交易 |
+| `/resume` | 恢复交易 |
+| `/close` | 平仓 |
+
+### 修改配置
+
+```bash
+# 修改策略参数
+nano /home/linuxuser/nautilus_AItrader/configs/strategy_config.yaml
+
+# 修改 API 密钥
+nano ~/.env.aitrader
+
+# 修改后重启服务生效
+sudo systemctl restart nautilus-trader
 ```
 
 ## 联系方式

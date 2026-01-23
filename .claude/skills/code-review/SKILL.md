@@ -72,6 +72,8 @@ git diff --cached
 - NautilusTrader API 使用是否正确
 - 入口文件必须是 `main_live.py` (非 `main.py`)
 - Telegram 通知配置正确性
+- 多代理分歧处理: `use_confidence_fusion` 和 `skip_on_divergence` 配置一致性
+- diagnose_realtime.py 与 deepseek_strategy.py 逻辑同步
 
 ### Step 3: 置信度评分
 
@@ -155,10 +157,12 @@ git diff --cached
 
 | 文件 | 审查重点 |
 |------|----------|
-| `strategy/deepseek_strategy.py` | 止损逻辑、交易信号 |
+| `strategy/deepseek_strategy.py` | 止损逻辑、交易信号、分歧处理 |
+| `diagnose_realtime.py` | 必须与策略逻辑同步 |
 | `utils/*.py` | API 调用、错误处理 |
 | `patches/*.py` | 兼容性、副作用 |
-| `main_live.py` | 配置、初始化 |
+| `main_live.py` | 配置加载、初始化 |
+| `configs/strategy_config.yaml` | 配置参数完整性 |
 
 ## CI/CD 集成
 

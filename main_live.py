@@ -146,8 +146,8 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
     
     # Get strategy parameters from env or YAML or use defaults
     position_config = strategy_yaml.get('position_management', {})
-    equity = get_env_float('EQUITY', str(strategy_yaml.get('equity', '400')))
-    leverage = get_env_float('LEVERAGE', str(strategy_yaml.get('leverage', '10')))
+    equity = get_env_float('EQUITY', str(strategy_yaml.get('equity', '1000')))
+    leverage = get_env_float('LEVERAGE', str(strategy_yaml.get('leverage', '5')))
     base_position = get_env_float('BASE_POSITION_USDT', str(position_config.get('base_usdt_amount', '100')))
     timeframe = get_env_str('TIMEFRAME', '15m')  # Production: 15-minute timeframe
     
@@ -214,6 +214,10 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
         rsi_extreme_threshold_upper=75.0,
         rsi_extreme_threshold_lower=25.0,
         rsi_extreme_multiplier=0.7,
+
+        # Multi-Agent Divergence Handling
+        skip_on_divergence=strategy_yaml.get('risk', {}).get('skip_on_divergence', True),
+        use_confidence_fusion=strategy_yaml.get('risk', {}).get('use_confidence_fusion', True),
 
         # Execution
         position_adjustment_threshold=0.001,

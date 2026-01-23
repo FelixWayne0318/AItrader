@@ -40,8 +40,8 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     bar_type: str
 
     # Capital
-    equity: float = 10000.0  # 备用值，当无法获取真实余额时使用
-    leverage: float = 10.0
+    equity: float = 1000.0  # 备用值，当无法获取真实余额时使用
+    leverage: float = 5.0   # 杠杆倍数 (建议 3-10)
     use_real_balance_as_equity: bool = True  # 自动从 Binance 获取真实余额作为 equity
 
     # Position sizing
@@ -49,7 +49,7 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     high_confidence_multiplier: float = 1.5
     medium_confidence_multiplier: float = 1.0
     low_confidence_multiplier: float = 0.5
-    max_position_ratio: float = 0.10
+    max_position_ratio: float = 0.30  # 最大仓位比例 (30% of equity)
     trend_strength_multiplier: float = 1.2
     min_trade_amount: float = 0.001
 
@@ -83,9 +83,11 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
 
     # Multi-Agent Divergence Handling
     # When DeepSeek and MultiAgent have opposing signals (BUY vs SELL),
-    # skip the trade for safety. Based on industry best practices:
-    # "High-confidence conflicting signals result in trade abstention"
-    skip_on_divergence: bool = True
+    # use weighted confidence fusion instead of simple skip.
+    # Based on industry best practices: QuantAgent, TradingAgents frameworks
+    skip_on_divergence: bool = True  # 完全跳过分歧（保守模式）
+    use_confidence_fusion: bool = True  # 启用加权信心融合（推荐）
+    # 当两者都启用时，confidence_fusion 优先
     
     # Stop Loss & Take Profit
     enable_auto_sl_tp: bool = True
@@ -176,6 +178,7 @@ class DeepSeekAIStrategy(Strategy):
 
         # Multi-Agent Divergence Handling
         self.skip_on_divergence = config.skip_on_divergence
+        self.use_confidence_fusion = config.use_confidence_fusion
 
         # Stop Loss & Take Profit
         self.enable_auto_sl_tp = config.enable_auto_sl_tp
@@ -811,21 +814,48 @@ class DeepSeekAIStrategy(Strategy):
                     # Check for opposing actionable signals (BUY vs SELL)
                     opposing_signals = {signal_deepseek['signal'], signal_multi['signal']} == {'BUY', 'SELL'}
 
-                    if opposing_signals and self.skip_on_divergence:
-                        # Industry best practice: skip trade when AI systems have opposing views
-                        self.log.warning(
-                            f"🚫 Opposing signals: DeepSeek={signal_deepseek['signal']}, "
-                            f"MultiAgent={signal_multi['signal']} - SKIPPING trade (skip_on_divergence=True)"
-                        )
-                        # Override to HOLD
-                        signal_deepseek = {
-                            'signal': 'HOLD',
-                            'confidence': 'LOW',
-                            'reason': f"Trade skipped: opposing signals (DeepSeek={signal_deepseek['signal']}, MultiAgent={signal_multi['signal']})",
-                            'stop_loss': None,
-                            'take_profit': None,
-                        }
+                    if opposing_signals:
+                        # Use weighted confidence fusion if enabled (recommended)
+                        if self.use_confidence_fusion:
+                            resolved_signal = self._resolve_divergence_by_confidence(
+                                signal_deepseek, signal_multi
+                            )
+                            if resolved_signal:
+                                signal_deepseek = resolved_signal
+                            # If fusion returns None, fall through to skip_on_divergence check
+                            elif self.skip_on_divergence:
+                                self.log.warning(
+                                    f"🚫 Equal confidence divergence: "
+                                    f"DeepSeek={signal_deepseek['signal']}({signal_deepseek['confidence']}), "
+                                    f"MultiAgent={signal_multi['signal']}({signal_multi['confidence']}) - SKIPPING"
+                                )
+                                signal_deepseek = self._create_hold_signal(
+                                    "Equal confidence divergence - trade skipped for safety"
+                                )
+                            else:
+                                # Equal confidence but skip_on_divergence=False - use DeepSeek signal
+                                self.log.warning(
+                                    f"⚠️ Equal confidence divergence: "
+                                    f"DeepSeek={signal_deepseek['signal']}({signal_deepseek.get('confidence', 'N/A')}), "
+                                    f"MultiAgent={signal_multi['signal']}({signal_multi.get('confidence', 'N/A')}) "
+                                    f"- using DeepSeek signal (skip_on_divergence=False)"
+                                )
+                        elif self.skip_on_divergence:
+                            # Legacy behavior: skip all opposing signals
+                            self.log.warning(
+                                f"🚫 Opposing signals: DeepSeek={signal_deepseek['signal']}, "
+                                f"MultiAgent={signal_multi['signal']} - SKIPPING trade (skip_on_divergence=True)"
+                            )
+                            signal_deepseek = self._create_hold_signal(
+                                f"Trade skipped: opposing signals (DeepSeek={signal_deepseek['signal']}, MultiAgent={signal_multi['signal']})"
+                            )
+                        else:
+                            self.log.warning(
+                                f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
+                                f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
+                            )
                     else:
+                        # Non-opposing divergence (e.g., BUY vs HOLD)
                         self.log.warning(
                             f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
                             f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
@@ -947,6 +977,131 @@ class DeepSeekAIStrategy(Strategy):
             }
 
         return None
+
+    def _create_hold_signal(self, reason: str) -> Dict[str, Any]:
+        """
+        Create a standardized HOLD signal dictionary.
+
+        Parameters
+        ----------
+        reason : str
+            The reason for holding (skipping trade)
+
+        Returns
+        -------
+        Dict[str, Any]
+            Standardized HOLD signal with LOW confidence
+        """
+        return {
+            'signal': 'HOLD',
+            'confidence': 'LOW',
+            'reason': reason,
+            'stop_loss': None,
+            'take_profit': None,
+        }
+
+    def _resolve_divergence_by_confidence(
+        self,
+        signal_deepseek: Dict[str, Any],
+        signal_multi: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Resolve opposing signals using weighted confidence fusion.
+
+        Based on industry best practices from QuantAgent and TradingAgents frameworks:
+        - Use the signal with higher confidence
+        - Only skip when confidence levels are equal
+
+        Parameters
+        ----------
+        signal_deepseek : Dict
+            DeepSeek AI signal with 'signal' and 'confidence'
+        signal_multi : Dict
+            MultiAgent signal with 'signal' and 'confidence'
+
+        Returns
+        -------
+        Optional[Dict]
+            Resolved signal dict, or None if equal confidence (should skip),
+            or None if input validation fails
+        """
+        # Parameter validation - check for None signals
+        if signal_deepseek is None or signal_multi is None:
+            self.log.error(
+                f"❌ Confidence fusion failed: signal is None "
+                f"(deepseek={signal_deepseek is not None}, multi={signal_multi is not None})"
+            )
+            return None
+
+        # Check for required 'signal' key
+        if 'signal' not in signal_deepseek:
+            self.log.error("❌ Confidence fusion failed: DeepSeek signal missing 'signal' key")
+            return None
+        if 'signal' not in signal_multi:
+            self.log.error("❌ Confidence fusion failed: MultiAgent signal missing 'signal' key")
+            return None
+
+        # Confidence weight mapping
+        confidence_weight = {
+            'HIGH': 3,
+            'MEDIUM': 2,
+            'LOW': 1,
+        }
+
+        # Valid confidence values
+        valid_confidences = {'HIGH', 'MEDIUM', 'LOW'}
+
+        ds_signal = signal_deepseek['signal']
+        ds_conf = signal_deepseek.get('confidence', 'MEDIUM')
+        ma_signal = signal_multi['signal']
+        ma_conf = signal_multi.get('confidence', 'MEDIUM')
+
+        # Validate and warn for invalid confidence values
+        if ds_conf not in valid_confidences:
+            self.log.warning(
+                f"⚠️ Invalid DeepSeek confidence '{ds_conf}', using MEDIUM as default"
+            )
+            ds_conf = 'MEDIUM'
+        if ma_conf not in valid_confidences:
+            self.log.warning(
+                f"⚠️ Invalid MultiAgent confidence '{ma_conf}', using MEDIUM as default"
+            )
+            ma_conf = 'MEDIUM'
+
+        ds_weight = confidence_weight.get(ds_conf, 2)
+        ma_weight = confidence_weight.get(ma_conf, 2)
+
+        self.log.info(
+            f"🔀 Confidence fusion: DeepSeek={ds_signal}({ds_conf}, w={ds_weight}) "
+            f"vs MultiAgent={ma_signal}({ma_conf}, w={ma_weight})"
+        )
+
+        if ds_weight > ma_weight:
+            # DeepSeek has higher confidence - use its signal
+            self.log.info(
+                f"✅ Fusion result: Using DeepSeek signal ({ds_signal}) - higher confidence"
+            )
+            return signal_deepseek
+
+        elif ma_weight > ds_weight:
+            # MultiAgent has higher confidence - use its signal
+            self.log.info(
+                f"✅ Fusion result: Using MultiAgent signal ({ma_signal}) - higher confidence"
+            )
+            # Construct signal in DeepSeek format
+            return {
+                'signal': ma_signal,
+                'confidence': ma_conf,
+                'reason': f"MultiAgent signal selected (higher confidence: {ma_conf} vs {ds_conf}). {signal_multi.get('debate_summary', '')}",
+                'stop_loss': signal_multi.get('stop_loss'),
+                'take_profit': signal_multi.get('take_profit'),
+            }
+        else:
+            # Equal confidence - return None to trigger skip
+            self.log.warning(
+                f"⚖️ Equal confidence ({ds_conf}) - cannot resolve divergence"
+            )
+            return None
 
     def _execute_trade(
         self,
