@@ -146,8 +146,8 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
     
     # Get strategy parameters from env or YAML or use defaults
     position_config = strategy_yaml.get('position_management', {})
-    equity = get_env_float('EQUITY', str(strategy_yaml.get('equity', '400')))
-    leverage = get_env_float('LEVERAGE', str(strategy_yaml.get('leverage', '10')))
+    equity = get_env_float('EQUITY', str(strategy_yaml.get('equity', '1000')))
+    leverage = get_env_float('LEVERAGE', str(strategy_yaml.get('leverage', '5')))
     base_position = get_env_float('BASE_POSITION_USDT', str(position_config.get('base_usdt_amount', '100')))
     timeframe = get_env_str('TIMEFRAME', '15m')  # Production: 15-minute timeframe
     
