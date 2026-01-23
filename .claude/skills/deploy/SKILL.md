@@ -2,6 +2,7 @@
 name: deploy
 description: 部署交易机器人到服务器。用于更新代码、重启服务、检查状态。Use when deploying, updating code, restarting service, or checking deployment status.
 disable-model-invocation: true
+argument-hint: "[restart|status|update|reinstall]"
 allowed-tools: Bash, Read, Grep
 ---
 

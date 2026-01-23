@@ -1,6 +1,8 @@
 ---
 name: stop-loss-check
 description: 验证止损设置是否正确，确保止损在入场价正确一侧。Use when validating stop loss, checking SL placement, or before live trading to ensure SL is on correct side of entry price.
+disable-model-invocation: true
+argument-hint: "[test|verify|check]"
 allowed-tools: Read, Grep, Bash(python3:*)
 ---
 
