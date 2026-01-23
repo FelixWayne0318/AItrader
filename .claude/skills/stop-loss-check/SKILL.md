@@ -1,84 +1,88 @@
 ---
 name: stop-loss-check
-description: 验证止损设置是否正确，确保止损在入场价正确一侧。Use when validating stop loss, checking SL placement, or before live trading to ensure SL is on correct side of entry price.
-disable-model-invocation: true
-argument-hint: "[test|verify|check]"
-allowed-tools: Read, Grep, Bash(python3:*)
+description: |
+  Validate stop-loss placement to ensure it's on the correct side of entry price. 验证止损设置是否正确。
+
+  Use this skill when:
+  - Validating stop-loss configuration (验证止损配置)
+  - Checking SL placement before live trading (实盘前检查止损位置)
+  - Debugging stop-loss trigger issues (调试止损触发问题)
+  - Verifying the stop-loss bug fix (验证止损修复)
+
+  Keywords: stop-loss, SL, entry price, validation, trading, 止损, 入场价, 验证
 ---
 
-# 止损验证
+# Stop-Loss Validation
 
-## 核心规则
+## Core Rules
 
-| 方向 | 止损位置 | 验证条件 |
-|------|----------|----------|
-| **LONG (做多)** | 止损必须 < 入场价 | `stop_loss_price < entry_price - PRICE_EPSILON` |
-| **SHORT (做空)** | 止损必须 > 入场价 | `stop_loss_price > entry_price + PRICE_EPSILON` |
+| Direction | Stop-Loss Position | Validation |
+|-----------|-------------------|------------|
+| **LONG** | SL must be < entry price | `stop_loss_price < entry_price - PRICE_EPSILON` |
+| **SHORT** | SL must be > entry price | `stop_loss_price > entry_price + PRICE_EPSILON` |
 
-> 注意：使用 `PRICE_EPSILON = entry_price * 1e-8` 进行浮点数比较，避免精度问题。
+> Note: Use `PRICE_EPSILON = entry_price * 1e-8` for floating-point comparison.
 
-## 已修复的Bug
+## Fixed Bug
 
 **Commit**: `7f940fb`
-**问题**: 当市场快速移动时，支撑/阻力位可能在入场价错误一侧，导致止损立即触发。
+**Problem**: When market moves fast, support/resistance levels may be on wrong side of entry price, causing immediate SL trigger.
 
-**示例**:
+**Example**:
 ```
-入场价: $91,626 (做多)
-支撑位: $91,808 (高于入场价!)
-原逻辑: 止损 = $91,808 × 0.999 = $91,808.10
-结果: 止损立即触发，820ms内亏损 -$0.18
+Entry: $91,626 (LONG)
+Support: $91,808 (above entry!)
+Original: SL = $91,808 × 0.999 = $91,808.10
+Result: SL triggered immediately, loss -$0.18 in 820ms
 ```
 
-**修复后**:
+**Fix**:
 ```python
-# strategy/deepseek_strategy.py 第1502-1543行
-PRICE_EPSILON = max(entry_price * 1e-8, 1e-8)  # 相对容差
+# strategy/deepseek_strategy.py lines 1502-1543
+PRICE_EPSILON = max(entry_price * 1e-8, 1e-8)  # Relative tolerance
 
 if side == OrderSide.BUY:
-    default_sl = entry_price * 0.98  # 默认2%止损
+    default_sl = entry_price * 0.98  # Default 2% SL
     if self.sl_use_support_resistance and support > 0:
         potential_sl = support * (1 - self.sl_buffer_pct)
-        # 验证: 止损必须低于入场价 (带epsilon容差)
+        # Validate: SL must be below entry (with epsilon tolerance)
         if potential_sl < entry_price - PRICE_EPSILON:
             stop_loss_price = potential_sl
         else:
-            stop_loss_price = default_sl  # 回退到默认2%
+            stop_loss_price = default_sl  # Fallback to default 2%
             self.log.warning(f"⚠️ Support above entry, using default SL")
 ```
 
-## 测试命令
-
-在服务器上运行测试：
+## Test Command
 
 ```bash
 cd /home/linuxuser/nautilus_AItrader
 source venv/bin/activate
-python test_sl_fix.py
+python3 test_sl_fix.py
 ```
 
-## 预期输出
+## Expected Output
 
 ```
 ============================================================
-  止损修复验证测试
+  Stop-Loss Fix Validation Test
 ============================================================
-测试 1: Bug场景: 支撑位高于入场价 ✅ 通过
-测试 2: 正常场景: 支撑位低于入场价 ✅ 通过
+Test 1: Bug scenario: Support above entry ✅ Passed
+Test 2: Normal scenario: Support below entry ✅ Passed
 ...
-🎉 所有测试通过! 止损修复正确!
+🎉 All tests passed! Stop-loss fix is correct!
 ```
 
-## 关键文件
+## Key Files
 
-| 文件 | 用途 | 关键行号 |
-|------|------|----------|
-| `strategy/deepseek_strategy.py` | 主策略 | 1502-1602 |
-| `test_sl_fix.py` | 测试脚本 | - |
+| File | Purpose | Key Lines |
+|------|---------|-----------|
+| `strategy/deepseek_strategy.py` | Main strategy | 1502-1602 |
+| `test_sl_fix.py` | Test script | - |
 
-## 验证步骤
+## Verification Steps
 
-1. 读取 `strategy/deepseek_strategy.py` 第1502-1602行
-2. 确认存在止损验证逻辑 (含 `PRICE_EPSILON` 容差)
-3. 运行 `python test_sl_fix.py` 测试
-4. 所有测试通过 = 修复正确
+1. Read `strategy/deepseek_strategy.py` lines 1502-1602
+2. Confirm stop-loss validation logic exists (with `PRICE_EPSILON` tolerance)
+3. Run `python3 test_sl_fix.py`
+4. All tests pass = fix is correct

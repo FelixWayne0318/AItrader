@@ -1,183 +1,114 @@
 ---
 name: code-review
-description: 代码审查 - 多维度审查代码变更，检查 bugs、安全问题、架构合规性。Use for reviewing code changes, PR reviews, or pre-commit checks.
-argument-hint: "[--staged|--all|--pr <number>|--branch|--file <path>]"
-allowed-tools: Bash, Read, Grep, Glob, Task, WebFetch
-context: fork
-agent: general-purpose
+description: |
+  Multi-dimensional code review for bug detection, security, and architecture compliance. 多维度代码审查。
+
+  Use this skill when:
+  - Reviewing code changes before commit (提交前审查代码)
+  - Reviewing pull requests (审查 PR)
+  - Running pre-commit checks (运行预提交检查)
+  - Checking for bugs, security issues, or architecture violations (检查 bugs、安全问题、架构违规)
+  - Validating code against CLAUDE.md specifications (验证代码是否符合规范)
+
+  Keywords: review, code, PR, bugs, security, architecture, commit, 审查, 代码, 安全
 ---
 
-# 代码审查 (Code Review)
+# Code Review
 
-基于 Claude Code 官方最佳实践的多维度代码审查技能。
+Multi-dimensional code review based on Claude Code best practices.
 
-## 参数解析
+## Review Modes
 
-用户参数: `$ARGUMENTS`
-
-根据参数选择审查模式：
-
-| 参数 | 模式 | 命令 |
-|------|------|------|
-| (空) 或 `--staged` | staged | `git diff --cached` |
+| Argument | Mode | Command |
+|----------|------|---------|
+| (empty) or `--staged` | staged | `git diff --cached` |
 | `--unstaged` | unstaged | `git diff` |
 | `--all` | all | `git diff HEAD` |
 | `--pr <number>` | PR | `gh pr diff <number>` |
 | `--commit <hash>` | commit | `git show <hash>` |
 | `--branch` | branch | `git diff main...HEAD` |
-| `--file <path>` | file | 直接读取文件 |
+| `--file <path>` | file | Read file directly |
 
-## 执行流程
+## Review Dimensions
 
-### Step 1: 获取代码变更
+### 1. Bug Detection
+- Logic errors, boundary conditions, null pointers, type errors
+- Missing exception handling, resource leaks
+- Concurrency issues, race conditions
+- Hardcoded values, magic numbers
 
-根据解析的模式执行对应命令获取 diff。
+### 2. Security Review
+- OWASP Top 10 vulnerabilities
+- Missing input validation
+- Sensitive data exposure (API keys, passwords, tokens)
+- SQL/command injection risks
+- Insecure dependencies
 
-**默认行为 (无参数时)**:
-```bash
-git diff --cached
-```
+### 3. Architecture & Code Quality
+- CLAUDE.md compliance
+- Code style consistency
+- Naming conventions
+- Function complexity (warn if cyclomatic > 10)
+- Code duplication, over-engineering
 
-如果暂存区为空，提示用户使用 `--all` 或 `--unstaged`。
+### 4. Project-Specific (AItrader)
+- Stop-loss validation: LONG SL < entry, SHORT SL > entry
+- API keys must be from environment variables
+- Entry file must be `main_live.py`
+- Telegram notification configuration
+- Multi-agent divergence handling
 
-### Step 2: 多维度并行审查
+## Confidence Scoring
 
-使用 Task 工具启动 4 个独立的审查代理并行执行：
+| Score | Meaning | Action |
+|-------|---------|--------|
+| 0-49 | Possible false positive | Don't report |
+| 50-79 | Medium confidence | List in "Suggestions" |
+| 80-100 | High confidence | Must report |
 
-#### Agent 1: Bug 检测 (Bug Scanner)
-检查项:
-- 逻辑错误、边界条件、空指针、类型错误
-- 异常处理缺失、资源泄漏
-- 并发问题、竞态条件
-- 硬编码值、魔法数字
+**Default threshold: ≥80%**
 
-#### Agent 2: 安全审查 (Security Reviewer)
-检查项:
-- OWASP Top 10 漏洞
-- 输入验证缺失
-- 敏感信息泄露 (API keys, passwords, tokens)
-- SQL/命令注入风险
-- 不安全的依赖
-
-#### Agent 3: 架构与代码质量 (Architecture Reviewer)
-检查项:
-- CLAUDE.md 规范合规性
-- 代码风格一致性
-- 命名规范 (变量、函数、类)
-- 函数复杂度 (圈复杂度 > 10 警告)
-- 重复代码、过度工程
-
-#### Agent 4: 项目特定检查 (Project-Specific)
-针对 AItrader 项目:
-- 止损验证: LONG 止损 < 入场价, SHORT 止损 > 入场价
-- API 密钥必须从环境变量读取，禁止硬编码
-- NautilusTrader API 使用是否正确
-- 入口文件必须是 `main_live.py` (非 `main.py`)
-- Telegram 通知配置正确性
-- 多代理分歧处理: `use_confidence_fusion` 和 `skip_on_divergence` 配置一致性
-- diagnose_realtime.py 与 deepseek_strategy.py 逻辑同步
-
-### Step 3: 置信度评分
-
-每个发现的问题需要评估置信度:
-
-| 分数 | 含义 | 行为 |
-|------|------|------|
-| 0-49 | 可能误报 | 不报告 |
-| 50-79 | 中等置信度 | 列入"建议改进"部分 |
-| 80-100 | 高置信度 | 必须报告 |
-
-**默认阈值: ≥80%**
-
-### Step 4: 输出格式
+## Output Format
 
 ```markdown
-# 代码审查报告
+# Code Review Report
 
-## 概要
-- 审查范围: [模式描述]
-- 文件数: N
-- 高置信度问题: N
+## Summary
+- Review scope: [mode description]
+- Files: N
+- High confidence issues: N
 
-## 发现的问题
+## Issues Found
 
-### 🔴 [Critical] 问题标题
-- **文件**: path/to/file.py:123
-- **置信度**: 95%
-- **类型**: Bug | Security | Architecture | Project
-- **描述**: 问题详细描述
-- **建议**: 修复建议
+### 🔴 [Critical] Issue Title
+- **File**: path/to/file.py:123
+- **Confidence**: 95%
+- **Type**: Bug | Security | Architecture | Project
+- **Description**: Detailed description
+- **Suggestion**: Fix recommendation
 
-### 🟠 [High] 问题标题
-...
+## Suggestions (50-79% confidence)
+- Issue list
 
-## 建议改进 (置信度 50-79%)
-- 问题列表
-
-## 结论
-✅ 审查通过 / ❌ 发现 N 个高置信度问题需要修复
+## Conclusion
+✅ Review passed / ❌ Found N high-confidence issues
 ```
 
-## 严重级别
+## Severity Levels
 
-| 级别 | 图标 | 置信度 | 说明 |
-|------|------|--------|------|
-| Critical | 🔴 | ≥90% | 阻止合并 |
-| High | 🟠 | ≥85% | 应该修复 |
-| Medium | 🟡 | ≥80% | 建议修复 |
-| Low | 🔵 | ≥70% | 可选 |
+| Level | Icon | Confidence | Action |
+|-------|------|------------|--------|
+| Critical | 🔴 | ≥90% | Block merge |
+| High | 🟠 | ≥85% | Should fix |
+| Medium | 🟡 | ≥80% | Recommend fix |
+| Low | 🔵 | ≥70% | Optional |
 
-## 使用示例
+## Key Files
 
-```bash
-# 审查暂存区 (默认)
-/code-review
-
-# 审查所有本地更改
-/code-review --all
-
-# 审查 PR #123
-/code-review --pr 123
-
-# 审查当前分支与 main 的差异
-/code-review --branch
-
-# 审查特定文件
-/code-review --file strategy/deepseek_strategy.py
-```
-
-## CLAUDE.md 合规检查
-
-必须验证的规范:
-1. 入口文件: `main_live.py` (非 `main.py`)
-2. 止损逻辑: 验证方向正确性
-3. API 密钥: 使用 `.env` 环境变量
-4. Python 版本: 3.11+
-5. NautilusTrader 版本: 1.221.0
-
-## 关键文件
-
-| 文件 | 审查重点 |
-|------|----------|
-| `strategy/deepseek_strategy.py` | 止损逻辑、交易信号、分歧处理 |
-| `diagnose_realtime.py` | 必须与策略逻辑同步 |
-| `utils/*.py` | API 调用、错误处理 |
-| `patches/*.py` | 兼容性、副作用 |
-| `main_live.py` | 配置加载、初始化 |
-| `configs/strategy_config.yaml` | 配置参数完整性 |
-
-## CI/CD 集成
-
-### GitHub Actions
-```yaml
-- name: Code Review
-  run: |
-    claude -p "/code-review --all" --output-format json
-```
-
-### Pre-commit Hook
-```bash
-#!/bin/bash
-# .git/hooks/pre-commit
-claude -p "/code-review --staged"
-```
+| File | Review Focus |
+|------|--------------|
+| `strategy/deepseek_strategy.py` | Stop-loss logic, signals, divergence |
+| `utils/*.py` | API calls, error handling |
+| `patches/*.py` | Compatibility, side effects |
+| `main_live.py` | Config loading, initialization |
+| `configs/strategy_config.yaml` | Parameter completeness |
