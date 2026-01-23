@@ -30,7 +30,7 @@ fi
 # Variables
 INSTALL_DIR="/home/linuxuser/algvex"
 REPO_URL="https://github.com/FelixWayne0318/AItrader.git"
-BRANCH="main"
+BRANCH="claude/review-repo-docs-eZRMo"
 
 # =============================================================================
 # Step 1: Install System Dependencies
@@ -87,10 +87,12 @@ echo -e "\n${GREEN}[3/8] Cloning repository...${NC}"
 TEMP_DIR=$(mktemp -d)
 git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TEMP_DIR"
 
-# Copy web files
-cp -r "$TEMP_DIR/web/backend/"* "$INSTALL_DIR/backend/"
-cp -r "$TEMP_DIR/web/frontend/"* "$INSTALL_DIR/frontend/"
-cp "$TEMP_DIR/web/deploy/Caddyfile" /etc/caddy/Caddyfile
+# Copy web files (use rsync to ensure all files are copied)
+rsync -av --delete "$TEMP_DIR/web/backend/" "$INSTALL_DIR/backend/"
+rsync -av --delete "$TEMP_DIR/web/frontend/" "$INSTALL_DIR/frontend/"
+sudo cp "$TEMP_DIR/web/deploy/Caddyfile" /etc/caddy/Caddyfile
+sudo cp "$TEMP_DIR/web/deploy/algvex-backend.service" /etc/systemd/system/
+sudo cp "$TEMP_DIR/web/deploy/algvex-frontend.service" /etc/systemd/system/
 
 rm -rf "$TEMP_DIR"
 
@@ -159,9 +161,7 @@ echo -e "${GREEN}✓ Frontend setup complete${NC}"
 # =============================================================================
 echo -e "\n${GREEN}[6/8] Installing systemd services...${NC}"
 
-# Backend service
-sudo cp "$INSTALL_DIR/../web/deploy/algvex-backend.service" /etc/systemd/system/
-sudo cp "$INSTALL_DIR/../web/deploy/algvex-frontend.service" /etc/systemd/system/
+# Backend service (already copied in step 3)
 
 # Reload systemd
 sudo systemctl daemon-reload

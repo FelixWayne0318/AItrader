@@ -9,7 +9,7 @@ Group=linuxuser
 WorkingDirectory=/home/linuxuser/algvex/frontend
 Environment=NODE_ENV=production
 Environment=PORT=3000
-ExecStart=/usr/bin/node server.js
+ExecStart=/usr/bin/npm start
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
