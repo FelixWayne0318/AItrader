@@ -40,8 +40,8 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     bar_type: str
 
     # Capital
-    equity: float = 10000.0  # 备用值，当无法获取真实余额时使用
-    leverage: float = 10.0
+    equity: float = 1000.0  # 备用值，当无法获取真实余额时使用
+    leverage: float = 5.0   # 杠杆倍数 (建议 3-10)
     use_real_balance_as_equity: bool = True  # 自动从 Binance 获取真实余额作为 equity
 
     # Position sizing
@@ -49,7 +49,7 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     high_confidence_multiplier: float = 1.5
     medium_confidence_multiplier: float = 1.0
     low_confidence_multiplier: float = 0.5
-    max_position_ratio: float = 0.10
+    max_position_ratio: float = 0.30  # 最大仓位比例 (30% of equity)
     trend_strength_multiplier: float = 1.2
     min_trade_amount: float = 0.001
 
