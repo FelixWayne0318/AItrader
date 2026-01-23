@@ -30,8 +30,8 @@ allowed-tools: Read, Grep, Bash(python3:*)
 
 **修复后**:
 ```python
-# strategy/deepseek_strategy.py 第1228-1273行
-PRICE_EPSILON = entry_price * 1e-8  # 相对容差
+# strategy/deepseek_strategy.py 第1502-1543行
+PRICE_EPSILON = max(entry_price * 1e-8, 1e-8)  # 相对容差
 
 if side == OrderSide.BUY:
     default_sl = entry_price * 0.98  # 默认2%止损
@@ -71,12 +71,12 @@ python test_sl_fix.py
 
 | 文件 | 用途 | 关键行号 |
 |------|------|----------|
-| `strategy/deepseek_strategy.py` | 主策略 | 1228-1273 |
+| `strategy/deepseek_strategy.py` | 主策略 | 1502-1602 |
 | `test_sl_fix.py` | 测试脚本 | - |
 
 ## 验证步骤
 
-1. 读取 `strategy/deepseek_strategy.py` 第1228-1273行
+1. 读取 `strategy/deepseek_strategy.py` 第1502-1602行
 2. 确认存在止损验证逻辑 (含 `PRICE_EPSILON` 容差)
 3. 运行 `python test_sl_fix.py` 测试
 4. 所有测试通过 = 修复正确
