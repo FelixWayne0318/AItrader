@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v3.0
+实盘信号诊断脚本 v4.0
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
-3. 模拟 deepseek_strategy.py 中 on_timer 的完整流程
+3. 使用共享 trading_logic 模块，与 deepseek_strategy.py 100% 一致
 4. 输出实盘环境下会产生的真实结果
+
+v4.0 更新:
+- 引入 strategy/trading_logic.py 共享模块
+- process_signals() - 信号处理逻辑
+- calculate_position_size() - 仓位计算逻辑
+- check_confidence_threshold() - 信心阈值检查
+- 消除代码重复，保证诊断与实盘 100% 一致
 
 使用方法:
     cd /home/linuxuser/nautilus_AItrader
@@ -46,7 +53,7 @@ else:
     load_dotenv()
 
 print("=" * 70)
-print("  实盘信号诊断工具 v3.0 (调用真实代码路径)")
+print("  实盘信号诊断工具 v4.0 (共享 trading_logic 模块)")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -422,20 +429,26 @@ except Exception as e:
 print()
 
 # =============================================================================
-# 9. 共识检查和最终决策 (与 on_timer 完全相同的逻辑)
+# 9. 共识检查和最终决策 (使用共享 trading_logic 模块 - 100% 一致)
 # =============================================================================
-print("[9/9] 共识检查和交易决策 (模拟 _execute_trade)...")
+print("[9/9] 共识检查和交易决策 (调用共享 trading_logic 模块)...")
 print("-" * 70)
 
-deepseek_signal = signal_deepseek.get('signal', 'ERROR')
-multi_signal = signal_multi.get('signal', 'ERROR')
-confidence = signal_deepseek.get('confidence', 'LOW')
+# 导入共享模块 (与 strategy 使用相同代码)
+from strategy.trading_logic import (
+    process_signals,
+    check_confidence_threshold,
+    calculate_position_size,
+    CONFIDENCE_LEVELS,
+)
 
-print(f"  DeepSeek Signal: {deepseek_signal}")
-print(f"  MultiAgent Signal: {multi_signal}")
+deepseek_signal_str = signal_deepseek.get('signal', 'ERROR')
+multi_signal_str = signal_multi.get('signal', 'ERROR')
+
+print(f"  DeepSeek Signal: {deepseek_signal_str}")
+print(f"  MultiAgent Signal: {multi_signal_str}")
 print()
 
-# 共识检查 (与 on_timer 相同)
 # 获取分歧处理配置
 skip_on_divergence = getattr(strategy_config, 'skip_on_divergence', True)
 use_confidence_fusion = getattr(strategy_config, 'use_confidence_fusion', True)
@@ -443,100 +456,53 @@ print(f"  skip_on_divergence: {skip_on_divergence}")
 print(f"  use_confidence_fusion: {use_confidence_fusion}")
 print()
 
-# 加权信心融合辅助函数 (与 _resolve_divergence_by_confidence 相同逻辑)
-def resolve_divergence_by_confidence(ds_signal, ds_conf, ma_signal, ma_conf):
-    """使用加权信心融合解决对立信号"""
-    confidence_weight = {'HIGH': 3, 'MEDIUM': 2, 'LOW': 1}
-    ds_weight = confidence_weight.get(ds_conf, 2)
-    ma_weight = confidence_weight.get(ma_conf, 2)
+# 创建简单的 print logger 用于诊断输出
+class PrintLogger:
+    def info(self, msg):
+        print(f"  {msg}")
+    def warning(self, msg):
+        print(f"  {msg}")
+    def error(self, msg):
+        print(f"  {msg}")
 
-    print(f"  🔀 Confidence fusion: DeepSeek={ds_signal}({ds_conf}, w={ds_weight}) "
-          f"vs MultiAgent={ma_signal}({ma_conf}, w={ma_weight})")
+diag_logger = PrintLogger()
 
-    if ds_weight > ma_weight:
-        print(f"  ✅ Fusion result: Using DeepSeek signal ({ds_signal}) - higher confidence")
-        return ds_signal, ds_conf
-    elif ma_weight > ds_weight:
-        print(f"  ✅ Fusion result: Using MultiAgent signal ({ma_signal}) - higher confidence")
-        return ma_signal, ma_conf
-    else:
-        print(f"  ⚖️ Equal confidence ({ds_conf}) - cannot resolve divergence")
-        return None, None  # 需要跳过
+# 使用共享模块处理信号 (与 strategy 完全相同的逻辑)
+final_signal_data, consensus, status_msg = process_signals(
+    signal_deepseek=signal_deepseek,
+    signal_multi=signal_multi,
+    use_confidence_fusion=use_confidence_fusion,
+    skip_on_divergence=skip_on_divergence,
+    logger=diag_logger,
+)
 
-if deepseek_signal == multi_signal:
-    print("  ✅ Consensus: Both analyzers agree")
-    consensus = True
-    final_signal = deepseek_signal
-    # 当共识时，使用 MultiAgent 的 SL/TP
-    if signal_multi.get('stop_loss') and signal_multi.get('take_profit'):
-        print(f"  📊 Using MultiAgent SL/TP:")
-        print(f"     SL: ${signal_multi['stop_loss']:,.2f}")
-        print(f"     TP: ${signal_multi['take_profit']:,.2f}")
-else:
-    # 检查是否是 BUY vs SELL 完全对立
-    opposing_signals = {deepseek_signal, multi_signal} == {'BUY', 'SELL'}
+final_signal = final_signal_data.get('signal', 'HOLD')
+confidence = final_signal_data.get('confidence', 'LOW')
 
-    # 检查是否是 HOLD vs 可执行信号 (BUY/SELL)
-    hold_vs_action = (
-        (deepseek_signal == 'HOLD' and multi_signal in ['BUY', 'SELL']) or
-        (multi_signal == 'HOLD' and deepseek_signal in ['BUY', 'SELL'])
-    )
-
-    if opposing_signals or hold_vs_action:
-        # 使用加权信心融合 (与 strategy 代码一致)
-        if use_confidence_fusion:
-            ds_conf = signal_deepseek.get('confidence', 'MEDIUM')
-            ma_conf = signal_multi.get('confidence', 'MEDIUM')
-            resolved_signal, resolved_conf = resolve_divergence_by_confidence(
-                deepseek_signal, ds_conf, multi_signal, ma_conf
-            )
-            if resolved_signal:
-                final_signal = resolved_signal
-                confidence = resolved_conf
-            elif skip_on_divergence:
-                print(f"  🚫 Equal confidence divergence - SKIPPING trade")
-                final_signal = 'HOLD'
-                confidence = 'LOW'
-                signal_deepseek['reason'] = "Equal confidence divergence - trade skipped for safety"
-            else:
-                print(f"  ⚠️ Equal confidence but skip_on_divergence=False - using DeepSeek signal")
-                final_signal = deepseek_signal
-        elif skip_on_divergence:
-            print(f"  🚫 Divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
-            print("     → SKIPPING trade (skip_on_divergence=True)")
-            final_signal = 'HOLD'
-            confidence = 'LOW'
-            signal_deepseek['reason'] = f"Trade skipped: divergence without fusion"
-        else:
-            print(f"  ⚠️ Divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
-            print("     → Using DeepSeek signal")
-            final_signal = deepseek_signal
-    else:
-        # 其他非对立分歧 (不应该出现)
-        print(f"  ⚠️ Unexpected divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
-        print("     → Using DeepSeek signal")
-        final_signal = deepseek_signal
-    consensus = False
+# 显示 MultiAgent SL/TP (如果有)
+if consensus and signal_multi.get('stop_loss') and signal_multi.get('take_profit'):
+    print(f"  📊 Using MultiAgent SL/TP:")
+    print(f"     SL: ${signal_multi['stop_loss']:,.2f}")
+    print(f"     TP: ${signal_multi['take_profit']:,.2f}")
 
 print()
 
-# 模拟 _execute_trade 的检查逻辑
+# 模拟 _execute_trade 的检查逻辑 (使用共享模块)
 print("  模拟 _execute_trade 检查:")
 
-# 1. 检查 min_confidence
-confidence_levels = {'LOW': 0, 'MEDIUM': 1, 'HIGH': 2}
-min_conf_level = confidence_levels.get(strategy_config.min_confidence_to_trade, 1)
-signal_conf_level = confidence_levels.get(confidence, 1)
+# 1. 检查 min_confidence (使用共享函数)
+passes_threshold, threshold_msg = check_confidence_threshold(
+    confidence, strategy_config.min_confidence_to_trade
+)
+print(f"  {threshold_msg}")
 
-if signal_conf_level < min_conf_level:
-    print(f"  ❌ Confidence {confidence} < minimum {strategy_config.min_confidence_to_trade}")
+if not passes_threshold:
     print("     → Trade would be SKIPPED")
     would_trade = False
 else:
-    print(f"  ✅ Confidence {confidence} >= minimum {strategy_config.min_confidence_to_trade}")
     would_trade = True
 
-# 2. 检查是否 HOLD (使用 final_signal，考虑分歧跳过)
+# 2. 检查是否 HOLD
 if final_signal == 'HOLD':
     print("  ℹ️ Signal is HOLD → No action")
     would_trade = False
@@ -546,49 +512,47 @@ else:
     print(f"  ❌ Signal is {final_signal} → Error state")
     would_trade = False
 
-# 3. 计算仓位大小 (模拟 _calculate_position_size)
+# 3. 计算仓位大小 (使用共享模块 calculate_position_size - 100% 一致)
 if would_trade and final_signal in ['BUY', 'SELL']:
     print()
-    print("  模拟仓位计算 (_calculate_position_size):")
+    print("  模拟仓位计算 (调用共享 calculate_position_size):")
 
-    base_usdt = strategy_config.base_usdt_amount
-    conf_mult = {
-        'HIGH': strategy_config.high_confidence_multiplier,
-        'MEDIUM': strategy_config.medium_confidence_multiplier,
-        'LOW': strategy_config.low_confidence_multiplier,
-    }.get(confidence, 1.0)
+    # 构建与 strategy 相同的配置字典
+    position_config = {
+        'base_usdt': strategy_config.base_usdt_amount,
+        'equity': strategy_config.equity,
+        'high_confidence_multiplier': strategy_config.high_confidence_multiplier,
+        'medium_confidence_multiplier': strategy_config.medium_confidence_multiplier,
+        'low_confidence_multiplier': strategy_config.low_confidence_multiplier,
+        'trend_strength_multiplier': strategy_config.trend_strength_multiplier,
+        'rsi_extreme_multiplier': strategy_config.rsi_extreme_multiplier,
+        'rsi_extreme_upper': strategy_config.rsi_extreme_threshold_upper,
+        'rsi_extreme_lower': strategy_config.rsi_extreme_threshold_lower,
+        'max_position_ratio': strategy_config.max_position_ratio,
+        'min_trade_amount': getattr(strategy_config, 'min_trade_amount', 0.001),
+    }
 
-    trend = technical_data.get('overall_trend', '震荡整理')
-    trend_mult = strategy_config.trend_strength_multiplier if trend in ['强势上涨', '强势下跌'] else 1.0
+    # 使用共享模块计算仓位 (与 strategy._calculate_position_size 完全相同)
+    btc_quantity, calc_details = calculate_position_size(
+        signal_data=final_signal_data,
+        price_data=price_data,
+        technical_data=technical_data,
+        config=position_config,
+        logger=None,  # 静默模式，我们手动打印
+    )
 
-    rsi = technical_data.get('rsi', 50)
-    rsi_mult = strategy_config.rsi_extreme_multiplier if (rsi > strategy_config.rsi_extreme_threshold_upper or rsi < strategy_config.rsi_extreme_threshold_lower) else 1.0
-
-    suggested_usdt = base_usdt * conf_mult * trend_mult * rsi_mult
-    max_usdt = strategy_config.equity * strategy_config.max_position_ratio
-    final_usdt = min(suggested_usdt, max_usdt)
-
-    # Binance minimum notional
-    if final_usdt < 100:
-        final_usdt = 100
-
-    btc_quantity = final_usdt / current_price
-    btc_quantity = round(btc_quantity, 3)
-
-    # 确保最小名义值
-    import math
-    if btc_quantity * current_price < 101:
-        btc_quantity = math.ceil(101 / current_price * 1000) / 1000
-
-    print(f"     Base: ${base_usdt}")
-    print(f"     × Confidence Mult: {conf_mult}")
-    print(f"     × Trend Mult: {trend_mult} (trend={trend})")
-    print(f"     × RSI Mult: {rsi_mult} (RSI={rsi:.1f})")
-    print(f"     = ${suggested_usdt:.2f}")
-    print(f"     Max allowed: ${max_usdt:.2f}")
-    print(f"     Final: ${final_usdt:.2f}")
+    # 显示计算详情
+    print(f"     Base: ${calc_details['base_usdt']}")
+    print(f"     × Confidence Mult: {calc_details['conf_mult']}")
+    print(f"     × Trend Mult: {calc_details['trend_mult']} (trend={calc_details['trend']})")
+    print(f"     × RSI Mult: {calc_details['rsi_mult']} (RSI={calc_details['rsi']:.1f})")
+    print(f"     = ${calc_details['suggested_usdt']:.2f}")
+    print(f"     Max allowed: ${calc_details['max_usdt']:.2f}")
+    print(f"     Final: ${calc_details['final_usdt']:.2f}")
     print(f"     BTC Quantity: {btc_quantity:.4f} BTC")
-    print(f"     Notional: ${btc_quantity * current_price:.2f}")
+    print(f"     Notional: ${calc_details['notional']:.2f}")
+    if calc_details.get('adjusted'):
+        print(f"     ⚠️ Quantity adjusted to meet minimum notional")
 
 print()
 
@@ -596,7 +560,7 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (实盘代码路径)")
+print("  诊断总结 (使用共享 trading_logic 模块 - 100% 一致)")
 print("=" * 70)
 print()
 
@@ -617,15 +581,16 @@ if would_trade and final_signal in ['BUY', 'SELL']:
         print(f"     Take Profit: ${signal_deepseek['take_profit']:,.2f}")
 elif final_signal == 'HOLD':
     print("  🟡 NO TRADE: AI recommends HOLD")
-    print(f"     Reason: {signal_deepseek.get('reason', 'N/A')[:100]}...")
+    reason = final_signal_data.get('reason', signal_deepseek.get('reason', 'N/A'))
+    print(f"     Reason: {reason[:100]}...")
 else:
     print(f"  🔴 NO TRADE: Signal={final_signal}, Confidence={confidence}")
-    if signal_conf_level < min_conf_level:
+    if not passes_threshold:
         print(f"     → Confidence below minimum ({strategy_config.min_confidence_to_trade})")
 
 print()
 print("=" * 70)
-print("  诊断完成 - 以上结果与实盘运行完全一致")
+print("  诊断完成 - 使用共享模块，与实盘逻辑 100% 一致")
 print("=" * 70)
 
 # =============================================================================

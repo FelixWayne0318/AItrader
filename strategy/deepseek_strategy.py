@@ -29,6 +29,15 @@ from utils.deepseek_client import DeepSeekAnalyzer
 from utils.sentiment_client import SentimentDataFetcher
 from utils.binance_account import BinanceAccountFetcher
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
+from strategy.trading_logic import (
+    check_divergence,
+    resolve_divergence_by_confidence,
+    check_confidence_threshold,
+    calculate_position_size,
+    create_hold_signal,
+    process_signals,
+    CONFIDENCE_LEVELS,
+)
 # OCOManager no longer needed - using NautilusTrader's built-in bracket orders
 
 
@@ -1014,9 +1023,7 @@ class DeepSeekAIStrategy(Strategy):
         """
         Resolve opposing signals using weighted confidence fusion.
 
-        Based on industry best practices from QuantAgent and TradingAgents frameworks:
-        - Use the signal with higher confidence
-        - Only skip when confidence levels are equal
+        Uses shared trading_logic module to ensure consistency with diagnostic tool.
 
         Parameters
         ----------
@@ -1028,86 +1035,24 @@ class DeepSeekAIStrategy(Strategy):
         Returns
         -------
         Optional[Dict]
-            Resolved signal dict, or None if equal confidence (should skip),
-            or None if input validation fails
+            Resolved signal dict, or None if equal confidence (should skip)
         """
-        # Parameter validation - check for None signals
-        if signal_deepseek is None or signal_multi is None:
-            self.log.error(
-                f"❌ Confidence fusion failed: signal is None "
-                f"(deepseek={signal_deepseek is not None}, multi={signal_multi is not None})"
-            )
-            return None
+        # Create a simple logger adapter that uses self.log
+        class LogAdapter:
+            def __init__(self, strategy_log):
+                self._log = strategy_log
+            def info(self, msg):
+                self._log.info(msg)
+            def warning(self, msg):
+                self._log.warning(msg)
+            def error(self, msg):
+                self._log.error(msg)
 
-        # Check for required 'signal' key
-        if 'signal' not in signal_deepseek:
-            self.log.error("❌ Confidence fusion failed: DeepSeek signal missing 'signal' key")
-            return None
-        if 'signal' not in signal_multi:
-            self.log.error("❌ Confidence fusion failed: MultiAgent signal missing 'signal' key")
-            return None
-
-        # Confidence weight mapping
-        confidence_weight = {
-            'HIGH': 3,
-            'MEDIUM': 2,
-            'LOW': 1,
-        }
-
-        # Valid confidence values
-        valid_confidences = {'HIGH', 'MEDIUM', 'LOW'}
-
-        ds_signal = signal_deepseek['signal']
-        ds_conf = signal_deepseek.get('confidence', 'MEDIUM')
-        ma_signal = signal_multi['signal']
-        ma_conf = signal_multi.get('confidence', 'MEDIUM')
-
-        # Validate and warn for invalid confidence values
-        if ds_conf not in valid_confidences:
-            self.log.warning(
-                f"⚠️ Invalid DeepSeek confidence '{ds_conf}', using MEDIUM as default"
-            )
-            ds_conf = 'MEDIUM'
-        if ma_conf not in valid_confidences:
-            self.log.warning(
-                f"⚠️ Invalid MultiAgent confidence '{ma_conf}', using MEDIUM as default"
-            )
-            ma_conf = 'MEDIUM'
-
-        ds_weight = confidence_weight.get(ds_conf, 2)
-        ma_weight = confidence_weight.get(ma_conf, 2)
-
-        self.log.info(
-            f"🔀 Confidence fusion: DeepSeek={ds_signal}({ds_conf}, w={ds_weight}) "
-            f"vs MultiAgent={ma_signal}({ma_conf}, w={ma_weight})"
+        logger = LogAdapter(self.log)
+        resolved, _ = resolve_divergence_by_confidence(
+            signal_deepseek, signal_multi, logger
         )
-
-        if ds_weight > ma_weight:
-            # DeepSeek has higher confidence - use its signal
-            self.log.info(
-                f"✅ Fusion result: Using DeepSeek signal ({ds_signal}) - higher confidence"
-            )
-            return signal_deepseek
-
-        elif ma_weight > ds_weight:
-            # MultiAgent has higher confidence - use its signal
-            self.log.info(
-                f"✅ Fusion result: Using MultiAgent signal ({ma_signal}) - higher confidence"
-            )
-            # Construct signal in DeepSeek format
-            return {
-                'signal': ma_signal,
-                'confidence': ma_conf,
-                'reason': f"MultiAgent signal selected (higher confidence: {ma_conf} vs {ds_conf}). {signal_multi.get('debate_summary', '')}",
-                'stop_loss': signal_multi.get('stop_loss'),
-                'take_profit': signal_multi.get('take_profit'),
-            }
-        else:
-            # Equal confidence - return None to trigger skip
-            self.log.warning(
-                f"⚖️ Equal confidence ({ds_conf}) - cannot resolve divergence"
-            )
-            return None
+        return resolved
 
     def _execute_trade(
         self,
@@ -1190,86 +1135,40 @@ class DeepSeekAIStrategy(Strategy):
         """
         Calculate intelligent position size.
 
+        Uses shared trading_logic module to ensure consistency with diagnostic tool.
         Returns BTC quantity based on confidence, trend, and RSI.
         """
-        # Base USDT amount
-        base_usdt = self.base_usdt
+        # Create a simple logger adapter that uses self.log
+        class LogAdapter:
+            def __init__(self, strategy_log):
+                self._log = strategy_log
+            def info(self, msg):
+                self._log.info(msg)
+            def warning(self, msg):
+                self._log.warning(msg)
+            def error(self, msg):
+                self._log.error(msg)
 
-        # Confidence multiplier
-        conf_mult = self.position_config.get(
-            f"{signal_data['confidence'].lower()}_confidence_multiplier",
-            1.0
+        logger = LogAdapter(self.log)
+
+        # Build config dict from instance variables
+        config = {
+            'base_usdt': self.base_usdt,
+            'equity': self.equity,
+            'high_confidence_multiplier': self.position_config.get('high_confidence_multiplier', 1.5),
+            'medium_confidence_multiplier': self.position_config.get('medium_confidence_multiplier', 1.0),
+            'low_confidence_multiplier': self.position_config.get('low_confidence_multiplier', 0.5),
+            'trend_strength_multiplier': self.position_config.get('trend_strength_multiplier', 1.2),
+            'rsi_extreme_multiplier': self.rsi_extreme_mult,
+            'rsi_extreme_upper': self.rsi_extreme_upper,
+            'rsi_extreme_lower': self.rsi_extreme_lower,
+            'max_position_ratio': self.position_config.get('max_position_ratio', 0.3),
+            'min_trade_amount': self.position_config.get('min_trade_amount', 0.001),
+        }
+
+        btc_quantity, _ = calculate_position_size(
+            signal_data, price_data, technical_data, config, logger
         )
-
-        # Trend multiplier
-        trend = technical_data.get('overall_trend', '震荡整理')
-        trend_mult = (
-            self.position_config['trend_strength_multiplier']
-            if trend in ['强势上涨', '强势下跌']
-            else 1.0
-        )
-
-        # RSI multiplier (reduce size in extreme RSI)
-        rsi = technical_data.get('rsi', 50)
-        rsi_mult = (
-            self.rsi_extreme_mult
-            if rsi > self.rsi_extreme_upper or rsi < self.rsi_extreme_lower
-            else 1.0
-        )
-
-        # Calculate suggested USDT
-        suggested_usdt = base_usdt * conf_mult * trend_mult * rsi_mult
-
-        # Apply max position ratio limit
-        max_usdt = self.equity * self.position_config['max_position_ratio']
-        final_usdt = min(suggested_usdt, max_usdt)
-
-        # Enforce Binance minimum notional requirement ($100)
-        MIN_NOTIONAL_USDT = 100.0
-        if final_usdt < MIN_NOTIONAL_USDT:
-            final_usdt = MIN_NOTIONAL_USDT
-
-        # Convert to BTC quantity
-        current_price = price_data['price']
-        btc_quantity = final_usdt / current_price
-
-        # Apply minimum trade amount
-        if btc_quantity < self.position_config['min_trade_amount']:
-            btc_quantity = self.position_config['min_trade_amount']
-
-        # Round to instrument precision
-        btc_quantity = round(btc_quantity, 3)  # Binance BTC precision
-
-        # CRITICAL: Re-check notional after rounding to ensure still >= $100
-        # Rounding can reduce the quantity below minimum notional threshold
-        # Add safety margin to avoid boundary rejection by exchange
-        MIN_NOTIONAL_SAFETY_MARGIN = 1.01  # 1% safety margin
-        MIN_NOTIONAL_WITH_MARGIN = MIN_NOTIONAL_USDT * MIN_NOTIONAL_SAFETY_MARGIN
-
-        actual_notional = btc_quantity * current_price
-        if actual_notional < MIN_NOTIONAL_WITH_MARGIN:
-            # Increase quantity to meet minimum notional with safety margin (round UP)
-            import math
-            btc_quantity = MIN_NOTIONAL_WITH_MARGIN / current_price
-            # Round up to next 0.001 to ensure we stay above minimum
-            btc_quantity = math.ceil(btc_quantity * 1000) / 1000
-            # Final verification
-            final_notional = btc_quantity * current_price
-            if final_notional < MIN_NOTIONAL_USDT:
-                # If still below minimum after rounding, add one more tick
-                btc_quantity += 0.001
-            self.log.warning(
-                f"⚠️ Adjusted quantity after rounding: {btc_quantity:.3f} BTC "
-                f"to meet ${MIN_NOTIONAL_USDT} minimum notional (actual: ${btc_quantity * current_price:.2f})"
-            )
-
-        self.log.info(
-            f"📊 Position Sizing: "
-            f"Base:{base_usdt} × Conf:{conf_mult} × Trend:{trend_mult} × RSI:{rsi_mult} "
-            f"= ${final_usdt:.2f} = {btc_quantity:.3f} BTC "
-            f"(notional: ${btc_quantity * current_price:.2f})"
-        )
-
         return btc_quantity
 
     def _manage_existing_position(

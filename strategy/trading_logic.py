@@ -1,0 +1,464 @@
+"""
+Shared Trading Logic Module
+
+This module contains core trading logic functions that are used by both:
+- deepseek_strategy.py (live trading)
+- diagnose_realtime.py (diagnostic tool)
+
+This ensures 100% consistency between diagnostic and live trading behavior.
+"""
+
+import math
+from typing import Dict, Any, Optional, Tuple
+import logging
+
+
+# Confidence weight mapping (used across all functions)
+CONFIDENCE_WEIGHT = {
+    'HIGH': 3,
+    'MEDIUM': 2,
+    'LOW': 1,
+}
+
+CONFIDENCE_LEVELS = {
+    'LOW': 0,
+    'MEDIUM': 1,
+    'HIGH': 2,
+}
+
+VALID_CONFIDENCES = {'HIGH', 'MEDIUM', 'LOW'}
+
+
+def check_divergence(
+    signal_deepseek: str,
+    signal_multi: str,
+) -> Tuple[bool, bool, bool]:
+    """
+    Check if two signals are divergent.
+
+    Parameters
+    ----------
+    signal_deepseek : str
+        DeepSeek signal ('BUY', 'SELL', 'HOLD')
+    signal_multi : str
+        MultiAgent signal ('BUY', 'SELL', 'HOLD')
+
+    Returns
+    -------
+    Tuple[bool, bool, bool]
+        (is_consensus, is_opposing, is_hold_vs_action)
+        - is_consensus: True if signals match
+        - is_opposing: True if BUY vs SELL
+        - is_hold_vs_action: True if HOLD vs BUY/SELL
+    """
+    # Check for consensus
+    if signal_deepseek == signal_multi:
+        return True, False, False
+
+    # Check for opposing signals (BUY vs SELL)
+    opposing_signals = {signal_deepseek, signal_multi} == {'BUY', 'SELL'}
+
+    # Check for HOLD vs actionable signal (HOLD vs BUY or HOLD vs SELL)
+    hold_vs_action = (
+        (signal_deepseek == 'HOLD' and signal_multi in ['BUY', 'SELL']) or
+        (signal_multi == 'HOLD' and signal_deepseek in ['BUY', 'SELL'])
+    )
+
+    return False, opposing_signals, hold_vs_action
+
+
+def resolve_divergence_by_confidence(
+    signal_deepseek: Dict[str, Any],
+    signal_multi: Dict[str, Any],
+    logger: Optional[logging.Logger] = None,
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """
+    Resolve opposing signals using weighted confidence fusion.
+
+    Based on industry best practices from QuantAgent and TradingAgents frameworks:
+    - Use the signal with higher confidence
+    - Only skip when confidence levels are equal
+
+    Parameters
+    ----------
+    signal_deepseek : Dict
+        DeepSeek AI signal with 'signal' and 'confidence'
+    signal_multi : Dict
+        MultiAgent signal with 'signal' and 'confidence'
+    logger : Logger, optional
+        Logger for output messages
+
+    Returns
+    -------
+    Tuple[Optional[Dict], str]
+        (resolved_signal, log_message)
+        - resolved_signal: Dict with the winning signal, or None if equal confidence
+        - log_message: Description of what happened
+    """
+    # Parameter validation - check for None signals
+    if signal_deepseek is None or signal_multi is None:
+        msg = (
+            f"❌ Confidence fusion failed: signal is None "
+            f"(deepseek={signal_deepseek is not None}, multi={signal_multi is not None})"
+        )
+        if logger:
+            logger.error(msg)
+        return None, msg
+
+    # Check for required 'signal' key
+    if 'signal' not in signal_deepseek:
+        msg = "❌ Confidence fusion failed: DeepSeek signal missing 'signal' key"
+        if logger:
+            logger.error(msg)
+        return None, msg
+    if 'signal' not in signal_multi:
+        msg = "❌ Confidence fusion failed: MultiAgent signal missing 'signal' key"
+        if logger:
+            logger.error(msg)
+        return None, msg
+
+    ds_signal = signal_deepseek['signal']
+    ds_conf = signal_deepseek.get('confidence', 'MEDIUM')
+    ma_signal = signal_multi['signal']
+    ma_conf = signal_multi.get('confidence', 'MEDIUM')
+
+    # Validate and fix invalid confidence values
+    if ds_conf not in VALID_CONFIDENCES:
+        msg = f"⚠️ Invalid DeepSeek confidence '{ds_conf}', using MEDIUM as default"
+        if logger:
+            logger.warning(msg)
+        ds_conf = 'MEDIUM'
+    if ma_conf not in VALID_CONFIDENCES:
+        msg = f"⚠️ Invalid MultiAgent confidence '{ma_conf}', using MEDIUM as default"
+        if logger:
+            logger.warning(msg)
+        ma_conf = 'MEDIUM'
+
+    ds_weight = CONFIDENCE_WEIGHT.get(ds_conf, 2)
+    ma_weight = CONFIDENCE_WEIGHT.get(ma_conf, 2)
+
+    fusion_msg = (
+        f"🔀 Confidence fusion: DeepSeek={ds_signal}({ds_conf}, w={ds_weight}) "
+        f"vs MultiAgent={ma_signal}({ma_conf}, w={ma_weight})"
+    )
+    if logger:
+        logger.info(fusion_msg)
+
+    if ds_weight > ma_weight:
+        # DeepSeek has higher confidence - use its signal
+        result_msg = f"✅ Fusion result: Using DeepSeek signal ({ds_signal}) - higher confidence"
+        if logger:
+            logger.info(result_msg)
+        return signal_deepseek, result_msg
+
+    elif ma_weight > ds_weight:
+        # MultiAgent has higher confidence - use its signal
+        result_msg = f"✅ Fusion result: Using MultiAgent signal ({ma_signal}) - higher confidence"
+        if logger:
+            logger.info(result_msg)
+        # Construct signal in DeepSeek format
+        resolved = {
+            'signal': ma_signal,
+            'confidence': ma_conf,
+            'reason': f"MultiAgent signal selected (higher confidence: {ma_conf} vs {ds_conf}). {signal_multi.get('debate_summary', '')}",
+            'stop_loss': signal_multi.get('stop_loss'),
+            'take_profit': signal_multi.get('take_profit'),
+        }
+        return resolved, result_msg
+
+    else:
+        # Equal confidence - return None to trigger skip
+        result_msg = f"⚖️ Equal confidence ({ds_conf}) - cannot resolve divergence"
+        if logger:
+            logger.warning(result_msg)
+        return None, result_msg
+
+
+def check_confidence_threshold(
+    confidence: str,
+    min_confidence: str,
+) -> Tuple[bool, str]:
+    """
+    Check if signal confidence meets minimum threshold.
+
+    Parameters
+    ----------
+    confidence : str
+        Signal confidence ('LOW', 'MEDIUM', 'HIGH')
+    min_confidence : str
+        Minimum required confidence
+
+    Returns
+    -------
+    Tuple[bool, str]
+        (passes_threshold, message)
+    """
+    min_conf_level = CONFIDENCE_LEVELS.get(min_confidence, 1)
+    signal_conf_level = CONFIDENCE_LEVELS.get(confidence, 1)
+
+    if signal_conf_level < min_conf_level:
+        msg = f"⚠️ Signal confidence {confidence} below minimum {min_confidence}, skipping trade"
+        return False, msg
+
+    msg = f"✅ Confidence {confidence} >= minimum {min_confidence}"
+    return True, msg
+
+
+def calculate_position_size(
+    signal_data: Dict[str, Any],
+    price_data: Dict[str, Any],
+    technical_data: Dict[str, Any],
+    config: Dict[str, Any],
+    logger: Optional[logging.Logger] = None,
+) -> Tuple[float, Dict[str, Any]]:
+    """
+    Calculate intelligent position size.
+
+    Parameters
+    ----------
+    signal_data : Dict
+        AI-generated signal with 'confidence'
+    price_data : Dict
+        Current price data with 'price'
+    technical_data : Dict
+        Technical indicators with 'overall_trend', 'rsi'
+    config : Dict
+        Configuration with keys:
+        - base_usdt: Base USDT amount
+        - equity: Total equity
+        - high_confidence_multiplier
+        - medium_confidence_multiplier
+        - low_confidence_multiplier
+        - trend_strength_multiplier
+        - rsi_extreme_multiplier
+        - rsi_extreme_upper
+        - rsi_extreme_lower
+        - max_position_ratio
+        - min_trade_amount
+    logger : Logger, optional
+        Logger for output messages
+
+    Returns
+    -------
+    Tuple[float, Dict]
+        (btc_quantity, calculation_details)
+    """
+    # Base USDT amount
+    base_usdt = config['base_usdt']
+
+    # Confidence multiplier
+    confidence = signal_data.get('confidence', 'MEDIUM').lower()
+    conf_mult = config.get(f'{confidence}_confidence_multiplier', 1.0)
+
+    # Trend multiplier
+    trend = technical_data.get('overall_trend', '震荡整理')
+    trend_mult = (
+        config['trend_strength_multiplier']
+        if trend in ['强势上涨', '强势下跌']
+        else 1.0
+    )
+
+    # RSI multiplier (reduce size in extreme RSI)
+    rsi = technical_data.get('rsi', 50)
+    rsi_mult = (
+        config['rsi_extreme_multiplier']
+        if rsi > config['rsi_extreme_upper'] or rsi < config['rsi_extreme_lower']
+        else 1.0
+    )
+
+    # Calculate suggested USDT
+    suggested_usdt = base_usdt * conf_mult * trend_mult * rsi_mult
+
+    # Apply max position ratio limit
+    max_usdt = config['equity'] * config['max_position_ratio']
+    final_usdt = min(suggested_usdt, max_usdt)
+
+    # Enforce Binance minimum notional requirement ($100)
+    MIN_NOTIONAL_USDT = 100.0
+    if final_usdt < MIN_NOTIONAL_USDT:
+        final_usdt = MIN_NOTIONAL_USDT
+
+    # Convert to BTC quantity
+    current_price = price_data['price']
+    btc_quantity = final_usdt / current_price
+
+    # Apply minimum trade amount
+    min_trade = config.get('min_trade_amount', 0.001)
+    if btc_quantity < min_trade:
+        btc_quantity = min_trade
+
+    # Round to instrument precision
+    btc_quantity = round(btc_quantity, 3)  # Binance BTC precision
+
+    # CRITICAL: Re-check notional after rounding
+    MIN_NOTIONAL_SAFETY_MARGIN = 1.01  # 1% safety margin
+    MIN_NOTIONAL_WITH_MARGIN = MIN_NOTIONAL_USDT * MIN_NOTIONAL_SAFETY_MARGIN
+
+    actual_notional = btc_quantity * current_price
+    adjusted = False
+    if actual_notional < MIN_NOTIONAL_WITH_MARGIN:
+        # Increase quantity to meet minimum notional with safety margin (round UP)
+        btc_quantity = MIN_NOTIONAL_WITH_MARGIN / current_price
+        # Round up to next 0.001
+        btc_quantity = math.ceil(btc_quantity * 1000) / 1000
+        # Final verification
+        final_notional = btc_quantity * current_price
+        if final_notional < MIN_NOTIONAL_USDT:
+            btc_quantity += 0.001
+        adjusted = True
+        if logger:
+            logger.warning(
+                f"⚠️ Adjusted quantity after rounding: {btc_quantity:.3f} BTC "
+                f"to meet ${MIN_NOTIONAL_USDT} minimum notional"
+            )
+
+    # Calculate final notional
+    notional = btc_quantity * current_price
+
+    # Log calculation details
+    if logger:
+        logger.info(
+            f"📊 Position Sizing: "
+            f"Base:{base_usdt} × Conf:{conf_mult} × Trend:{trend_mult} × RSI:{rsi_mult} "
+            f"= ${final_usdt:.2f} = {btc_quantity:.3f} BTC "
+            f"(notional: ${notional:.2f})"
+        )
+
+    # Return calculation details for diagnostic display
+    details = {
+        'base_usdt': base_usdt,
+        'conf_mult': conf_mult,
+        'trend_mult': trend_mult,
+        'trend': trend,
+        'rsi_mult': rsi_mult,
+        'rsi': rsi,
+        'suggested_usdt': suggested_usdt,
+        'max_usdt': max_usdt,
+        'final_usdt': final_usdt,
+        'btc_quantity': btc_quantity,
+        'notional': notional,
+        'adjusted': adjusted,
+    }
+
+    return btc_quantity, details
+
+
+def create_hold_signal(reason: str) -> Dict[str, Any]:
+    """
+    Create a standardized HOLD signal.
+
+    Parameters
+    ----------
+    reason : str
+        Reason for HOLD
+
+    Returns
+    -------
+    Dict
+        Standardized HOLD signal
+    """
+    return {
+        'signal': 'HOLD',
+        'confidence': 'LOW',
+        'reason': reason,
+        'stop_loss': None,
+        'take_profit': None,
+    }
+
+
+def process_signals(
+    signal_deepseek: Dict[str, Any],
+    signal_multi: Dict[str, Any],
+    use_confidence_fusion: bool = True,
+    skip_on_divergence: bool = True,
+    logger: Optional[logging.Logger] = None,
+) -> Tuple[Dict[str, Any], bool, str]:
+    """
+    Process and merge DeepSeek and MultiAgent signals.
+
+    This is the main signal processing logic used by both live trading and diagnostic.
+
+    Parameters
+    ----------
+    signal_deepseek : Dict
+        DeepSeek AI signal
+    signal_multi : Dict
+        MultiAgent signal
+    use_confidence_fusion : bool
+        Whether to use confidence fusion for divergence
+    skip_on_divergence : bool
+        Whether to skip trade on unresolved divergence
+    logger : Logger, optional
+        Logger for output messages
+
+    Returns
+    -------
+    Tuple[Dict, bool, str]
+        (final_signal, is_consensus, status_message)
+    """
+    ds_signal = signal_deepseek.get('signal', 'ERROR')
+    ma_signal = signal_multi.get('signal', 'ERROR')
+
+    # Check divergence
+    is_consensus, is_opposing, is_hold_vs_action = check_divergence(ds_signal, ma_signal)
+
+    if is_consensus:
+        # Both agree - use DeepSeek signal but with MultiAgent SL/TP if available
+        msg = f"✅ Consensus: Both analyzers agree on {ds_signal}"
+        if logger:
+            logger.info(msg)
+
+        # Merge SL/TP from MultiAgent if available
+        final_signal = signal_deepseek.copy()
+        if signal_multi.get('stop_loss') and signal_multi.get('take_profit'):
+            final_signal['stop_loss_multi'] = signal_multi['stop_loss']
+            final_signal['take_profit_multi'] = signal_multi['take_profit']
+            if logger:
+                logger.info(
+                    f"📊 Using MultiAgent SL/TP: "
+                    f"SL=${signal_multi['stop_loss']:,.2f}, TP=${signal_multi['take_profit']:,.2f}"
+                )
+
+        return final_signal, True, msg
+
+    # Handle divergence
+    if is_opposing or is_hold_vs_action:
+        divergence_type = "BUY vs SELL" if is_opposing else "HOLD vs action"
+
+        if use_confidence_fusion:
+            resolved_signal, fusion_msg = resolve_divergence_by_confidence(
+                signal_deepseek, signal_multi, logger
+            )
+
+            if resolved_signal:
+                return resolved_signal, False, fusion_msg
+
+            # Equal confidence - check skip_on_divergence
+            if skip_on_divergence:
+                msg = f"🚫 Equal confidence divergence ({divergence_type}) - SKIPPING trade"
+                if logger:
+                    logger.warning(msg)
+                return create_hold_signal(msg), False, msg
+            else:
+                msg = f"⚠️ Equal confidence but skip_on_divergence=False - using DeepSeek"
+                if logger:
+                    logger.warning(msg)
+                return signal_deepseek, False, msg
+
+        elif skip_on_divergence:
+            msg = f"🚫 Divergence ({divergence_type}): skip_on_divergence=True - SKIPPING"
+            if logger:
+                logger.warning(msg)
+            return create_hold_signal(msg), False, msg
+
+        else:
+            msg = f"⚠️ Divergence ({divergence_type}): using DeepSeek signal"
+            if logger:
+                logger.warning(msg)
+            return signal_deepseek, False, msg
+
+    # Unexpected divergence type
+    msg = f"⚠️ Unexpected divergence: DeepSeek={ds_signal}, MultiAgent={ma_signal}"
+    if logger:
+        logger.warning(msg)
+    return signal_deepseek, False, msg
