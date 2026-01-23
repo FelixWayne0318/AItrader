@@ -27,6 +27,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from indicators.technical_manager import TechnicalIndicatorManager
 from utils.deepseek_client import DeepSeekAnalyzer
 from utils.sentiment_client import SentimentDataFetcher
+from utils.binance_account import BinanceAccountFetcher
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
 # OCOManager no longer needed - using NautilusTrader's built-in bracket orders
 
@@ -208,6 +209,10 @@ class DeepSeekAIStrategy(Strategy):
         # IMPORTANT: Do NOT access indicator_manager from Telegram thread - it contains
         # Rust indicators (RSI, MACD) that are not Send/Sync and will cause panic
         self._cached_current_price: float = 0.0
+
+        # Real-time Binance account fetcher for accurate balance info
+        self.binance_account = BinanceAccountFetcher(logger=self.log)
+        self._real_balance: Dict[str, float] = {}  # Cached real balance from Binance
 
         # Track trailing stop state for each position
         self.trailing_stop_state: Dict[str, Dict[str, Any]] = {}
@@ -464,6 +469,9 @@ class DeepSeekAIStrategy(Strategy):
 
         self.log.info("Strategy started successfully")
 
+        # Fetch real account balance from Binance
+        self._update_real_balance()
+
         # Record start time for uptime tracking
         from datetime import datetime
         self.strategy_start_time = datetime.utcnow()
@@ -500,6 +508,45 @@ class DeepSeekAIStrategy(Strategy):
         self.unsubscribe_bars(self.bar_type)
 
         self.log.info("Strategy stopped")
+
+    def _update_real_balance(self) -> Dict[str, float]:
+        """
+        Fetch real account balance from Binance and update internal state.
+
+        This method is called:
+        - On strategy startup
+        - Periodically by Telegram /risk command
+        - Before position size calculation (optional)
+
+        Returns
+        -------
+        dict
+            Balance info with total_balance, available_balance, etc.
+        """
+        try:
+            balance = self.binance_account.get_balance()
+
+            if 'error' not in balance:
+                self._real_balance = balance
+
+                # Update equity if real balance is significantly different
+                real_total = balance.get('total_balance', 0)
+                if real_total > 0:
+                    # Log if there's a significant difference
+                    if abs(real_total - self.equity) > 10:
+                        self.log.info(
+                            f"💰 Real balance from Binance: ${real_total:.2f} "
+                            f"(configured equity: ${self.equity:.2f})"
+                        )
+
+                return balance
+            else:
+                self.log.warning(f"Failed to fetch real balance: {balance.get('error')}")
+                return {}
+
+        except Exception as e:
+            self.log.error(f"Error fetching real balance: {e}")
+            return {}
 
     def _prefetch_historical_bars(self, limit: int = 200):
         """
@@ -1815,7 +1862,7 @@ class DeepSeekAIStrategy(Strategy):
             }
     
     def _cmd_status(self) -> Dict[str, Any]:
-        """Handle /status command."""
+        """Handle /status command - shows REAL account balance."""
         try:
             from datetime import datetime
 
@@ -1824,15 +1871,21 @@ class DeepSeekAIStrategy(Strategy):
             # Telegram thread and Rust indicators (RSI) are not thread-safe
             with self._state_lock:
                 current_price = self._cached_current_price
-            
-            # Get unrealized PnL
-            unrealized_pnl = 0
+
+            # Fetch REAL balance from Binance
+            real_balance = self.binance_account.get_balance()
+            total_balance = real_balance.get('total_balance', 0)
+
+            # Get unrealized PnL from real balance or calculate from position
+            unrealized_pnl = real_balance.get('unrealized_pnl', 0)
             positions = self.cache.positions_open(instrument_id=self.instrument_id)
-            if positions:
+            if positions and current_price > 0:
                 position = positions[0]
-                if current_price > 0:
-                    unrealized_pnl = float(position.unrealized_pnl(current_price))
-            
+                # Use position-specific PnL if available
+                position_pnl = float(position.unrealized_pnl(current_price))
+                if position_pnl != 0:
+                    unrealized_pnl = position_pnl
+
             # Calculate uptime
             uptime_str = "N/A"
             if self.strategy_start_time:
@@ -1840,26 +1893,28 @@ class DeepSeekAIStrategy(Strategy):
                 hours = uptime_delta.total_seconds() // 3600
                 minutes = (uptime_delta.total_seconds() % 3600) // 60
                 uptime_str = f"{int(hours)}h {int(minutes)}m"
-            
+
             # Get last signal
             last_signal = "N/A"
             last_signal_time = "N/A"
             if hasattr(self, 'last_signal') and self.last_signal:
                 last_signal = f"{self.last_signal.get('signal', 'N/A')} ({self.last_signal.get('confidence', 'N/A')})"
-                # You could store timestamp if needed
-            
+
+            # Use real balance if available, otherwise fall back to configured equity
+            display_equity = total_balance if total_balance > 0 else self.equity
+
             status_info = {
                 'is_running': True,  # If this method is called, strategy is running
                 'is_paused': self.is_trading_paused,
                 'instrument_id': str(self.instrument_id),
                 'current_price': current_price,
-                'equity': self.equity,
+                'equity': display_equity,  # Now shows REAL balance
                 'unrealized_pnl': unrealized_pnl,
                 'last_signal': last_signal,
                 'last_signal_time': last_signal_time,
                 'uptime': uptime_str,
             }
-            
+
             message = self.telegram_bot.format_status_response(status_info) if self.telegram_bot else "Status unavailable"
             
             return {
@@ -2108,21 +2163,38 @@ class DeepSeekAIStrategy(Strategy):
         Handle /risk command - view risk metrics.
 
         Thread-safe: Does not access indicator_manager.
+        Shows REAL account balance from Binance API.
         """
         try:
             with self._state_lock:
                 cached_price = self._cached_current_price
 
-            # Get position info
+            # Fetch REAL balance from Binance (with cache)
+            real_balance = self.binance_account.get_balance()
+            total_balance = real_balance.get('total_balance', 0)
+            available_balance = real_balance.get('available_balance', 0)
+            unrealized_pnl_total = real_balance.get('unrealized_pnl', 0)
+
+            # Get position info from NautilusTrader cache
             positions = self.cache.positions_open(instrument_id=self.instrument_id)
 
             msg = "📊 *Risk Metrics*\n\n"
 
-            # Account info
-            msg += "*Account*:\n"
-            msg += f"• Equity: ${self.equity:,.2f}\n"
+            # Real Account Balance from Binance
+            msg += "*Account (Real-time)*:\n"
+            if total_balance > 0:
+                msg += f"• Balance: ${total_balance:,.2f} USDT\n"
+                msg += f"• Available: ${available_balance:,.2f} USDT\n"
+                if unrealized_pnl_total != 0:
+                    pnl_emoji = "📈" if unrealized_pnl_total >= 0 else "📉"
+                    msg += f"• Unrealized P&L: {pnl_emoji} ${unrealized_pnl_total:,.2f}\n"
+            else:
+                msg += f"• Balance: ⚠️ Unable to fetch (configured: ${self.equity:,.2f})\n"
             msg += f"• Leverage: {self.leverage}x\n"
-            msg += f"• Max Position: {self.position_config.get('max_position_ratio', 0.3)*100:.0f}% of equity\n\n"
+            msg += f"• Max Position: {self.position_config.get('max_position_ratio', 0.3)*100:.0f}%\n\n"
+
+            # Use real balance for calculations if available, otherwise fall back to configured equity
+            effective_equity = total_balance if total_balance > 0 else self.equity
 
             # Position risk
             if positions:
@@ -2155,10 +2227,10 @@ class DeepSeekAIStrategy(Strategy):
                 msg += f"• Current: ${cached_price:,.2f}\n"
                 msg += f"• P&L: {pnl_emoji} ${pnl:,.2f} ({pnl_pct:+.2f}%)\n\n"
 
-                # Risk exposure
-                exposure_pct = (position_value / self.equity) * 100 if self.equity > 0 else 0
+                # Risk exposure using real balance
+                exposure_pct = (position_value / effective_equity) * 100 if effective_equity > 0 else 0
                 msg += "*Risk Exposure*:\n"
-                msg += f"• Position/Equity: {exposure_pct:.1f}%\n"
+                msg += f"• Position/Balance: {exposure_pct:.1f}%\n"
                 msg += f"• Leveraged Exposure: {exposure_pct * self.leverage:.1f}%\n"
             else:
                 msg += "*Current Position*: None\n"
