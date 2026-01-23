@@ -8,18 +8,19 @@ strategy:
   bar_type: "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL"  # Production: 15-minute bars
 
   # Capital and leverage
-  equity: 400  # USDT (实际账户余额)
-  leverage: 10
+  equity: 1000  # USDT (备用值，当无法获取真实余额时使用)
+  leverage: 5   # 杠杆倍数 (建议 5-10)
+  use_real_balance_as_equity: true  # 自动从 Binance 获取真实余额 (推荐开启)
 
-  # Position sizing
+  # Position sizing (仓位管理)
   position_management:
-    base_usdt_amount: 100  # Base position size (meets Binance $100 minimum notional)
-    high_confidence_multiplier: 1.5
-    medium_confidence_multiplier: 1.0
-    low_confidence_multiplier: 0.5
-    max_position_ratio: 0.30  # Max 30% of equity (120 USDT max with 400 equity)
-    trend_strength_multiplier: 1.2
-    min_trade_amount: 0.001  # Minimum BTC amount
+    base_usdt_amount: 100  # 基础仓位 (Binance 最低 $100)
+    high_confidence_multiplier: 1.5   # 高信心仓位乘数 → $150
+    medium_confidence_multiplier: 1.0 # 中等信心仓位乘数 → $100
+    low_confidence_multiplier: 0.5    # 低信心仓位乘数 → $50
+    max_position_ratio: 0.30  # 最大仓位比例 (30% of equity)
+    trend_strength_multiplier: 1.2    # 趋势强度乘数
+    min_trade_amount: 0.001  # 最小交易量 (BTC)
 
   # Technical indicators parameters - Production: Standard periods for 15-minute timeframe
   indicators:
