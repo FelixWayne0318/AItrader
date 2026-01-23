@@ -814,7 +814,13 @@ class DeepSeekAIStrategy(Strategy):
                     # Check for opposing actionable signals (BUY vs SELL)
                     opposing_signals = {signal_deepseek['signal'], signal_multi['signal']} == {'BUY', 'SELL'}
 
-                    if opposing_signals:
+                    # Check for HOLD vs actionable signal (HOLD vs BUY or HOLD vs SELL)
+                    hold_vs_action = (
+                        (signal_deepseek['signal'] == 'HOLD' and signal_multi['signal'] in ['BUY', 'SELL']) or
+                        (signal_multi['signal'] == 'HOLD' and signal_deepseek['signal'] in ['BUY', 'SELL'])
+                    )
+
+                    if opposing_signals or hold_vs_action:
                         # Use weighted confidence fusion if enabled (recommended)
                         if self.use_confidence_fusion:
                             resolved_signal = self._resolve_divergence_by_confidence(
@@ -855,9 +861,9 @@ class DeepSeekAIStrategy(Strategy):
                                 f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
                             )
                     else:
-                        # Non-opposing divergence (e.g., BUY vs HOLD)
-                        self.log.warning(
-                            f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
+                        # Non-actionable divergence (e.g., both HOLD with different reasons)
+                        self.log.info(
+                            f"ℹ️ Minor divergence: DeepSeek={signal_deepseek['signal']}, "
                             f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
                         )
             except Exception as e:

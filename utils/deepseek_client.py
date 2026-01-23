@@ -26,7 +26,7 @@ class DeepSeekAnalyzer:
         self,
         api_key: str,
         model: str = "deepseek-chat",
-        temperature: float = 0.1,
+        temperature: float = 0.3,  # Balanced: not too conservative, not too risky
         base_url: str = "https://api.deepseek.com",
         max_retries: int = 2,
     ):
@@ -134,8 +134,10 @@ class DeepSeekAnalyzer:
                         "high-frequency cryptocurrency trading on Binance Futures (BTCUSDT-PERP). "
                         "You analyze 15-minute K-line data with precision, combining multiple "
                         "technical indicators, market microstructure, and sentiment analysis. "
-                        "Your decisions must be data-driven, risk-aware, and optimized for "
-                        "15-minute timeframe characteristics. Always return responses strictly in JSON format."
+                        "Your decisions must be data-driven and DECISIVE. Prefer action (BUY/SELL) "
+                        "over inaction (HOLD) when trend direction is identifiable. "
+                        "HOLD should only be used when signals truly conflict. "
+                        "Always return responses strictly in JSON format."
                     )
                 },
                 {"role": "user", "content": prompt}
@@ -271,65 +273,67 @@ Tertiary Layer (10% weight) - RISK MANAGEMENT:
 
 【2. SIGNAL GENERATION LOGIC - STRICT RULES】
 
-BUY Signal Conditions (Require at least 2 of 3):
-├─ ✅ Strong uptrend confirmed by MA alignment
-├─ ✅ Price breaks above resistance with volume surge
-├─ ✅ RSI recovering from oversold (< 40) or healthy momentum (40-60)
+BUY Signal Conditions (ANY 2 of these is sufficient):
+├─ ✅ Uptrend: Price above SMA5 and SMA20
+├─ ✅ RSI < 60 (not overbought) and recovering or in healthy range
 ├─ ✅ MACD bullish crossover or positive histogram
-├─ ✅ Bullish K-line pattern (hammer, bullish engulfing, etc.)
-└─ ✅ Sentiment positive (if available, adds confidence)
+├─ ✅ Price near support level or bouncing from lower Bollinger Band
+├─ ✅ Volume confirmation (volume ratio > 1.0)
+└─ ✅ Bullish K-line pattern (hammer, bullish engulfing, etc.)
 
-SELL Signal Conditions (Require at least 2 of 3):
-├─ ✅ Strong downtrend confirmed by MA alignment
-├─ ✅ Price breaks below support with volume surge
-├─ ✅ RSI declining from overbought (> 60) or strong bearish momentum
+SELL Signal Conditions (ANY 2 of these is sufficient):
+├─ ✅ Downtrend: Price below SMA5 and SMA20
+├─ ✅ RSI > 40 (not oversold) and declining or showing weakness
 ├─ ✅ MACD bearish crossover or negative histogram
-├─ ✅ Bearish K-line pattern (shooting star, bearish engulfing, etc.)
-└─ ✅ Sentiment negative (if available, adds confidence)
+├─ ✅ Price near resistance level or rejected from upper Bollinger Band
+├─ ✅ Volume confirmation (volume ratio > 1.0)
+└─ ✅ Bearish K-line pattern (shooting star, bearish engulfing, etc.)
 
-HOLD Signal Conditions:
-├─ ⚠️ Consolidation/narrow range trading (no clear direction)
-├─ ⚠️ Mixed signals (some indicators bullish, some bearish)
-├─ ⚠️ Waiting for confirmation (potential reversal but not confirmed)
-└─ ⚠️ Low volume with indecisive candles
+HOLD Signal Conditions (Use sparingly - only when genuinely uncertain):
+├─ ⚠️ Tight consolidation with no breakout attempt
+├─ ⚠️ Equal bullish AND bearish indicators (true 50/50 conflict)
+├─ ⚠️ Key level test without volume confirmation
+└─ NOTE: If trend direction is visible, prefer BUY or SELL over HOLD
 
 【3. CONFIDENCE LEVEL ASSIGNMENT】
 
-HIGH Confidence:
+HIGH Confidence (Trade with full position):
 ├─ 3+ technical indicators align
-├─ Clear trend with strong volume
-├─ Price action confirms indicator signals
-└─ Sentiment supports (if available)
+├─ Clear trend direction visible
+├─ Volume confirms the move
+└─ Sentiment supports (bonus, not required)
 
-MEDIUM Confidence:
+MEDIUM Confidence (Trade with normal position):
 ├─ 2 technical indicators align
-├─ Moderate trend strength
-├─ Some conflicting signals present
-└─ Sentiment neutral or unavailable
+├─ Trend direction identifiable
+├─ Minor conflicting signals acceptable
+└─ This is the MOST COMMON and EXPECTED confidence level
 
-LOW Confidence:
-├─ Only 1 strong indicator
-├─ Mixed signals predominant
-├─ Low volume/consolidation phase
-└─ Sentiment contradicts technical
+LOW Confidence (Trade with reduced position - still valid!):
+├─ 1-2 indicators suggest direction
+├─ Trend is developing but not fully confirmed
+├─ NOTE: LOW confidence trades can still be profitable
+└─ Better to trade with LOW confidence than miss opportunity
 
-【4. ANTI-OVERTRADING PRINCIPLES】
+【4. SIGNAL GENERATION PRINCIPLES】
 
-1. Trend Continuity:
-   └─ Don't reverse signal based on single candle fluctuation
-   └─ Require 2-3 consecutive bars confirming reversal
+1. Be Decisive:
+   └─ When indicators align (2+ supporting), take action
+   └─ HOLD should only be used when genuinely uncertain
+   └─ In trending markets, favor trend continuation signals
 
-2. Position Stability:
+2. Trend Continuity:
    └─ Maintain direction unless clear reversal pattern
-   └─ Avoid frequent position changes (minimize transaction costs)
+   └─ A single bar reversal is rarely enough for direction change
 
-3. Signal Confirmation:
-   └─ Wait for confirmation when in doubt
-   └─ Better to HOLD than make wrong move
+3. Volume Validation:
+   └─ High volume confirms signal strength
+   └─ Low volume moves are less reliable but still valid
 
-4. Volume Validation:
-   └─ High-confidence signals require volume confirmation
-   └─ Low volume moves are less reliable
+4. Avoid Excessive HOLD:
+   └─ HOLD is appropriate ONLY when indicators truly conflict
+   └─ If trend is clear, generate BUY or SELL even with moderate confidence
+   └─ Market opportunities are missed by excessive caution
 
 【5. 15-MINUTE TIMEFRAME SPECIFIC CONSIDERATIONS】
 

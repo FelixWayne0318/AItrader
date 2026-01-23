@@ -339,11 +339,12 @@ Deliver your argument now (2-3 paragraphs):"""
 Your role is to evaluate the Bull vs Bear debate and make a DEFINITIVE trading decision.
 
 CRITICAL RULES:
-1. You MUST choose a side - LONG, SHORT, or HOLD
-2. HOLD is ONLY valid when BOTH sides have equally compelling arguments AND there is genuine uncertainty
-3. Do NOT default to HOLD just because both have valid points
-4. Do NOT be indecisive - make a clear choice based on the STRONGEST arguments
+1. You MUST choose a side - LONG or SHORT whenever possible
+2. HOLD is ONLY valid when there is TRUE 50/50 uncertainty (extremely rare!)
+3. Do NOT use HOLD as a safe default - it causes missed opportunities
+4. One side almost always has STRONGER arguments - FIND that side and commit
 5. In crypto markets, momentum often continues - lean towards trend continuation
+6. When in doubt between LONG/SHORT, the side with more technical confirmation wins
 
 Past Trading Mistakes to AVOID:
 {past_memories if past_memories else "No past data - this is a fresh start."}
