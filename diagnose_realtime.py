@@ -575,10 +575,13 @@ print()
 if would_trade and final_signal in ['BUY', 'SELL']:
     print(f"  🟢 WOULD EXECUTE: {final_signal} {btc_quantity:.4f} BTC @ ${current_price:,.2f}")
     print(f"     Notional: ${btc_quantity * current_price:.2f}")
-    if signal_deepseek.get('stop_loss'):
-        print(f"     Stop Loss: ${signal_deepseek['stop_loss']:,.2f}")
-    if signal_deepseek.get('take_profit'):
-        print(f"     Take Profit: ${signal_deepseek['take_profit']:,.2f}")
+    # 显示最终信号的 SL/TP (来自 final_signal_data，不是 signal_deepseek)
+    final_sl = final_signal_data.get('stop_loss')
+    final_tp = final_signal_data.get('take_profit')
+    if final_sl:
+        print(f"     Stop Loss: ${final_sl:,.2f}")
+    if final_tp:
+        print(f"     Take Profit: ${final_tp:,.2f}")
 elif final_signal == 'HOLD':
     print("  🟡 NO TRADE: AI recommends HOLD")
     reason = final_signal_data.get('reason', signal_deepseek.get('reason', 'N/A'))
