@@ -202,6 +202,55 @@ except Exception as e:
 print()
 
 # =============================================================================
+# 3.5. 检查 Binance 真实持仓 (与实盘一致)
+# =============================================================================
+print("[3.5/9] 检查 Binance 真实持仓...")
+print("-" * 70)
+
+current_position = None  # 默认无持仓
+
+try:
+    from utils.binance_account import BinanceAccountFetcher
+
+    account_fetcher = BinanceAccountFetcher()
+    positions = account_fetcher.get_positions(symbol="BTCUSDT")
+
+    if positions:
+        pos = positions[0]  # 取第一个 BTCUSDT 持仓
+        pos_amt = float(pos.get('positionAmt', 0))
+        entry_price = float(pos.get('entryPrice', 0))
+        unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+
+        if pos_amt != 0:
+            side = 'long' if pos_amt > 0 else 'short'
+            current_position = {
+                'side': side,
+                'quantity': abs(pos_amt),
+                'avg_px': entry_price,
+                'unrealized_pnl': unrealized_pnl,
+            }
+            print(f"  ⚠️ 检测到现有持仓!")
+            print(f"     方向: {side.upper()}")
+            print(f"     数量: {abs(pos_amt):.4f} BTC")
+            print(f"     入场价: ${entry_price:,.2f}")
+            print(f"     未实现盈亏: ${unrealized_pnl:,.2f}")
+
+            # 计算盈亏百分比
+            if entry_price > 0:
+                pnl_pct = (unrealized_pnl / (entry_price * abs(pos_amt))) * 100
+                print(f"     盈亏比例: {pnl_pct:+.2f}%")
+        else:
+            print("  ✅ 无持仓")
+    else:
+        print("  ✅ 无持仓")
+
+except Exception as e:
+    print(f"  ⚠️ 持仓检查失败: {e}")
+    print("  → 继续假设无持仓")
+
+print()
+
+# =============================================================================
 # 4. 获取技术数据 (与 on_timer 相同)
 # =============================================================================
 print("[4/9] 获取技术数据 (模拟 on_timer 流程)...")
@@ -339,12 +388,12 @@ try:
     print(f"  Max Retries: {strategy_config.deepseek_max_retries}")
     print("  正在调用 DeepSeek API...")
 
-    # 调用分析 (与 on_timer 相同)
+    # 调用分析 (与 on_timer 相同，使用真实持仓)
     signal_deepseek = deepseek.analyze(
         price_data=price_data,
         technical_data=technical_data,
         sentiment_data=sentiment_data,
-        current_position=None,  # 无持仓
+        current_position=current_position,  # 使用真实持仓
     )
 
     print()
@@ -396,12 +445,12 @@ try:
     print("  🐻 Bear Agent 分析中...")
     print("  ⚖️ Judge Agent 判断中...")
 
-    # 调用分析 (与 on_timer 相同)
+    # 调用分析 (与 on_timer 相同，使用真实持仓)
     signal_multi = multi_agent.analyze(
         symbol="BTCUSDT",
         technical_report=technical_data,
         sentiment_report=sentiment_data,
-        current_position=None,
+        current_position=current_position,  # 使用真实持仓
         price_data=price_data,
     )
 
@@ -554,6 +603,53 @@ if would_trade and final_signal in ['BUY', 'SELL']:
     if calc_details.get('adjusted'):
         print(f"     ⚠️ Quantity adjusted to meet minimum notional")
 
+    # 4. 检查现有持仓 (与 _manage_existing_position 逻辑一致)
+    print()
+    print("  模拟持仓管理检查:")
+    target_side = 'long' if final_signal == 'BUY' else 'short'
+
+    if current_position:
+        current_side = current_position['side']
+        current_qty = current_position['quantity']
+        adjustment_threshold = getattr(strategy_config, 'position_adjustment_threshold', 0.001)
+
+        print(f"     当前持仓: {current_side.upper()} {current_qty:.4f} BTC")
+        print(f"     目标方向: {target_side.upper()} {btc_quantity:.4f} BTC")
+        print(f"     调整阈值: {adjustment_threshold} BTC")
+
+        if target_side == current_side:
+            # 同方向持仓
+            size_diff = btc_quantity - current_qty
+            print(f"     仓位差异: {size_diff:+.4f} BTC")
+
+            if abs(size_diff) < adjustment_threshold:
+                print(f"     ⚠️ 仓位差异 ({abs(size_diff):.4f}) < 阈值 ({adjustment_threshold})")
+                print(f"     → 实盘会输出: 'Position size appropriate, no adjustment needed'")
+                print(f"     → 🔴 NO NEW TRADE - 这就是信号发出但无交易的原因!")
+                would_trade = False
+            elif size_diff > 0:
+                print(f"     → 将增加仓位 {abs(size_diff):.4f} BTC")
+            else:
+                print(f"     → 将减少仓位 {abs(size_diff):.4f} BTC")
+        else:
+            # 反向持仓 - 反转
+            allow_reversals = getattr(strategy_config, 'allow_reversals', True)
+            require_high_conf = getattr(strategy_config, 'require_high_confidence_for_reversal', False)
+
+            if allow_reversals:
+                if require_high_conf and confidence != 'HIGH':
+                    print(f"     ⚠️ 反转需要 HIGH 信心，当前为 {confidence}")
+                    print(f"     → 实盘会保持现有 {current_side.upper()} 持仓")
+                    would_trade = False
+                else:
+                    print(f"     → 将反转持仓: {current_side.upper()} → {target_side.upper()}")
+            else:
+                print(f"     ⚠️ 反转已禁用")
+                print(f"     → 实盘会保持现有 {current_side.upper()} 持仓")
+                would_trade = False
+    else:
+        print(f"     无现有持仓 → 将开新 {target_side.upper()} 仓位 {btc_quantity:.4f} BTC")
+
 print()
 
 # =============================================================================
@@ -572,6 +668,13 @@ print(f"  📊 use_confidence_fusion: {use_confidence_fusion}")
 print(f"  📊 skip_on_divergence: {skip_on_divergence}")
 print()
 
+# 显示持仓信息
+if current_position:
+    print(f"  📊 Current Position: {current_position['side'].upper()} {current_position['quantity']:.4f} BTC")
+else:
+    print(f"  📊 Current Position: None")
+print()
+
 if would_trade and final_signal in ['BUY', 'SELL']:
     print(f"  🟢 WOULD EXECUTE: {final_signal} {btc_quantity:.4f} BTC @ ${current_price:,.2f}")
     print(f"     Notional: ${btc_quantity * current_price:.2f}")
@@ -586,6 +689,16 @@ elif final_signal == 'HOLD':
     print("  🟡 NO TRADE: AI recommends HOLD")
     reason = final_signal_data.get('reason', signal_deepseek.get('reason', 'N/A'))
     print(f"     Reason: {reason[:100]}...")
+elif not would_trade and final_signal in ['BUY', 'SELL']:
+    # 信号是 BUY/SELL 但因为持仓原因不会执行
+    print(f"  🔴 NO TRADE: Signal={final_signal}, but blocked by position management")
+    if current_position:
+        target_side = 'long' if final_signal == 'BUY' else 'short'
+        if current_position['side'] == target_side:
+            print(f"     → 已有同方向持仓 ({current_position['side'].upper()} {current_position['quantity']:.4f} BTC)")
+            print(f"     → 仓位差异低于调整阈值，无需操作")
+        else:
+            print(f"     → 反转被阻止 (当前: {current_position['side'].upper()}, 信号: {target_side.upper()})")
 else:
     print(f"  🔴 NO TRADE: Signal={final_signal}, Confidence={confidence}")
     if not passes_threshold:
