@@ -53,12 +53,12 @@ strategy:
 
   # Risk management
   risk:
-    min_confidence_to_trade: "MEDIUM"  # LOW, MEDIUM, HIGH
+    min_confidence_to_trade: "LOW"  # LOW, MEDIUM, HIGH (changed to LOW for more active trading)
     allow_reversals: true
     require_high_confidence_for_reversal: false  # Set to true for safer trading
     max_consecutive_same_signal: 5
-    rsi_extreme_threshold_upper: 75
-    rsi_extreme_threshold_lower: 25
+    rsi_extreme_threshold_upper: 70  # Lowered from 75 for earlier overbought detection
+    rsi_extreme_threshold_lower: 30  # Raised from 25 for earlier oversold detection
     rsi_extreme_multiplier: 0.7
 
     # Multi-Agent 分歧处理 (Divergence Handling)
