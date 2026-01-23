@@ -1,68 +1,69 @@
 ---
 name: deploy
-description: 部署交易机器人到服务器。用于更新代码、重启服务、检查状态。Use when deploying, updating code, restarting service, or checking deployment status.
-disable-model-invocation: true
-argument-hint: "[restart|status|update|reinstall]"
-allowed-tools: Bash, Read, Grep
+description: |
+  Deploy and manage the AItrader trading bot on the server. 部署和管理 AItrader 交易机器人。
+
+  Use this skill when:
+  - Deploying or updating code to the server (部署或更新代码)
+  - Restarting the nautilus-trader service (重启服务)
+  - Checking deployment status (检查部署状态)
+  - Performing a complete reinstall (完全重装)
+  - Managing systemd service configuration (管理 systemd 服务)
+  - Troubleshooting deployment issues (排查部署问题)
+
+  Keywords: deploy, restart, update, reinstall, systemd, service, server, 部署, 重启, 更新
 ---
 
-# 部署交易机器人
+# Deploy Trading Bot
 
-## 关键信息
+## Key Information
 
-| 项目 | 值 |
-|------|-----|
-| **入口文件** | `main_live.py` (不是 main.py!) |
-| **服务器** | 139.180.157.152 |
-| **用户** | linuxuser |
-| **路径** | /home/linuxuser/nautilus_AItrader |
-| **服务名** | nautilus-trader |
-| **分支** | main |
-| **配置文件** | ~/.env.aitrader (永久存储) |
+| Item | Value |
+|------|-------|
+| **Entry File** | `main_live.py` (NOT main.py!) |
+| **Server** | 139.180.157.152 |
+| **User** | linuxuser |
+| **Path** | /home/linuxuser/nautilus_AItrader |
+| **Service** | nautilus-trader |
+| **Branch** | main |
+| **Config** | ~/.env.aitrader (permanent storage) |
 
-## .env 配置管理
+## Configuration Management
 
-| 位置 | 说明 |
-|------|------|
-| `~/.env.aitrader` | 永久存储位置，重装不会删除 |
-| `.env` | 软链接，指向 ~/.env.aitrader |
+| Location | Description |
+|----------|-------------|
+| `~/.env.aitrader` | Permanent storage, survives reinstall |
+| `.env` | Symlink to ~/.env.aitrader |
 
 ```bash
-# 编辑配置
+# Edit configuration
 nano ~/.env.aitrader
 
-# 查看软链接
+# Check symlink
 ls -la /home/linuxuser/nautilus_AItrader/.env
 ```
 
-## 部署命令
+## Deployment Commands
 
-如果用户提供了参数，执行对应操作：
-- `$ARGUMENTS` 包含 "restart" → 重启服务
-- `$ARGUMENTS` 包含 "status" → 检查状态
-- `$ARGUMENTS` 包含 "update" → 更新代码并重启
-- `$ARGUMENTS` 包含 "reinstall" → 完全重装
-- 无参数 → 显示部署信息
-
-### 完全重装
+### Complete Reinstall
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/main/reinstall.sh | bash
 ```
 
-### 更新代码并重启
+### Update and Restart
 ```bash
 cd /home/linuxuser/nautilus_AItrader
 git pull origin main
 sudo systemctl restart nautilus-trader
 ```
 
-### 检查状态
+### Check Status
 ```bash
 sudo systemctl status nautilus-trader
 sudo journalctl -u nautilus-trader -n 30 --no-hostname
 ```
 
-## systemd 服务配置
+## systemd Service Configuration
 
 ```ini
 [Unit]
@@ -77,12 +78,8 @@ Environment="PATH=/home/linuxuser/nautilus_AItrader/venv/bin:/usr/local/sbin:/us
 Environment="AUTO_CONFIRM=true"
 EnvironmentFile=-/home/linuxuser/nautilus_AItrader/.env
 ExecStart=/home/linuxuser/nautilus_AItrader/venv/bin/python main_live.py
-
-# Auto-restart on failure
 Restart=on-failure
 RestartSec=10
-
-# Logging (use journalctl to view)
 StandardOutput=journal
 StandardError=journal
 
@@ -90,11 +87,11 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
-## 常见错误
+## Common Errors
 
-| 错误 | 原因 | 解决 |
-|------|------|------|
-| `can't open file 'main.py'` | 入口文件错误 | 使用 `main_live.py` |
-| `EOFError: EOF when reading a line` | 缺少 AUTO_CONFIRM | 添加 `Environment=AUTO_CONFIRM=true` |
-| 服务不断重启 | 配置错误 | 检查 ExecStart 路径 |
-| `.env` 丢失 | 软链接断开 | `ln -sf ~/.env.aitrader .env` |
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `can't open file 'main.py'` | Wrong entry file | Use `main_live.py` |
+| `EOFError: EOF when reading a line` | Missing AUTO_CONFIRM | Add `Environment=AUTO_CONFIRM=true` |
+| Service keeps restarting | Config error | Check ExecStart path |
+| `.env` missing | Broken symlink | `ln -sf ~/.env.aitrader .env` |

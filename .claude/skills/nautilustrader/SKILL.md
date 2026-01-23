@@ -1,23 +1,113 @@
 ---
 name: nautilustrader
-description: NautilusTrader algorithmic trading platform. Use for building trading strategies, backtesting, live trading, data handling, and quantitative finance applications.
-allowed-tools: Read, Grep, Glob, WebFetch, WebSearch
+description: |
+  NautilusTrader algorithmic trading platform reference. NautilusTrader 量化交易框架参考。
+
+  Use this skill when:
+  - Working with NautilusTrader API (使用 NautilusTrader API)
+  - Implementing trading strategies (实现交易策略)
+  - Running backtests (运行回测)
+  - Configuring data feeds and adapters (配置数据源和适配器)
+  - Debugging NautilusTrader code (调试 NautilusTrader 代码)
+  - Understanding trading concepts like positions, orders, and fills (理解持仓、订单、成交等概念)
+
+  Keywords: NautilusTrader, strategy, backtest, trading, adapter, Binance, quantitative, 量化, 策略, 回测
 ---
 
-# Nautilus-Trader Skill
+# NautilusTrader Reference
 
-Comprehensive assistance with nautilus-trader development, generated from official documentation.
+High-performance algorithmic trading platform used by AItrader.
 
-## When to Use This Skill
+## Project Configuration
 
-This skill should be triggered when:
-- Working with nautilus_trader
-- Asking about nautilus_trader features or APIs
-- Implementing nautilus_trader solutions
-- Debugging nautilus_trader code
-- Learning nautilus_trader best practices
+| Item | Value |
+|------|-------|
+| **Version** | 1.221.0 |
+| **Python** | 3.11+ |
+| **Exchange** | Binance Futures |
+| **Symbol** | BTCUSDT-PERP |
+
+## Reference Documentation
+
+Detailed documentation is available in the `references/` subdirectory:
+
+| File | Content |
+|------|---------|
+| `references/index.md` | Overview and navigation |
+| `references/getting_started.md` | Installation and quick start |
+| `references/concepts.md` | Core concepts (Strategy, Actor, etc.) |
+| `references/strategies.md` | Strategy implementation guide |
+| `references/data.md` | Data types and feeds |
+| `references/backtesting.md` | Backtesting guide |
+| `references/api.md` | API reference |
+| `references/other.md` | Additional topics |
 
 ## Quick Reference
+
+### Strategy Base Class
+
+```python
+from nautilus_trader.trading.strategy import Strategy
+
+class MyStrategy(Strategy):
+    def on_start(self):
+        """Called when strategy starts"""
+        pass
+
+    def on_bar(self, bar: Bar):
+        """Called on each bar update"""
+        pass
+
+    def on_order_filled(self, event: OrderFilled):
+        """Called when order is filled"""
+        pass
+```
+
+### Order Submission
+
+```python
+order = self.order_factory.market(
+    instrument_id=self.instrument.id,
+    order_side=OrderSide.BUY,
+    quantity=Quantity.from_str("0.001"),
+)
+self.submit_order(order)
+```
+
+### Stop-Loss/Take-Profit (Bracket Order)
+
+```python
+entry = self.order_factory.market(...)
+sl_order = self.order_factory.stop_market(..., reduce_only=True)
+tp_order = self.order_factory.limit(..., reduce_only=True)
+
+self.submit_order_list(
+    OrderList(
+        order_list_id=self.order_list_id_generator.generate(),
+        orders=[entry, sl_order, tp_order],
+    )
+)
+```
+
+## Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| `POSITION_RISK_CONTROL` enum error | Apply `patches/binance_enums.py` before import |
+| Non-ASCII symbol crash | Upgrade to NautilusTrader 1.221.0 |
+| RSI thread safety | Don't access indicators from background threads |
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `main_live.py` | Entry point |
+| `strategy/deepseek_strategy.py` | Main strategy |
+| `patches/binance_enums.py` | Enum compatibility patch |
+
+## Detailed Pattern Documentation
+
+The following patterns are extensively documented in the references/ subdirectory. Read those files for detailed API documentation.
 
 ### Common Patterns
 
