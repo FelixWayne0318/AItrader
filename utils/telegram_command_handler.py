@@ -10,17 +10,20 @@ from typing import Optional, Callable, Dict, Any
 from datetime import datetime
 
 try:
-    from telegram import Update
-    from telegram.ext import Application, CommandHandler, ContextTypes
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
     from telegram.error import Conflict as TelegramConflict
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
     Application = None
     CommandHandler = None
+    CallbackQueryHandler = None
     Update = None
     ContextTypes = None
     TelegramConflict = Exception
+    InlineKeyboardButton = None
+    InlineKeyboardMarkup = None
 
 
 class TelegramCommandHandler:
@@ -34,6 +37,7 @@ class TelegramCommandHandler:
     - /history: View recent trade history
     - /risk: View risk metrics
     - /help: Show available commands
+    - /menu: Show interactive button menu
 
     Control Commands:
     - /pause: Pause trading
@@ -273,7 +277,8 @@ class TelegramCommandHandler:
             "• `/orders` - View open orders\n"
             "• `/history` - Recent trade history\n"
             "• `/risk` - View risk metrics\n"
-            "• `/help` - Show this help message\n\n"
+            "• `/help` - Show this help message\n"
+            "• `/menu` - Show interactive buttons\n\n"
             "*Control Commands*:\n"
             "• `/pause` - Pause trading (no new orders)\n"
             "• `/resume` - Resume trading\n"
@@ -281,7 +286,97 @@ class TelegramCommandHandler:
             "💡 _Commands are case-insensitive_\n"
         )
         await self._send_response(update, help_msg)
-    
+
+    async def cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /menu command - show interactive inline keyboard."""
+        self.logger.info("Received /menu command")
+
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        # Create inline keyboard with buttons
+        keyboard = [
+            # Row 1: Query commands
+            [
+                InlineKeyboardButton("📊 状态", callback_data='cmd_status'),
+                InlineKeyboardButton("💰 持仓", callback_data='cmd_position'),
+                InlineKeyboardButton("📋 订单", callback_data='cmd_orders'),
+            ],
+            # Row 2: More query commands
+            [
+                InlineKeyboardButton("📈 历史", callback_data='cmd_history'),
+                InlineKeyboardButton("⚠️ 风险", callback_data='cmd_risk'),
+            ],
+            # Row 3: Control commands
+            [
+                InlineKeyboardButton("⏸️ 暂停", callback_data='cmd_pause'),
+                InlineKeyboardButton("▶️ 恢复", callback_data='cmd_resume'),
+            ],
+            # Row 4: Dangerous command (separate row)
+            [
+                InlineKeyboardButton("🔴 平仓", callback_data='cmd_close'),
+            ],
+        ]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "🤖 *交易控制面板*\n\n点击按钮执行操作：",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle inline keyboard button callbacks."""
+        query = update.callback_query
+
+        # Acknowledge the callback
+        await query.answer()
+
+        # Check authorization
+        chat_id = str(query.message.chat.id)
+        if chat_id not in self.allowed_chat_ids:
+            await query.edit_message_text("❌ Unauthorized")
+            return
+
+        callback_data = query.data
+        self.logger.info(f"Received callback: {callback_data}")
+
+        # Map callback data to commands
+        command_map = {
+            'cmd_status': 'status',
+            'cmd_position': 'position',
+            'cmd_orders': 'orders',
+            'cmd_history': 'history',
+            'cmd_risk': 'risk',
+            'cmd_pause': 'pause',
+            'cmd_resume': 'resume',
+            'cmd_close': 'close',
+        }
+
+        command = command_map.get(callback_data)
+        if not command:
+            await query.edit_message_text("❌ Unknown command")
+            return
+
+        try:
+            # Execute the command
+            result = self.strategy_callback(command, {})
+
+            if result.get('success'):
+                message = result.get('message', f'✅ {command} executed')
+                # Truncate if too long for Telegram
+                if len(message) > 4000:
+                    message = message[:4000] + "..."
+                await query.edit_message_text(message, parse_mode='Markdown')
+            else:
+                await query.edit_message_text(f"❌ Error: {result.get('error', 'Unknown')}")
+
+        except Exception as e:
+            self.logger.error(f"Error handling callback {callback_data}: {e}")
+            await query.edit_message_text(f"❌ Error: {str(e)}")
+
     async def _delete_webhook_standalone(self) -> bool:
         """
         Delete webhook using a standalone Bot instance.
@@ -347,7 +442,11 @@ class TelegramCommandHandler:
                 self.application.add_handler(CommandHandler("resume", self.cmd_resume))
                 self.application.add_handler(CommandHandler("close", self.cmd_close))
                 self.application.add_handler(CommandHandler("help", self.cmd_help))
+                self.application.add_handler(CommandHandler("menu", self.cmd_menu))  # Inline keyboard menu
                 self.application.add_handler(CommandHandler("start", self.cmd_help))  # Alias for help
+
+                # Register callback handler for inline keyboard buttons
+                self.application.add_handler(CallbackQueryHandler(self.handle_callback))
 
                 self.logger.info("🤖 Starting Telegram command handler...")
 
