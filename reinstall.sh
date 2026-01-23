@@ -1,211 +1,483 @@
 #!/bin/bash
 # ============================================================
-# AItrader 一键清空重装脚本
+# AItrader 一键安装脚本 v2.0
 #
-# 用途: 完全清理并重新安装交易机器人
+# 用途: 完整安装交易机器人 + 可选 Web 管理界面
 # 服务器: 139.180.157.152
 # 用户: linuxuser
 # 仓库: https://github.com/FelixWayne0318/AItrader
-# 分支: main
 #
-# .env 管理策略:
-#   - 永久存储: ~/.env.aitrader (不会被删除)
-#   - 项目目录: .env -> ~/.env.aitrader (软链接)
-#   - 重装时自动保留配置
+# 组件:
+#   [必装] AItrader - NautilusTrader 交易机器人
+#   [可选] Algvex Web - 网站管理界面 (前端 + 后端)
 #
 # 使用方法:
-#   方法1: 直接从 GitHub 下载并执行
+#   方法1: 一键安装全部 (从 GitHub)
 #     curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/main/reinstall.sh | bash
 #
-#   方法2: 本地执行
+#   方法2: 仅安装交易机器人
+#     curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/main/reinstall.sh | bash -s -- --trader-only
+#
+#   方法3: 仅安装 Web 界面
+#     curl -fsSL https://raw.githubusercontent.com/FelixWayne0318/AItrader/main/reinstall.sh | bash -s -- --web-only
+#
+#   方法4: 本地执行
 #     chmod +x reinstall.sh && ./reinstall.sh
 #
 # ============================================================
 
 set -e  # 遇到错误立即退出
 
+# ==================== 配置变量 ====================
+INSTALL_DIR="/home/linuxuser/nautilus_AItrader"
+WEB_DIR="/home/linuxuser/algvex"
+HOME_DIR="/home/linuxuser"
+ENV_PERMANENT="${HOME_DIR}/.env.aitrader"
+WEB_ENV="${WEB_DIR}/backend/.env"
+REPO_URL="https://github.com/FelixWayne0318/AItrader.git"
+BRANCH="${AITRADER_BRANCH:-main}"
+TRADER_SERVICE="nautilus-trader"
+WEB_BACKEND_SERVICE="algvex-backend"
+WEB_FRONTEND_SERVICE="algvex-frontend"
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-# 配置变量
-INSTALL_DIR="/home/linuxuser/nautilus_AItrader"
-HOME_DIR="/home/linuxuser"
-ENV_PERMANENT="${HOME_DIR}/.env.aitrader"  # 永久存储位置
-REPO_URL="https://github.com/FelixWayne0318/AItrader.git"
-BRANCH="main"
-SERVICE_NAME="nautilus-trader"
+# 安装选项 (默认全部安装)
+INSTALL_TRADER=true
+INSTALL_WEB=true
 
-echo ""
-echo -e "${BLUE}==========================================${NC}"
-echo -e "${BLUE}   AItrader 一键清空重装脚本${NC}"
-echo -e "${BLUE}==========================================${NC}"
-echo ""
+# ==================== 解析参数 ====================
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --trader-only)
+            INSTALL_WEB=false
+            shift
+            ;;
+        --web-only)
+            INSTALL_TRADER=false
+            shift
+            ;;
+        --branch)
+            BRANCH="$2"
+            shift 2
+            ;;
+        *)
+            echo -e "${RED}未知参数: $1${NC}"
+            exit 1
+            ;;
+    esac
+done
 
-# ========== 第一步：处理 .env 配置 ==========
-echo -e "${YELLOW}[1/8] 处理 .env 配置...${NC}"
-
-# 检查是否已有永久配置
-if [ -f "${ENV_PERMANENT}" ]; then
-    echo -e "${GREEN}✓ 发现永久配置文件: ${ENV_PERMANENT}${NC}"
-    echo -e "${GREEN}  (重装不会影响此文件)${NC}"
-else
-    # 检查项目目录中是否有 .env (非软链接)
-    if [ -f "${INSTALL_DIR}/.env" ] && [ ! -L "${INSTALL_DIR}/.env" ]; then
-        echo -e "${YELLOW}  迁移现有 .env 到永久位置...${NC}"
-        cp "${INSTALL_DIR}/.env" "${ENV_PERMANENT}"
-        chmod 600 "${ENV_PERMANENT}"
-        echo -e "${GREEN}✓ 已迁移到 ${ENV_PERMANENT}${NC}"
+# ==================== 辅助函数 ====================
+print_header() {
+    echo ""
+    echo -e "${BLUE}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║                    AItrader 一键安装脚本 v2.0                  ║${NC}"
+    echo -e "${BLUE}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${CYAN}安装组件:${NC}"
+    if $INSTALL_TRADER; then
+        echo -e "  ${GREEN}✓${NC} AItrader 交易机器人"
     else
-        echo -e "${YELLOW}⚠ 未找到现有配置，稍后需要手动配置${NC}"
+        echo -e "  ${YELLOW}○${NC} AItrader 交易机器人 (跳过)"
+    fi
+    if $INSTALL_WEB; then
+        echo -e "  ${GREEN}✓${NC} Algvex Web 管理界面"
+    else
+        echo -e "  ${YELLOW}○${NC} Algvex Web 管理界面 (跳过)"
+    fi
+    echo -e "${CYAN}分支:${NC} ${BRANCH}"
+    echo ""
+}
+
+print_step() {
+    echo ""
+    echo -e "${YELLOW}[$1] $2${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✓ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠ $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}✗ $1${NC}"
+}
+
+# ==================== 主程序开始 ====================
+print_header
+
+STEP=1
+TOTAL_STEPS=0
+$INSTALL_TRADER && TOTAL_STEPS=$((TOTAL_STEPS + 5))
+$INSTALL_WEB && TOTAL_STEPS=$((TOTAL_STEPS + 4))
+TOTAL_STEPS=$((TOTAL_STEPS + 2))  # 基础步骤
+
+# ==================== 1. 检查系统依赖 ====================
+print_step "${STEP}/${TOTAL_STEPS}" "检查并安装系统依赖..."
+STEP=$((STEP + 1))
+
+# 检测包管理器
+if command -v apt-get &> /dev/null; then
+    PKG_MANAGER="apt-get"
+    sudo apt-get update -qq
+elif command -v yum &> /dev/null; then
+    PKG_MANAGER="yum"
+else
+    print_error "不支持的系统，请使用 Ubuntu/Debian 或 CentOS"
+    exit 1
+fi
+
+# 安装基础依赖
+sudo $PKG_MANAGER install -y -qq curl git software-properties-common build-essential
+
+# Python 3.11+ (AItrader 和 Web 都需要)
+if ! command -v python3.11 &> /dev/null; then
+    print_warning "安装 Python 3.11..."
+    if [ "$PKG_MANAGER" = "apt-get" ]; then
+        sudo add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || true
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq python3.11 python3.11-venv python3.11-dev
+    fi
+fi
+print_success "Python 3.11 已就绪"
+
+# 确保 python3 命令可用 (创建符号链接如果不存在)
+if ! command -v python3 &> /dev/null; then
+    sudo ln -sf /usr/bin/python3.11 /usr/bin/python3
+fi
+
+# Node.js 18+ (Web 需要)
+if $INSTALL_WEB; then
+    NODE_VERSION=$(node -v 2>/dev/null | cut -d'v' -f2 | cut -d'.' -f1 || echo "0")
+    if [ "$NODE_VERSION" -lt 18 ]; then
+        print_warning "安装 Node.js 18..."
+        curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - 2>/dev/null
+        sudo apt-get install -y -qq nodejs
+    fi
+    print_success "Node.js $(node -v) 已就绪"
+fi
+
+# ==================== 2. 处理配置文件 ====================
+print_step "${STEP}/${TOTAL_STEPS}" "处理配置文件..."
+STEP=$((STEP + 1))
+
+# AItrader 配置
+if $INSTALL_TRADER; then
+    if [ -f "${ENV_PERMANENT}" ]; then
+        print_success "发现 AItrader 配置: ${ENV_PERMANENT}"
+    else
+        if [ -f "${INSTALL_DIR}/.env" ] && [ ! -L "${INSTALL_DIR}/.env" ]; then
+            cp "${INSTALL_DIR}/.env" "${ENV_PERMANENT}"
+            chmod 600 "${ENV_PERMANENT}"
+            print_success "已迁移配置到 ${ENV_PERMANENT}"
+        else
+            print_warning "AItrader 配置稍后需要手动创建"
+        fi
     fi
 fi
 
-# ========== 第二步：停止并清理旧服务 ==========
-echo ""
-echo -e "${YELLOW}[2/8] 停止并清理旧服务...${NC}"
-
-# 停止 nautilus-trader 服务
-if systemctl is-active --quiet ${SERVICE_NAME}.service 2>/dev/null; then
-    sudo systemctl stop ${SERVICE_NAME}.service
-    echo -e "${GREEN}✓ 已停止 ${SERVICE_NAME} 服务${NC}"
+# Web 配置 (保留现有)
+if $INSTALL_WEB && [ -f "${WEB_ENV}" ]; then
+    WEB_ENV_BACKUP="/tmp/algvex-backend-env-backup"
+    cp "${WEB_ENV}" "${WEB_ENV_BACKUP}"
+    print_success "已备份 Web 配置"
 fi
-sudo systemctl disable ${SERVICE_NAME}.service 2>/dev/null || true
-sudo rm -f /etc/systemd/system/${SERVICE_NAME}.service 2>/dev/null || true
 
-# 停止旧的 deepseek-trader 服务（如果存在）
-if systemctl is-active --quiet deepseek-trader.service 2>/dev/null; then
-    sudo systemctl stop deepseek-trader.service
-fi
-sudo systemctl disable deepseek-trader.service 2>/dev/null || true
-sudo rm -f /etc/systemd/system/deepseek-trader.service 2>/dev/null || true
+# ==================== AItrader 安装 ====================
+if $INSTALL_TRADER; then
+    # 停止服务
+    print_step "${STEP}/${TOTAL_STEPS}" "停止 AItrader 服务..."
+    STEP=$((STEP + 1))
 
-# 重新加载 systemd
-sudo systemctl daemon-reload
+    if systemctl is-active --quiet ${TRADER_SERVICE}.service 2>/dev/null; then
+        sudo systemctl stop ${TRADER_SERVICE}.service
+    fi
+    sudo systemctl disable ${TRADER_SERVICE}.service 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/${TRADER_SERVICE}.service 2>/dev/null || true
+    pkill -f "main_live.py" 2>/dev/null || true
+    sleep 2
+    print_success "AItrader 服务已停止"
 
-# 杀死所有可能残留的进程
-pkill -f "main_live.py" 2>/dev/null || true
-pkill -f "nautilus_AItrader" 2>/dev/null || true
-sleep 2
+    # 删除旧目录
+    print_step "${STEP}/${TOTAL_STEPS}" "清理 AItrader 旧文件..."
+    STEP=$((STEP + 1))
 
-# 强制杀死残留进程
-pkill -9 -f "main_live.py" 2>/dev/null || true
-sleep 1
+    rm -rf "${INSTALL_DIR}"
+    print_success "旧文件已清理"
 
-echo -e "${GREEN}✓ 旧服务已清理${NC}"
+    # 克隆仓库
+    print_step "${STEP}/${TOTAL_STEPS}" "克隆 AItrader 仓库..."
+    STEP=$((STEP + 1))
 
-# ========== 第三步：删除旧目录 ==========
-echo ""
-echo -e "${YELLOW}[3/8] 删除旧目录...${NC}"
-rm -rf "${INSTALL_DIR}"
-rm -rf "${INSTALL_DIR}_backup"
-echo -e "${GREEN}✓ 旧目录已删除${NC}"
-echo -e "${GREEN}  (永久配置 ${ENV_PERMANENT} 保持不变)${NC}"
+    cd "${HOME_DIR}"
+    git clone -b "${BRANCH}" --depth 1 "${REPO_URL}" nautilus_AItrader
+    # 确保目录所有权正确 (如果以 root 运行)
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R linuxuser:linuxuser "${INSTALL_DIR}"
+    fi
+    print_success "仓库已克隆"
 
-# ========== 第四步：克隆仓库 ==========
-echo ""
-echo -e "${YELLOW}[4/8] 克隆仓库...${NC}"
-cd "${HOME_DIR}"
-git clone -b "${BRANCH}" "${REPO_URL}" nautilus_AItrader
-echo -e "${GREEN}✓ 仓库已克隆 (分支: ${BRANCH})${NC}"
+    # 配置环境
+    print_step "${STEP}/${TOTAL_STEPS}" "配置 AItrader 环境..."
+    STEP=$((STEP + 1))
 
-# ========== 第五步：配置 .env 软链接 ==========
-echo ""
-echo -e "${YELLOW}[5/8] 配置 .env...${NC}"
-cd "${INSTALL_DIR}"
+    cd "${INSTALL_DIR}"
+    rm -f .env 2>/dev/null || true
 
-# 删除克隆时可能带来的 .env 或 .env.template
-rm -f .env 2>/dev/null || true
-
-if [ -f "${ENV_PERMANENT}" ]; then
-    # 创建软链接
-    ln -sf "${ENV_PERMANENT}" .env
-    echo -e "${GREEN}✓ 已创建软链接: .env -> ${ENV_PERMANENT}${NC}"
-else
-    # 首次安装，从模板创建
-    if [ -f .env.template ]; then
+    if [ -f "${ENV_PERMANENT}" ]; then
+        ln -sf "${ENV_PERMANENT}" .env
+        print_success "已链接配置文件"
+    elif [ -f .env.template ]; then
         cp .env.template "${ENV_PERMANENT}"
         chmod 600 "${ENV_PERMANENT}"
         ln -sf "${ENV_PERMANENT}" .env
-        echo -e "${YELLOW}⚠ 首次安装，已从模板创建配置${NC}"
-        echo -e "${YELLOW}  请编辑 ${ENV_PERMANENT} 填入 API 密钥${NC}"
+        print_warning "已创建配置模板，请稍后编辑"
+    fi
+
+    # 运行 setup.sh
+    chmod +x setup.sh
+    ./setup.sh
+
+    # 安装服务
+    sudo cp nautilus-trader.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable ${TRADER_SERVICE}
+    sudo systemctl start ${TRADER_SERVICE}
+
+    if systemctl is-active --quiet ${TRADER_SERVICE}.service; then
+        print_success "AItrader 服务启动成功"
     else
-        echo -e "${RED}✗ 未找到 .env.template${NC}"
+        print_error "AItrader 服务启动失败"
     fi
 fi
 
-# ========== 第六步：运行 setup.sh ==========
-echo ""
-echo -e "${YELLOW}[6/8] 运行部署脚本...${NC}"
-chmod +x setup.sh
-./setup.sh
+# ==================== Algvex Web 安装 ====================
+if $INSTALL_WEB; then
+    # 停止服务
+    print_step "${STEP}/${TOTAL_STEPS}" "停止 Web 服务..."
+    STEP=$((STEP + 1))
 
-# ========== 第七步：安装 systemd 服务 ==========
-echo ""
-echo -e "${YELLOW}[7/8] 安装 systemd 服务...${NC}"
-sudo cp nautilus-trader.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable ${SERVICE_NAME}
-echo -e "${GREEN}✓ systemd 服务已安装${NC}"
+    sudo systemctl stop ${WEB_BACKEND_SERVICE} 2>/dev/null || true
+    sudo systemctl stop ${WEB_FRONTEND_SERVICE} 2>/dev/null || true
+    print_success "Web 服务已停止"
 
-# ========== 第八步：启动服务并验证 ==========
-echo ""
-echo -e "${YELLOW}[8/8] 启动服务并验证...${NC}"
-sudo systemctl start ${SERVICE_NAME}
-sleep 3
+    # 清理并复制文件
+    print_step "${STEP}/${TOTAL_STEPS}" "安装 Web 文件..."
+    STEP=$((STEP + 1))
 
-# 检查服务状态
-if systemctl is-active --quiet ${SERVICE_NAME}.service; then
-    echo -e "${GREEN}✓ 服务启动成功${NC}"
-else
-    echo -e "${RED}✗ 服务启动失败，请检查日志${NC}"
-    echo -e "${YELLOW}  sudo journalctl -u ${SERVICE_NAME} -n 50 --no-pager${NC}"
+    rm -rf "${WEB_DIR}"
+    mkdir -p "${WEB_DIR}"
+    # 确保目录所有权正确 (如果以 root 运行)
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R linuxuser:linuxuser "${WEB_DIR}"
+    fi
+
+    # 如果 AItrader 已安装，直接复制；否则临时克隆
+    if [ -d "${INSTALL_DIR}/web" ]; then
+        cp -r "${INSTALL_DIR}/web/backend" "${WEB_DIR}/"
+        cp -r "${INSTALL_DIR}/web/frontend" "${WEB_DIR}/"
+        cp -r "${INSTALL_DIR}/web/deploy" "${WEB_DIR}/"
+    else
+        TEMP_DIR="/tmp/aitrader-web-temp"
+        rm -rf "${TEMP_DIR}"
+        git clone -b "${BRANCH}" --depth 1 "${REPO_URL}" "${TEMP_DIR}"
+        cp -r "${TEMP_DIR}/web/backend" "${WEB_DIR}/"
+        cp -r "${TEMP_DIR}/web/frontend" "${WEB_DIR}/"
+        cp -r "${TEMP_DIR}/web/deploy" "${WEB_DIR}/"
+        rm -rf "${TEMP_DIR}"
+    fi
+
+    # 确保所有文件所有权正确
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R linuxuser:linuxuser "${WEB_DIR}"
+    fi
+    print_success "Web 文件已安装"
+
+    # 恢复或创建配置
+    if [ -f "/tmp/algvex-backend-env-backup" ]; then
+        cp "/tmp/algvex-backend-env-backup" "${WEB_ENV}"
+        rm -f "/tmp/algvex-backend-env-backup"
+        print_success "已恢复 Web 配置"
+    elif [ -f "${WEB_DIR}/backend/.env.example" ]; then
+        # 首次安装：从模板创建并生成随机密钥
+        cp "${WEB_DIR}/backend/.env.example" "${WEB_ENV}"
+        # 生成随机 SECRET_KEY
+        SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))" 2>/dev/null || openssl rand -base64 32)
+        sed -i "s|your-secret-key-change-in-production|${SECRET_KEY}|g" "${WEB_ENV}"
+        chmod 600 "${WEB_ENV}"
+        print_warning "已创建 Web 配置模板，请编辑填入 Google OAuth 凭据"
+        print_warning "  nano ${WEB_ENV}"
+    else
+        print_error "未找到 .env.example，请手动创建 ${WEB_ENV}"
+    fi
+
+    # 安装后端依赖
+    print_step "${STEP}/${TOTAL_STEPS}" "安装 Web 后端依赖..."
+    STEP=$((STEP + 1))
+
+    cd "${WEB_DIR}/backend"
+    python3.11 -m venv venv
+    source venv/bin/activate
+    pip install --upgrade pip -q
+    pip install -r requirements.txt -q
+    deactivate
+    print_success "后端依赖已安装"
+
+    # 安装前端依赖
+    print_step "${STEP}/${TOTAL_STEPS}" "安装 Web 前端依赖..."
+    STEP=$((STEP + 1))
+
+    cd "${WEB_DIR}/frontend"
+    npm install 2>&1 | tail -5 || { print_error "npm install 失败"; exit 1; }
+    npm run build 2>&1 | tail -10 || { print_error "npm build 失败"; exit 1; }
+    print_success "前端已构建"
+
+    # 安装服务
+    sudo cp "${WEB_DIR}/deploy/algvex-backend.service" /etc/systemd/system/
+    sudo cp "${WEB_DIR}/deploy/algvex-frontend.service" /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable ${WEB_BACKEND_SERVICE} ${WEB_FRONTEND_SERVICE}
+    sudo systemctl start ${WEB_BACKEND_SERVICE} ${WEB_FRONTEND_SERVICE}
+
+    if systemctl is-active --quiet ${WEB_BACKEND_SERVICE}; then
+        print_success "Web 后端启动成功"
+    else
+        print_error "Web 后端启动失败"
+    fi
+
+    if systemctl is-active --quiet ${WEB_FRONTEND_SERVICE}; then
+        print_success "Web 前端启动成功"
+    else
+        print_error "Web 前端启动失败"
+    fi
+
+    # 配置防火墙
+    if command -v ufw &> /dev/null; then
+        sudo ufw allow 80/tcp >/dev/null 2>&1 || true
+        sudo ufw allow 443/tcp >/dev/null 2>&1 || true
+        sudo ufw allow 3000/tcp >/dev/null 2>&1 || true
+        sudo ufw allow 8000/tcp >/dev/null 2>&1 || true
+    fi
+
+    # 安装 Caddy (如果没有)
+    if ! command -v caddy &> /dev/null; then
+        print_warning "安装 Caddy..."
+        sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https 2>/dev/null || true
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null || true
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null 2>&1 || true
+        sudo apt-get update -qq 2>/dev/null || true
+        sudo apt-get install -y -qq caddy 2>/dev/null || true
+    fi
+
+    # 配置 Caddy (如果域名环境变量已设置)
+    DOMAIN="${ALGVEX_DOMAIN:-}"
+    if [ -n "$DOMAIN" ]; then
+        print_warning "配置 Caddy for ${DOMAIN}..."
+        sudo tee /etc/caddy/Caddyfile > /dev/null << CADDYEOF
+${DOMAIN} {
+    reverse_proxy /api/* localhost:8000
+    reverse_proxy /* localhost:3000
+}
+CADDYEOF
+        sudo systemctl restart caddy
+        print_success "Caddy 已配置: ${DOMAIN}"
+    else
+        # 默认配置：使用 IP 访问
+        IP=$(curl -s ifconfig.me 2>/dev/null || echo "localhost")
+        sudo tee /etc/caddy/Caddyfile > /dev/null << CADDYEOF
+:80 {
+    reverse_proxy /api/* localhost:8000
+    reverse_proxy /* localhost:3000
+}
+CADDYEOF
+        sudo systemctl restart caddy 2>/dev/null || true
+        print_success "Caddy 已配置 (HTTP 模式)"
+        print_warning "设置域名: ALGVEX_DOMAIN=algvex.com ./reinstall.sh --web-only"
+    fi
 fi
+
+# ==================== 完成 ====================
+echo ""
+echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║                      ✅ 安装完成！                            ║${NC}"
+echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+echo ""
 
 # 显示服务状态
-echo ""
-echo -e "${BLUE}==========================================${NC}"
-echo -e "${BLUE}   服务状态${NC}"
-echo -e "${BLUE}==========================================${NC}"
-sudo systemctl status ${SERVICE_NAME} --no-pager -l || true
-
-# ========== 完成 ==========
-echo ""
-echo -e "${GREEN}==========================================${NC}"
-echo -e "${GREEN}   ✅ 安装完成！${NC}"
-echo -e "${GREEN}==========================================${NC}"
-echo ""
-echo -e "${BLUE}配置文件位置:${NC}"
-echo -e "  永久存储: ${YELLOW}${ENV_PERMANENT}${NC}"
-echo -e "  软链接:   ${YELLOW}${INSTALL_DIR}/.env -> ${ENV_PERMANENT}${NC}"
-echo ""
-echo -e "${BLUE}常用命令:${NC}"
-echo -e "  查看日志:   ${YELLOW}sudo journalctl -u ${SERVICE_NAME} -f --no-hostname${NC}"
-echo -e "  重启服务:   ${YELLOW}sudo systemctl restart ${SERVICE_NAME}${NC}"
-echo -e "  停止服务:   ${YELLOW}sudo systemctl stop ${SERVICE_NAME}${NC}"
-echo -e "  全面诊断:   ${YELLOW}cd ${INSTALL_DIR} && python diagnose.py${NC}"
-echo -e "  编辑密钥:   ${YELLOW}nano ${ENV_PERMANENT}${NC}"
-echo ""
-echo -e "${BLUE}安装路径:${NC} ${INSTALL_DIR}"
-echo -e "${BLUE}服务名称:${NC} ${SERVICE_NAME}"
-echo -e "${BLUE}分支:${NC} ${BRANCH}"
-echo ""
-
-# 检查是否需要配置
-if [ -f "${ENV_PERMANENT}" ]; then
-    # 检查是否有有效的 API 密钥
-    if grep -E -q "^BINANCE_API_KEY=.+" "${ENV_PERMANENT}" 2>/dev/null; then
-        echo -e "${GREEN}✓ API 密钥已配置${NC}"
+echo -e "${CYAN}服务状态:${NC}"
+if $INSTALL_TRADER; then
+    STATUS=$(systemctl is-active ${TRADER_SERVICE} 2>/dev/null || echo "inactive")
+    if [ "$STATUS" = "active" ]; then
+        echo -e "  ${GREEN}●${NC} ${TRADER_SERVICE}: ${GREEN}运行中${NC}"
     else
-        echo -e "${YELLOW}⚠ 请编辑配置文件填入 API 密钥:${NC}"
-        echo -e "  ${YELLOW}nano ${ENV_PERMANENT}${NC}"
-        echo ""
+        echo -e "  ${RED}●${NC} ${TRADER_SERVICE}: ${RED}未运行${NC}"
+    fi
+fi
+if $INSTALL_WEB; then
+    STATUS=$(systemctl is-active ${WEB_BACKEND_SERVICE} 2>/dev/null || echo "inactive")
+    if [ "$STATUS" = "active" ]; then
+        echo -e "  ${GREEN}●${NC} ${WEB_BACKEND_SERVICE}: ${GREEN}运行中${NC}"
+    else
+        echo -e "  ${RED}●${NC} ${WEB_BACKEND_SERVICE}: ${RED}未运行${NC}"
+    fi
+    STATUS=$(systemctl is-active ${WEB_FRONTEND_SERVICE} 2>/dev/null || echo "inactive")
+    if [ "$STATUS" = "active" ]; then
+        echo -e "  ${GREEN}●${NC} ${WEB_FRONTEND_SERVICE}: ${GREEN}运行中${NC}"
+    else
+        echo -e "  ${RED}●${NC} ${WEB_FRONTEND_SERVICE}: ${RED}未运行${NC}"
     fi
 fi
 
-echo -e "${YELLOW}提示: 运行以下命令查看实时日志:${NC}"
-echo -e "  sudo journalctl -u ${SERVICE_NAME} -f --no-hostname"
+# 显示访问地址
+echo ""
+echo -e "${CYAN}访问地址:${NC}"
+if $INSTALL_WEB; then
+    IP=$(curl -s ifconfig.me 2>/dev/null || echo "YOUR_IP")
+    echo -e "  前端: ${YELLOW}http://${IP}:3000${NC}"
+    echo -e "  后端: ${YELLOW}http://${IP}:8000/api/${NC}"
+    echo -e "  管理: ${YELLOW}http://${IP}:3000/admin${NC}"
+fi
+
+# 显示配置提示
+echo ""
+echo -e "${CYAN}配置文件:${NC}"
+if $INSTALL_TRADER; then
+    echo -e "  AItrader: ${YELLOW}${ENV_PERMANENT}${NC}"
+fi
+if $INSTALL_WEB; then
+    echo -e "  Web后端:  ${YELLOW}${WEB_ENV}${NC}"
+fi
+
+# 显示常用命令
+echo ""
+echo -e "${CYAN}常用命令:${NC}"
+if $INSTALL_TRADER; then
+    echo -e "  查看日志: ${YELLOW}sudo journalctl -u ${TRADER_SERVICE} -f --no-hostname${NC}"
+fi
+if $INSTALL_WEB; then
+    echo -e "  Web日志:  ${YELLOW}sudo journalctl -u ${WEB_BACKEND_SERVICE} -f${NC}"
+fi
+echo -e "  诊断工具: ${YELLOW}cd ${INSTALL_DIR} && python3 diagnose.py${NC}"
+
+# 待办提示
+echo ""
+echo -e "${YELLOW}待办事项:${NC}"
+if $INSTALL_TRADER && [ ! -f "${ENV_PERMANENT}" ]; then
+    echo -e "  1. 配置 AItrader API 密钥: nano ${ENV_PERMANENT}"
+fi
+if $INSTALL_WEB && [ ! -f "${WEB_ENV}" ]; then
+    echo -e "  2. 配置 Web 后端: nano ${WEB_ENV}"
+    echo -e "  3. 配置 Google OAuth 回调 URI"
+    echo -e "  4. 配置域名 DNS 指向服务器"
+fi
 echo ""

@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = [
         "https://algvex.com",
+        "http://algvex.com",
+        "http://139.180.157.152:3000",
+        "http://139.180.157.152",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
