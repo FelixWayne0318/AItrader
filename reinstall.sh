@@ -221,6 +221,10 @@ if $INSTALL_TRADER; then
 
     cd "${HOME_DIR}"
     git clone -b "${BRANCH}" --depth 1 "${REPO_URL}" nautilus_AItrader
+    # 确保目录所有权正确 (如果以 root 运行)
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R linuxuser:linuxuser "${INSTALL_DIR}"
+    fi
     print_success "仓库已克隆"
 
     # 配置环境
@@ -273,6 +277,10 @@ if $INSTALL_WEB; then
 
     rm -rf "${WEB_DIR}"
     mkdir -p "${WEB_DIR}"
+    # 确保目录所有权正确 (如果以 root 运行)
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R linuxuser:linuxuser "${WEB_DIR}"
+    fi
 
     # 如果 AItrader 已安装，直接复制；否则临时克隆
     if [ -d "${INSTALL_DIR}/web" ]; then
@@ -287,6 +295,11 @@ if $INSTALL_WEB; then
         cp -r "${TEMP_DIR}/web/frontend" "${WEB_DIR}/"
         cp -r "${TEMP_DIR}/web/deploy" "${WEB_DIR}/"
         rm -rf "${TEMP_DIR}"
+    fi
+
+    # 确保所有文件所有权正确
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R linuxuser:linuxuser "${WEB_DIR}"
     fi
     print_success "Web 文件已安装"
 
