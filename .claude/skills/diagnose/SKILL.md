@@ -80,7 +80,8 @@ skip_on_divergence: True      # 分歧时跳过 (后备)
 
 **检查命令**:
 ```bash
-grep -E "(Final Signal|Confidence|Divergence)" diagnose_output.log
+# 实时过滤诊断输出
+python3 diagnose_realtime.py 2>&1 | grep -E "(Final Signal|Confidence|Divergence)"
 ```
 
 ### 2. DeepSeek API 失败
@@ -103,7 +104,8 @@ grep "DEEPSEEK_API_KEY" ~/.env.aitrader
 
 **检查**:
 ```bash
-grep -E "(RSI|MACD|SMA)" diagnose_output.log
+# 实时过滤诊断输出
+python3 diagnose_realtime.py 2>&1 | grep -E "(RSI|MACD|SMA)"
 ```
 
 ## 关键文件
