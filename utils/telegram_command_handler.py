@@ -26,13 +26,19 @@ except ImportError:
 class TelegramCommandHandler:
     """
     Handles Telegram commands for strategy control.
-    
-    Commands:
+
+    Query Commands:
     - /status: Get strategy status
     - /position: Get current position info
+    - /orders: View open orders
+    - /history: View recent trade history
+    - /risk: View risk metrics
+    - /help: Show available commands
+
+    Control Commands:
     - /pause: Pause trading
     - /resume: Resume trading
-    - /help: Show available commands
+    - /close: Close current position
     """
     
     def __init__(
@@ -175,6 +181,82 @@ class TelegramCommandHandler:
             self.logger.error(f"Error handling /resume: {e}")
             await self._send_response(update, f"❌ Error: {str(e)}")
     
+    async def cmd_close(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /close command - close current position."""
+        self.logger.info("Received /close command")
+
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        try:
+            result = self.strategy_callback('close', {})
+
+            if result.get('success'):
+                await self._send_response(update, result.get('message', '✅ Position closed'))
+            else:
+                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
+        except Exception as e:
+            self.logger.error(f"Error handling /close: {e}")
+            await self._send_response(update, f"❌ Error: {str(e)}")
+
+    async def cmd_orders(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /orders command - view open orders."""
+        self.logger.info("Received /orders command")
+
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        try:
+            result = self.strategy_callback('orders', {})
+
+            if result.get('success'):
+                await self._send_response(update, result.get('message', 'No orders info'))
+            else:
+                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
+        except Exception as e:
+            self.logger.error(f"Error handling /orders: {e}")
+            await self._send_response(update, f"❌ Error: {str(e)}")
+
+    async def cmd_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /history command - view recent trades."""
+        self.logger.info("Received /history command")
+
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        try:
+            result = self.strategy_callback('history', {})
+
+            if result.get('success'):
+                await self._send_response(update, result.get('message', 'No history available'))
+            else:
+                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
+        except Exception as e:
+            self.logger.error(f"Error handling /history: {e}")
+            await self._send_response(update, f"❌ Error: {str(e)}")
+
+    async def cmd_risk(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /risk command - view risk metrics."""
+        self.logger.info("Received /risk command")
+
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        try:
+            result = self.strategy_callback('risk', {})
+
+            if result.get('success'):
+                await self._send_response(update, result.get('message', 'No risk info'))
+            else:
+                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
+        except Exception as e:
+            self.logger.error(f"Error handling /risk: {e}")
+            await self._send_response(update, f"❌ Error: {str(e)}")
+
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
         self.logger.info("Received /help command")
@@ -188,10 +270,14 @@ class TelegramCommandHandler:
             "*Query Commands*:\n"
             "• `/status` - View strategy status\n"
             "• `/position` - View current position\n"
+            "• `/orders` - View open orders\n"
+            "• `/history` - Recent trade history\n"
+            "• `/risk` - View risk metrics\n"
             "• `/help` - Show this help message\n\n"
             "*Control Commands*:\n"
             "• `/pause` - Pause trading (no new orders)\n"
-            "• `/resume` - Resume trading\n\n"
+            "• `/resume` - Resume trading\n"
+            "• `/close` - Close current position\n\n"
             "💡 _Commands are case-insensitive_\n"
         )
         await self._send_response(update, help_msg)
@@ -254,8 +340,12 @@ class TelegramCommandHandler:
                 # Register command handlers
                 self.application.add_handler(CommandHandler("status", self.cmd_status))
                 self.application.add_handler(CommandHandler("position", self.cmd_position))
+                self.application.add_handler(CommandHandler("orders", self.cmd_orders))
+                self.application.add_handler(CommandHandler("history", self.cmd_history))
+                self.application.add_handler(CommandHandler("risk", self.cmd_risk))
                 self.application.add_handler(CommandHandler("pause", self.cmd_pause))
                 self.application.add_handler(CommandHandler("resume", self.cmd_resume))
+                self.application.add_handler(CommandHandler("close", self.cmd_close))
                 self.application.add_handler(CommandHandler("help", self.cmd_help))
                 self.application.add_handler(CommandHandler("start", self.cmd_help))  # Alias for help
 

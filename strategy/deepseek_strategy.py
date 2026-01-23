@@ -1790,10 +1790,18 @@ class DeepSeekAIStrategy(Strategy):
                 return self._cmd_status()
             elif command == 'position':
                 return self._cmd_position()
+            elif command == 'orders':
+                return self._cmd_orders()
+            elif command == 'history':
+                return self._cmd_history()
+            elif command == 'risk':
+                return self._cmd_risk()
             elif command == 'pause':
                 return self._cmd_pause()
             elif command == 'resume':
                 return self._cmd_resume()
+            elif command == 'close':
+                return self._cmd_close()
             else:
                 return {
                     'success': False,
@@ -1945,6 +1953,227 @@ class DeepSeekAIStrategy(Strategy):
             return {
                 'success': True,
                 'message': message
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_close(self) -> Dict[str, Any]:
+        """
+        Handle /close command - close current position.
+
+        Thread-safe: Does not access indicator_manager.
+        """
+        try:
+            from nautilus_trader.model.enums import OrderSide
+
+            # Get open positions
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+
+            if not positions:
+                return {
+                    'success': True,
+                    'message': "ℹ️ *No Open Position*\n\nThere is no position to close."
+                }
+
+            position = positions[0]
+            quantity = float(position.quantity)
+
+            # Determine closing side (opposite of position)
+            if position.side.name == 'LONG':
+                close_side = OrderSide.SELL
+                side_str = "LONG"
+            else:
+                close_side = OrderSide.BUY
+                side_str = "SHORT"
+
+            # Submit close order
+            self._submit_order(
+                side=close_side,
+                quantity=quantity,
+                reduce_only=True,
+            )
+
+            self.log.info(f"🔴 Position closed by Telegram command: {side_str} {quantity:.4f} BTC")
+
+            return {
+                'success': True,
+                'message': f"✅ *Position Closing*\n\n"
+                          f"Closing {side_str} position\n"
+                          f"Quantity: {quantity:.4f} BTC\n\n"
+                          f"⏳ Order submitted, waiting for fill..."
+            }
+        except Exception as e:
+            self.log.error(f"Error closing position: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_orders(self) -> Dict[str, Any]:
+        """
+        Handle /orders command - view open orders.
+
+        Thread-safe: Does not access indicator_manager.
+        """
+        try:
+            # Get open orders
+            orders = self.cache.orders_open(instrument_id=self.instrument_id)
+
+            if not orders:
+                return {
+                    'success': True,
+                    'message': "ℹ️ *No Open Orders*\n\nThere are no pending orders."
+                }
+
+            msg = f"📋 *Open Orders* ({len(orders)})\n\n"
+
+            for i, order in enumerate(orders, 1):
+                order_type = order.order_type.name
+                side = order.side.name
+                qty = float(order.quantity)
+
+                # Get price for limit/stop orders
+                price_str = ""
+                if hasattr(order, 'price') and order.price:
+                    price_str = f"@ ${float(order.price):,.2f}"
+                elif hasattr(order, 'trigger_price') and order.trigger_price:
+                    price_str = f"trigger @ ${float(order.trigger_price):,.2f}"
+
+                # Order status
+                status = order.status.name
+                reduce_only = "🔻" if order.is_reduce_only else ""
+
+                msg += f"{i}. {side} {order_type} {reduce_only}\n"
+                msg += f"   Qty: {qty:.4f} BTC {price_str}\n"
+                msg += f"   Status: {status}\n\n"
+
+            return {
+                'success': True,
+                'message': msg
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_history(self) -> Dict[str, Any]:
+        """
+        Handle /history command - view recent trade history.
+
+        Thread-safe: Does not access indicator_manager.
+        """
+        try:
+            # Get recent fills (last 10)
+            fills = list(self.cache.order_fills())[-10:]
+
+            if not fills:
+                return {
+                    'success': True,
+                    'message': "ℹ️ *No Trade History*\n\nNo trades have been executed yet."
+                }
+
+            msg = f"📊 *Recent Trades* (last {len(fills)})\n\n"
+
+            for fill in reversed(fills):  # Most recent first
+                side = fill.order_side.name
+                side_emoji = "🟢" if side == "BUY" else "🔴"
+                qty = float(fill.last_qty)
+                price = float(fill.last_px)
+                ts = fill.ts_event
+
+                # Format timestamp
+                from datetime import datetime
+                dt = datetime.utcfromtimestamp(ts / 1e9)
+                time_str = dt.strftime("%m-%d %H:%M")
+
+                msg += f"{side_emoji} {side} {qty:.4f} @ ${price:,.2f}\n"
+                msg += f"   Time: {time_str} UTC\n\n"
+
+            return {
+                'success': True,
+                'message': msg
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_risk(self) -> Dict[str, Any]:
+        """
+        Handle /risk command - view risk metrics.
+
+        Thread-safe: Does not access indicator_manager.
+        """
+        try:
+            with self._state_lock:
+                cached_price = self._cached_current_price
+
+            # Get position info
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+
+            msg = "📊 *Risk Metrics*\n\n"
+
+            # Account info
+            msg += "*Account*:\n"
+            msg += f"• Equity: ${self.equity:,.2f}\n"
+            msg += f"• Leverage: {self.leverage}x\n"
+            msg += f"• Max Position: {self.position_config.get('max_position_ratio', 0.3)*100:.0f}% of equity\n\n"
+
+            # Position risk
+            if positions:
+                position = positions[0]
+                qty = float(position.quantity)
+                entry_price = float(position.avg_px_open)
+                side = position.side.name
+
+                # Calculate position value
+                position_value = qty * cached_price if cached_price > 0 else qty * entry_price
+
+                # Calculate unrealized PnL
+                if cached_price > 0:
+                    if side == 'LONG':
+                        pnl = (cached_price - entry_price) * qty
+                        pnl_pct = ((cached_price / entry_price) - 1) * 100
+                    else:
+                        pnl = (entry_price - cached_price) * qty
+                        pnl_pct = ((entry_price / cached_price) - 1) * 100
+                else:
+                    pnl = 0
+                    pnl_pct = 0
+
+                pnl_emoji = "📈" if pnl >= 0 else "📉"
+
+                msg += "*Current Position*:\n"
+                msg += f"• Side: {side}\n"
+                msg += f"• Size: {qty:.4f} BTC (${position_value:,.2f})\n"
+                msg += f"• Entry: ${entry_price:,.2f}\n"
+                msg += f"• Current: ${cached_price:,.2f}\n"
+                msg += f"• P&L: {pnl_emoji} ${pnl:,.2f} ({pnl_pct:+.2f}%)\n\n"
+
+                # Risk exposure
+                exposure_pct = (position_value / self.equity) * 100 if self.equity > 0 else 0
+                msg += "*Risk Exposure*:\n"
+                msg += f"• Position/Equity: {exposure_pct:.1f}%\n"
+                msg += f"• Leveraged Exposure: {exposure_pct * self.leverage:.1f}%\n"
+            else:
+                msg += "*Current Position*: None\n"
+                msg += "*Risk Exposure*: 0%\n"
+
+            # Strategy settings
+            msg += f"\n*Strategy Settings*:\n"
+            msg += f"• Min Confidence: {self.min_confidence}\n"
+            msg += f"• Auto SL/TP: {'✅' if self.enable_auto_sl_tp else '❌'}\n"
+            msg += f"• Trailing Stop: {'✅' if self.enable_trailing_stop else '❌'}\n"
+            msg += f"• Trading Paused: {'⏸️ Yes' if self.is_trading_paused else '▶️ No'}\n"
+
+            return {
+                'success': True,
+                'message': msg
             }
         except Exception as e:
             return {
