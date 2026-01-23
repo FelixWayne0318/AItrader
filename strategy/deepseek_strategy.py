@@ -40,8 +40,9 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     bar_type: str
 
     # Capital
-    equity: float = 10000.0
+    equity: float = 10000.0  # 备用值，当无法获取真实余额时使用
     leverage: float = 10.0
+    use_real_balance_as_equity: bool = True  # 自动从 Binance 获取真实余额作为 equity
 
     # Position sizing
     base_usdt_amount: float = 100.0
@@ -518,6 +519,9 @@ class DeepSeekAIStrategy(Strategy):
         - Periodically by Telegram /risk command
         - Before position size calculation (optional)
 
+        When use_real_balance_as_equity is True (default), this will automatically
+        update self.equity to match the real Binance account balance.
+
         Returns
         -------
         dict
@@ -529,15 +533,26 @@ class DeepSeekAIStrategy(Strategy):
             if 'error' not in balance:
                 self._real_balance = balance
 
-                # Update equity if real balance is significantly different
                 real_total = balance.get('total_balance', 0)
                 if real_total > 0:
-                    # Log if there's a significant difference
-                    if abs(real_total - self.equity) > 10:
-                        self.log.info(
-                            f"💰 Real balance from Binance: ${real_total:.2f} "
-                            f"(configured equity: ${self.equity:.2f})"
-                        )
+                    # Auto-update equity if enabled
+                    if self.config.use_real_balance_as_equity:
+                        old_equity = self.equity
+                        self.equity = real_total
+                        # Also update position_config for position sizing
+                        # max_position_ratio is based on equity
+                        if abs(old_equity - real_total) > 1:
+                            self.log.info(
+                                f"💰 Equity auto-updated: ${old_equity:.2f} → ${real_total:.2f} "
+                                f"(from Binance real balance)"
+                            )
+                    else:
+                        # Just log if there's a significant difference
+                        if abs(real_total - self.equity) > 10:
+                            self.log.info(
+                                f"💰 Real balance from Binance: ${real_total:.2f} "
+                                f"(configured equity: ${self.equity:.2f})"
+                            )
 
                 return balance
             else:

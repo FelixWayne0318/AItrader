@@ -175,6 +175,7 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
         # Capital
         equity=equity,
         leverage=leverage,
+        use_real_balance_as_equity=strategy_yaml.get('use_real_balance_as_equity', True),  # 自动获取真实余额
 
         # Position sizing
         base_usdt_amount=base_position,
