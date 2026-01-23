@@ -829,26 +829,26 @@ class DeepSeekAIStrategy(Strategy):
                                     f"DeepSeek={signal_deepseek['signal']}({signal_deepseek['confidence']}), "
                                     f"MultiAgent={signal_multi['signal']}({signal_multi['confidence']}) - SKIPPING"
                                 )
-                                signal_deepseek = {
-                                    'signal': 'HOLD',
-                                    'confidence': 'LOW',
-                                    'reason': f"Equal confidence divergence - trade skipped for safety",
-                                    'stop_loss': None,
-                                    'take_profit': None,
-                                }
+                                signal_deepseek = self._create_hold_signal(
+                                    "Equal confidence divergence - trade skipped for safety"
+                                )
+                            else:
+                                # Equal confidence but skip_on_divergence=False - use DeepSeek signal
+                                self.log.warning(
+                                    f"⚠️ Equal confidence divergence: "
+                                    f"DeepSeek={signal_deepseek['signal']}({signal_deepseek.get('confidence', 'N/A')}), "
+                                    f"MultiAgent={signal_multi['signal']}({signal_multi.get('confidence', 'N/A')}) "
+                                    f"- using DeepSeek signal (skip_on_divergence=False)"
+                                )
                         elif self.skip_on_divergence:
                             # Legacy behavior: skip all opposing signals
                             self.log.warning(
                                 f"🚫 Opposing signals: DeepSeek={signal_deepseek['signal']}, "
                                 f"MultiAgent={signal_multi['signal']} - SKIPPING trade (skip_on_divergence=True)"
                             )
-                            signal_deepseek = {
-                                'signal': 'HOLD',
-                                'confidence': 'LOW',
-                                'reason': f"Trade skipped: opposing signals (DeepSeek={signal_deepseek['signal']}, MultiAgent={signal_multi['signal']})",
-                                'stop_loss': None,
-                                'take_profit': None,
-                            }
+                            signal_deepseek = self._create_hold_signal(
+                                f"Trade skipped: opposing signals (DeepSeek={signal_deepseek['signal']}, MultiAgent={signal_multi['signal']})"
+                            )
                         else:
                             self.log.warning(
                                 f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
@@ -977,6 +977,28 @@ class DeepSeekAIStrategy(Strategy):
             }
 
         return None
+
+    def _create_hold_signal(self, reason: str) -> Dict[str, Any]:
+        """
+        Create a standardized HOLD signal dictionary.
+
+        Parameters
+        ----------
+        reason : str
+            The reason for holding (skipping trade)
+
+        Returns
+        -------
+        Dict[str, Any]
+            Standardized HOLD signal with LOW confidence
+        """
+        return {
+            'signal': 'HOLD',
+            'confidence': 'LOW',
+            'reason': reason,
+            'stop_loss': None,
+            'take_profit': None,
+        }
 
     def _resolve_divergence_by_confidence(
         self,

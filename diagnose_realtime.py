@@ -436,10 +436,32 @@ print(f"  MultiAgent Signal: {multi_signal}")
 print()
 
 # 共识检查 (与 on_timer 相同)
-# 获取 skip_on_divergence 配置 (默认 True)
+# 获取分歧处理配置
 skip_on_divergence = getattr(strategy_config, 'skip_on_divergence', True)
+use_confidence_fusion = getattr(strategy_config, 'use_confidence_fusion', True)
 print(f"  skip_on_divergence: {skip_on_divergence}")
+print(f"  use_confidence_fusion: {use_confidence_fusion}")
 print()
+
+# 加权信心融合辅助函数 (与 _resolve_divergence_by_confidence 相同逻辑)
+def resolve_divergence_by_confidence(ds_signal, ds_conf, ma_signal, ma_conf):
+    """使用加权信心融合解决对立信号"""
+    confidence_weight = {'HIGH': 3, 'MEDIUM': 2, 'LOW': 1}
+    ds_weight = confidence_weight.get(ds_conf, 2)
+    ma_weight = confidence_weight.get(ma_conf, 2)
+
+    print(f"  🔀 Confidence fusion: DeepSeek={ds_signal}({ds_conf}, w={ds_weight}) "
+          f"vs MultiAgent={ma_signal}({ma_conf}, w={ma_weight})")
+
+    if ds_weight > ma_weight:
+        print(f"  ✅ Fusion result: Using DeepSeek signal ({ds_signal}) - higher confidence")
+        return ds_signal, ds_conf
+    elif ma_weight > ds_weight:
+        print(f"  ✅ Fusion result: Using MultiAgent signal ({ma_signal}) - higher confidence")
+        return ma_signal, ma_conf
+    else:
+        print(f"  ⚖️ Equal confidence ({ds_conf}) - cannot resolve divergence")
+        return None, None  # 需要跳过
 
 if deepseek_signal == multi_signal:
     print("  ✅ Consensus: Both analyzers agree")
@@ -454,13 +476,37 @@ else:
     # 检查是否是 BUY vs SELL 完全对立
     opposing_signals = {deepseek_signal, multi_signal} == {'BUY', 'SELL'}
 
-    if opposing_signals and skip_on_divergence:
-        print(f"  🚫 Opposing signals: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
-        print("     → SKIPPING trade (skip_on_divergence=True)")
-        final_signal = 'HOLD'  # 转为 HOLD
-        confidence = 'LOW'
-        signal_deepseek['reason'] = f"Trade skipped: opposing signals"
+    if opposing_signals:
+        # 使用加权信心融合 (推荐)
+        if use_confidence_fusion:
+            ds_conf = signal_deepseek.get('confidence', 'MEDIUM')
+            ma_conf = signal_multi.get('confidence', 'MEDIUM')
+            resolved_signal, resolved_conf = resolve_divergence_by_confidence(
+                deepseek_signal, ds_conf, multi_signal, ma_conf
+            )
+            if resolved_signal:
+                final_signal = resolved_signal
+                confidence = resolved_conf
+            elif skip_on_divergence:
+                print(f"  🚫 Equal confidence divergence - SKIPPING trade")
+                final_signal = 'HOLD'
+                confidence = 'LOW'
+                signal_deepseek['reason'] = "Equal confidence divergence - trade skipped for safety"
+            else:
+                print(f"  ⚠️ Equal confidence but skip_on_divergence=False - using DeepSeek signal")
+                final_signal = deepseek_signal
+        elif skip_on_divergence:
+            print(f"  🚫 Opposing signals: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
+            print("     → SKIPPING trade (skip_on_divergence=True)")
+            final_signal = 'HOLD'
+            confidence = 'LOW'
+            signal_deepseek['reason'] = f"Trade skipped: opposing signals"
+        else:
+            print(f"  ⚠️ Divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
+            print("     → Using DeepSeek signal")
+            final_signal = deepseek_signal
     else:
+        # Non-opposing divergence (e.g., BUY vs HOLD)
         print(f"  ⚠️ Divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
         print("     → Using DeepSeek signal")
         final_signal = deepseek_signal
@@ -548,10 +594,11 @@ print("  诊断总结 (实盘代码路径)")
 print("=" * 70)
 print()
 
-# final_signal 已在共识检查阶段设置，考虑了 skip_on_divergence 逻辑
+# final_signal 已在共识检查阶段设置，考虑了分歧处理逻辑
 print(f"  📊 Final Signal: {final_signal}")
 print(f"  📊 Confidence: {confidence}")
 print(f"  📊 Consensus: {'Yes' if consensus else 'No (Divergence)'}")
+print(f"  📊 use_confidence_fusion: {use_confidence_fusion}")
 print(f"  📊 skip_on_divergence: {skip_on_divergence}")
 print()
 
