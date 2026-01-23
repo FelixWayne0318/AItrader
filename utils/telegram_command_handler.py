@@ -381,11 +381,12 @@ class TelegramCommandHandler:
         """
         Register bot commands with Telegram (shows in command menu).
 
+        Commands are registered ONLY for private chats, not for groups.
         This makes commands appear when user clicks the "/" button
-        or types "/" in the chat input.
+        or types "/" in private chat with the bot.
         """
         try:
-            from telegram import BotCommand
+            from telegram import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
 
             commands = [
                 BotCommand("menu", "显示操作菜单"),
@@ -400,8 +401,20 @@ class TelegramCommandHandler:
                 BotCommand("help", "帮助信息"),
             ]
 
-            await self.application.bot.set_my_commands(commands)
-            self.logger.info("✅ Bot commands registered successfully")
+            # Register commands ONLY for private chats
+            await self.application.bot.set_my_commands(
+                commands,
+                scope=BotCommandScopeAllPrivateChats()
+            )
+            self.logger.info("✅ Bot commands registered for private chats")
+
+            # Remove commands from group chats (set empty list)
+            await self.application.bot.set_my_commands(
+                [],
+                scope=BotCommandScopeAllGroupChats()
+            )
+            self.logger.info("✅ Bot commands removed from group chats")
+
             return True
 
         except Exception as e:
