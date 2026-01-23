@@ -30,7 +30,7 @@ fi
 # Variables
 INSTALL_DIR="/home/linuxuser/algvex"
 REPO_URL="https://github.com/FelixWayne0318/AItrader.git"
-BRANCH="claude/review-repo-docs-eZRMo"
+BRANCH="${ALGVEX_BRANCH:-main}"  # Use main by default, can override with ALGVEX_BRANCH env var
 
 # =============================================================================
 # Step 1: Install System Dependencies
