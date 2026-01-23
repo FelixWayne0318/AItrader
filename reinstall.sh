@@ -138,19 +138,22 @@ else
 fi
 
 # 安装基础依赖
-sudo $PKG_MANAGER install -y -qq curl git
+sudo $PKG_MANAGER install -y -qq curl git software-properties-common build-essential
 
-# Python 3.11+ (AItrader 需要)
-if $INSTALL_TRADER; then
-    if ! command -v python3.11 &> /dev/null; then
-        print_warning "安装 Python 3.11..."
-        if [ "$PKG_MANAGER" = "apt-get" ]; then
-            sudo add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || true
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq python3.11 python3.11-venv python3.11-dev
-        fi
+# Python 3.11+ (AItrader 和 Web 都需要)
+if ! command -v python3.11 &> /dev/null; then
+    print_warning "安装 Python 3.11..."
+    if [ "$PKG_MANAGER" = "apt-get" ]; then
+        sudo add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || true
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq python3.11 python3.11-venv python3.11-dev
     fi
-    print_success "Python 3.11 已就绪"
+fi
+print_success "Python 3.11 已就绪"
+
+# 确保 python3 命令可用 (创建符号链接如果不存在)
+if ! command -v python3 &> /dev/null; then
+    sudo ln -sf /usr/bin/python3.11 /usr/bin/python3
 fi
 
 # Node.js 18+ (Web 需要)
@@ -310,9 +313,10 @@ if $INSTALL_WEB; then
     STEP=$((STEP + 1))
 
     cd "${WEB_DIR}/backend"
-    python3 -m venv venv
+    python3.11 -m venv venv
     source venv/bin/activate
-    pip install -q -r requirements.txt
+    pip install --upgrade pip -q
+    pip install -r requirements.txt -q
     deactivate
     print_success "后端依赖已安装"
 
@@ -321,8 +325,8 @@ if $INSTALL_WEB; then
     STEP=$((STEP + 1))
 
     cd "${WEB_DIR}/frontend"
-    npm install --silent 2>/dev/null
-    npm run build --silent 2>/dev/null
+    npm install 2>&1 | tail -5 || { print_error "npm install 失败"; exit 1; }
+    npm run build 2>&1 | tail -10 || { print_error "npm build 失败"; exit 1; }
     print_success "前端已构建"
 
     # 安装服务
