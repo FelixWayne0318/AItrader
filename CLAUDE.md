@@ -258,9 +258,15 @@ TELEGRAM_CHAT_ID=xxx          # 你的个人用户 ID
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `min_confidence_to_trade` | MEDIUM | 最低交易信心 (LOW/MEDIUM/HIGH) |
-| `skip_on_divergence` | true | AI 分歧时跳过交易 |
+| `skip_on_divergence` | true | AI 分歧时跳过交易 (保守模式后备) |
+| `use_confidence_fusion` | true | 启用加权信心融合 (推荐) |
 | `rsi_extreme_threshold_upper` | 75 | RSI 超买阈值 |
 | `rsi_extreme_threshold_lower` | 25 | RSI 超卖阈值 |
+
+**加权信心融合说明**：当 DeepSeek 和 MultiAgent 信号相反时 (BUY vs SELL)，使用信心更高的信号：
+- HIGH 权重=3, MEDIUM=2, LOW=1
+- 例：DeepSeek=BUY(HIGH) vs MultiAgent=SELL(MEDIUM) → 使用 BUY
+- 只有权重相等时才跳过交易
 
 #### 止损止盈
 | 参数 | 默认值 | 说明 |

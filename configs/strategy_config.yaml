@@ -60,6 +60,15 @@ strategy:
     rsi_extreme_threshold_upper: 75
     rsi_extreme_threshold_lower: 25
     rsi_extreme_multiplier: 0.7
+
+    # Multi-Agent 分歧处理 (Divergence Handling)
+    # 当 DeepSeek 和 MultiAgent 信号相反时 (BUY vs SELL) 的处理方式
+    skip_on_divergence: true           # 完全跳过分歧 (保守模式的后备)
+    use_confidence_fusion: true        # 启用加权信心融合 (推荐)
+    # 加权信心融合逻辑:
+    # - HIGH 信心权重=3, MEDIUM=2, LOW=1
+    # - 使用权重更高的信号
+    # - 只有权重相等时才跳过交易
     
     # Stop Loss & Take Profit (自动止损止盈)
     enable_auto_sl_tp: true  # 启用自动止损止盈
