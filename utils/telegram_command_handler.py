@@ -377,6 +377,37 @@ class TelegramCommandHandler:
             self.logger.error(f"Error handling callback {callback_data}: {e}")
             await query.edit_message_text(f"❌ Error: {str(e)}")
 
+    async def _register_commands(self) -> bool:
+        """
+        Register bot commands with Telegram (shows in command menu).
+
+        This makes commands appear when user clicks the "/" button
+        or types "/" in the chat input.
+        """
+        try:
+            from telegram import BotCommand
+
+            commands = [
+                BotCommand("menu", "显示操作菜单"),
+                BotCommand("status", "查看系统状态"),
+                BotCommand("position", "查看当前持仓"),
+                BotCommand("orders", "查看挂单"),
+                BotCommand("history", "最近交易记录"),
+                BotCommand("risk", "风险指标"),
+                BotCommand("pause", "暂停交易"),
+                BotCommand("resume", "恢复交易"),
+                BotCommand("close", "平仓"),
+                BotCommand("help", "帮助信息"),
+            ]
+
+            await self.application.bot.set_my_commands(commands)
+            self.logger.info("✅ Bot commands registered successfully")
+            return True
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ Failed to register bot commands: {e}")
+            return False
+
     async def _delete_webhook_standalone(self) -> bool:
         """
         Delete webhook using a standalone Bot instance.
@@ -457,6 +488,9 @@ class TelegramCommandHandler:
                 self.logger.info("🔄 Post-init webhook cleanup...")
                 await self.application.bot.delete_webhook(drop_pending_updates=True)
                 self.logger.info("✅ Webhook cleanup complete")
+
+                # Register commands for the command menu (shows when user types "/")
+                await self._register_commands()
 
                 await self.application.start()
                 await self.application.updater.start_polling(
