@@ -1,7 +1,6 @@
 ---
 name: diagnose
 description: 运行实盘信号诊断，检查 AI 信号生成、技术指标、市场数据是否正常。Use for diagnosing trading signals, checking AI analysis, or debugging why no trades are happening.
-disable-model-invocation: true
 argument-hint: "[quick|full|signals]"
 allowed-tools: Bash(python3:*), Read, Grep
 context: fork
