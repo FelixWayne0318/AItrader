@@ -460,7 +460,7 @@ class TelegramCommandHandler:
 
                 await self.application.start()
                 await self.application.updater.start_polling(
-                    allowed_updates=["message"],  # Only listen to messages
+                    allowed_updates=["message", "callback_query"],  # Listen to messages and button callbacks
                     drop_pending_updates=True,  # Clear stale updates to avoid conflicts on restart
                 )
 
