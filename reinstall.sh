@@ -287,13 +287,22 @@ if $INSTALL_WEB; then
     fi
     print_success "Web 文件已安装"
 
-    # 恢复配置
+    # 恢复或创建配置
     if [ -f "/tmp/algvex-backend-env-backup" ]; then
         cp "/tmp/algvex-backend-env-backup" "${WEB_ENV}"
         rm -f "/tmp/algvex-backend-env-backup"
         print_success "已恢复 Web 配置"
+    elif [ -f "${WEB_DIR}/backend/.env.example" ]; then
+        # 首次安装：从模板创建并生成随机密钥
+        cp "${WEB_DIR}/backend/.env.example" "${WEB_ENV}"
+        # 生成随机 SECRET_KEY
+        SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))" 2>/dev/null || openssl rand -base64 32)
+        sed -i "s|your-secret-key-change-in-production|${SECRET_KEY}|g" "${WEB_ENV}"
+        chmod 600 "${WEB_ENV}"
+        print_warning "已创建 Web 配置模板，请编辑填入 Google OAuth 凭据"
+        print_warning "  nano ${WEB_ENV}"
     else
-        print_warning "请配置 ${WEB_ENV}"
+        print_error "未找到 .env.example，请手动创建 ${WEB_ENV}"
     fi
 
     # 安装后端依赖
@@ -346,11 +355,37 @@ if $INSTALL_WEB; then
     # 安装 Caddy (如果没有)
     if ! command -v caddy &> /dev/null; then
         print_warning "安装 Caddy..."
-        sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https
+        sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https 2>/dev/null || true
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null || true
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null 2>&1 || true
         sudo apt-get update -qq 2>/dev/null || true
         sudo apt-get install -y -qq caddy 2>/dev/null || true
+    fi
+
+    # 配置 Caddy (如果域名环境变量已设置)
+    DOMAIN="${ALGVEX_DOMAIN:-}"
+    if [ -n "$DOMAIN" ]; then
+        print_warning "配置 Caddy for ${DOMAIN}..."
+        sudo tee /etc/caddy/Caddyfile > /dev/null << CADDYEOF
+${DOMAIN} {
+    reverse_proxy /api/* localhost:8000
+    reverse_proxy /* localhost:3000
+}
+CADDYEOF
+        sudo systemctl restart caddy
+        print_success "Caddy 已配置: ${DOMAIN}"
+    else
+        # 默认配置：使用 IP 访问
+        IP=$(curl -s ifconfig.me 2>/dev/null || echo "localhost")
+        sudo tee /etc/caddy/Caddyfile > /dev/null << CADDYEOF
+:80 {
+    reverse_proxy /api/* localhost:8000
+    reverse_proxy /* localhost:3000
+}
+CADDYEOF
+        sudo systemctl restart caddy 2>/dev/null || true
+        print_success "Caddy 已配置 (HTTP 模式)"
+        print_warning "设置域名: ALGVEX_DOMAIN=algvex.com ./reinstall.sh --web-only"
     fi
 fi
 
