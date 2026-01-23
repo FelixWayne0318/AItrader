@@ -476,8 +476,14 @@ else:
     # 检查是否是 BUY vs SELL 完全对立
     opposing_signals = {deepseek_signal, multi_signal} == {'BUY', 'SELL'}
 
-    if opposing_signals:
-        # 使用加权信心融合 (推荐)
+    # 检查是否是 HOLD vs 可执行信号 (BUY/SELL)
+    hold_vs_action = (
+        (deepseek_signal == 'HOLD' and multi_signal in ['BUY', 'SELL']) or
+        (multi_signal == 'HOLD' and deepseek_signal in ['BUY', 'SELL'])
+    )
+
+    if opposing_signals or hold_vs_action:
+        # 使用加权信心融合 (与 strategy 代码一致)
         if use_confidence_fusion:
             ds_conf = signal_deepseek.get('confidence', 'MEDIUM')
             ma_conf = signal_multi.get('confidence', 'MEDIUM')
@@ -496,18 +502,18 @@ else:
                 print(f"  ⚠️ Equal confidence but skip_on_divergence=False - using DeepSeek signal")
                 final_signal = deepseek_signal
         elif skip_on_divergence:
-            print(f"  🚫 Opposing signals: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
+            print(f"  🚫 Divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
             print("     → SKIPPING trade (skip_on_divergence=True)")
             final_signal = 'HOLD'
             confidence = 'LOW'
-            signal_deepseek['reason'] = f"Trade skipped: opposing signals"
+            signal_deepseek['reason'] = f"Trade skipped: divergence without fusion"
         else:
             print(f"  ⚠️ Divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
             print("     → Using DeepSeek signal")
             final_signal = deepseek_signal
     else:
-        # Non-opposing divergence (e.g., BUY vs HOLD)
-        print(f"  ⚠️ Divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
+        # 其他非对立分歧 (不应该出现)
+        print(f"  ⚠️ Unexpected divergence: DeepSeek={deepseek_signal}, MultiAgent={multi_signal}")
         print("     → Using DeepSeek signal")
         final_signal = deepseek_signal
     consensus = False
@@ -636,10 +642,11 @@ print("[分析1] 技术指标阈值检查")
 print("-" * 50)
 
 rsi = technical_data.get('rsi', 50)
-rsi_upper = strategy_config.rsi_extreme_threshold_upper if hasattr(strategy_config, 'rsi_extreme_threshold_upper') else 70
-rsi_lower = strategy_config.rsi_extreme_threshold_lower if hasattr(strategy_config, 'rsi_extreme_threshold_lower') else 30
+rsi_upper = getattr(strategy_config, 'rsi_extreme_threshold_upper', 70)
+rsi_lower = getattr(strategy_config, 'rsi_extreme_threshold_lower', 30)
 
 print(f"  RSI: {rsi:.2f}")
+print(f"    配置阈值: 超卖<{rsi_lower}, 超买>{rsi_upper}")
 if rsi > rsi_upper:
     print(f"    → 🔴 超买区 (>{rsi_upper}) - 可能触发 SELL")
 elif rsi < rsi_lower:
@@ -761,22 +768,25 @@ multi_summary = signal_multi.get('debate_summary', signal_multi.get('reason', 'N
 for i in range(0, len(str(multi_summary)), 80):
     print(f"    {str(multi_summary)[i:i+80]}")
 
-# 5. 触发交易的条件
+# 5. 触发交易的条件 (基于更新后的提示词)
 print()
-print("[分析5] 触发交易所需条件")
+print("[分析5] 触发交易所需条件 (最新提示词)")
 print("-" * 50)
 
-print("  要触发 BUY 信号，通常需要:")
-print(f"    • RSI < {rsi_lower} (当前: {rsi:.2f}, 差 {rsi - rsi_lower:.2f})")
-print(f"    • MACD 金叉 (MACD > Signal, 当前: {macd:.4f} vs {macd_signal:.4f})")
-print(f"    • 价格在 BB 下轨附近 (当前位置: {bb_position:.1f}%)")
-print(f"    • 趋势转多 (当前: {trend})")
+print("  要触发 BUY 信号 (ANY 2 of these is sufficient):")
+print(f"    • 价格在 SMA5/SMA20 上方 (当前: {'✅' if current_price > sma_5 and current_price > sma_20 else '❌'})")
+print(f"    • RSI < 60 且不超买 (当前: {rsi:.2f}, {'✅' if rsi < 60 else '❌'})")
+print(f"    • MACD 金叉或柱状图为正 (当前: {'✅' if macd > macd_signal or macd_hist > 0 else '❌'})")
+print(f"    • 价格接近支撑或 BB 下轨 (当前位置: {bb_position:.1f}%)")
 print()
-print("  要触发 SELL 信号，通常需要:")
-print(f"    • RSI > {rsi_upper} (当前: {rsi:.2f}, 差 {rsi_upper - rsi:.2f})")
-print(f"    • MACD 死叉 (MACD < Signal, 当前: {'是' if macd < macd_signal else '否'})")
-print(f"    • 价格在 BB 上轨附近 (当前位置: {bb_position:.1f}%)")
-print(f"    • 趋势转空 (当前: {trend})")
+print("  要触发 SELL 信号 (ANY 2 of these is sufficient):")
+print(f"    • 价格在 SMA5/SMA20 下方 (当前: {'✅' if current_price < sma_5 and current_price < sma_20 else '❌'})")
+print(f"    • RSI > 40 且显示弱势 (当前: {rsi:.2f}, {'✅' if rsi > 40 else '❌'})")
+print(f"    • MACD 死叉或柱状图为负 (当前: {'✅' if macd < macd_signal or macd_hist < 0 else '❌'})")
+print(f"    • 价格接近阻力或 BB 上轨 (当前位置: {bb_position:.1f}%)")
+print()
+print("  📌 提示词更新后，HOLD 仅在信号真正冲突时使用")
+print(f"     当前 min_confidence_to_trade: {strategy_config.min_confidence_to_trade}")
 
 # 6. 建议
 print()
