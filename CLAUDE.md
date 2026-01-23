@@ -142,6 +142,15 @@ Environment=AUTO_CONFIRM=true
    - 影响方法：`_cmd_status()`, `_cmd_position()` 改用缓存价格
    - 文件：`strategy/deepseek_strategy.py`
 
+9. **Telegram Webhook 冲突** (polling 模式失败)
+   - 问题：服务启动后持续报错 `can't use getUpdates method while webhook is active`
+   - 原因：Bot 之前被设置了 webhook，与 polling 模式冲突
+   - 根因：`delete_webhook()` 调用时机太晚，在 `Application.initialize()` 之后
+   - 修复：添加 `_delete_webhook_standalone()` 方法，在初始化前先删除 webhook
+   - 改进：双重删除 (初始化前 + 初始化后)，冲突重试时也删除
+   - 文件：`utils/telegram_command_handler.py`
+   - 手动修复：`curl "https://api.telegram.org/bot<TOKEN>/deleteWebhook"`
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)

@@ -196,22 +196,55 @@ class TelegramCommandHandler:
         )
         await self._send_response(update, help_msg)
     
+    async def _delete_webhook_standalone(self) -> bool:
+        """
+        Delete webhook using a standalone Bot instance.
+
+        This is called BEFORE Application initialization to ensure
+        no webhook conflicts occur during polling startup.
+
+        Returns True if webhook was deleted successfully.
+        """
+        try:
+            from telegram import Bot
+            bot = Bot(token=self.token)
+
+            # Get current webhook info
+            webhook_info = await bot.get_webhook_info()
+            if webhook_info.url:
+                self.logger.info(f"🔍 Found active webhook: {webhook_info.url}")
+                await bot.delete_webhook(drop_pending_updates=True)
+                self.logger.info("✅ Webhook deleted successfully")
+            else:
+                self.logger.info("ℹ️ No active webhook found")
+
+            # Close the standalone bot connection
+            await bot.close()
+            return True
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ Failed to delete webhook (standalone): {e}")
+            return False
+
     async def start_polling(self):
         """Start the command handler polling loop with conflict handling."""
         if not TELEGRAM_AVAILABLE:
             self.logger.error("Telegram not available")
             return
 
-        # Initial delay to allow previous session to expire on Telegram servers
-        # This helps avoid Conflict errors on quick restarts
-        # Telegram's getUpdates has a default timeout of 10 seconds, so we wait longer
-        startup_delay = 15
-        self.logger.info(f"⏳ Waiting {startup_delay}s before starting Telegram polling (conflict prevention)...")
+        # CRITICAL: Delete any existing webhook BEFORE doing anything else
+        # This prevents "can't use getUpdates while webhook is active" errors
+        self.logger.info("🔄 Pre-startup webhook cleanup...")
+        await self._delete_webhook_standalone()
+
+        # Short delay after webhook deletion to let Telegram servers sync
+        startup_delay = 5
+        self.logger.info(f"⏳ Waiting {startup_delay}s for Telegram servers to sync...")
         await asyncio.sleep(startup_delay)
 
-        max_retries = 3  # Reduced retries to fail faster when another instance is running
+        max_retries = 3
         retry_count = 0
-        base_delay = 30  # Initial retry delay in seconds (longer to allow old session to expire)
+        base_delay = 10  # Reduced since we already deleted webhook
 
         while retry_count < max_retries:
             try:
@@ -231,11 +264,10 @@ class TelegramCommandHandler:
                 # Start polling - compatible with python-telegram-bot v20+
                 await self.application.initialize()
 
-                # Delete any existing webhook before starting polling
-                # This is required because webhook and polling modes are mutually exclusive
-                self.logger.info("🔄 Deleting any existing webhook...")
+                # Delete webhook again after initialization (belt and suspenders)
+                self.logger.info("🔄 Post-init webhook cleanup...")
                 await self.application.bot.delete_webhook(drop_pending_updates=True)
-                self.logger.info("✅ Webhook deleted (if any)")
+                self.logger.info("✅ Webhook cleanup complete")
 
                 await self.application.start()
                 await self.application.updater.start_polling(
@@ -253,11 +285,11 @@ class TelegramCommandHandler:
 
             except TelegramConflict as e:
                 retry_count += 1
-                delay = base_delay * (2 ** (retry_count - 1))  # Exponential backoff: 10, 20, 40, 80, 160 seconds
+                delay = base_delay * (2 ** (retry_count - 1))  # Exponential backoff
 
                 if retry_count < max_retries:
                     self.logger.warning(
-                        f"⚠️ Telegram Conflict error (another instance running?). "
+                        f"⚠️ Telegram Conflict error. "
                         f"Retry {retry_count}/{max_retries} in {delay}s: {e}"
                     )
                     # Clean up current application before retry
@@ -267,11 +299,19 @@ class TelegramCommandHandler:
                         except Exception:
                             pass
                         self.application = None
+
+                    # Try to delete webhook again before retry
+                    self.logger.info("🔄 Attempting webhook cleanup before retry...")
+                    await self._delete_webhook_standalone()
+
                     await asyncio.sleep(delay)
                 else:
                     self.logger.error(
                         f"❌ Telegram Conflict error persists after {max_retries} retries. "
-                        f"Command handler disabled. Check for other running bot instances."
+                        f"Command handler disabled. Possible causes:\n"
+                        f"  1. Another bot instance using the same token\n"
+                        f"  2. External service setting webhooks\n"
+                        f"  Run: curl 'https://api.telegram.org/bot<TOKEN>/deleteWebhook'"
                     )
                     self.is_running = False
                     return  # Give up after max retries
