@@ -485,12 +485,17 @@ Remember: Be decisive but not reckless. Quality over quantity.
         if not sentiment_data:
             return "【Market Sentiment】Data not available"
 
-        sign = '+' if sentiment_data['net_sentiment'] >= 0 else ''
+        # Use .get() with defaults to prevent KeyError
+        net_sentiment = sentiment_data.get('net_sentiment', 0.0)
+        positive_ratio = sentiment_data.get('positive_ratio', 0.5)
+        negative_ratio = sentiment_data.get('negative_ratio', 0.5)
+
+        sign = '+' if net_sentiment >= 0 else ''
         return (
             f"【Market Sentiment】"
-            f"Bullish {sentiment_data['positive_ratio']:.1%} | "
-            f"Bearish {sentiment_data['negative_ratio']:.1%} | "
-            f"Net {sign}{sentiment_data['net_sentiment']:.3f}"
+            f"Bullish {positive_ratio:.1%} | "
+            f"Bearish {negative_ratio:.1%} | "
+            f"Net {sign}{net_sentiment:.3f}"
         )
 
     def _format_position_data(self, position: Optional[Dict[str, Any]]) -> str:

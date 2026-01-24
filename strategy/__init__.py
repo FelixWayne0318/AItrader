@@ -1,6 +1,9 @@
-"""DeepSeek AI trading strategy for NautilusTrader."""
+"""DeepSeek AI trading strategy for NautilusTrader.
 
-from .deepseek_strategy import DeepSeekAIStrategy, DeepSeekAIStrategyConfig
+NOTE: Do NOT import DeepSeekAIStrategy here to avoid circular imports.
+Import directly when needed:
+    from strategy.deepseek_strategy import DeepSeekAIStrategy, DeepSeekAIStrategyConfig
+"""
 
 __all__ = [
     "DeepSeekAIStrategy",

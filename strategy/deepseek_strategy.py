@@ -749,6 +749,9 @@ class DeepSeekAIStrategy(Strategy):
                 'long_short_ratio': 1.0,  # Neutral (equal longs and shorts)
                 'long_account_pct': 50.0,
                 'short_account_pct': 50.0,
+                'positive_ratio': 0.5,   # Required by deepseek_client
+                'negative_ratio': 0.5,   # Required by deepseek_client
+                'net_sentiment': 0.0,    # Required by deepseek_client (long - short = 0)
                 'source': 'default_neutral',
                 'timestamp': None,
             }
