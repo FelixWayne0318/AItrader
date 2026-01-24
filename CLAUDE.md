@@ -226,6 +226,15 @@ Environment=AUTO_CONFIRM=true
     - 参考：[PTB Discussion #4096](https://github.com/python-telegram-bot/python-telegram-bot/discussions/4096)
     - 文件：`utils/telegram_bot.py`
 
+13. **Rust 指标线程安全 panic** (on_timer 崩溃)
+    - 问题：服务崩溃，Rust panic: `RelativeStrengthIndex is unsendable, but sent to another thread`
+    - 原因：使用 `nautilus_trader.core.nautilus_pyo3` 的 Rust 指标
+    - 根因：Rust 指标有严格的 Send/Sync 检查，on_timer 在不同线程运行
+    - 修复：改用 `nautilus_trader.indicators` 的 Cython 指标（与原始仓库一致）
+    - 参考：[原始仓库](https://github.com/Patrick-code-Bot/nautilus_AItrader)
+    - 文件：`indicators/technical_manager.py`
+    - 注意：**不要**从 `nautilus_trader.core.nautilus_pyo3` 导入指标
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
@@ -234,6 +243,7 @@ Environment=AUTO_CONFIRM=true
 - ❌ 止损在入场价错误一侧 → 已修复，会自动回退到默认2%
 - ❌ 使用 Python 3.10 → ✅ 必须使用 Python 3.11+
 - ❌ 从后台线程访问 `indicator_manager` → ✅ 使用 `_cached_current_price` (Rust 指标不可跨线程)
+- ❌ 使用 `nautilus_trader.core.nautilus_pyo3` 的指标 → ✅ 使用 `nautilus_trader.indicators` (Cython 版本，线程安全)
 - ❌ 在 `__init__.py` 中自动导入 → ✅ 直接导入模块 (避免循环导入)
 - ❌ 直接访问 `sentiment_data['key']` → ✅ 使用 `sentiment_data.get('key', default)` (防止 KeyError)
 - ❌ **服务器命令不带 cd** → ✅ **始终先 cd 到项目目录**
