@@ -120,10 +120,11 @@ Environment=AUTO_CONFIRM=true
    - 问题：`log_file_format` 和 `log_colors` 参数不被支持
    - 修复：移除这两个参数
 
-6. **多代理分歧处理** (skip_on_divergence) → **已被方案B取代**
+6. **多代理分歧处理** (skip_on_divergence) → **已被 TradingAgents 架构取代**
    - 问题：当 DeepSeek 和 MultiAgent 信号完全对立 (BUY vs SELL) 时，信号合并会导致过多 HOLD
-   - **方案B修复**：改用层级决策架构，MultiAgent Judge 作为唯一决策者
-   - 架构：Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
+   - **TradingAgents 修复**：改用层级决策架构，MultiAgent Judge 作为唯一决策者
+   - 架构：Bull/Bear 辩论 (2 AI calls) → Judge 决策 (1 AI call, optimized prompt) → Risk 评估 (1 AI call) → 最终信号
+   - 优化：Judge 使用量化决策框架，减少主观判断，降低 HOLD 比例
    - 参考：[TradingAgents Framework](https://github.com/TauricResearch/TradingAgents) UCLA/MIT 论文
    - 文件：`strategy/deepseek_strategy.py`, `agents/multi_agent_analyzer.py`
    - 注意：`skip_on_divergence` 和 `use_confidence_fusion` 配置项已标记为 LEGACY，不再生效

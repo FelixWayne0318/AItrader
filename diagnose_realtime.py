@@ -1,23 +1,32 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v6.0 (方案B - 层级决策架构)
+实盘信号诊断脚本 v7.0 (TradingAgents 架构)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
-3. 使用 MultiAgent 层级决策架构，与 deepseek_strategy.py 100% 一致
+3. 使用 TradingAgents 层级决策架构，与 deepseek_strategy.py 100% 一致
 4. 检查 Binance 真实持仓
 5. 模拟完整的 _execute_trade 流程
 6. 输出实盘环境下会产生的真实结果
 
-v6.0 更新 (方案B):
-- 移除 DeepSeek 独立分析，改用 MultiAgent Judge 层级决策
-- 移除 process_signals() 信号合并逻辑
-- Judge 决策即最终决策，不存在信号冲突
-- 架构: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
+当前架构 (TradingAgents Judge-based Decision):
+- Phase 1: Bull/Bear 辩论 (2 AI calls)
+- Phase 2: Judge 决策 (1 AI call with optimized prompt)
+- Phase 3: Risk 评估 (1 AI call)
+- Judge 决策即最终决策，不需要信号合并
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
-v5.0 更新:
+历史更新:
+v7.0:
+- 统一架构命名为 "TradingAgents"，移除"方案A/B"混淆
+- 更新注释以反映当前架构状态
+
+v6.0:
+- 实现 TradingAgents 层级决策架构
+- Judge 决策作为唯一决策者
+
+v5.0:
 - 添加 Binance 真实持仓检查
 - 添加 _manage_existing_position 逻辑模拟
 - 添加仓位为0检查
@@ -75,7 +84,7 @@ else:
     load_dotenv()
 
 print("=" * 70)
-print("  实盘信号诊断工具 v6.0 (方案B - Judge 层级决策)")
+print("  实盘信号诊断工具 v7.0 (TradingAgents 架构)")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -413,9 +422,9 @@ print("  ✅ 价格数据构建成功")
 print()
 
 # =============================================================================
-# 7. MultiAgent 层级决策 (方案B - 使用实盘配置)
+# 7. MultiAgent 层级决策 (TradingAgents 架构 - 使用实盘配置)
 # =============================================================================
-print("[7/9] MultiAgent 层级决策 (方案B - TradingAgents架构)...")
+print("[7/9] MultiAgent 层级决策 (TradingAgents 架构)...")
 print("-" * 70)
 print("  📋 决策流程:")
 print("     Phase 1: Bull/Bear Debate (辩论)")
@@ -444,7 +453,7 @@ try:
     print("  🛡️ Risk Manager 评估中...")
 
     # 调用分析 (与 on_timer 相同，使用真实持仓)
-    # 方案B: Judge 决策即最终决策，不需要与 DeepSeek 合并
+    # TradingAgents: Judge 决策即最终决策，不需要与 DeepSeek 合并
     signal_data = multi_agent.analyze(
         symbol="BTCUSDT",
         technical_report=technical_data,
@@ -496,9 +505,9 @@ except (KeyboardInterrupt, SystemExit):
 print()
 
 # =============================================================================
-# 8. 交易决策 (方案B - Judge 决策即最终决策)
+# 8. 交易决策 (TradingAgents - Judge 决策即最终决策)
 # =============================================================================
-print("[8/9] 交易决策 (方案B - Judge 决策即最终决策)...")
+print("[8/9] 交易决策 (TradingAgents - Judge 决策即最终决策)...")
 print("-" * 70)
 
 # 导入共享模块 (只需要 check_confidence_threshold 和 calculate_position_size)
@@ -508,7 +517,7 @@ from strategy.trading_logic import (
     CONFIDENCE_LEVELS,
 )
 
-# 方案B: Judge 决策即最终决策，不需要信号合并
+# TradingAgents: Judge 决策即最终决策，不需要信号合并
 final_signal = signal_data.get('signal', 'HOLD')
 confidence = signal_data.get('confidence', 'LOW')
 
@@ -574,7 +583,7 @@ if would_trade and final_signal in ['BUY', 'SELL']:
 
     # 使用共享模块计算仓位 (与 strategy._calculate_position_size 完全相同)
     btc_quantity, calc_details = calculate_position_size(
-        signal_data=signal_data,  # 方案B: 使用 Judge 的决策数据
+        signal_data=signal_data,  # TradingAgents: 使用 Judge 的决策数据
         price_data=price_data,
         technical_data=technical_data,
         config=position_config,
@@ -655,11 +664,11 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (方案B - Judge 层级决策)")
+print("  诊断总结 (TradingAgents - Judge 层级决策)")
 print("=" * 70)
 print()
 
-# 方案B: Judge 决策即最终决策，无需共识检查
+# TradingAgents: Judge 决策即最终决策，无需共识检查
 print(f"  📊 Final Signal: {final_signal}")
 print(f"  📊 Confidence: {confidence}")
 judge_decision = signal_data.get('judge_decision', {})
@@ -867,9 +876,9 @@ elif ls_ratio < LS_RATIO_BEARISH:
 else:
     print("    → ⚪ 多空平衡")
 
-# 4. 为什么 AI 返回该信号 (方案B: Judge 决策分析)
+# 4. 为什么 AI 返回该信号 (TradingAgents: Judge 决策分析)
 print()
-print("[分析4] Judge 决策原因分析 (方案B)")
+print("[分析4] Judge 决策原因分析 (TradingAgents)")
 print("-" * 50)
 
 print(f"  ⚖️ Judge 最终决策: {signal_data.get('signal', 'N/A')}")

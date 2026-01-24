@@ -190,12 +190,14 @@ class MultiAgentAnalyzer:
         """
         Run multi-agent analysis with Bull/Bear debate.
 
-        TradingAgents Architecture (方案A):
+        TradingAgents Architecture (Judge-based decision):
         - Phase 1: Bull/Bear debate (2 AI calls)
         - Phase 2: Judge decision (1 AI call with optimized prompt)
         - Phase 3: Risk evaluation (1 AI call)
 
         Total: 4 AI calls (complete TradingAgents framework)
+
+        Reference: https://github.com/TauricResearch/TradingAgents (UCLA/MIT paper)
 
         Parameters
         ----------
