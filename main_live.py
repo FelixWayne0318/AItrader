@@ -253,10 +253,9 @@ def get_binance_config() -> tuple:
     if not api_key or not api_secret:
         raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET required in .env")
 
-    # CRITICAL: Explicitly specify which instruments to load
-    # Using load_ids is more reliable than filters for loading specific instruments
-    # This prevents loading non-ASCII symbols like '币安人生USDT-PERP' that cause crashes
-    instrument_id = "BTCUSDT-PERP.BINANCE"
+    # CRITICAL: Use load_all=True for proper instrument initialization
+    # NautilusTrader 1.221.0 has fixed non-ASCII symbol issues
+    # The binance_positions.py patch provides additional filtering if needed
 
     # Data client config
     data_config = BinanceDataClientConfig(
@@ -265,8 +264,7 @@ def get_binance_config() -> tuple:
         account_type=BinanceAccountType.USDT_FUTURES,  # Binance Futures
         testnet=False,  # Set to True for testnet
         instrument_provider=InstrumentProviderConfig(
-            load_all=False,  # CRITICAL: Must be False to avoid loading all symbols
-            load_ids=frozenset([instrument_id]),  # Explicitly load only BTCUSDT-PERP
+            load_all=True,  # Load all instruments for proper execution
         ),
     )
 
@@ -277,8 +275,7 @@ def get_binance_config() -> tuple:
         account_type=BinanceAccountType.USDT_FUTURES,
         testnet=False,
         instrument_provider=InstrumentProviderConfig(
-            load_all=False,  # CRITICAL: Must be False to avoid loading all symbols
-            load_ids=frozenset([instrument_id]),  # Explicitly load only BTCUSDT-PERP
+            load_all=True,  # Load all instruments for proper execution
         ),
     )
 
