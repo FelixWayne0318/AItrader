@@ -10,6 +10,7 @@ description: |
   - Verifying the stop-loss bug fix (验证止损修复)
 
   Keywords: stop-loss, SL, entry price, validation, trading, 止损, 入场价, 验证
+disable-model-invocation: true
 ---
 
 # Stop-Loss Validation

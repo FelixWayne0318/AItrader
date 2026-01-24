@@ -12,6 +12,7 @@ description: |
   - Understanding trading concepts like positions, orders, and fills (理解持仓、订单、成交等概念)
 
   Keywords: NautilusTrader, strategy, backtest, trading, adapter, Binance, quantitative, 量化, 策略, 回测
+user-invocable: false
 ---
 
 # NautilusTrader Reference

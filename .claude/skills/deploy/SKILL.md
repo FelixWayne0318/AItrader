@@ -12,6 +12,7 @@ description: |
   - Troubleshooting deployment issues (排查部署问题)
 
   Keywords: deploy, restart, update, reinstall, systemd, service, server, 部署, 重启, 更新
+disable-model-invocation: true
 ---
 
 # Deploy Trading Bot
