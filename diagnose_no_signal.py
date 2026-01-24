@@ -1304,13 +1304,10 @@ def main():
     # 3. API 连接
     all_results['api'] = test_api_connections()
 
-    # 4. 信号对比 (可选，耗时较长)
+    # 4. 信号对比 (默认执行)
     print("\n" + "="*70)
-    user_input = input("是否进行信号源对比测试? (耗时约 30-60 秒) [y/N]: ").strip().lower()
-    if user_input == 'y':
-        all_results['signals'] = compare_signal_sources()
-    else:
-        print_info("跳过信号对比测试")
+    print_info("进行信号源对比测试 (耗时约 30-60 秒)...")
+    all_results['signals'] = compare_signal_sources()
 
     # 5. 配置检查
     all_results['config'] = check_configuration()
@@ -1324,13 +1321,10 @@ def main():
     # 7. K线数据
     all_results['bars'] = check_bar_data()
 
-    # 8. 模拟执行 (可选)
+    # 8. 模拟执行 (默认执行)
     print("\n" + "="*70)
-    user_input = input("是否进行执行流程模拟? (耗时约 20-40 秒) [y/N]: ").strip().lower()
-    if user_input == 'y':
-        all_results['execution'] = simulate_execution()
-    else:
-        print_info("跳过执行流程模拟")
+    print_info("进行执行流程模拟 (耗时约 20-40 秒)...")
+    all_results['execution'] = simulate_execution()
 
     # ==========================================================================
     # 总结
