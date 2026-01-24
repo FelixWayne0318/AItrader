@@ -2096,10 +2096,13 @@ class DeepSeekAIStrategy(Strategy):
                 price = float(fill.last_px)
                 ts = fill.ts_event
 
-                # Format timestamp
+                # Format timestamp with defensive handling
                 from datetime import datetime
-                dt = datetime.utcfromtimestamp(ts / 1e9)
-                time_str = dt.strftime("%m-%d %H:%M")
+                try:
+                    dt = datetime.utcfromtimestamp(ts / 1e9) if ts else datetime.utcnow()
+                    time_str = dt.strftime("%m-%d %H:%M")
+                except (ValueError, TypeError, OSError):
+                    time_str = "N/A"
 
                 msg += f"{side_emoji} {side} {qty:.4f} @ ${price:,.2f}\n"
                 msg += f"   Time: {time_str} UTC\n\n"
