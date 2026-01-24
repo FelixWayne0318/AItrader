@@ -3,6 +3,25 @@
 ## 项目概述
 基于 NautilusTrader 框架的 AI 驱动加密货币交易系统，使用 DeepSeek AI 进行信号生成。
 
+## 🚨 代码修改规范 (必读)
+
+在修改任何代码之前，**必须**按以下顺序调研：
+
+1. **官方文档** - NautilusTrader、python-telegram-bot 等框架的官方文档
+2. **社区/GitHub Issues** - 查看是否有相关问题和解决方案
+3. **原始仓库** - 对比 [Patrick-code-Bot/nautilus_AItrader](https://github.com/Patrick-code-Bot/nautilus_AItrader) 的实现
+4. **提出方案** - 基于以上调研，结合当前系统问题，提出合理修改方案
+
+**禁止**：
+- ❌ 凭猜测直接修改代码
+- ❌ 未经调研就"优化"或"改进"代码
+- ❌ 忽略原始仓库的已验证实现
+- ❌ 不了解框架线程模型就修改异步/多线程代码
+
+**教训案例**：
+- 将 `nautilus_trader.indicators` (Cython) 改为 `nautilus_trader.core.nautilus_pyo3` (Rust) 导致线程安全 panic
+- 未研究 python-telegram-bot v20 的异步模型就混合使用 asyncio/threading
+
 ## ⚠️ 关键信息
 
 | 项目 | 值 |
