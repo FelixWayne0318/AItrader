@@ -801,7 +801,9 @@ def check_known_issues_from_commits() -> Dict[str, Any]:
         import_text = '\n'.join(import_lines)
 
         # 检查是否使用 Cython 指标 (正确)
-        uses_cython = "from nautilus_trader.indicators" in import_text
+        # 原始仓库使用: from nautilus_trader.indicators import ...
+        uses_cython = "from nautilus_trader.indicators import" in import_text or \
+                      "from nautilus_trader.indicators " in import_text
         # 检查是否使用 Rust PyO3 指标 (错误，会导致 panic)
         uses_rust_pyo3 = "from nautilus_trader.core.nautilus_pyo3" in import_text
 
