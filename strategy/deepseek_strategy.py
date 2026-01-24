@@ -1075,15 +1075,18 @@ class DeepSeekAIStrategy(Strategy):
                 return
 
             if size_diff > 0:
-                # Add to position with bracket order (includes SL/TP protection)
+                # Add to position with simple market order
+                # NOTE: Bracket orders CANNOT be used for adding to existing positions
+                # They can only be used for opening new positions (entry + SL + TP linked)
                 order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
-                self._submit_bracket_order(
+                self._submit_order(
                     side=order_side,
                     quantity=abs(size_diff),
+                    reduce_only=False,
                 )
                 self.log.info(
                     f"📈 Adding to {target_side} position: {abs(size_diff):.3f} BTC "
-                    f"({current_qty:.3f} → {target_quantity:.3f}) [with SL/TP]"
+                    f"({current_qty:.3f} → {target_quantity:.3f})"
                 )
             else:
                 # Reduce position
@@ -1116,14 +1119,17 @@ class DeepSeekAIStrategy(Strategy):
                 reduce_only=True,
             )
 
-            # Open opposite position with bracket order (includes SL/TP protection)
+            # Open opposite position with simple market order
+            # NOTE: Using simple order for consistency with reference implementation
+            # Bracket orders can cause timing issues when used after position close
             new_order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
-            self._submit_bracket_order(
+            self._submit_order(
                 side=new_order_side,
                 quantity=target_quantity,
+                reduce_only=False,
             )
             self.log.info(
-                f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC [with SL/TP]"
+                f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC"
             )
 
         else:
