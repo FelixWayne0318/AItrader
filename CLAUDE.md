@@ -202,6 +202,22 @@ Environment=AUTO_CONFIRM=true
    - 文件：`utils/telegram_command_handler.py`
    - 手动修复：`curl "https://api.telegram.org/bot<TOKEN>/deleteWebhook"`
 
+10. **循环导入错误** (agents ↔ strategy)
+    - 问题：启动时报错 `ImportError: cannot import name 'MultiAgentAnalyzer' from partially initialized module`
+    - 原因：`agents/__init__.py` 导入 `multi_agent_analyzer` → 导入 `trading_logic` → 导入 `strategy` → 循环
+    - 根因：`__init__.py` 中的自动导入触发了循环依赖链
+    - 修复：移除 `agents/__init__.py` 和 `strategy/__init__.py` 中的自动导入
+    - 使用方式：直接导入 `from agents.multi_agent_analyzer import MultiAgentAnalyzer`
+    - 文件：`agents/__init__.py`, `strategy/__init__.py`
+
+11. **DeepSeek net_sentiment KeyError** (情绪数据缺失)
+    - 问题：AI 分析失败，报错 `KeyError: 'net_sentiment'`
+    - 原因：当真实情绪数据不可用时，默认情绪结构缺少必需字段
+    - 根因：默认情绪数据没有 `net_sentiment`, `positive_ratio`, `negative_ratio`
+    - 修复：在默认情绪数据中添加所有必需字段
+    - 防护：`_format_sentiment_data()` 改用 `.get()` 防止 KeyError
+    - 文件：`strategy/deepseek_strategy.py`, `utils/deepseek_client.py`
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
@@ -210,6 +226,8 @@ Environment=AUTO_CONFIRM=true
 - ❌ 止损在入场价错误一侧 → 已修复，会自动回退到默认2%
 - ❌ 使用 Python 3.10 → ✅ 必须使用 Python 3.11+
 - ❌ 从后台线程访问 `indicator_manager` → ✅ 使用 `_cached_current_price` (Rust 指标不可跨线程)
+- ❌ 在 `__init__.py` 中自动导入 → ✅ 直接导入模块 (避免循环导入)
+- ❌ 直接访问 `sentiment_data['key']` → ✅ 使用 `sentiment_data.get('key', default)` (防止 KeyError)
 - ❌ **服务器命令不带 cd** → ✅ **始终先 cd 到项目目录**
   ```bash
   # 错误：直接执行命令会报 "not a git repository"
