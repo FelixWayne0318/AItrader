@@ -795,10 +795,15 @@ def check_known_issues_from_commits() -> Dict[str, Any]:
     if tech_manager.exists():
         content = tech_manager.read_text()
 
+        # 只检查实际的 import 语句，忽略注释
+        import_lines = [line.strip() for line in content.split('\n')
+                        if line.strip().startswith('from ') or line.strip().startswith('import ')]
+        import_text = '\n'.join(import_lines)
+
         # 检查是否使用 Cython 指标 (正确)
-        uses_cython = "from nautilus_trader.indicators" in content
+        uses_cython = "from nautilus_trader.indicators" in import_text
         # 检查是否使用 Rust PyO3 指标 (错误，会导致 panic)
-        uses_rust_pyo3 = "from nautilus_trader.core.nautilus_pyo3" in content
+        uses_rust_pyo3 = "from nautilus_trader.core.nautilus_pyo3" in import_text
 
         if uses_cython and not uses_rust_pyo3:
             print_ok("使用 Cython 指标 (nautilus_trader.indicators) ✓ (commit cd036b4)")
