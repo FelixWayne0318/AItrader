@@ -220,9 +220,10 @@ Environment=AUTO_CONFIRM=true
 
 12. **Telegram TCPTransport closed 错误** (跨事件循环问题)
     - 问题：发送 Telegram 消息时报错 `RuntimeError: unable to perform operation on <TCPTransport closed=True>`
-    - 原因：python-telegram-bot v20+ 使用 httpx 作为 HTTP 客户端
-    - 根因：httpx 会话与创建时的事件循环绑定，在新事件循环中使用旧 Bot 实例会失败
-    - 修复：在 `_run_sync_in_new_loop` 中为每个新事件循环创建新的 Bot 实例
+    - 原因：python-telegram-bot v20+ 是完全异步的，不是线程安全的
+    - 根因：混合 asyncio 和 threading 会导致 httpx 会话冲突
+    - 修复：`send_message_sync` 改用 `requests` 直接调用 Telegram Bot API (官方推荐)
+    - 参考：[PTB Discussion #4096](https://github.com/python-telegram-bot/python-telegram-bot/discussions/4096)
     - 文件：`utils/telegram_bot.py`
 
 ## 常见错误避免
