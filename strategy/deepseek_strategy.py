@@ -1268,9 +1268,10 @@ class DeepSeekAIStrategy(Strategy):
         support = self.latest_technical_data.get('support', 0.0)
         resistance = self.latest_technical_data.get('resistance', 0.0)
 
-        # Check for MultiAgent SL/TP (from consensus)
-        multi_sl = self.latest_signal_data.get('stop_loss_multi')
-        multi_tp = self.latest_signal_data.get('take_profit_multi')
+        # Check for MultiAgent SL/TP (from Judge decision)
+        # Note: MultiAgent returns 'stop_loss' and 'take_profit' fields directly
+        multi_sl = self.latest_signal_data.get('stop_loss')
+        multi_tp = self.latest_signal_data.get('take_profit')
         use_multi_sltp = False
 
         # Validate MultiAgent SL/TP values
