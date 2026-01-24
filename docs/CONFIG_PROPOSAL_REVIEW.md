@@ -2,6 +2,7 @@
 
 > 审查日期: 2026-01-24
 > 审查范围: 对比方案与当前代码库实际状态
+> 状态: **已完成** - 遗漏项已补充到方案 v2.1
 
 ---
 
@@ -265,3 +266,20 @@ CONFIG_MANAGEMENT_PROPOSAL.md 的核心设计是合理的，可以实现统一�
 ---
 
 *审查完成。建议先执行 Phase 0 修复冲突，再按更新后的方案实施。*
+
+---
+
+## 9. 遗漏项补充记录 (2026-01-24)
+
+审查后发现以下遗漏项，已补充到 CONFIG_MANAGEMENT_PROPOSAL.md v2.1:
+
+| 文件 | 行号 | 硬编码值 | 已添加到 |
+|------|------|---------|---------|
+| `trading_logic.py` | 379-383 | `TP_PCT_CONFIG` 字典 | `trading_logic.tp_pct_by_confidence` |
+| `trading_logic.py` | 324 | `+= 0.001` 精度调整 | `trading_logic.quantity_adjustment_step` |
+| `bar_persistence.py` | 346 | `min(limit, 1500)` | `network.bar_persistence.max_limit` |
+| `bar_persistence.py` | 349 | `timeout=10` | `network.bar_persistence.timeout` |
+| `oco_manager.py` | 89 | `socket_timeout=5` | `network.oco_manager.socket_timeout` |
+| `oco_manager.py` | 90 | `socket_connect_timeout=5` | `network.oco_manager.socket_connect_timeout` |
+
+**硬编码总数更新**: 42 → 48 处
