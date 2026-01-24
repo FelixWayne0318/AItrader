@@ -11,6 +11,7 @@ description: |
   - Validating code against CLAUDE.md specifications (验证代码是否符合规范)
 
   Keywords: review, code, PR, bugs, security, architecture, commit, 审查, 代码, 安全
+disable-model-invocation: true
 ---
 
 # Code Review

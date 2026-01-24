@@ -6,7 +6,7 @@ AI-powered cryptocurrency trading strategy using TradingAgents-inspired architec
 - Judge (Portfolio Manager): Evaluates debate and makes final decision
 - Risk Manager: Determines position sizing and stop/take profit levels
 
-This implements 方案B (Hierarchical Decision) where the Judge's decision is final,
+This implements a hierarchical decision architecture where the Judge's decision is final,
 avoiding signal conflicts that can occur with parallel multi-agent systems.
 
 Reference: TradingAgents (UCLA/MIT) - https://github.com/TauricResearch/TradingAgents
@@ -39,7 +39,7 @@ from agents.multi_agent_analyzer import MultiAgentAnalyzer
 from strategy.trading_logic import (
     check_confidence_threshold,
     calculate_position_size,
-    # process_signals removed - 方案B uses MultiAgent Judge as final decision maker
+    # process_signals removed - Hierarchical architecture uses MultiAgent Judge as final decision maker
 )
 # OCOManager no longer needed - using NautilusTrader's built-in bracket orders
 
@@ -93,11 +93,11 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     rsi_extreme_threshold_lower: float = 25.0
     rsi_extreme_multiplier: float = 0.7
 
-    # [LEGACY - 方案B不再使用] Multi-Agent Divergence Handling
-    # 方案B采用层级决策架构，Judge决策即最终决策，不存在信号合并/冲突
+    # [LEGACY - 不再使用] Multi-Agent Divergence Handling
+    # 层级决策架构中，Judge决策即最终决策，不存在信号合并/冲突
     # 以下选项保留用于向后兼容，但不再生效
-    skip_on_divergence: bool = True  # [LEGACY] 方案B不使用
-    use_confidence_fusion: bool = True  # [LEGACY] 方案B不使用
+    skip_on_divergence: bool = True  # [LEGACY] 不再使用
+    use_confidence_fusion: bool = True  # [LEGACY] 不再使用
     
     # Stop Loss & Take Profit
     enable_auto_sl_tp: bool = True
@@ -776,7 +776,7 @@ class DeepSeekAIStrategy(Strategy):
                 f"{current_position['quantity']} @ ${current_position['avg_px']:.2f}"
             )
 
-        # ========== 方案B: 层级决策架构 (TradingAgents) ==========
+        # ========== 层级决策架构 (TradingAgents) ==========
         # MultiAgent 的 Judge 作为最终决策者，不再与 DeepSeek 并行合并
         # 流程: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
         try:
@@ -832,7 +832,7 @@ class DeepSeekAIStrategy(Strategy):
                             'support': technical_data.get('support', 0),
                             'resistance': technical_data.get('resistance', 0),
                             'reasoning': signal_data.get('reason', ''),
-                            # 方案B additional fields
+                            # Hierarchical architecture additional fields
                             'winning_side': winning_side,
                             'debate_summary': debate_summary[:100] if debate_summary else '',
                         })
@@ -932,7 +932,7 @@ class DeepSeekAIStrategy(Strategy):
 
         return None
 
-    # NOTE: 方案B (Hierarchical Decision) - MultiAgent Judge 作为唯一决策者
+    # NOTE: Hierarchical Decision Architecture - MultiAgent Judge 作为唯一决策者
     # 不再需要信号合并逻辑，Judge 决策即最终决策
 
     def _execute_trade(
@@ -993,6 +993,21 @@ class DeepSeekAIStrategy(Strategy):
 
         if target_quantity == 0:
             self.log.warning("⚠️ Calculated position size is 0, skipping trade")
+
+            # Notify user about insufficient position size (helpful for low-balance accounts)
+            if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
+                try:
+                    current_price = price_data.get('price', 0) if price_data else 0
+                    error_msg = self.telegram_bot.format_error_alert({
+                        'type': 'POSITION_SIZE_ZERO',
+                        'message': f"Cannot trade {signal} signal - position size calculated as 0",
+                        'details': f"Price: ${current_price:.2f}, Signal: {signal} ({confidence})",
+                        'action': "Check account balance or adjust position sizing parameters"
+                    })
+                    self.telegram_bot.send_message_sync(error_msg)
+                except Exception as notify_error:
+                    self.log.error(f"Failed to send Telegram alert: {notify_error}")
+
             return
 
         # Determine order side
@@ -1119,17 +1134,15 @@ class DeepSeekAIStrategy(Strategy):
                 reduce_only=True,
             )
 
-            # Open opposite position with simple market order
-            # NOTE: Using simple order for consistency with reference implementation
-            # Bracket orders can cause timing issues when used after position close
+            # Open opposite position with bracket order (entry + SL + TP)
+            # This ensures the new position has proper risk protection from the start
             new_order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
-            self._submit_order(
+            self._submit_bracket_order(
                 side=new_order_side,
                 quantity=target_quantity,
-                reduce_only=False,
             )
             self.log.info(
-                f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC"
+                f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC (with bracket SL/TP)"
             )
 
         else:
@@ -1435,6 +1448,20 @@ class DeepSeekAIStrategy(Strategy):
         except Exception as e:
             self.log.error(f"❌ Failed to submit bracket order: {e}")
             self.log.warning("⚠️ Falling back to simple market order without SL/TP")
+
+            # Send Telegram alert for critical bracket order failure
+            if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
+                try:
+                    error_msg = self.telegram_bot.format_error_alert({
+                        'type': 'BRACKET_ORDER_FAILURE',
+                        'message': f"Bracket order failed, opening position WITHOUT SL/TP protection",
+                        'details': f"Error: {str(e)}",
+                        'action': f"Opening {side.name} {quantity:.3f} BTC with simple order"
+                    })
+                    self.telegram_bot.send_message_sync(error_msg)
+                except Exception as notify_error:
+                    self.log.error(f"Failed to send Telegram alert: {notify_error}")
+
             self._submit_order(side=side, quantity=quantity, reduce_only=False)
 
     def on_order_filled(self, event):

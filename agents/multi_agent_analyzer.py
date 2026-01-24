@@ -123,6 +123,62 @@ class MultiAgentAnalyzer:
 
         raise last_error
 
+    def _extract_json_with_retry(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float,
+        max_json_retries: int = 2,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Call API and extract JSON, with retry on parse failure.
+
+        Parameters
+        ----------
+        messages : List[Dict]
+            Chat messages to send
+        temperature : float
+            Temperature for API call
+        max_json_retries : int
+            Maximum retries for JSON parsing failures
+
+        Returns
+        -------
+        Optional[Dict]
+            Parsed JSON dict, or None if all retries fail
+        """
+        for retry_attempt in range(max_json_retries + 1):
+            try:
+                result = self._call_api_with_retry(messages=messages, temperature=temperature)
+                self.logger.debug(f"API response (attempt {retry_attempt + 1}): {result}")
+
+                # Extract JSON from response
+                start = result.find('{')
+                end = result.rfind('}') + 1
+                if start != -1 and end > 0 and start < end:
+                    json_str = result[start:end]
+                    if json_str.strip():
+                        return json.loads(json_str)
+
+                # If we reach here, JSON extraction failed
+                if retry_attempt < max_json_retries:
+                    self.logger.warning(
+                        f"Failed to extract valid JSON (attempt {retry_attempt + 1}/{max_json_retries + 1}). Retrying..."
+                    )
+                    time.sleep(self.retry_delay)
+                else:
+                    self.logger.error(f"Failed to extract valid JSON after {max_json_retries + 1} attempts")
+
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                if retry_attempt < max_json_retries:
+                    self.logger.warning(
+                        f"JSON parse error (attempt {retry_attempt + 1}/{max_json_retries + 1}): {e}. Retrying..."
+                    )
+                    time.sleep(self.retry_delay)
+                else:
+                    self.logger.error(f"JSON parse failed after {max_json_retries + 1} attempts: {e}")
+
+        return None
+
     def analyze(
         self,
         symbol: str,
@@ -133,6 +189,15 @@ class MultiAgentAnalyzer:
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis with Bull/Bear debate.
+
+        TradingAgents Architecture (Judge-based decision):
+        - Phase 1: Bull/Bear debate (2 AI calls)
+        - Phase 2: Judge decision (1 AI call with optimized prompt)
+        - Phase 3: Risk evaluation (1 AI call)
+
+        Total: 4 AI calls (complete TradingAgents framework)
+
+        Reference: https://github.com/TauricResearch/TradingAgents (UCLA/MIT paper)
 
         Parameters
         ----------
@@ -164,7 +229,7 @@ class MultiAgentAnalyzer:
             }
         """
         try:
-            self.logger.info("Starting multi-agent analysis...")
+            self.logger.info("Starting multi-agent analysis (TradingAgents architecture)...")
 
             # Format reports for prompts
             tech_summary = self._format_technical_report(technical_report)
@@ -173,7 +238,7 @@ class MultiAgentAnalyzer:
             # Get current price for calculations
             current_price = price_data.get('price', 0) if price_data else technical_report.get('price', 0)
 
-            # Phase 1: Bull/Bear Debate
+            # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
             debate_history = ""
             bull_argument = ""
@@ -205,14 +270,19 @@ class MultiAgentAnalyzer:
             # Store transcript for debugging
             self.last_debate_transcript = debate_history
 
-            # Phase 2: Judge makes decision
+            # Phase 2: Judge makes decision (1 AI call)
             self.logger.info("Phase 2: Judge evaluating debate...")
             judge_decision = self._get_judge_decision(
                 debate_history=debate_history,
                 past_memories=self._get_past_memories(),
             )
 
-            # Phase 3: Risk evaluation and final decision
+            self.logger.info(
+                f"🎯 Judge decision: {judge_decision.get('decision', 'HOLD')} "
+                f"({judge_decision.get('confidence', 'LOW')} confidence)"
+            )
+
+            # Phase 3: Risk evaluation (1 AI call)
             self.logger.info("Phase 3: Risk evaluation...")
             final_decision = self._evaluate_risk(
                 proposed_action=judge_decision,
@@ -334,17 +404,17 @@ Deliver your argument now (2-3 paragraphs):"""
         Judge evaluates the debate and makes decision.
 
         Borrowed from: TradingAgents/agents/managers/research_manager.py
+        Optimized with prescriptive prompt engineering to reduce HOLD bias.
         """
         prompt = f"""You are the Portfolio Manager and Debate Judge.
 Your role is to evaluate the Bull vs Bear debate and make a DEFINITIVE trading decision.
 
-CRITICAL RULES:
-1. You MUST choose a side - LONG or SHORT whenever possible
-2. HOLD is ONLY valid when there is TRUE 50/50 uncertainty (extremely rare!)
-3. Do NOT use HOLD as a safe default - it causes missed opportunities
-4. One side almost always has STRONGER arguments - FIND that side and commit
-5. In crypto markets, momentum often continues - lean towards trend continuation
-6. When in doubt between LONG/SHORT, the side with more technical confirmation wins
+=== MANDATORY RULES (YOU MUST FOLLOW EXACTLY) ===
+
+1. ⚠️ YOU MUST COUNT TECHNICAL CONFIRMATIONS BEFORE DECIDING
+2. ⚠️ YOU MUST FOLLOW THE DECISION RULES ALGORITHMICALLY - NO SUBJECTIVE INTERPRETATION
+3. ⚠️ DO NOT DEFAULT TO HOLD - It causes missed opportunities
+4. ⚠️ One side almost always has stronger evidence - FIND IT and COMMIT TO IT
 
 Past Trading Mistakes to AVOID:
 {past_memories if past_memories else "No past data - this is a fresh start."}
@@ -352,48 +422,115 @@ Past Trading Mistakes to AVOID:
 FULL DEBATE TRANSCRIPT:
 {debate_history}
 
-DECISION FRAMEWORK:
-- If Bull's arguments are stronger → LONG
-- If Bear's arguments are stronger → SHORT
-- If genuinely 50/50 with high uncertainty → HOLD
+=== STEP 1: COUNT TECHNICAL CONFIRMATIONS (MANDATORY) ===
 
-Provide your decision in this exact JSON format:
+You MUST count how many of these specific confirmations each side presented:
+
+BULLISH Confirmations (count in Bull's arguments):
+1. Price above SMA20 OR Price above SMA50
+2. RSI < 60 (not overbought, has room to rise)
+3. MACD > Signal (bullish crossover) OR MACD histogram > 0
+4. Price near support level OR Price near BB lower band
+5. Increasing volume OR bullish volume pattern mentioned
+
+BEARISH Confirmations (count in Bear's arguments):
+1. Price below SMA20 OR Price below SMA50
+2. RSI > 40 (showing weakness or overbought)
+3. MACD < Signal (bearish crossover) OR MACD histogram < 0
+4. Price near resistance level OR Price near BB upper band
+5. Decreasing volume OR bearish volume pattern mentioned
+
+IMPORTANT: Each confirmation is worth 1 point if ANY of the conditions in that item are true.
+Example: If price is above SMA50 but below SMA20, confirmation #1 STILL COUNTS as 1.
+
+=== STEP 2: APPLY DECISION RULES (MANDATORY - NO EXCEPTIONS) ===
+
+You MUST follow these rules EXACTLY as written:
+
+IF Bullish count >= 3:
+    → decision = "LONG"
+    → confidence = "HIGH"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE IF Bearish count >= 3:
+    → decision = "SHORT"
+    → confidence = "HIGH"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE IF Bullish count == 2 AND Bullish count > Bearish count:
+    → decision = "LONG"
+    → confidence = "MEDIUM"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE IF Bearish count == 2 AND Bearish count > Bullish count:
+    → decision = "SHORT"
+    → confidence = "MEDIUM"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE IF Bullish count >= 2 AND Bull's argument quality is clearly superior:
+    → decision = "LONG"
+    → confidence = "MEDIUM"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE IF Bearish count >= 2 AND Bear's argument quality is clearly superior:
+    → decision = "SHORT"
+    → confidence = "MEDIUM"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE:
+    → decision = "HOLD"
+    → confidence = "LOW"
+    (This should be RARE - only when both sides have < 2 confirmations AND are truly balanced)
+
+=== STEP 3: VERIFICATION CHECKLIST (BEFORE RESPONDING) ===
+
+Before you provide your JSON response, verify:
+✓ Did you count all 5 bullish confirmations? (Write the count)
+✓ Did you count all 5 bearish confirmations? (Write the count)
+✓ Did you apply the decision rules EXACTLY as written above?
+✓ Did you avoid using HOLD as a default safe choice?
+✓ If you chose HOLD, are BOTH counts < 2 AND truly balanced?
+
+=== OUTPUT FORMAT ===
+
+Provide your decision in this EXACT JSON format (no additional text):
 {{
     "decision": "LONG|SHORT|HOLD",
     "winning_side": "BULL|BEAR|TIE",
     "confidence": "HIGH|MEDIUM|LOW",
+    "bullish_count": <number 0-5>,
+    "bearish_count": <number 0-5>,
     "key_reasons": ["reason1", "reason2", "reason3"],
     "acknowledged_risks": ["risk1", "risk2"]
 }}
 
-JSON response only:"""
+JSON response only (no preamble, no explanation):"""
 
-        result = self._call_api_with_retry(
+        # Use JSON retry mechanism to improve reliability
+        decision = self._extract_json_with_retry(
             messages=[
-                {"role": "system", "content": "You are a decisive Portfolio Manager. Make clear trading decisions based on debate evidence. Avoid excessive hedging."},
+                {"role": "system", "content": "You are a Portfolio Manager. You MUST follow the quantitative decision rules EXACTLY. Do NOT use subjective judgment to override the rules. Count confirmations accurately and apply the decision logic algorithmically."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,  # Lower temperature for more decisive output
+            temperature=0.1,  # Lower temperature for more consistent output
+            max_json_retries=2,
         )
-        self.logger.debug(f"Judge raw response: {result}")
 
-        try:
-            # Extract JSON from response with explicit validation
-            start = result.find('{')
-            end = result.rfind('}') + 1
-            # Validate: start found, end found (end > 0), and start comes before end
-            if start != -1 and end > 0 and start < end:
-                json_str = result[start:end]
-                if json_str.strip():  # Ensure non-empty
-                    return json.loads(json_str)
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
-            self.logger.warning(f"Failed to parse judge decision: {e}")
+        if decision:
+            # Log the confirmation counts for transparency
+            bullish = decision.get('bullish_count', 'N/A')
+            bearish = decision.get('bearish_count', 'N/A')
+            self.logger.info(f"📊 Judge counted: Bullish {bullish}/5, Bearish {bearish}/5")
+            return decision
 
-        # Fallback decision
+        # Fallback decision if all retries failed
+        self.logger.warning("Judge decision parsing failed after retries, using fallback")
         return {
             "decision": "HOLD",
             "winning_side": "TIE",
             "confidence": "LOW",
+            "bullish_count": 0,
+            "bearish_count": 0,
             "key_reasons": ["JSON parse error - defaulting to HOLD"],
             "acknowledged_risks": ["Parse failure"]
         }
@@ -465,36 +602,28 @@ MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD
 
 JSON response only:"""
 
-        result = self._call_api_with_retry(
+        # Use JSON retry mechanism to improve reliability
+        decision = self._extract_json_with_retry(
             messages=[
                 {"role": "system", "content": "You are a Risk Manager. Provide precise trade parameters with specific price levels."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
+            max_json_retries=2,
         )
-        self.logger.debug(f"Risk evaluation raw response: {result}")
 
-        try:
-            # Extract JSON from response with explicit validation
-            start = result.find('{')
-            end = result.rfind('}') + 1
-            # Validate: start found, end found (end > 0), and start comes before end
-            if start != -1 and end > 0 and start < end:
-                json_str = result[start:end]
-                if json_str.strip():  # Ensure non-empty
-                    decision = json.loads(json_str)
-                    decision["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    decision["debate_rounds"] = self.debate_rounds
-                    decision["judge_decision"] = proposed_action
+        if decision:
+            decision["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            decision["debate_rounds"] = self.debate_rounds
+            decision["judge_decision"] = proposed_action
 
-                    # Validate stop loss / take profit
-                    decision = self._validate_sl_tp(decision, current_price)
+            # Validate stop loss / take profit
+            decision = self._validate_sl_tp(decision, current_price)
 
-                    return decision
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
-            self.logger.warning(f"Failed to parse risk evaluation: {e}")
+            return decision
 
-        # Fallback
+        # Fallback if all retries failed
+        self.logger.warning("Risk evaluation parsing failed after retries, using fallback")
         return self._create_fallback_signal({"price": current_price})
 
     def _validate_sl_tp(self, decision: Dict[str, Any], current_price: float) -> Dict[str, Any]:

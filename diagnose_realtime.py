@@ -1,23 +1,37 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v6.0 (方案B - 层级决策架构)
+实盘信号诊断脚本 v8.0 (TradingAgents 架构)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
-3. 使用 MultiAgent 层级决策架构，与 deepseek_strategy.py 100% 一致
+3. 使用 TradingAgents 层级决策架构，与 deepseek_strategy.py 100% 一致
 4. 检查 Binance 真实持仓
-5. 模拟完整的 _execute_trade 流程
+5. 模拟完整的 _execute_trade 流程（包括完整的 SL/TP 验证逻辑）
 6. 输出实盘环境下会产生的真实结果
 
-v6.0 更新 (方案B):
-- 移除 DeepSeek 独立分析，改用 MultiAgent Judge 层级决策
-- 移除 process_signals() 信号合并逻辑
-- Judge 决策即最终决策，不存在信号冲突
-- 架构: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
+当前架构 (TradingAgents Judge-based Decision):
+- Phase 1: Bull/Bear 辩论 (2 AI calls)
+- Phase 2: Judge 决策 (1 AI call with optimized prompt)
+- Phase 3: Risk 评估 (1 AI call)
+- Judge 决策即最终决策，不需要信号合并
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
-v5.0 更新:
+历史更新:
+v8.0:
+- 添加完整的 Bracket Order SL/TP 验证逻辑（与实盘100%一致）
+- 添加 --summary 选项用于快速诊断
+- 模拟技术分析回退逻辑
+
+v7.0:
+- 统一架构命名为 "TradingAgents"，移除"方案A/B"混淆
+- 更新注释以反映当前架构状态
+
+v6.0:
+- 实现 TradingAgents 层级决策架构
+- Judge 决策作为唯一决策者
+
+v5.0:
 - 添加 Binance 真实持仓检查
 - 添加 _manage_existing_position 逻辑模拟
 - 添加仓位为0检查
@@ -26,14 +40,156 @@ v5.0 更新:
 使用方法:
     cd /home/linuxuser/nautilus_AItrader
     source venv/bin/activate
-    python3 diagnose_realtime.py
+    python3 diagnose_realtime.py              # 完整诊断
+    python3 diagnose_realtime.py --summary    # 快速诊断（仅显示关键结果）
 """
 
+import argparse
 import os
 import sys
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Optional, Tuple
+
+# 解析命令行参数
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v8.0')
+parser.add_argument('--summary', action='store_true',
+                   help='仅显示关键结果，跳过详细分析')
+args = parser.parse_args()
+
+# 全局标志
+SUMMARY_MODE = args.summary
+
+# 分析阈值常量 (避免魔法数字)
+BB_OVERBOUGHT_THRESHOLD = 80  # 布林带上轨接近阈值
+BB_OVERSOLD_THRESHOLD = 20    # 布林带下轨接近阈值
+LS_RATIO_EXTREME_BULLISH = 2.0  # 多空比极度看多阈值
+LS_RATIO_BULLISH = 1.5          # 多空比偏多阈值
+LS_RATIO_EXTREME_BEARISH = 0.5  # 多空比极度看空阈值
+LS_RATIO_BEARISH = 0.7          # 多空比偏空阈值
+
+def print_wrapped(text: str, indent: str = "    ", width: int = 80) -> None:
+    """打印自动换行的文本"""
+    for i in range(0, len(text), width):
+        print(f"{indent}{text[i:i+width]}")
+
+def validate_multiagent_sltp(
+    side: str,  # 'BUY' or 'SELL'
+    multi_sl: Optional[float],
+    multi_tp: Optional[float],
+    entry_price: float
+) -> Tuple[bool, Optional[float], Optional[float], str]:
+    """
+    验证 MultiAgent SL/TP 是否有效（与 deepseek_strategy.py:1276-1325 完全一致）
+
+    Returns:
+        (is_valid, final_sl, final_tp, reason)
+    """
+    MIN_SL_DISTANCE_PCT = 0.001  # 0.1% minimum distance
+    MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum distance
+
+    if not multi_sl or not multi_tp or multi_sl <= 0 or multi_tp <= 0:
+        return False, None, None, "MultiAgent SL/TP not provided or invalid"
+
+    sl_distance = abs(multi_sl - entry_price) / entry_price
+    tp_distance = abs(multi_tp - entry_price) / entry_price
+
+    if side == 'BUY':
+        # BUY: SL must be < entry, TP must be > entry
+        if multi_sl >= entry_price:
+            return False, None, None, f"BUY SL (${multi_sl:,.2f}) must be < entry (${entry_price:,.2f})"
+        if multi_tp <= entry_price:
+            return False, None, None, f"BUY TP (${multi_tp:,.2f}) must be > entry (${entry_price:,.2f})"
+
+        # Check minimum distances
+        if sl_distance < MIN_SL_DISTANCE_PCT:
+            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%)"
+        if tp_distance < MIN_TP_DISTANCE_PCT:
+            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%)"
+
+        return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
+
+    else:  # SELL
+        # SELL: SL must be > entry, TP must be < entry
+        if multi_sl <= entry_price:
+            return False, None, None, f"SELL SL (${multi_sl:,.2f}) must be > entry (${entry_price:,.2f})"
+        if multi_tp >= entry_price:
+            return False, None, None, f"SELL TP (${multi_tp:,.2f}) must be >= entry (${entry_price:,.2f})"
+
+        # Check minimum distances
+        if sl_distance < MIN_SL_DISTANCE_PCT:
+            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%)"
+        if tp_distance < MIN_TP_DISTANCE_PCT:
+            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%)"
+
+        return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
+
+def calculate_technical_sltp(
+    side: str,
+    entry_price: float,
+    support: float,
+    resistance: float,
+    confidence: str,
+    use_support_resistance: bool = True,
+    sl_buffer_pct: float = 0.001
+) -> Tuple[float, float, str]:
+    """
+    计算基于技术分析的 SL/TP（与 deepseek_strategy.py:1332-1388 完全一致）
+
+    Returns:
+        (stop_loss_price, take_profit_price, calculation_method)
+    """
+    PRICE_EPSILON = max(entry_price * 1e-8, 1e-8)
+
+    # TP 配置（与 deepseek_strategy.py 一致）
+    tp_pct_config = {
+        'HIGH': 0.03,    # 3%
+        'MEDIUM': 0.02,  # 2%
+        'LOW': 0.01,     # 1%
+    }
+
+    if side == 'BUY':
+        # BUY: Stop loss below entry
+        default_sl = entry_price * 0.98  # Default 2% below
+
+        if use_support_resistance and support > 0:
+            potential_sl = support * (1 - sl_buffer_pct)
+            if potential_sl < entry_price - PRICE_EPSILON:
+                stop_loss_price = potential_sl
+                method = f"Support-based SL (${support:,.2f} - buffer)"
+            else:
+                stop_loss_price = default_sl
+                method = f"Default 2% SL (support ${support:,.2f} > entry)"
+        else:
+            stop_loss_price = default_sl
+            method = "Default 2% SL"
+
+        # TP
+        tp_pct = tp_pct_config.get(confidence, 0.02)
+        take_profit_price = entry_price * (1 + tp_pct)
+
+    else:  # SELL
+        # SELL: Stop loss above entry
+        default_sl = entry_price * 1.02  # Default 2% above
+
+        if use_support_resistance and resistance > 0:
+            potential_sl = resistance * (1 + sl_buffer_pct)
+            if potential_sl > entry_price + PRICE_EPSILON:
+                stop_loss_price = potential_sl
+                method = f"Resistance-based SL (${resistance:,.2f} + buffer)"
+            else:
+                stop_loss_price = default_sl
+                method = f"Default 2% SL (resistance ${resistance:,.2f} < entry)"
+        else:
+            stop_loss_price = default_sl
+            method = "Default 2% SL"
+
+        # TP
+        tp_pct = tp_pct_config.get(confidence, 0.02)
+        take_profit_price = entry_price * (1 - tp_pct)
+
+    return stop_loss_price, take_profit_price, method
 
 # =============================================================================
 # 关键: 使用与 main_live.py 完全相同的初始化流程
@@ -60,8 +216,9 @@ elif env_local.exists():
 else:
     load_dotenv()
 
+mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print("  实盘信号诊断工具 v5.0 (共享模块 + 持仓检查)")
+print(f"  实盘信号诊断工具 v8.0 (TradingAgents 架构){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -70,7 +227,8 @@ print()
 # =============================================================================
 # 1. 从 main_live.py 导入并获取真实配置
 # =============================================================================
-print("[1/9] 从 main_live.py 加载真实配置...")
+if not SUMMARY_MODE:
+    print("[1/9] 从 main_live.py 加载真实配置...")
 
 try:
     from main_live import get_strategy_config, load_yaml_config
@@ -79,28 +237,35 @@ try:
     strategy_config = get_strategy_config()
     yaml_config = load_yaml_config()
 
-    print(f"  instrument_id: {strategy_config.instrument_id}")
-    print(f"  bar_type: {strategy_config.bar_type}")
-    print(f"  equity: ${strategy_config.equity}")
-    print(f"  base_usdt_amount: ${strategy_config.base_usdt_amount}")
-    print(f"  leverage: {strategy_config.leverage}x")
-    print(f"  min_confidence_to_trade: {strategy_config.min_confidence_to_trade}")
-    timer_sec = strategy_config.timer_interval_sec
-    timer_min = timer_sec / 60
-    print(f"  timer_interval_sec: {timer_sec}s ({timer_min:.1f}分钟)")
-    print(f"  sma_periods: {strategy_config.sma_periods}")
-    print(f"  rsi_period: {strategy_config.rsi_period}")
-    print(f"  macd_fast/slow: {strategy_config.macd_fast}/{strategy_config.macd_slow}")
-    print(f"  debate_rounds: {strategy_config.debate_rounds}")
-    print("  ✅ 配置加载成功 (与实盘完全一致)")
-    print()
-    print(f"  ⏰ 注意: 实盘每 {timer_min:.0f} 分钟分析一次")
-    print(f"     如果刚启动服务，需等待第一个周期触发")
-except Exception as e:
+    if not SUMMARY_MODE:
+        print(f"  instrument_id: {strategy_config.instrument_id}")
+        print(f"  bar_type: {strategy_config.bar_type}")
+        print(f"  equity: ${strategy_config.equity}")
+        print(f"  base_usdt_amount: ${strategy_config.base_usdt_amount}")
+        print(f"  leverage: {strategy_config.leverage}x")
+        print(f"  min_confidence_to_trade: {strategy_config.min_confidence_to_trade}")
+        timer_sec = strategy_config.timer_interval_sec
+        timer_min = timer_sec / 60
+        print(f"  timer_interval_sec: {timer_sec}s ({timer_min:.1f}分钟)")
+        print(f"  sma_periods: {strategy_config.sma_periods}")
+        print(f"  rsi_period: {strategy_config.rsi_period}")
+        print(f"  macd_fast/slow: {strategy_config.macd_fast}/{strategy_config.macd_slow}")
+        print(f"  debate_rounds: {strategy_config.debate_rounds}")
+        print("  ✅ 配置加载成功 (与实盘完全一致)")
+        print()
+        print(f"  ⏰ 注意: 实盘每 {timer_min:.0f} 分钟分析一次")
+        print(f"     如果刚启动服务，需等待第一个周期触发")
+    else:
+        timer_sec = strategy_config.timer_interval_sec
+        timer_min = timer_sec / 60
+except (ImportError, AttributeError, KeyError, ValueError) as e:
     print(f"  ❌ 配置加载失败: {e}")
     import traceback
     traceback.print_exc()
     sys.exit(1)
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -113,6 +278,7 @@ import requests
 
 # 从 bar_type 解析时间周期 (注意: 必须先检查更长的字符串)
 bar_type_str = strategy_config.bar_type
+# 按照从长到短的顺序检查，避免子字符串匹配错误
 if "15-MINUTE" in bar_type_str:
     interval = "15m"
 elif "5-MINUTE" in bar_type_str:
@@ -148,9 +314,12 @@ try:
     else:
         print(f"  ❌ K线数据异常: {klines_raw}")
         sys.exit(1)
-except Exception as e:
+except (requests.RequestException, ValueError, KeyError) as e:
     print(f"  ❌ 获取市场数据失败: {e}")
     sys.exit(1)
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -206,11 +375,14 @@ try:
     else:
         print(f"  ⚠️ 指标未完全初始化，可能数据不足")
 
-except Exception as e:
+except (ImportError, AttributeError, TypeError, ValueError) as e:
     print(f"  ❌ TechnicalIndicatorManager 失败: {e}")
     import traceback
     traceback.print_exc()
     sys.exit(1)
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -257,9 +429,12 @@ try:
     else:
         print("  ✅ 无持仓")
 
-except Exception as e:
+except (ImportError, AttributeError, KeyError, ValueError, requests.RequestException) as e:
     print(f"  ⚠️ 持仓检查失败: {e}")
     print("  → 继续假设无持仓")
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -291,11 +466,14 @@ try:
     print(f"  Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
     print("  ✅ 技术数据获取成功")
 
-except Exception as e:
+except (AttributeError, KeyError, TypeError, ValueError) as e:
     print(f"  ❌ 技术数据获取失败: {e}")
     import traceback
     traceback.print_exc()
     sys.exit(1)
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -335,7 +513,7 @@ try:
         }
         print("  ⚠️ 使用中性默认值 (与 on_timer fallback 相同)")
 
-except Exception as e:
+except (ImportError, AttributeError, requests.RequestException, ValueError) as e:
     print(f"  ❌ 情绪数据获取失败: {e}")
     sentiment_data = {
         'long_short_ratio': 1.0,
@@ -343,6 +521,9 @@ except Exception as e:
         'short_account_pct': 50.0,
         'source': 'fallback',
     }
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -380,9 +561,9 @@ print("  ✅ 价格数据构建成功")
 print()
 
 # =============================================================================
-# 7. MultiAgent 层级决策 (方案B - 使用实盘配置)
+# 7. MultiAgent 层级决策 (TradingAgents 架构 - 使用实盘配置)
 # =============================================================================
-print("[7/8] 阶段6: MultiAgent 层级决策 (方案B - TradingAgents架构)...")
+print("[7/9] MultiAgent 层级决策 (TradingAgents 架构)...")
 print("-" * 70)
 print("  📋 决策流程:")
 print("     Phase 1: Bull/Bear Debate (辩论)")
@@ -411,7 +592,7 @@ try:
     print("  🛡️ Risk Manager 评估中...")
 
     # 调用分析 (与 on_timer 相同，使用真实持仓)
-    # 方案B: Judge 决策即最终决策，不需要与 DeepSeek 合并
+    # TradingAgents: Judge 决策即最终决策，不需要与 DeepSeek 合并
     signal_data = multi_agent.analyze(
         symbol="BTCUSDT",
         technical_report=technical_data,
@@ -445,7 +626,7 @@ try:
     print(f"     Reason: {reason[:150]}..." if len(reason) > 150 else f"     Reason: {reason}")
     print("  ✅ MultiAgent 层级决策成功")
 
-except Exception as e:
+except (ImportError, AttributeError, requests.RequestException, ValueError, KeyError) as e:
     print(f"  ❌ MultiAgent 层级决策失败: {e}")
     import traceback
     traceback.print_exc()
@@ -456,13 +637,16 @@ except Exception as e:
         'stop_loss': None,
         'take_profit': None,
     }
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
 # =============================================================================
-# 8. 交易决策 (方案B - Judge 决策即最终决策)
+# 8. 交易决策 (TradingAgents - Judge 决策即最终决策)
 # =============================================================================
-print("[8/8] 交易决策 (方案B - Judge 决策即最终决策)...")
+print("[8/9] 交易决策 (TradingAgents - Judge 决策即最终决策)...")
 print("-" * 70)
 
 # 导入共享模块 (只需要 check_confidence_threshold 和 calculate_position_size)
@@ -472,7 +656,7 @@ from strategy.trading_logic import (
     CONFIDENCE_LEVELS,
 )
 
-# 方案B: Judge 决策即最终决策，不需要信号合并
+# TradingAgents: Judge 决策即最终决策，不需要信号合并
 final_signal = signal_data.get('signal', 'HOLD')
 confidence = signal_data.get('confidence', 'LOW')
 
@@ -480,11 +664,96 @@ print(f"  🎯 Final Signal: {final_signal}")
 print(f"  📊 Confidence: {confidence}")
 print()
 
-# 显示 SL/TP
-if signal_data.get('stop_loss') and signal_data.get('take_profit'):
-    print(f"  📊 Judge's SL/TP:")
-    print(f"     Stop Loss: ${signal_data['stop_loss']:,.2f}")
-    print(f"     Take Profit: ${signal_data['take_profit']:,.2f}")
+# =============================================================================
+# SL/TP 验证逻辑 (与 deepseek_strategy.py:1272-1388 完全一致)
+# =============================================================================
+final_sl = None
+final_tp = None
+sltp_source = "N/A"
+
+if final_signal in ['BUY', 'SELL']:
+    print("  📊 SL/TP 验证 (模拟 _submit_bracket_order 逻辑):")
+    print("-" * 70)
+
+    # 获取 entry price
+    entry_price = price_data.get('price', current_price)
+
+    # 检查 MultiAgent SL/TP (来自 Judge 的决策)
+    multi_sl = signal_data.get('stop_loss')
+    multi_tp = signal_data.get('take_profit')
+
+    if multi_sl and multi_tp:
+        print(f"     MultiAgent 返回: SL=${multi_sl:,.2f}, TP=${multi_tp:,.2f}")
+
+        # 验证 MultiAgent SL/TP
+        is_valid, validated_sl, validated_tp, reason = validate_multiagent_sltp(
+            side=final_signal,
+            multi_sl=multi_sl,
+            multi_tp=multi_tp,
+            entry_price=entry_price
+        )
+
+        if is_valid:
+            print(f"     ✅ MultiAgent SL/TP 验证通过: {reason}")
+            final_sl = validated_sl
+            final_tp = validated_tp
+            sltp_source = "MultiAgent (Judge)"
+        else:
+            print(f"     ❌ MultiAgent SL/TP 验证失败: {reason}")
+            print(f"     → 回退到技术分析计算")
+
+            # 回退到技术分析
+            support = technical_data.get('support', 0.0)
+            resistance = technical_data.get('resistance', 0.0)
+            use_sr = getattr(strategy_config, 'sl_use_support_resistance', True)
+            sl_buffer = getattr(strategy_config, 'sl_buffer_pct', 0.001)
+
+            final_sl, final_tp, calc_method = calculate_technical_sltp(
+                side=final_signal,
+                entry_price=entry_price,
+                support=support,
+                resistance=resistance,
+                confidence=confidence,
+                use_support_resistance=use_sr,
+                sl_buffer_pct=sl_buffer
+            )
+            sltp_source = f"Technical Analysis ({calc_method})"
+            print(f"     📍 技术分析计算: SL=${final_sl:,.2f}, TP=${final_tp:,.2f}")
+            print(f"     方法: {calc_method}")
+    else:
+        print("     ⚠️ MultiAgent 未返回 SL/TP，使用技术分析")
+
+        # 直接使用技术分析
+        support = technical_data.get('support', 0.0)
+        resistance = technical_data.get('resistance', 0.0)
+        use_sr = getattr(strategy_config, 'sl_use_support_resistance', True)
+        sl_buffer = getattr(strategy_config, 'sl_buffer_pct', 0.001)
+
+        final_sl, final_tp, calc_method = calculate_technical_sltp(
+            side=final_signal,
+            entry_price=entry_price,
+            support=support,
+            resistance=resistance,
+            confidence=confidence,
+            use_support_resistance=use_sr,
+            sl_buffer_pct=sl_buffer
+        )
+        sltp_source = f"Technical Analysis ({calc_method})"
+        print(f"     📍 技术分析计算: SL=${final_sl:,.2f}, TP=${final_tp:,.2f}")
+        print(f"     方法: {calc_method}")
+
+    # 显示最终 SL/TP
+    print()
+    print(f"  🎯 最终 SL/TP (实盘会使用的值):")
+    if final_sl and final_tp:
+        sl_pct = ((final_sl / entry_price) - 1) * 100
+        tp_pct = ((final_tp / entry_price) - 1) * 100
+        print(f"     Entry: ~${entry_price:,.2f}")
+        print(f"     Stop Loss: ${final_sl:,.2f} ({sl_pct:+.2f}%)")
+        print(f"     Take Profit: ${final_tp:,.2f} ({tp_pct:+.2f}%)")
+        print(f"     来源: {sltp_source}")
+    else:
+        print(f"     ❌ 无法计算 SL/TP")
 
 print()
 
@@ -538,7 +807,7 @@ if would_trade and final_signal in ['BUY', 'SELL']:
 
     # 使用共享模块计算仓位 (与 strategy._calculate_position_size 完全相同)
     btc_quantity, calc_details = calculate_position_size(
-        signal_data=signal_data,  # 方案B: 使用 Judge 的决策数据
+        signal_data=signal_data,  # TradingAgents: 使用 Judge 的决策数据
         price_data=price_data,
         technical_data=technical_data,
         config=position_config,
@@ -619,11 +888,11 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (方案B - Judge 层级决策)")
+print("  诊断总结 (TradingAgents - Judge 层级决策)")
 print("=" * 70)
 print()
 
-# 方案B: Judge 决策即最终决策，无需共识检查
+# TradingAgents: Judge 决策即最终决策，无需共识检查
 print(f"  📊 Final Signal: {final_signal}")
 print(f"  📊 Confidence: {confidence}")
 judge_decision = signal_data.get('judge_decision', {})
@@ -642,13 +911,13 @@ print()
 if would_trade and final_signal in ['BUY', 'SELL']:
     print(f"  🟢 WOULD EXECUTE: {final_signal} {btc_quantity:.4f} BTC @ ${current_price:,.2f}")
     print(f"     Notional: ${btc_quantity * current_price:.2f}")
-    # 显示最终信号的 SL/TP (来自 Judge 决策)
-    final_sl = signal_data.get('stop_loss')
-    final_tp = signal_data.get('take_profit')
+    # 显示最终的 SL/TP (经过验证或技术分析计算)
     if final_sl:
         print(f"     Stop Loss: ${final_sl:,.2f}")
     if final_tp:
         print(f"     Take Profit: ${final_tp:,.2f}")
+    if sltp_source and sltp_source != "N/A":
+        print(f"     SL/TP 来源: {sltp_source}")
 elif final_signal == 'HOLD':
     print("  🟡 NO TRADE: Judge recommends HOLD")
     reason = signal_data.get('reason', 'N/A')
@@ -707,15 +976,16 @@ print("=" * 70)
 # =============================================================================
 # 深入分析: 为什么没有交易信号?
 # =============================================================================
-print()
-print("=" * 70)
-print("  📋 深入分析: 信号产生条件")
-print("=" * 70)
-print()
+if not SUMMARY_MODE:
+    print()
+    print("=" * 70)
+    print("  📋 深入分析: 信号产生条件")
+    print("=" * 70)
+    print()
 
-# 1. 技术指标详细分析
-print("[分析1] 技术指标阈值检查")
-print("-" * 50)
+    # 1. 技术指标详细分析
+    print("[分析1] 技术指标阈值检查")
+    print("-" * 50)
 
 rsi = technical_data.get('rsi', 50)
 rsi_upper = getattr(strategy_config, 'rsi_extreme_threshold_upper', 70)
@@ -782,10 +1052,10 @@ print(f"  BB Lower: ${bb_lower:,.2f}")
 print(f"  BB Width: ${bb_width:,.2f} ({bb_width/current_price*100:.2f}%)")
 print(f"  价格在带内位置: {bb_position:.1f}%")
 
-if bb_position > 80:
-    print("    → 🔴 接近上轨 (可能超买)")
-elif bb_position < 20:
-    print("    → 🟢 接近下轨 (可能超卖)")
+if bb_position > BB_OVERBOUGHT_THRESHOLD:
+    print(f"    → 🔴 接近上轨 (>{BB_OVERBOUGHT_THRESHOLD}%, 可能超买)")
+elif bb_position < BB_OVERSOLD_THRESHOLD:
+    print(f"    → 🟢 接近下轨 (<{BB_OVERSOLD_THRESHOLD}%, 可能超卖)")
 else:
     print("    → ⚪ 带内中间区域")
 
@@ -802,11 +1072,15 @@ if len(bars) >= 10:
     price_10_bars_ago = float(bars[-10].close)
     price_change_10 = ((current_price - price_10_bars_ago) / price_10_bars_ago) * 100
     print(f"  近10根K线变化: {price_change_10:+.2f}%")
+else:
+    print(f"  近10根K线变化: N/A (K线数量不足: {len(bars)})")
 
 if len(bars) >= 20:
     price_20_bars_ago = float(bars[-20].close)
     price_change_20 = ((current_price - price_20_bars_ago) / price_20_bars_ago) * 100
     print(f"  近20根K线变化: {price_change_20:+.2f}%")
+else:
+    print(f"  近20根K线变化: N/A (K线数量不足: {len(bars)})")
 
 # 3. 情绪分析
 print()
@@ -816,20 +1090,20 @@ print("-" * 50)
 ls_ratio = sentiment_data.get('long_short_ratio', 1.0)
 print(f"  多空比: {ls_ratio:.4f}")
 
-if ls_ratio > 2.0:
-    print("    → 🔴 极度看多 (逆向指标: 可能下跌)")
-elif ls_ratio > 1.5:
-    print("    → 🟡 偏多 (市场乐观)")
-elif ls_ratio < 0.5:
-    print("    → 🔴 极度看空 (逆向指标: 可能上涨)")
-elif ls_ratio < 0.7:
-    print("    → 🟡 偏空 (市场悲观)")
+if ls_ratio > LS_RATIO_EXTREME_BULLISH:
+    print(f"    → 🔴 极度看多 (>{LS_RATIO_EXTREME_BULLISH}, 逆向指标: 可能下跌)")
+elif ls_ratio > LS_RATIO_BULLISH:
+    print(f"    → 🟡 偏多 (>{LS_RATIO_BULLISH}, 市场乐观)")
+elif ls_ratio < LS_RATIO_EXTREME_BEARISH:
+    print(f"    → 🔴 极度看空 (<{LS_RATIO_EXTREME_BEARISH}, 逆向指标: 可能上涨)")
+elif ls_ratio < LS_RATIO_BEARISH:
+    print(f"    → 🟡 偏空 (<{LS_RATIO_BEARISH}, 市场悲观)")
 else:
     print("    → ⚪ 多空平衡")
 
-# 4. 为什么 AI 返回该信号 (方案B: Judge 决策分析)
+# 4. 为什么 AI 返回该信号 (TradingAgents: Judge 决策分析)
 print()
-print("[分析4] Judge 决策原因分析 (方案B)")
+print("[分析4] Judge 决策原因分析 (TradingAgents)")
 print("-" * 50)
 
 print(f"  ⚖️ Judge 最终决策: {signal_data.get('signal', 'N/A')}")
@@ -853,15 +1127,12 @@ if judge_decision:
 print()
 print(f"  📋 Judge 完整理由:")
 judge_reason = signal_data.get('reason', 'N/A')
-# 分行显示
-for i in range(0, len(judge_reason), 80):
-    print(f"    {judge_reason[i:i+80]}")
+print_wrapped(judge_reason)
 
 print()
 print(f"  🗣️ 辩论摘要:")
 debate_summary = signal_data.get('debate_summary', 'N/A')
-for i in range(0, len(str(debate_summary)), 80):
-    print(f"    {str(debate_summary)[i:i+80]}")
+print_wrapped(str(debate_summary))
 
 # 5. 触发交易的条件 (基于更新后的提示词)
 print()
@@ -920,9 +1191,9 @@ if final_signal == 'HOLD':
         bearish_score += 1
 
     # Long/Short ratio (逆向)
-    if ls_ratio > 2.0:
+    if ls_ratio > LS_RATIO_EXTREME_BULLISH:
         bearish_score += 1
-    elif ls_ratio < 0.7:
+    elif ls_ratio < LS_RATIO_BEARISH:
         bullish_score += 1
 
     print(f"    多头信号得分: {bullish_score}/5")
@@ -949,7 +1220,79 @@ if final_signal == 'HOLD':
     print(f"      支撑: ${technical_data.get('support', 0):,.2f}")
     print(f"      阻力: ${technical_data.get('resistance', 0):,.2f}")
 
-print()
-print("=" * 70)
-print("  深入分析完成")
-print("=" * 70)
+    print()
+    print("=" * 70)
+    print("  深入分析完成")
+    print("=" * 70)
+else:
+    # Summary mode: add actionable suggestions
+    print()
+    print("=" * 70)
+    print("  🔧 下一步建议")
+    print("=" * 70)
+    print()
+
+    if final_signal == 'HOLD':
+        print("  📌 当前信号: HOLD")
+        print(f"  原因: {signal_data.get('reason', 'N/A')[:100]}")
+        print()
+        print("  💡 等待条件:")
+        print("    • RSI 突破超买/超卖区间 (< 30 或 > 70)")
+        print("    • MACD 形成明确金叉/死叉")
+        print("    • 价格突破关键支撑/阻力位")
+        rsi = technical_data.get('rsi', 50)
+        if rsi > 50:
+            print(f"    • 当前 RSI={rsi:.1f}, 距离超买还需 {70-rsi:.1f} 点")
+        else:
+            print(f"    • 当前 RSI={rsi:.1f}, 距离超卖还需 {rsi-30:.1f} 点")
+        print()
+        print("  ⏰ 实盘每 {:.0f} 分钟重新分析一次".format(timer_min))
+
+    elif not would_trade and current_position:
+        print(f"  📌 有信号 ({final_signal}) 但未执行")
+        target_side = 'long' if final_signal == 'BUY' else 'short'
+        if current_position['side'] == target_side:
+            print(f"  原因: 已有同向持仓，仓位差异低于调整阈值")
+            print()
+            print("  💡 建议:")
+            print("    • 这是正常行为，避免频繁微调仓位")
+            print("    • 等待更大的仓位变化需求或反转信号")
+        else:
+            print(f"  原因: 反转被阻止")
+            print()
+            print("  💡 检查:")
+            print("    • 配置: allow_reversals 是否启用?")
+            print("    • 配置: require_high_confidence_for_reversal?")
+            print(f"    • 当前信心: {confidence}")
+
+    elif btc_quantity == 0:
+        print(f"  📌 有信号 ({final_signal}) 但仓位为 0")
+        print("  原因: 计算的仓位大小低于最小交易量")
+        print()
+        print("  💡 建议:")
+        print("    • 增加账户余额")
+        print("    • 或调整配置: base_usdt_amount")
+
+    elif not passes_threshold:
+        print(f"  📌 有信号 ({final_signal}) 但信心不足")
+        print(f"  原因: {confidence} < {strategy_config.min_confidence_to_trade}")
+        print()
+        print("  💡 建议:")
+        print("    • 等待更强的市场信号")
+        print("    • 或降低配置: min_confidence_to_trade")
+
+    elif would_trade:
+        print(f"  📌 将执行交易: {final_signal} {btc_quantity:.4f} BTC")
+        if final_sl and final_tp:
+            sl_pct = ((final_sl / entry_price) - 1) * 100
+            tp_pct = ((final_tp / entry_price) - 1) * 100
+            print(f"  SL: ${final_sl:,.2f} ({sl_pct:+.2f}%)")
+            print(f"  TP: ${final_tp:,.2f} ({tp_pct:+.2f}%)")
+        print()
+        print("  💡 实盘状态:")
+        print("    • 检查服务是否运行: systemctl status nautilus-trader")
+        print("    • 查看日志: journalctl -u nautilus-trader -f --no-hostname")
+
+    print()
+    print("  📖 详细分析: 运行 python3 diagnose_realtime.py (不加 --summary)")
+    print()

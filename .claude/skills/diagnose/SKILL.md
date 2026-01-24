@@ -47,7 +47,7 @@ python3 diagnose.py --update --restart
 
 ## Expected Output
 
-### Normal Operation Signs (方案B)
+### Normal Operation Signs
 ```
 ✅ Configuration loaded successfully
 ✅ Market data fetched successfully
@@ -71,7 +71,7 @@ python3 diagnose.py --update --restart
 | Judge Signal | BUY/SELL/HOLD | ERROR = API failure |
 | Winning Side | BULL/BEAR/TIE | 显示辩论胜方 |
 
-## 信号决策流程 (方案B - 层级决策架构)
+## 信号决策流程 (层级决策架构)
 
 **v6.0 更新**: 采用 TradingAgents 层级决策架构，Judge 决策即最终决策
 
@@ -90,15 +90,15 @@ Phase 3: Risk Evaluation
 
 **注意**: 以下配置已标记为 LEGACY，不再生效:
 ```yaml
-skip_on_divergence: true      # [LEGACY] 方案B不使用
-use_confidence_fusion: true   # [LEGACY] 方案B不使用
+skip_on_divergence: true      # [LEGACY] 不再使用
+use_confidence_fusion: true   # [LEGACY] 不再使用
 ```
 
 ## Common Issues
 
 ### 1. No Trading Signals
 
-**Possible Causes** (方案B):
+**Possible Causes**:
 - Judge returns HOLD (Bull/Bear辩论无明显胜者)
 - Confidence below min_confidence_to_trade
 - Risk Manager 认为风险过高
