@@ -74,7 +74,24 @@ class TelegramBot:
             self.logger.error(f"❌ Failed to initialize Telegram Bot: {e}")
             self.enabled = False
             raise
-    
+
+    @staticmethod
+    def escape_markdown(text: str) -> str:
+        """
+        Escape special Markdown characters in text.
+
+        Telegram Markdown uses: _ * [ ] ( ) ~ ` > # + - = | { } . !
+        For basic Markdown mode, we only need to escape: _ * ` [
+        """
+        if not text:
+            return text
+        # Escape characters that have special meaning in Telegram Markdown
+        escape_chars = ['_', '*', '`', '[']
+        result = str(text)
+        for char in escape_chars:
+            result = result.replace(char, '\\' + char)
+        return result
+
     async def send_message(
         self,
         message: str,
@@ -196,10 +213,11 @@ class TelegramBot:
     
     def format_startup_message(self, instrument_id: str, config: Dict[str, Any]) -> str:
         """Format strategy startup notification."""
+        safe_instrument = self.escape_markdown(str(instrument_id))
         return f"""
 🚀 *Strategy Started*
 
-📊 *Instrument*: {instrument_id}
+📊 *Instrument*: {safe_instrument}
 ⏰ *Timeframe*: 15 minutes
 🕐 *Time*: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
 
@@ -314,24 +332,24 @@ class TelegramBot:
     def format_error_alert(self, error_data: Dict[str, Any]) -> str:
         """Format error/warning notification."""
         level = error_data.get('level', 'ERROR')  # ERROR, WARNING, CRITICAL
-        message = error_data.get('message', 'Unknown error')
+        message = self.escape_markdown(str(error_data.get('message', 'Unknown error')))
         context = error_data.get('context', '')
-        
+
         if level == "CRITICAL":
             emoji = "🚨"
         elif level == "WARNING":
             emoji = "⚠️"
         else:
             emoji = "❌"
-        
+
         formatted = f"""
 {emoji} *{level}*
 
 {message}
 """
-        
+
         if context:
-            formatted += f"\n*Context*: {context}\n"
+            formatted += f"\n*Context*: {self.escape_markdown(str(context))}\n"
         
         formatted += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
         
@@ -433,7 +451,7 @@ class TelegramBot:
         
         msg = f"{status_emoji} *Strategy Status*\n\n"
         msg += f"*Status*: {status_text}\n"
-        msg += f"*Instrument*: {status_info.get('instrument_id', 'N/A')}\n"
+        msg += f"*Instrument*: {self.escape_markdown(str(status_info.get('instrument_id', 'N/A')))}\n"
         msg += f"*Current Price*: ${status_info.get('current_price', 0):,.2f}\n"
         msg += f"*Equity*: ${status_info.get('equity', 0):,.2f}\n"
         
@@ -441,9 +459,9 @@ class TelegramBot:
         pnl_emoji = "📈" if pnl > 0 else "📉" if pnl < 0 else "➖"
         msg += f"*Unrealized P&L*: {pnl_emoji} ${pnl:,.2f}\n\n"
         
-        msg += f"*Last Signal*: {status_info.get('last_signal', 'N/A')}\n"
-        msg += f"*Signal Time*: {status_info.get('last_signal_time', 'N/A')}\n"
-        msg += f"*Uptime*: {status_info.get('uptime', 'N/A')}\n"
+        msg += f"*Last Signal*: {self.escape_markdown(str(status_info.get('last_signal', 'N/A')))}\n"
+        msg += f"*Signal Time*: {self.escape_markdown(str(status_info.get('last_signal_time', 'N/A')))}\n"
+        msg += f"*Uptime*: {self.escape_markdown(str(status_info.get('uptime', 'N/A')))}\n"
         
         return msg
     
