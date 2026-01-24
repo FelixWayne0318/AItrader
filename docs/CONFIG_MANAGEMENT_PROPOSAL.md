@@ -1,8 +1,9 @@
 # AItrader 配置统一管理方案
 
-> 版本: 1.0
-> 日期: 2026-01-23
-> 状态: 待评估
+> 版本: 2.0
+> 日期: 2026-01-24
+> 状态: **已审查，可实施**
+> 审查: CONFIG_PROPOSAL_REVIEW.md
 
 ---
 
@@ -26,65 +27,116 @@
 | 位置 | 参数数量 | 用途 | 问题 |
 |------|---------|------|------|
 | `~/.env.aitrader` | 8 | API 密钥、敏感信息 | ✅ 合理 |
-| `configs/strategy_config.yaml` | 60+ | 策略参数 | ⚠️ 未完全使用 |
-| `strategy/deepseek_strategy.py` | 52 | 默认值 | ❌ 与 YAML 重复/不同步 |
-| `main_live.py` | 15 | 加载逻辑 + 硬编码 | ❌ 混乱 |
-| `utils/*.py` | 15 | 工具类硬编码 | ❌ 分散 |
+| `configs/strategy_config.yaml` | 60+ | 策略参数 | ⚠️ 部分被硬编码覆盖 |
+| `strategy/deepseek_strategy.py` | 45 | 策略默认值 | ⚠️ 部分与 YAML 重复 |
+| `strategy/trading_logic.py` | 7 | 交易核心常量 | ❌ **新文件，未配置化** |
+| `main_live.py` | 18 | 加载逻辑 + 硬编码 | ❌ **覆盖 YAML 配置** |
+| `utils/*.py` | 12 | 工具类硬编码 | ❌ 分散 |
 
-### 1.2 已识别的硬编码 (36 处需处理)
+### 1.2 已识别的硬编码 (42 处需处理)
+
+#### 🔴 紧急：配置冲突 (main_live.py 硬编码覆盖 YAML)
+
+```python
+# main_live.py:201 - YAML 配置被忽略！
+deepseek_temperature=0.1,          # 硬编码 0.1
+# strategy_config.yaml:41 定义为 0.3，但被覆盖
+
+# main_live.py:214-215 - YAML 配置被忽略！
+rsi_extreme_threshold_upper=75.0,  # 硬编码 75
+rsi_extreme_threshold_lower=25.0,  # 硬编码 25
+# strategy_config.yaml:60-61 定义为 70/30，但被覆盖
+
+# main_live.py:187 - YAML 配置被忽略！
+min_trade_amount=0.001,            # 硬编码
+# strategy_config.yaml:23 定义为 0.001，但加载逻辑未使用
+```
 
 #### 交易核心参数 (P0 - 必须配置化)
+
 ```python
-# deepseek_strategy.py:1067
-MIN_NOTIONAL_USDT = 100.0  # Binance 最低名义价值
+# strategy/trading_logic.py:294-296  [新文件]
+MIN_NOTIONAL_USDT = 100.0          # Binance 最低名义价值
 
-# deepseek_strategy.py:1085
-MIN_NOTIONAL_SAFETY_MARGIN = 1.01  # 安全边际
+# strategy/trading_logic.py:311
+MIN_NOTIONAL_SAFETY_MARGIN = 1.01  # 安全边际 1%
 
-# main_live.py:254
-instrument_id = "BTCUSDT-PERP.BINANCE"  # 交易对
+# strategy/trading_logic.py:370
+MIN_SL_DISTANCE_PCT = 0.01         # 最小止损距离 1%
 
-# deepseek_strategy.py:566
-limit: int = 200  # 历史K线数量
+# strategy/trading_logic.py:374-376
+DEFAULT_SL_PCT = 0.02              # 默认止损 2%
+DEFAULT_TP_PCT_BUY = 0.03          # 默认止盈 3% (做多)
+DEFAULT_TP_PCT_SELL = 0.03         # 默认止盈 3% (做空)
+
+# strategy/deepseek_strategy.py:473
+limit = 200                        # 历史K线获取数量
 ```
 
 #### 网络重试参数 (P1)
+
 ```python
-# deepseek_strategy.py:409-410
-max_retries = 60
-retry_interval = 1.0
+# strategy/deepseek_strategy.py:424-425
+max_retries = 60                   # 合约发现重试次数
+retry_interval = 1.0               # 重试间隔
 
-# telegram_command_handler.py:453-459
-startup_delay = 5
-max_retries = 3
-base_delay = 10
+# utils/telegram_command_handler.py:476-482
+startup_delay = 5                  # Telegram 启动延迟
+max_retries = 3                    # 轮询重试次数
+base_delay = 10                    # 重试基础延迟
 
-# binance_account.py:55,78
-_cache_ttl = 5.0
-recvWindow = 5000
+# utils/binance_account.py:55,78
+_cache_ttl = 5.0                   # 余额缓存时间
+recvWindow = 5000                  # Binance 接收窗口
+
+# utils/sentiment_client.py:89
+timeout = 10                       # 情绪数据请求超时
+
+# utils/telegram_bot.py:185
+timeout = 30                       # 消息发送超时
 ```
 
 #### AI/分析参数 (P2)
+
 ```python
-# deepseek_client.py:598
-signal_history_count = 3
+# utils/deepseek_client.py:58
+maxlen = 30                        # 信号历史队列大小
 
-# multi_agent_analyzer.py:75
-retry_delay = 1.0
+# agents/multi_agent_analyzer.py:83
+retry_delay = 1.0                  # API 重试延迟
+
+# agents/multi_agent_analyzer.py:138
+max_json_retries = 2               # JSON 解析重试次数
 ```
 
-#### 测试模式参数 (P3)
+#### 测试模式参数 (P3 - 已正确处理)
+
 ```python
-# main_live.py:191-195 (1分钟测试模式特殊值)
-sma_periods = [3, 7, 15]
-rsi_period = 7
-macd_fast = 5
+# main_live.py:191-195 (基于 timeframe 动态切换)
+# 1分钟模式特殊值 - 这是正确的条件逻辑，不需要配置化
+sma_periods = [3, 7, 15] if timeframe == '1m' else [5, 20, 50]
+rsi_period = 7 if timeframe == '1m' else 14
+macd_fast = 5 if timeframe == '1m' else 12
 ```
 
-### 1.3 当前加载优先级 (不明确)
+### 1.3 硬编码统计汇总
+
+| 类别 | 数量 | 状态 |
+|------|------|------|
+| 🔴 紧急配置冲突 | 3 | 必须立即修复 |
+| P0 交易核心参数 | 7 | 必须配置化 |
+| P1 网络重试参数 | 10 | 应该配置化 |
+| P2 AI/分析参数 | 3 | 应该配置化 |
+| P3 测试模式参数 | 4 | ✅ 已正确处理 |
+| ✅ 已配置化 | 15 | 无需处理 |
+| **总计待处理** | **23** | - |
+
+### 1.4 当前加载优先级 (问题所在)
 
 ```
-环境变量 (.env) → YAML → 代码默认值 → ??? (混乱)
+环境变量 (.env) → YAML → 代码硬编码覆盖 ← 问题！
+                              ↑
+                    main_live.py 硬编码值覆盖了 YAML 配置
 ```
 
 ---
@@ -119,7 +171,7 @@ macd_fast = 5
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  4. ConfigManager.validate() (类型检查 + 范围验证)               │
+│  4. ConfigManager.validate() (类型检查 + 范围验证 + 依赖检查)     │
 └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
@@ -138,6 +190,7 @@ macd_fast = 5
 | **范围检查** | 数值参数检查合理范围 |
 | **环境隔离** | 生产/开发/回测环境独立配置 |
 | **敏感分离** | API 密钥只存放在 .env，不进入 git |
+| **禁止硬编码覆盖** | main_live.py 不得硬编码覆盖 YAML 值 |
 
 ---
 
@@ -164,6 +217,7 @@ AItrader/
 # configs/base.yaml
 # AItrader 配置文件 - 所有参数的完整定义
 # 此文件包含所有配置项的默认值，是配置的唯一来源
+# 版本: 2.0
 
 # =============================================================================
 # 交易配置
@@ -173,12 +227,22 @@ trading:
   instrument_id: "BTCUSDT-PERP.BINANCE"
   bar_type: "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL"
 
+  # 数据获取
+  historical_bars_limit: 200      # 启动时获取的历史K线数量
+
+# =============================================================================
+# 交易逻辑常量 (来自 strategy/trading_logic.py)
+# =============================================================================
+trading_logic:
   # Binance 交易限制
   min_notional_usdt: 100.0        # Binance 最低名义价值 (不建议修改)
   min_notional_safety_margin: 1.01  # 安全边际 1%
 
-  # 数据获取
-  historical_bars_limit: 200      # 启动时获取的历史K线数量
+  # 止损止盈默认值
+  min_sl_distance_pct: 0.01       # 最小止损距离 1%
+  min_tp_distance_pct: 0.005      # 最小止盈距离 0.5%
+  default_sl_pct: 0.02            # 默认止损 2%
+  default_tp_pct: 0.03            # 默认止盈 3%
 
 # =============================================================================
 # 资金配置
@@ -234,19 +298,22 @@ ai:
   # DeepSeek 配置
   deepseek:
     model: "deepseek-chat"
-    temperature: 0.3
+    temperature: 0.3              # 注意: main_live.py 曾硬编码为 0.1
     max_retries: 2
+    retry_delay: 1.0              # 新增: API 重试延迟
     base_url: "https://api.deepseek.com"
 
   # 多代理辩论配置
   multi_agent:
     debate_rounds: 2              # 辩论轮数 (1-3)
     retry_delay: 1.0              # 重试延迟 (秒)
+    json_parse_max_retries: 2     # 新增: JSON 解析重试
 
   # 信号处理
   signal:
-    history_count: 3              # 检查连续信号数量
-    skip_on_divergence: true      # AI 分歧时跳过交易
+    history_count: 30             # 新增: 信号历史队列大小 (原 maxlen=30)
+    skip_on_divergence: true      # [LEGACY] AI 分歧时跳过交易
+    use_confidence_fusion: true   # [LEGACY] 不再使用
 
 # =============================================================================
 # 情绪数据
@@ -257,6 +324,7 @@ sentiment:
   lookback_hours: 4
   timeframe: "15m"
   weight: 0.30                    # 决策权重
+  timeout: 10                     # 新增: 请求超时 (秒)
 
 # =============================================================================
 # 风险管理
@@ -267,9 +335,9 @@ risk:
   allow_reversals: true
   require_high_confidence_for_reversal: false
 
-  # RSI 阈值
-  rsi_extreme_threshold_upper: 75.0
-  rsi_extreme_threshold_lower: 25.0
+  # RSI 阈值 - 注意: main_live.py 曾硬编码为 75/25
+  rsi_extreme_threshold_upper: 70.0  # RSI 超买阈值
+  rsi_extreme_threshold_lower: 30.0  # RSI 超卖阈值
   rsi_extreme_multiplier: 0.7
 
   # 止损止盈
@@ -298,9 +366,10 @@ risk:
 # 网络配置
 # =============================================================================
 network:
-  # 通用重试
-  max_retries: 60                 # 最大重试次数
-  retry_interval: 1.0             # 重试间隔 (秒)
+  # 合约发现重试
+  instrument_discovery:
+    max_retries: 60               # 最大重试次数
+    retry_interval: 1.0           # 重试间隔 (秒)
 
   # Binance API
   binance:
@@ -310,8 +379,9 @@ network:
   # Telegram
   telegram:
     startup_delay: 5              # 启动延迟 (秒)
-    max_retries: 3                # 最大重试次数
-    base_delay: 10                # 重试基础延迟 (秒)
+    polling_max_retries: 3        # 轮询最大重试次数
+    polling_base_delay: 10        # 轮询重试基础延迟 (秒)
+    message_timeout: 30           # 消息发送超时 (秒)
 
 # =============================================================================
 # Telegram 通知
@@ -398,11 +468,12 @@ logging:
 # utils/config_manager.py
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 import yaml
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dotenv import load_dotenv
 import os
+import logging
 
 
 @dataclass
@@ -411,6 +482,7 @@ class ConfigValidationError:
     field: str
     message: str
     value: Any
+    severity: str = "error"  # error / warning
 
 
 class ConfigManager:
@@ -421,13 +493,16 @@ class ConfigManager:
     - 分层加载配置 (base → env → .env)
     - 类型验证
     - 范围检查
+    - 依赖验证
     - 环境切换
+    - 配置迁移日志
     """
 
     def __init__(
         self,
         config_dir: Path = None,
-        env: str = "production"
+        env: str = "production",
+        logger: logging.Logger = None
     ):
         """
         初始化配置管理器
@@ -438,11 +513,15 @@ class ConfigManager:
             配置目录，默认为项目根目录/configs
         env : str
             环境名称: production / development / backtest
+        logger : logging.Logger
+            日志记录器
         """
         self.config_dir = config_dir or Path(__file__).parent.parent / "configs"
         self.env = env
         self._config: Dict[str, Any] = {}
-        self._errors: list[ConfigValidationError] = []
+        self._errors: List[ConfigValidationError] = []
+        self._warnings: List[ConfigValidationError] = []
+        self.logger = logger or logging.getLogger(__name__)
 
     def load(self) -> Dict[str, Any]:
         """
@@ -453,21 +532,30 @@ class ConfigManager:
         dict
             合并后的配置字典
         """
+        self.logger.info(f"Loading configuration for environment: {self.env}")
+
         # 1. 加载 base.yaml
         base_config = self._load_yaml("base.yaml")
         self._config = base_config
+        self.logger.debug(f"Loaded base.yaml with {len(base_config)} top-level keys")
 
         # 2. 加载环境配置并合并
         env_file = f"{self.env}.yaml"
         if (self.config_dir / env_file).exists():
             env_config = self._load_yaml(env_file)
             self._config = self._deep_merge(self._config, env_config)
+            self.logger.debug(f"Merged {env_file}")
+        else:
+            self.logger.warning(f"Environment config not found: {env_file}")
 
         # 3. 加载 .env 敏感信息
         self._load_env_secrets()
 
         # 4. 验证配置
         self.validate()
+
+        # 5. 打印配置摘要
+        self._log_config_summary()
 
         return self._config
 
@@ -498,6 +586,7 @@ class ConfigManager:
         env_path = Path.home() / ".env.aitrader"
         if env_path.exists():
             load_dotenv(env_path)
+            self.logger.debug(f"Loaded secrets from {env_path}")
 
         # 映射环境变量到配置
         env_mappings = {
@@ -529,17 +618,39 @@ class ConfigManager:
             是否通过验证
         """
         self._errors = []
+        self._warnings = []
 
-        # 验证规则
+        # 类型和范围验证规则
+        # (字段路径, 类型, 最小值, 最大值, 必填)
         rules = [
-            # (字段路径, 类型, 最小值, 最大值, 必填)
+            # 资金配置
             (('capital', 'equity'), (int, float), 100, 1000000, True),
             (('capital', 'leverage'), (int, float), 1, 125, True),
+
+            # 仓位管理
             (('position', 'base_usdt_amount'), (int, float), 100, None, True),
             (('position', 'max_position_ratio'), float, 0.01, 1.0, True),
+            (('position', 'min_trade_amount'), float, 0.0001, 1.0, True),
+
+            # 风险管理
             (('risk', 'rsi_extreme_threshold_upper'), (int, float), 50, 100, True),
             (('risk', 'rsi_extreme_threshold_lower'), (int, float), 0, 50, True),
+
+            # 交易逻辑
+            (('trading_logic', 'min_notional_usdt'), (int, float), 1, 10000, True),
+            (('trading_logic', 'min_sl_distance_pct'), float, 0.001, 0.1, True),
+            (('trading_logic', 'default_sl_pct'), float, 0.005, 0.2, True),
+
+            # 定时器
             (('timing', 'timer_interval_sec'), int, 60, 86400, True),
+
+            # AI 配置
+            (('ai', 'deepseek', 'temperature'), float, 0.0, 2.0, True),
+            (('ai', 'multi_agent', 'debate_rounds'), int, 1, 5, True),
+
+            # 网络配置
+            (('network', 'instrument_discovery', 'max_retries'), int, 1, 300, True),
+            (('network', 'binance', 'recv_window'), int, 1000, 60000, True),
         ]
 
         for path, expected_type, min_val, max_val, required in rules:
@@ -558,7 +669,7 @@ class ConfigManager:
             if not isinstance(value, expected_type):
                 self._errors.append(ConfigValidationError(
                     field='.'.join(path),
-                    message=f"Expected {expected_type}, got {type(value)}",
+                    message=f"Expected {expected_type}, got {type(value).__name__}",
                     value=value
                 ))
                 continue
@@ -578,7 +689,49 @@ class ConfigManager:
                     value=value
                 ))
 
+        # 依赖验证
+        self._validate_dependencies()
+
         return len(self._errors) == 0
+
+    def _validate_dependencies(self):
+        """验证配置依赖关系"""
+        # RSI 阈值顺序
+        rsi_upper = self.get('risk', 'rsi_extreme_threshold_upper')
+        rsi_lower = self.get('risk', 'rsi_extreme_threshold_lower')
+        if rsi_upper and rsi_lower and rsi_lower >= rsi_upper:
+            self._errors.append(ConfigValidationError(
+                field='risk.rsi_extreme_threshold_*',
+                message=f"RSI lower ({rsi_lower}) must be less than upper ({rsi_upper})",
+                value=(rsi_lower, rsi_upper)
+            ))
+
+        # MACD 周期顺序
+        macd_fast = self.get('indicators', 'macd_fast')
+        macd_slow = self.get('indicators', 'macd_slow')
+        if macd_fast and macd_slow and macd_fast >= macd_slow:
+            self._errors.append(ConfigValidationError(
+                field='indicators.macd_*',
+                message=f"MACD fast ({macd_fast}) must be less than slow ({macd_slow})",
+                value=(macd_fast, macd_slow)
+            ))
+
+        # Telegram 依赖
+        if self.get('telegram', 'enabled'):
+            if not self.get('telegram', 'bot_token'):
+                self._warnings.append(ConfigValidationError(
+                    field='telegram.bot_token',
+                    message="Telegram enabled but bot_token not set",
+                    value=None,
+                    severity="warning"
+                ))
+            if not self.get('telegram', 'chat_id'):
+                self._warnings.append(ConfigValidationError(
+                    field='telegram.chat_id',
+                    message="Telegram enabled but chat_id not set",
+                    value=None,
+                    severity="warning"
+                ))
 
     def _get_nested(self, d: dict, path: tuple) -> Any:
         """获取嵌套字典值"""
@@ -599,9 +752,41 @@ class ConfigManager:
         value = self._get_nested(self._config, path)
         return value if value is not None else default
 
-    def get_errors(self) -> list[ConfigValidationError]:
+    def get_errors(self) -> List[ConfigValidationError]:
         """获取验证错误列表"""
         return self._errors
+
+    def get_warnings(self) -> List[ConfigValidationError]:
+        """获取验证警告列表"""
+        return self._warnings
+
+    def _log_config_summary(self):
+        """记录配置摘要"""
+        self.logger.info("=" * 50)
+        self.logger.info("Configuration Summary")
+        self.logger.info("=" * 50)
+        self.logger.info(f"  Environment: {self.env}")
+        self.logger.info(f"  Instrument: {self.get('trading', 'instrument_id')}")
+        self.logger.info(f"  Equity: ${self.get('capital', 'equity'):,.2f}")
+        self.logger.info(f"  Leverage: {self.get('capital', 'leverage')}x")
+        self.logger.info(f"  Timer: {self.get('timing', 'timer_interval_sec')}s")
+        self.logger.info(f"  AI Temperature: {self.get('ai', 'deepseek', 'temperature')}")
+        self.logger.info(f"  RSI Thresholds: {self.get('risk', 'rsi_extreme_threshold_lower')}/{self.get('risk', 'rsi_extreme_threshold_upper')}")
+        self.logger.info(f"  Telegram: {'Enabled' if self.get('telegram', 'enabled') else 'Disabled'}")
+
+        if self._errors:
+            self.logger.error(f"  Validation Errors: {len(self._errors)}")
+            for error in self._errors:
+                self.logger.error(f"    - {error.field}: {error.message}")
+        else:
+            self.logger.info("  Validation: PASSED")
+
+        if self._warnings:
+            self.logger.warning(f"  Warnings: {len(self._warnings)}")
+            for warning in self._warnings:
+                self.logger.warning(f"    - {warning.field}: {warning.message}")
+
+        self.logger.info("=" * 50)
 
     def to_strategy_config(self) -> 'DeepSeekAIStrategyConfig':
         """
@@ -671,10 +856,13 @@ class ConfigManager:
 
             # Timing
             timer_interval_sec=self.get('timing', 'timer_interval_sec'),
+
+            # Trading Logic (新增)
+            historical_bars_limit=self.get('trading', 'historical_bars_limit'),
         )
 
     def print_summary(self):
-        """打印配置摘要"""
+        """打印配置摘要到控制台"""
         print("=" * 60)
         print("  Configuration Summary")
         print("=" * 60)
@@ -683,14 +871,22 @@ class ConfigManager:
         print(f"  Equity: ${self.get('capital', 'equity'):,.2f}")
         print(f"  Leverage: {self.get('capital', 'leverage')}x")
         print(f"  Timer: {self.get('timing', 'timer_interval_sec')}s")
+        print(f"  AI Temperature: {self.get('ai', 'deepseek', 'temperature')}")
+        print(f"  RSI Thresholds: {self.get('risk', 'rsi_extreme_threshold_lower')}/{self.get('risk', 'rsi_extreme_threshold_upper')}")
         print(f"  Telegram: {'Enabled' if self.get('telegram', 'enabled') else 'Disabled'}")
 
         if self._errors:
-            print("\n  ⚠️ Validation Errors:")
+            print(f"\n  ⚠️ Validation Errors ({len(self._errors)}):")
             for error in self._errors:
                 print(f"    - {error.field}: {error.message}")
         else:
             print("\n  ✅ Configuration validated successfully")
+
+        if self._warnings:
+            print(f"\n  ⚠️ Warnings ({len(self._warnings)}):")
+            for warning in self._warnings:
+                print(f"    - {warning.field}: {warning.message}")
+
         print("=" * 60)
 ```
 
@@ -700,16 +896,85 @@ class ConfigManager:
 
 ### 5.1 分阶段实施
 
-| 阶段 | 任务 | 文件变更 | 风险 | 预计时间 |
-|------|------|---------|------|---------|
-| **Phase 1** | 创建 ConfigManager 和 base.yaml | 新增 2 文件 | 低 | - |
-| **Phase 2** | 修改 main_live.py 使用 ConfigManager | 修改 1 文件 | 中 | - |
-| **Phase 3** | 移除 deepseek_strategy.py 默认值 | 修改 1 文件 | 中 | - |
-| **Phase 4** | 迁移 utils 中的硬编码 | 修改 4 文件 | 低 | - |
-| **Phase 5** | 添加环境切换和 CLI 参数 | 修改 1 文件 | 低 | - |
-| **Phase 6** | 测试和文档更新 | 多文件 | 低 | - |
+| 阶段 | 任务 | 文件变更 | 风险 | 优先级 |
+|------|------|---------|------|--------|
+| **Phase 0** | 🔴 **修复配置冲突** | main_live.py | **高** | **紧急** |
+| **Phase 1** | 创建 ConfigManager 和 base.yaml | 新增 2 文件 | 低 | 高 |
+| **Phase 2** | 修改 main_live.py 使用 ConfigManager | 修改 1 文件 | 中 | 高 |
+| **Phase 3** | 迁移 trading_logic.py 常量 | 修改 2 文件 | 中 | 中 |
+| **Phase 4** | 迁移 utils 中的硬编码 | 修改 5 文件 | 低 | 中 |
+| **Phase 5** | 添加环境切换和 CLI 参数 | 修改 1 文件 | 低 | 低 |
+| **Phase 6** | 测试和文档更新 | 多文件 | 低 | 低 |
 
-### 5.2 回滚方案
+### 5.2 Phase 0: 紧急修复配置冲突
+
+**必须先执行！** 修复 main_live.py 中覆盖 YAML 配置的硬编码：
+
+```python
+# main_live.py 修改
+
+# BEFORE (硬编码覆盖 YAML):
+deepseek_temperature=0.1,
+rsi_extreme_threshold_upper=75.0,
+rsi_extreme_threshold_lower=25.0,
+min_trade_amount=0.001,
+
+# AFTER (从 YAML 加载):
+deepseek_temperature=deepseek_config.get('temperature', 0.3),
+rsi_extreme_threshold_upper=risk_config.get('rsi_extreme_threshold_upper', 70.0),
+rsi_extreme_threshold_lower=risk_config.get('rsi_extreme_threshold_lower', 30.0),
+min_trade_amount=position_config.get('min_trade_amount', 0.001),
+```
+
+**注意**: 此修复会改变系统行为：
+- DeepSeek temperature: 0.1 → 0.3 (AI 输出更多样)
+- RSI 阈值: 75/25 → 70/30 (更早触发极值逻辑)
+
+### 5.3 Phase 3: 迁移 trading_logic.py 常量
+
+```python
+# strategy/trading_logic.py 修改
+
+# BEFORE (硬编码):
+MIN_NOTIONAL_USDT = 100.0
+MIN_NOTIONAL_SAFETY_MARGIN = 1.01
+MIN_SL_DISTANCE_PCT = 0.01
+DEFAULT_SL_PCT = 0.02
+DEFAULT_TP_PCT_BUY = 0.03
+DEFAULT_TP_PCT_SELL = 0.03
+
+# AFTER (从配置加载):
+def get_trading_logic_config():
+    """从配置加载交易逻辑常量"""
+    from utils.config_manager import ConfigManager
+    config = ConfigManager()
+    config.load()
+
+    return {
+        'min_notional_usdt': config.get('trading_logic', 'min_notional_usdt', default=100.0),
+        'min_notional_safety_margin': config.get('trading_logic', 'min_notional_safety_margin', default=1.01),
+        'min_sl_distance_pct': config.get('trading_logic', 'min_sl_distance_pct', default=0.01),
+        'default_sl_pct': config.get('trading_logic', 'default_sl_pct', default=0.02),
+        'default_tp_pct': config.get('trading_logic', 'default_tp_pct', default=0.03),
+    }
+
+# 模块级别缓存
+_TRADING_LOGIC_CONFIG = None
+
+def _get_config():
+    global _TRADING_LOGIC_CONFIG
+    if _TRADING_LOGIC_CONFIG is None:
+        _TRADING_LOGIC_CONFIG = get_trading_logic_config()
+    return _TRADING_LOGIC_CONFIG
+
+# 提供常量访问接口
+MIN_NOTIONAL_USDT = property(lambda self: _get_config()['min_notional_usdt'])
+# ... 或使用函数:
+def get_min_notional_usdt():
+    return _get_config()['min_notional_usdt']
+```
+
+### 5.4 回滚方案
 
 如果出现问题，可以快速回滚：
 
@@ -721,10 +986,10 @@ git checkout HEAD~1 -- main_live.py
 git revert <commit-hash>
 ```
 
-### 5.3 兼容性保证
+### 5.5 兼容性保证
 
 - 旧的 `.env.aitrader` 格式完全兼容
-- 旧的 `strategy_config.yaml` 可以继续使用
+- 旧的 `strategy_config.yaml` 可以继续使用 (但建议迁移到 base.yaml)
 - 添加迁移脚本自动转换旧配置
 
 ---
@@ -739,6 +1004,7 @@ git revert <commit-hash>
 | leverage | int/float | 必须为数字 |
 | sma_periods | list[int] | 必须为整数列表 |
 | min_confidence_to_trade | str | 必须为 LOW/MEDIUM/HIGH |
+| temperature | float | 必须为 0.0-2.0 |
 
 ### 6.2 范围验证
 
@@ -751,6 +1017,8 @@ git revert <commit-hash>
 | rsi_extreme_threshold_upper | 50 | 100 | RSI 范围 |
 | rsi_extreme_threshold_lower | 0 | 50 | RSI 范围 |
 | timer_interval_sec | 60 | 86400 | 1分钟到1天 |
+| min_sl_distance_pct | 0.001 | 0.1 | 0.1% 到 10% |
+| default_sl_pct | 0.005 | 0.2 | 0.5% 到 20% |
 
 ### 6.3 依赖验证
 
@@ -759,6 +1027,7 @@ git revert <commit-hash>
 | `rsi_extreme_threshold_lower < rsi_extreme_threshold_upper` | RSI 下限必须小于上限 |
 | `macd_fast < macd_slow` | MACD 快线周期必须小于慢线 |
 | `telegram.enabled` 时需要 `bot_token` 和 `chat_id` | Telegram 依赖检查 |
+| `min_sl_distance_pct <= default_sl_pct` | 最小距离不能超过默认值 |
 
 ---
 
@@ -792,9 +1061,18 @@ config.load()
 # 获取配置值
 equity = config.get('capital', 'equity')
 leverage = config.get('capital', 'leverage')
+temperature = config.get('ai', 'deepseek', 'temperature')
+
+# 获取嵌套配置
+min_sl = config.get('trading_logic', 'min_sl_distance_pct')
 
 # 获取策略配置对象
 strategy_config = config.to_strategy_config()
+
+# 检查验证结果
+if config.get_errors():
+    for error in config.get_errors():
+        print(f"Error: {error.field} - {error.message}")
 ```
 
 ### 7.3 Telegram 命令 (可选扩展)
@@ -817,13 +1095,28 @@ strategy_config = config.to_strategy_config()
 | 类型转换错误 | 中 | 中 | 完善类型检查和错误提示 |
 | 环境变量丢失 | 低 | 高 | 启动时检查必要配置 |
 | 性能影响 | 低 | 低 | YAML 解析只在启动时进行 |
+| **Phase 0 行为变化** | **高** | **中** | 先在测试环境验证 |
+| **trading_logic 迁移影响** | 中 | 中 | 添加配置缓存机制 |
 
-### 8.2 测试计划
+### 8.2 Phase 0 行为变化说明
+
+修复配置冲突后，以下参数将改变：
+
+| 参数 | 旧值 (硬编码) | 新值 (YAML) | 影响 |
+|------|--------------|-------------|------|
+| `deepseek_temperature` | 0.1 | 0.3 | AI 输出更多样，信号可能更多变 |
+| `rsi_extreme_threshold_upper` | 75 | 70 | 更早触发超买判断 |
+| `rsi_extreme_threshold_lower` | 25 | 30 | 更早触发超卖判断 |
+
+**建议**: 如需保持旧行为，可以在 production.yaml 中覆盖这些值。
+
+### 8.3 测试计划
 
 1. **单元测试**: ConfigManager 各方法测试
 2. **集成测试**: 完整配置加载流程测试
 3. **回归测试**: 与旧系统行为对比
-4. **生产验证**: 先在测试账户验证
+4. **Phase 0 验证**: 在测试账户运行 24 小时
+5. **生产验证**: 先在小资金账户验证
 
 ---
 
@@ -833,21 +1126,30 @@ strategy_config = config.to_strategy_config()
 
 | 方面 | 改进前 | 改进后 |
 |------|--------|--------|
-| 配置来源 | 4 处分散 | 1 个 base.yaml |
-| 默认值同步 | 手动维护 | 自动单一来源 |
+| 配置来源 | 5 处分散 | 1 个 base.yaml |
+| 默认值同步 | 手动维护，存在冲突 | 自动单一来源 |
+| 配置冲突 | 3 处硬编码覆盖 | 完全消除 |
 | 环境切换 | 手动修改 | --env 参数 |
-| 配置验证 | 无 | 类型 + 范围检查 |
+| 配置验证 | 无 | 类型 + 范围 + 依赖检查 |
 | 错误提示 | 运行时崩溃 | 启动时明确提示 |
+| trading_logic | 硬编码 | 可配置 |
 
-### 9.2 决策点
+### 9.2 实施优先级
 
-请确认以下事项：
+```
+🔴 紧急 (Phase 0): 修复 main_live.py 中的 3 处配置冲突
+🟠 高   (Phase 1-2): 创建 ConfigManager 并迁移核心配置
+🟡 中   (Phase 3-4): 迁移 trading_logic.py 和 utils 硬编码
+🟢 低   (Phase 5-6): 添加环境切换和高级功能
+```
 
-1. **是否采用此方案？**
-2. **是否需要 Telegram 命令修改配置功能？**
-3. **是否需要配置热重载（不重启生效）？**
-4. **是否需要 JSON Schema 验证？**
+### 9.3 变更日志
+
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| 1.0 | 2026-01-23 | 初始方案 |
+| 2.0 | 2026-01-24 | 基于代码审查更新:<br>- 添加 trading_logic.py 新文件<br>- 识别 3 处配置冲突<br>- 硬编码从 36 处更新到 42 处<br>- 添加 Phase 0 紧急修复<br>- 扩展 base.yaml 配置结构<br>- 增强 ConfigManager 验证逻辑 |
 
 ---
 
-*等待您的评估和反馈。*
+*方案已审查，可以开始实施。建议从 Phase 0 (修复配置冲突) 开始。*
