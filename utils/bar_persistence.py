@@ -51,8 +51,13 @@ class BarPersistenceManager:
         """
         try:
             self.catalog.write_data([bar])
+        except (IOError, OSError) as e:
+            raise RuntimeError(f"Failed to save bar to catalog (I/O error): {e}")
         except Exception as e:
-            raise RuntimeError(f"Failed to save bar to catalog: {e}")
+            # Log unexpected errors but still raise
+            import logging
+            logging.getLogger(__name__).critical(f"Unexpected error saving bar: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to save bar to catalog (unexpected error): {e}")
 
     def save_bars(self, bars: List[Bar]):
         """

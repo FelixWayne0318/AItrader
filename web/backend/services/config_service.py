@@ -3,6 +3,7 @@ Configuration Service - Read/Write AItrader configuration
 """
 import yaml
 import subprocess
+import re
 from pathlib import Path
 from typing import Optional, Any
 
@@ -15,6 +16,13 @@ class ConfigService:
     def __init__(self):
         self.config_path = settings.AITRADER_CONFIG_PATH
         self.service_name = settings.AITRADER_SERVICE_NAME
+
+        # Validate service name to prevent command injection
+        if not re.match(r'^[a-z0-9-]+$', self.service_name):
+            raise ValueError(
+                f"Invalid service name: {self.service_name}. "
+                "Service name must contain only lowercase letters, numbers, and hyphens."
+            )
 
     def read_strategy_config(self) -> dict:
         """Read strategy configuration from YAML file"""

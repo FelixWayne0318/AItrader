@@ -1263,16 +1263,47 @@ class DeepSeekAIStrategy(Strategy):
         # Validate MultiAgent SL/TP values
         if multi_sl and multi_tp and multi_sl > 0 and multi_tp > 0:
             # Verify SL is on correct side of entry price
+            sl_distance = abs(multi_sl - entry_price) / entry_price
+            tp_distance = abs(multi_tp - entry_price) / entry_price
+            MIN_SL_DISTANCE_PCT = 0.001  # 0.1% minimum distance to avoid extreme values
+            MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum distance for take profit
+
             if side == OrderSide.BUY and multi_sl < entry_price and multi_tp > entry_price:
-                use_multi_sltp = True
-                self.log.info(
-                    f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f}, TP=${multi_tp:,.2f}"
-                )
+                # Additional validation: check minimum distance
+                if sl_distance < MIN_SL_DISTANCE_PCT:
+                    self.log.warning(
+                        f"⚠️ MultiAgent SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%), "
+                        f"falling back to technical analysis"
+                    )
+                elif tp_distance < MIN_TP_DISTANCE_PCT:
+                    self.log.warning(
+                        f"⚠️ MultiAgent TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%), "
+                        f"falling back to technical analysis"
+                    )
+                else:
+                    use_multi_sltp = True
+                    self.log.info(
+                        f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f} ({sl_distance*100:.2f}%), "
+                        f"TP=${multi_tp:,.2f} ({tp_distance*100:.2f}%)"
+                    )
             elif side == OrderSide.SELL and multi_sl > entry_price and multi_tp < entry_price:
-                use_multi_sltp = True
-                self.log.info(
-                    f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f}, TP=${multi_tp:,.2f}"
-                )
+                # Additional validation: check minimum distance
+                if sl_distance < MIN_SL_DISTANCE_PCT:
+                    self.log.warning(
+                        f"⚠️ MultiAgent SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%), "
+                        f"falling back to technical analysis"
+                    )
+                elif tp_distance < MIN_TP_DISTANCE_PCT:
+                    self.log.warning(
+                        f"⚠️ MultiAgent TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%), "
+                        f"falling back to technical analysis"
+                    )
+                else:
+                    use_multi_sltp = True
+                    self.log.info(
+                        f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f} ({sl_distance*100:.2f}%), "
+                        f"TP=${multi_tp:,.2f} ({tp_distance*100:.2f}%)"
+                    )
             else:
                 self.log.warning(
                     f"⚠️ MultiAgent SL/TP invalid for {side.name} "
