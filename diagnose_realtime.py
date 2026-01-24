@@ -619,16 +619,17 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (使用共享 trading_logic 模块 - 100% 一致)")
+print("  诊断总结 (方案B - Judge 层级决策)")
 print("=" * 70)
 print()
 
-# final_signal 已在共识检查阶段设置，考虑了分歧处理逻辑
+# 方案B: Judge 决策即最终决策，无需共识检查
 print(f"  📊 Final Signal: {final_signal}")
 print(f"  📊 Confidence: {confidence}")
-print(f"  📊 Consensus: {'Yes' if consensus else 'No (Divergence)'}")
-print(f"  📊 use_confidence_fusion: {use_confidence_fusion}")
-print(f"  📊 skip_on_divergence: {skip_on_divergence}")
+judge_decision = signal_data.get('judge_decision', {})
+winning_side = judge_decision.get('winning_side', 'N/A')
+print(f"  📊 Winning Side: {winning_side}")
+print(f"  📊 Risk Level: {signal_data.get('risk_level', 'N/A')}")
 print()
 
 # 显示持仓信息

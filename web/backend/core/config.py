@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # Security
-    SECRET_KEY: str = "change-this-in-production-use-secrets"
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "change-this-in-production-use-secrets")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
 
@@ -60,6 +60,15 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Validate SECRET_KEY in production
+if not os.getenv("DEBUG", "False").lower() == "true":
+    if settings.SECRET_KEY == "change-this-in-production-use-secrets":
+        raise ValueError(
+            "⚠️ SECURITY ERROR: Default SECRET_KEY detected in production!\n"
+            "   Set a secure SECRET_KEY in your .env file:\n"
+            "   SECRET_KEY=$(openssl rand -hex 32)"
+        )
 
 
 def load_aitrader_env():

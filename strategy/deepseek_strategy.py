@@ -1075,15 +1075,18 @@ class DeepSeekAIStrategy(Strategy):
                 return
 
             if size_diff > 0:
-                # Add to position with bracket order (includes SL/TP protection)
+                # Add to position with simple market order
+                # NOTE: Bracket orders CANNOT be used for adding to existing positions
+                # They can only be used for opening new positions (entry + SL + TP linked)
                 order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
-                self._submit_bracket_order(
+                self._submit_order(
                     side=order_side,
                     quantity=abs(size_diff),
+                    reduce_only=False,
                 )
                 self.log.info(
                     f"📈 Adding to {target_side} position: {abs(size_diff):.3f} BTC "
-                    f"({current_qty:.3f} → {target_quantity:.3f}) [with SL/TP]"
+                    f"({current_qty:.3f} → {target_quantity:.3f})"
                 )
             else:
                 # Reduce position
@@ -1116,14 +1119,17 @@ class DeepSeekAIStrategy(Strategy):
                 reduce_only=True,
             )
 
-            # Open opposite position with bracket order (includes SL/TP protection)
+            # Open opposite position with simple market order
+            # NOTE: Using simple order for consistency with reference implementation
+            # Bracket orders can cause timing issues when used after position close
             new_order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
-            self._submit_bracket_order(
+            self._submit_order(
                 side=new_order_side,
                 quantity=target_quantity,
+                reduce_only=False,
             )
             self.log.info(
-                f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC [with SL/TP]"
+                f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC"
             )
 
         else:
@@ -1257,16 +1263,47 @@ class DeepSeekAIStrategy(Strategy):
         # Validate MultiAgent SL/TP values
         if multi_sl and multi_tp and multi_sl > 0 and multi_tp > 0:
             # Verify SL is on correct side of entry price
+            sl_distance = abs(multi_sl - entry_price) / entry_price
+            tp_distance = abs(multi_tp - entry_price) / entry_price
+            MIN_SL_DISTANCE_PCT = 0.001  # 0.1% minimum distance to avoid extreme values
+            MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum distance for take profit
+
             if side == OrderSide.BUY and multi_sl < entry_price and multi_tp > entry_price:
-                use_multi_sltp = True
-                self.log.info(
-                    f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f}, TP=${multi_tp:,.2f}"
-                )
+                # Additional validation: check minimum distance
+                if sl_distance < MIN_SL_DISTANCE_PCT:
+                    self.log.warning(
+                        f"⚠️ MultiAgent SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%), "
+                        f"falling back to technical analysis"
+                    )
+                elif tp_distance < MIN_TP_DISTANCE_PCT:
+                    self.log.warning(
+                        f"⚠️ MultiAgent TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%), "
+                        f"falling back to technical analysis"
+                    )
+                else:
+                    use_multi_sltp = True
+                    self.log.info(
+                        f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f} ({sl_distance*100:.2f}%), "
+                        f"TP=${multi_tp:,.2f} ({tp_distance*100:.2f}%)"
+                    )
             elif side == OrderSide.SELL and multi_sl > entry_price and multi_tp < entry_price:
-                use_multi_sltp = True
-                self.log.info(
-                    f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f}, TP=${multi_tp:,.2f}"
-                )
+                # Additional validation: check minimum distance
+                if sl_distance < MIN_SL_DISTANCE_PCT:
+                    self.log.warning(
+                        f"⚠️ MultiAgent SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%), "
+                        f"falling back to technical analysis"
+                    )
+                elif tp_distance < MIN_TP_DISTANCE_PCT:
+                    self.log.warning(
+                        f"⚠️ MultiAgent TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%), "
+                        f"falling back to technical analysis"
+                    )
+                else:
+                    use_multi_sltp = True
+                    self.log.info(
+                        f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f} ({sl_distance*100:.2f}%), "
+                        f"TP=${multi_tp:,.2f} ({tp_distance*100:.2f}%)"
+                    )
             else:
                 self.log.warning(
                     f"⚠️ MultiAgent SL/TP invalid for {side.name} "
