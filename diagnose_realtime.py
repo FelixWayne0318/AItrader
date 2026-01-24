@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v4.0
+实盘信号诊断脚本 v5.0
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
 3. 使用共享 trading_logic 模块，与 deepseek_strategy.py 100% 一致
-4. 输出实盘环境下会产生的真实结果
+4. 检查 Binance 真实持仓
+5. 模拟完整的 _execute_trade 流程
+6. 输出实盘环境下会产生的真实结果
+
+v5.0 更新:
+- 添加 Binance 真实持仓检查
+- 添加 _manage_existing_position 逻辑模拟
+- 添加仓位为0检查
+- 添加 Telegram/交易执行流程说明
+- 与实盘 on_timer -> _execute_trade 流程 100% 一致
 
 v4.0 更新:
 - 引入 strategy/trading_logic.py 共享模块
@@ -53,7 +62,7 @@ else:
     load_dotenv()
 
 print("=" * 70)
-print("  实盘信号诊断工具 v4.0 (共享 trading_logic 模块)")
+print("  实盘信号诊断工具 v5.0 (共享模块 + 持仓检查)")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -77,12 +86,17 @@ try:
     print(f"  base_usdt_amount: ${strategy_config.base_usdt_amount}")
     print(f"  leverage: {strategy_config.leverage}x")
     print(f"  min_confidence_to_trade: {strategy_config.min_confidence_to_trade}")
-    print(f"  timer_interval_sec: {strategy_config.timer_interval_sec}s")
+    timer_sec = strategy_config.timer_interval_sec
+    timer_min = timer_sec / 60
+    print(f"  timer_interval_sec: {timer_sec}s ({timer_min:.1f}分钟)")
     print(f"  sma_periods: {strategy_config.sma_periods}")
     print(f"  rsi_period: {strategy_config.rsi_period}")
     print(f"  macd_fast/slow: {strategy_config.macd_fast}/{strategy_config.macd_slow}")
     print(f"  debate_rounds: {strategy_config.debate_rounds}")
     print("  ✅ 配置加载成功 (与实盘完全一致)")
+    print()
+    print(f"  ⏰ 注意: 实盘每 {timer_min:.0f} 分钟分析一次")
+    print(f"     如果刚启动服务，需等待第一个周期触发")
 except Exception as e:
     print(f"  ❌ 配置加载失败: {e}")
     import traceback
@@ -539,6 +553,9 @@ print()
 # 模拟 _execute_trade 的检查逻辑 (使用共享模块)
 print("  模拟 _execute_trade 检查:")
 
+# 0. 检查 is_trading_paused (诊断无法检测，需查看服务状态)
+print("  ⚠️ is_trading_paused: 无法检测 (需查看服务日志)")
+
 # 1. 检查 min_confidence (使用共享函数)
 passes_threshold, threshold_msg = check_confidence_threshold(
     confidence, strategy_config.min_confidence_to_trade
@@ -602,6 +619,14 @@ if would_trade and final_signal in ['BUY', 'SELL']:
     print(f"     Notional: ${calc_details['notional']:.2f}")
     if calc_details.get('adjusted'):
         print(f"     ⚠️ Quantity adjusted to meet minimum notional")
+
+    # 3.5 检查仓位为0 (与 _execute_trade 一致)
+    if btc_quantity == 0:
+        print()
+        print("  ❌ 仓位计算结果为 0!")
+        print("     → 实盘会输出: 'Calculated position size is 0, skipping trade'")
+        print("     → 🔴 NO TRADE")
+        would_trade = False
 
     # 4. 检查现有持仓 (与 _manage_existing_position 逻辑一致)
     print()
@@ -704,6 +729,37 @@ else:
     if not passes_threshold:
         print(f"     → Confidence below minimum ({strategy_config.min_confidence_to_trade})")
 
+print()
+
+# Telegram 和交易执行流程说明
+print("-" * 70)
+print("  📱 实盘执行流程:")
+print("-" * 70)
+print()
+
+if final_signal in ['BUY', 'SELL']:
+    print(f"  Step 1: AI 分析完成 → Signal = {final_signal}")
+    print(f"  Step 2: 📱 发送 Telegram 信号通知")
+    print(f"          → 此时你会收到交易信号消息")
+    print(f"  Step 3: 调用 _execute_trade()")
+
+    if not passes_threshold:
+        print(f"          → ❌ 信心 {confidence} < 最低要求 {strategy_config.min_confidence_to_trade}")
+        print(f"          → 🔴 交易被跳过，但 Telegram 信号已发送!")
+    elif would_trade:
+        print(f"          → ✅ 所有检查通过")
+        print(f"          → 📊 提交订单到 Binance")
+    else:
+        print(f"          → ❌ 被持仓管理阻止")
+        print(f"          → 🔴 交易被跳过，但 Telegram 信号已发送!")
+else:
+    print(f"  Step 1: AI 分析完成 → Signal = {final_signal}")
+    print(f"  Step 2: ❌ 非 BUY/SELL 信号，不发送 Telegram")
+    print(f"  Step 3: _execute_trade 直接返回")
+
+print()
+print("  💡 关键点: Telegram 通知在 _execute_trade 之前发送!")
+print("     如果收到信号但无交易，检查服务日志查看 _execute_trade 输出")
 print()
 print("=" * 70)
 print("  诊断完成 - 使用共享模块，与实盘逻辑 100% 一致")
