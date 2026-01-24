@@ -86,7 +86,12 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     rsi_extreme_threshold_lower: float = 25.0
     rsi_extreme_multiplier: float = 0.7
 
-    # Multi-Agent Divergence Handling
+    # Multi-Agent System
+    # Enable/disable MultiAgent Bull/Bear debate system
+    # When disabled, only DeepSeek is used (like reference repo)
+    enable_multi_agent: bool = True  # 禁用可简化流程，与参考仓库一致
+
+    # Multi-Agent Divergence Handling (only applies when enable_multi_agent=True)
     # When DeepSeek and MultiAgent have opposing signals (BUY vs SELL),
     # use weighted confidence fusion instead of simple skip.
     # Based on industry best practices: QuantAgent, TradingAgents frameworks
@@ -261,13 +266,19 @@ class DeepSeekAIStrategy(Strategy):
         )
 
         # Multi-Agent AI analyzer (Bull/Bear Debate) - for parallel comparison
-        self.multi_agent = MultiAgentAnalyzer(
-            api_key=api_key,
-            model=config.deepseek_model,
-            temperature=config.deepseek_temperature,
-            debate_rounds=config.debate_rounds,
-        )
-        self.log.info(f"✅ Multi-Agent analyzer initialized (debate_rounds={config.debate_rounds})")
+        # Can be disabled via enable_multi_agent=False for simpler flow
+        self.enable_multi_agent = config.enable_multi_agent
+        self.multi_agent = None
+        if self.enable_multi_agent:
+            self.multi_agent = MultiAgentAnalyzer(
+                api_key=api_key,
+                model=config.deepseek_model,
+                temperature=config.deepseek_temperature,
+                debate_rounds=config.debate_rounds,
+            )
+            self.log.info(f"✅ Multi-Agent analyzer initialized (debate_rounds={config.debate_rounds})")
+        else:
+            self.log.info("ℹ️ Multi-Agent analyzer DISABLED (using DeepSeek only)")
 
         # Telegram Bot
         self.telegram_bot = None
@@ -787,47 +798,52 @@ class DeepSeekAIStrategy(Strategy):
             )
 
             # Multi-Agent parallel analysis (Bull/Bear debate) for comparison
-            signal_multi = None
-            try:
-                self.log.info("🎭 Starting Multi-Agent analysis (Bull/Bear debate)...")
-                signal_multi = self.multi_agent.analyze(
-                    symbol="BTCUSDT",
-                    technical_report=technical_data,
-                    sentiment_report=sentiment_data,
-                    current_position=current_position,
-                    price_data=price_data,
-                )
-                self.log.info(
-                    f"🎯 MultiAgent: {signal_multi['signal']} | "
-                    f"Confidence: {signal_multi['confidence']}"
-                )
-                if signal_multi.get('debate_summary'):
-                    self.log.info(f"📋 Debate: {signal_multi['debate_summary'][:200]}...")
+            # Can be disabled via enable_multi_agent=False for simpler flow (like reference repo)
+            if self.enable_multi_agent and self.multi_agent:
+                signal_multi = None
+                try:
+                    self.log.info("🎭 Starting Multi-Agent analysis (Bull/Bear debate)...")
+                    signal_multi = self.multi_agent.analyze(
+                        symbol="BTCUSDT",
+                        technical_report=technical_data,
+                        sentiment_report=sentiment_data,
+                        current_position=current_position,
+                        price_data=price_data,
+                    )
+                    self.log.info(
+                        f"🎯 MultiAgent: {signal_multi['signal']} | "
+                        f"Confidence: {signal_multi['confidence']}"
+                    )
+                    if signal_multi.get('debate_summary'):
+                        self.log.info(f"📋 Debate: {signal_multi['debate_summary'][:200]}...")
 
-                # Use shared process_signals for 100% consistency with diagnostic
-                # This ensures diagnose_realtime.py and live trading use identical logic
-                class LogAdapter:
-                    """Adapter to make self.log compatible with trading_logic module."""
-                    def __init__(self, strategy_log):
-                        self._log = strategy_log
-                    def info(self, msg):
-                        self._log.info(msg)
-                    def warning(self, msg):
-                        self._log.warning(msg)
-                    def error(self, msg):
-                        self._log.error(msg)
+                    # Use shared process_signals for 100% consistency with diagnostic
+                    # This ensures diagnose_realtime.py and live trading use identical logic
+                    class LogAdapter:
+                        """Adapter to make self.log compatible with trading_logic module."""
+                        def __init__(self, strategy_log):
+                            self._log = strategy_log
+                        def info(self, msg):
+                            self._log.info(msg)
+                        def warning(self, msg):
+                            self._log.warning(msg)
+                        def error(self, msg):
+                            self._log.error(msg)
 
-                logger = LogAdapter(self.log)
-                signal_deepseek, _, _ = process_signals(
-                    signal_deepseek=signal_deepseek,
-                    signal_multi=signal_multi,
-                    use_confidence_fusion=self.use_confidence_fusion,
-                    skip_on_divergence=self.skip_on_divergence,
-                    logger=logger,
-                )
+                    logger = LogAdapter(self.log)
+                    signal_deepseek, _, _ = process_signals(
+                        signal_deepseek=signal_deepseek,
+                        signal_multi=signal_multi,
+                        use_confidence_fusion=self.use_confidence_fusion,
+                        skip_on_divergence=self.skip_on_divergence,
+                        logger=logger,
+                    )
 
-            except Exception as e:
-                self.log.warning(f"⚠️ Multi-Agent comparison failed (non-critical): {e}")
+                except Exception as e:
+                    self.log.warning(f"⚠️ Multi-Agent comparison failed (non-critical): {e}")
+            else:
+                # MultiAgent disabled - use DeepSeek signal directly (like reference repo)
+                self.log.info("ℹ️ MultiAgent disabled, using DeepSeek signal directly")
 
             # Use processed signal for actual trading
             # Signal has been merged/resolved by process_signals()
