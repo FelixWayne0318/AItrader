@@ -577,9 +577,14 @@ RISK RULES:
    - MEDIUM confidence → 50% of base position
    - LOW confidence → 25% or skip trade
 
-2. Stop Loss:
-   - LONG: 1-2% below entry (use support levels if available)
-   - SHORT: 1-2% above entry (use resistance levels if available)
+2. Stop Loss (CRITICAL - minimum 1% distance required):
+   - LONG: Place SL 1.5-2% BELOW entry price
+     * Can reference support level, but SL must be AT LEAST 1% below entry
+     * If support is too close (<1% from entry), use default 2% below
+   - SHORT: Place SL 1.5-2% ABOVE entry price
+     * Can reference resistance level, but SL must be AT LEAST 1% above entry
+     * If resistance is too close (<1% from entry), use default 2% above
+   - NEVER place SL closer than 1% from entry price
 
 3. Take Profit:
    - HIGH confidence: 2-3% target
@@ -637,20 +642,35 @@ JSON response only:"""
         sl = decision.get("stop_loss", 0) or 0  # Handle None
         tp = decision.get("take_profit", 0) or 0  # Handle None
 
+        # Minimum SL distance: 1% (to avoid too tight stops)
+        MIN_SL_DISTANCE_PCT = 0.01
+
         if signal == "BUY":
             # For LONG: SL should be below entry, TP above
+            sl_distance = (current_price - sl) / current_price if sl > 0 else 0
+
             if sl >= current_price:
                 decision["stop_loss"] = current_price * 0.98  # 2% below
-                self.logger.warning(f"Fixed BUY stop loss: {sl} -> {decision['stop_loss']}")
+                self.logger.warning(f"Fixed BUY stop loss (wrong side): {sl} -> {decision['stop_loss']}")
+            elif sl_distance < MIN_SL_DISTANCE_PCT:
+                decision["stop_loss"] = current_price * 0.98  # 2% below
+                self.logger.warning(f"Fixed BUY stop loss (too close {sl_distance*100:.2f}%): {sl} -> {decision['stop_loss']}")
+
             if tp <= current_price:
                 decision["take_profit"] = current_price * 1.03  # 3% above
                 self.logger.warning(f"Fixed BUY take profit: {tp} -> {decision['take_profit']}")
 
         elif signal == "SELL":
             # For SHORT: SL should be above entry, TP below
+            sl_distance = (sl - current_price) / current_price if sl > 0 else 0
+
             if sl <= current_price:
                 decision["stop_loss"] = current_price * 1.02  # 2% above
-                self.logger.warning(f"Fixed SELL stop loss: {sl} -> {decision['stop_loss']}")
+                self.logger.warning(f"Fixed SELL stop loss (wrong side): {sl} -> {decision['stop_loss']}")
+            elif sl_distance < MIN_SL_DISTANCE_PCT:
+                decision["stop_loss"] = current_price * 1.02  # 2% above
+                self.logger.warning(f"Fixed SELL stop loss (too close {sl_distance*100:.2f}%): {sl} -> {decision['stop_loss']}")
+
             if tp >= current_price:
                 decision["take_profit"] = current_price * 0.97  # 3% below
                 self.logger.warning(f"Fixed SELL take profit: {tp} -> {decision['take_profit']}")
