@@ -993,6 +993,21 @@ class DeepSeekAIStrategy(Strategy):
 
         if target_quantity == 0:
             self.log.warning("⚠️ Calculated position size is 0, skipping trade")
+
+            # Notify user about insufficient position size (helpful for low-balance accounts)
+            if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
+                try:
+                    current_price = price_data.get('price', 0) if price_data else 0
+                    error_msg = self.telegram_bot.format_error_alert({
+                        'type': 'POSITION_SIZE_ZERO',
+                        'message': f"Cannot trade {signal} signal - position size calculated as 0",
+                        'details': f"Price: ${current_price:.2f}, Signal: {signal} ({confidence})",
+                        'action': "Check account balance or adjust position sizing parameters"
+                    })
+                    self.telegram_bot.send_message_sync(error_msg)
+                except Exception as notify_error:
+                    self.log.error(f"Failed to send Telegram alert: {notify_error}")
+
             return
 
         # Determine order side
@@ -1119,17 +1134,15 @@ class DeepSeekAIStrategy(Strategy):
                 reduce_only=True,
             )
 
-            # Open opposite position with simple market order
-            # NOTE: Using simple order for consistency with reference implementation
-            # Bracket orders can cause timing issues when used after position close
+            # Open opposite position with bracket order (entry + SL + TP)
+            # This ensures the new position has proper risk protection from the start
             new_order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
-            self._submit_order(
+            self._submit_bracket_order(
                 side=new_order_side,
                 quantity=target_quantity,
-                reduce_only=False,
             )
             self.log.info(
-                f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC"
+                f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC (with bracket SL/TP)"
             )
 
         else:
@@ -1435,6 +1448,20 @@ class DeepSeekAIStrategy(Strategy):
         except Exception as e:
             self.log.error(f"❌ Failed to submit bracket order: {e}")
             self.log.warning("⚠️ Falling back to simple market order without SL/TP")
+
+            # Send Telegram alert for critical bracket order failure
+            if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
+                try:
+                    error_msg = self.telegram_bot.format_error_alert({
+                        'type': 'BRACKET_ORDER_FAILURE',
+                        'message': f"Bracket order failed, opening position WITHOUT SL/TP protection",
+                        'details': f"Error: {str(e)}",
+                        'action': f"Opening {side.name} {quantity:.3f} BTC with simple order"
+                    })
+                    self.telegram_bot.send_message_sync(error_msg)
+                except Exception as notify_error:
+                    self.log.error(f"Failed to send Telegram alert: {notify_error}")
+
             self._submit_order(side=side, quantity=quantity, reduce_only=False)
 
     def on_order_filled(self, event):

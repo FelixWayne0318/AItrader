@@ -123,6 +123,62 @@ class MultiAgentAnalyzer:
 
         raise last_error
 
+    def _extract_json_with_retry(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float,
+        max_json_retries: int = 2,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Call API and extract JSON, with retry on parse failure.
+
+        Parameters
+        ----------
+        messages : List[Dict]
+            Chat messages to send
+        temperature : float
+            Temperature for API call
+        max_json_retries : int
+            Maximum retries for JSON parsing failures
+
+        Returns
+        -------
+        Optional[Dict]
+            Parsed JSON dict, or None if all retries fail
+        """
+        for retry_attempt in range(max_json_retries + 1):
+            try:
+                result = self._call_api_with_retry(messages=messages, temperature=temperature)
+                self.logger.debug(f"API response (attempt {retry_attempt + 1}): {result}")
+
+                # Extract JSON from response
+                start = result.find('{')
+                end = result.rfind('}') + 1
+                if start != -1 and end > 0 and start < end:
+                    json_str = result[start:end]
+                    if json_str.strip():
+                        return json.loads(json_str)
+
+                # If we reach here, JSON extraction failed
+                if retry_attempt < max_json_retries:
+                    self.logger.warning(
+                        f"Failed to extract valid JSON (attempt {retry_attempt + 1}/{max_json_retries + 1}). Retrying..."
+                    )
+                    time.sleep(self.retry_delay)
+                else:
+                    self.logger.error(f"Failed to extract valid JSON after {max_json_retries + 1} attempts")
+
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                if retry_attempt < max_json_retries:
+                    self.logger.warning(
+                        f"JSON parse error (attempt {retry_attempt + 1}/{max_json_retries + 1}): {e}. Retrying..."
+                    )
+                    time.sleep(self.retry_delay)
+                else:
+                    self.logger.error(f"JSON parse failed after {max_json_retries + 1} attempts: {e}")
+
+        return None
+
     def analyze(
         self,
         symbol: str,
@@ -368,28 +424,21 @@ Provide your decision in this exact JSON format:
 
 JSON response only:"""
 
-        result = self._call_api_with_retry(
+        # Use JSON retry mechanism to improve reliability
+        decision = self._extract_json_with_retry(
             messages=[
                 {"role": "system", "content": "You are a decisive Portfolio Manager. Make clear trading decisions based on debate evidence. Avoid excessive hedging."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,  # Lower temperature for more decisive output
+            max_json_retries=2,
         )
-        self.logger.debug(f"Judge raw response: {result}")
 
-        try:
-            # Extract JSON from response with explicit validation
-            start = result.find('{')
-            end = result.rfind('}') + 1
-            # Validate: start found, end found (end > 0), and start comes before end
-            if start != -1 and end > 0 and start < end:
-                json_str = result[start:end]
-                if json_str.strip():  # Ensure non-empty
-                    return json.loads(json_str)
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
-            self.logger.warning(f"Failed to parse judge decision: {e}")
+        if decision:
+            return decision
 
-        # Fallback decision
+        # Fallback decision if all retries failed
+        self.logger.warning("Judge decision parsing failed after retries, using fallback")
         return {
             "decision": "HOLD",
             "winning_side": "TIE",
@@ -465,36 +514,28 @@ MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD
 
 JSON response only:"""
 
-        result = self._call_api_with_retry(
+        # Use JSON retry mechanism to improve reliability
+        decision = self._extract_json_with_retry(
             messages=[
                 {"role": "system", "content": "You are a Risk Manager. Provide precise trade parameters with specific price levels."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
+            max_json_retries=2,
         )
-        self.logger.debug(f"Risk evaluation raw response: {result}")
 
-        try:
-            # Extract JSON from response with explicit validation
-            start = result.find('{')
-            end = result.rfind('}') + 1
-            # Validate: start found, end found (end > 0), and start comes before end
-            if start != -1 and end > 0 and start < end:
-                json_str = result[start:end]
-                if json_str.strip():  # Ensure non-empty
-                    decision = json.loads(json_str)
-                    decision["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    decision["debate_rounds"] = self.debate_rounds
-                    decision["judge_decision"] = proposed_action
+        if decision:
+            decision["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            decision["debate_rounds"] = self.debate_rounds
+            decision["judge_decision"] = proposed_action
 
-                    # Validate stop loss / take profit
-                    decision = self._validate_sl_tp(decision, current_price)
+            # Validate stop loss / take profit
+            decision = self._validate_sl_tp(decision, current_price)
 
-                    return decision
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
-            self.logger.warning(f"Failed to parse risk evaluation: {e}")
+            return decision
 
-        # Fallback
+        # Fallback if all retries failed
+        self.logger.warning("Risk evaluation parsing failed after retries, using fallback")
         return self._create_fallback_signal({"price": current_price})
 
     def _validate_sl_tp(self, decision: Dict[str, Any], current_price: float) -> Dict[str, Any]:
