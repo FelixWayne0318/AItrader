@@ -1,9 +1,15 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.3
+> 版本: 2.4
 > 日期: 2026-01-24
-> 状态: **Phase 0 已完成，风险评估已补充，可实施 Phase 1-6**
+> 状态: **Phase 0 已完成，Phase 间关联影响已补充，可实施 Phase 1-6**
 > 审查: CONFIG_PROPOSAL_REVIEW.md
+
+**v2.4 更新说明**:
+- 新增 Section 5.6: Phase 间关联影响，包含依赖图、必须项详解、循环导入处理方案
+- 扩展环境变量映射: 5 → 9 个核心变量 (新增 TEST_MODE, AUTO_CONFIRM, TESTNET API)
+- 新增 Phase 1 必须项 (M1-M3) 和验证清单
+- 新增敏感信息掩蔽实现要求
 
 ---
 
@@ -14,6 +20,7 @@
 3. [配置文件设计](#3-配置文件设计)
 4. [ConfigManager 类设计](#4-configmanager-类设计)
 5. [迁移计划](#5-迁移计划)
+   - 5.6 [Phase 间关联影响](#56-phase-间关联影响) ⭐ **新增**
 6. [验证规则](#6-验证规则)
 7. [使用方式](#7-使用方式)
 8. [Pydantic 升级建议](#8-pydantic-升级建议-可选)
@@ -638,13 +645,26 @@ class ConfigManager:
             load_dotenv(env_path)
             self.logger.debug(f"Loaded secrets from {env_path}")
 
-        # 映射环境变量到配置
+        # 映射环境变量到配置 (完整映射，共 9 个核心变量)
         env_mappings = {
+            # Binance 主网 API
             'BINANCE_API_KEY': ('binance', 'api_key'),
             'BINANCE_API_SECRET': ('binance', 'api_secret'),
+
+            # Binance 测试网 API (可选，回测/开发环境)
+            'BINANCE_TESTNET_API_KEY': ('binance', 'testnet_api_key'),
+            'BINANCE_TESTNET_API_SECRET': ('binance', 'testnet_api_secret'),
+
+            # AI 服务
             'DEEPSEEK_API_KEY': ('ai', 'deepseek', 'api_key'),
+
+            # Telegram 通知
             'TELEGRAM_BOT_TOKEN': ('telegram', 'bot_token'),
             'TELEGRAM_CHAT_ID': ('telegram', 'chat_id'),
+
+            # 运行模式控制
+            'TEST_MODE': ('runtime', 'test_mode'),
+            'AUTO_CONFIRM': ('runtime', 'auto_confirm'),
         }
 
         for env_var, config_path in env_mappings.items():
@@ -1047,6 +1067,228 @@ git revert <commit-hash>
 - 旧的 `.env.aitrader` 格式完全兼容
 - 旧的 `strategy_config.yaml` 可以继续使用 (但建议迁移到 base.yaml)
 - 添加迁移脚本自动转换旧配置
+
+### 5.6 Phase 间关联影响
+
+> ⚠️ **关键：修改一个 Phase 可能影响其他 Phase，必须理解依赖关系**
+
+#### 5.6.1 Phase 依赖图
+
+```
+Phase 0 (紧急修复)
+    │
+    ├──→ Phase 2 (main_live.py 迁移)
+    │        │
+    │        └──→ 验证: deepseek_temperature 配置路径一致性
+    │             验证: rsi_extreme_threshold 配置路径一致性
+    │
+    ↓
+Phase 1 (ConfigManager) ←─── 阻塞后续所有 Phase
+    │
+    ├── 必须项 (不可跳过):
+    │   ├── [M1] 单例模式: get_config() 函数
+    │   ├── [M2] 敏感信息掩蔽: _mask_sensitive() 方法
+    │   └── [M3] 环境变量完整映射 (9 个核心变量)
+    │
+    ├──→ Phase 3 (trading_logic.py)
+    │        │
+    │        ├── 风险: 循环导入 (trading_logic ↔ config_manager)
+    │        └── 方案: 延迟导入 + 模块级缓存
+    │
+    └──→ Phase 4 (utils/*.py)
+             │
+             ├── 依赖: bar_persistence.py 需要 retry_delay
+             ├── 依赖: oco_manager.py 需要 socket_timeout
+             └── 依赖: telegram_command_handler.py 需要 startup_delay
+```
+
+#### 5.6.2 Phase 1 必须项详解
+
+| 编号 | 必须项 | 描述 | 影响范围 | 验证方法 |
+|------|--------|------|---------|---------|
+| M1 | **单例模式** | `get_config()` 全局访问函数 | 所有模块 | `id(get_config()) == id(get_config())` |
+| M2 | **敏感信息掩蔽** | 日志/异常中隐藏 API_KEY 等 | 安全性 | 日志搜索无敏感信息明文 |
+| M3 | **环境变量映射** | 9 个核心变量完整映射 | 启动加载 | `config.get('binance', 'api_key')` 有值 |
+
+**M1 单例模式实现要求**:
+
+```python
+# utils/config_manager.py
+
+_instance: Optional['ConfigManager'] = None
+
+def get_config() -> ConfigManager:
+    """
+    获取 ConfigManager 单例实例
+
+    线程安全说明:
+    - NautilusTrader 多线程环境下必须保证单例
+    - 首次调用在主线程 (on_start)，后续调用可能在其他线程
+    """
+    global _instance
+    if _instance is None:
+        _instance = ConfigManager()
+        _instance.load()
+    return _instance
+```
+
+**M2 敏感信息掩蔽要求**:
+
+```python
+# 需要掩蔽的字段列表
+SENSITIVE_FIELDS = [
+    'api_key', 'api_secret', 'bot_token',
+    'testnet_api_key', 'testnet_api_secret'
+]
+
+def _mask_sensitive(self, key: str, value: Any) -> str:
+    """
+    掩蔽敏感信息用于日志输出
+
+    示例:
+    - 'sk-xxxxxxxxxxxx1234' → 'sk-****1234'
+    - '' → '(未设置)'
+    """
+    if any(field in key.lower() for field in SENSITIVE_FIELDS):
+        if not value:
+            return '(未设置)'
+        return f"{str(value)[:4]}****{str(value)[-4:]}"
+    return str(value)
+```
+
+**M3 环境变量映射验证清单**:
+
+| 变量名 | 配置路径 | 必需 | 说明 |
+|--------|---------|------|------|
+| `BINANCE_API_KEY` | `binance.api_key` | ✅ | 主网 API |
+| `BINANCE_API_SECRET` | `binance.api_secret` | ✅ | 主网密钥 |
+| `BINANCE_TESTNET_API_KEY` | `binance.testnet_api_key` | ❌ | 测试网 |
+| `BINANCE_TESTNET_API_SECRET` | `binance.testnet_api_secret` | ❌ | 测试网 |
+| `DEEPSEEK_API_KEY` | `ai.deepseek.api_key` | ✅ | AI 服务 |
+| `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` | ❌ | 通知 |
+| `TELEGRAM_CHAT_ID` | `telegram.chat_id` | ❌ | 通知 |
+| `TEST_MODE` | `runtime.test_mode` | ❌ | 测试模式 |
+| `AUTO_CONFIRM` | `runtime.auto_confirm` | ❌ | 自动确认 |
+
+#### 5.6.3 Phase 0 → Phase 2 过渡验证
+
+Phase 0 修复了 main_live.py 的硬编码问题，Phase 2 将完全迁移到 ConfigManager。必须验证配置路径一致性：
+
+| 参数 | Phase 0 路径 | Phase 2 路径 | 验证 |
+|------|-------------|-------------|------|
+| `deepseek_temperature` | `deepseek_config.get('temperature')` | `config.get('ai', 'deepseek', 'temperature')` | ✅ 一致 |
+| `rsi_extreme_threshold_upper` | `risk_config.get('rsi_extreme_threshold_upper')` | `config.get('risk', 'rsi_extreme_threshold_upper')` | ✅ 一致 |
+| `rsi_extreme_threshold_lower` | `risk_config.get('rsi_extreme_threshold_lower')` | `config.get('risk', 'rsi_extreme_threshold_lower')` | ✅ 一致 |
+| `min_trade_amount` | `position_config.get('min_trade_amount')` | `config.get('position', 'min_trade_amount')` | ✅ 一致 |
+
+**验证脚本**:
+
+```bash
+# 验证 Phase 0 修复后配置值
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+python3 -c "
+import yaml
+with open('configs/strategy_config.yaml') as f:
+    cfg = yaml.safe_load(f)
+print('Phase 0 配置验证:')
+print(f'  temperature: {cfg.get(\"deepseek\", {}).get(\"temperature\")}')
+print(f'  rsi_upper: {cfg.get(\"risk\", {}).get(\"rsi_extreme_threshold_upper\")}')
+print(f'  rsi_lower: {cfg.get(\"risk\", {}).get(\"rsi_extreme_threshold_lower\")}')
+"
+```
+
+#### 5.6.4 Phase 3 循环导入处理
+
+**问题描述**:
+
+```
+trading_logic.py
+    ├── 导入 config_manager.py (获取配置)
+    │
+config_manager.py
+    ├── 导入 trading_logic.py (获取常量定义)  ← 循环！
+```
+
+**解决方案: 延迟导入 + 模块级缓存**
+
+```python
+# strategy/trading_logic.py
+
+# ❌ 错误: 顶层导入会触发循环
+# from utils.config_manager import get_config
+
+# ✅ 正确: 延迟导入
+_TRADING_LOGIC_CONFIG = None
+
+def _get_config():
+    """延迟导入并缓存配置"""
+    global _TRADING_LOGIC_CONFIG
+    if _TRADING_LOGIC_CONFIG is None:
+        # 仅在首次调用时导入
+        from utils.config_manager import get_config
+        config = get_config()
+        _TRADING_LOGIC_CONFIG = {
+            'min_notional_usdt': config.get('trading_logic', 'min_notional_usdt', default=100.0),
+            'min_sl_distance_pct': config.get('trading_logic', 'min_sl_distance_pct', default=0.01),
+            # ... 其他配置
+        }
+    return _TRADING_LOGIC_CONFIG
+
+# 提供兼容接口
+def get_min_notional_usdt():
+    return _get_config()['min_notional_usdt']
+```
+
+#### 5.6.5 Phase 4 依赖关系
+
+| 文件 | 依赖配置 | 来源 Phase | 影响说明 |
+|------|---------|-----------|---------|
+| `bar_persistence.py` | `retry_delay`, `max_retries` | Phase 1 | 文件操作重试 |
+| `oco_manager.py` | `socket_timeout` | Phase 1 | WebSocket 连接 |
+| `telegram_command_handler.py` | `startup_delay`, `max_retries` | Phase 1 | Telegram 轮询 |
+| `binance_account.py` | `api_timeout` | Phase 1 | API 请求超时 |
+| `deepseek_client.py` | `retry_delay`, `max_retries` | Phase 1 | AI API 重试 |
+
+**Phase 4 部分回滚方案**:
+
+如果某个文件迁移失败，可以单独回滚：
+
+```bash
+# 只回滚 oco_manager.py 的更改
+git checkout HEAD~1 -- utils/oco_manager.py
+
+# 保留其他文件的迁移
+```
+
+#### 5.6.6 关联影响检查清单
+
+在实施每个 Phase 前，完成以下检查：
+
+**Phase 1 实施前**:
+- [ ] 确认 Phase 0 已完成并测试通过
+- [ ] 确认 base.yaml 包含所有必需配置项
+- [ ] 确认 _mask_sensitive() 覆盖所有敏感字段
+
+**Phase 2 实施前**:
+- [ ] 确认 Phase 1 ConfigManager 加载正常
+- [ ] 验证配置路径映射 (5.6.3 表格)
+- [ ] 运行 `python3 diagnose.py --quick` 无报错
+
+**Phase 3 实施前**:
+- [ ] 确认 Phase 1 单例模式工作正常
+- [ ] 测试延迟导入无循环错误
+- [ ] 验证缓存机制 (`_TRADING_LOGIC_CONFIG` 只初始化一次)
+
+**Phase 4 实施前**:
+- [ ] 确认 Phase 1-3 全部完成
+- [ ] 列出所有 utils/*.py 文件的配置依赖
+- [ ] 准备单文件回滚脚本
+
+**Phase 5-6 实施前**:
+- [ ] 全量功能测试通过
+- [ ] 运行 `python3 diagnose.py` 全部检查通过
+- [ ] 更新 CLAUDE.md 和 README.md
 
 ---
 
