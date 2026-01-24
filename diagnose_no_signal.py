@@ -541,6 +541,279 @@ def check_configuration() -> Dict[str, Any]:
     return result
 
 # =============================================================================
+# 5.5 已知问题检查 (基于提交历史)
+# =============================================================================
+def check_known_issues_from_commits() -> Dict[str, Any]:
+    """
+    检查从 Patrick-code-Bot/nautilus_AItrader 克隆以来
+    所有提交中修复的已知问题是否正确应用
+
+    基于提交历史:
+    - cc67d89: 禁用 reconciliation (后在 1b7d15f 重新启用)
+    - 0d02da8: 修正 SL/TP 字段名匹配
+    - e522eaa: 修复 Risk Manager SL 距离过近
+    - a9a3655: 统一 MIN_SL_DISTANCE_PCT 为 1%
+    - c1afae7: 方案B - 移除 DeepSeek，改用 MultiAgent Judge
+    - fa738be: load_all=True
+    - ebdfccd: 统一 SL/TP 回退常量
+    """
+    print_section("5.5 已知问题检查 (基于提交历史)")
+
+    result = {
+        "issues": [],
+        "warnings": [],
+        "fixes_verified": [],
+    }
+
+    project_root = Path(__file__).parent
+
+    # =========================================================================
+    # 检查 1: main_live.py - reconciliation 和 load_all
+    # =========================================================================
+    print_info("检查 1: main_live.py 配置...")
+    main_live = project_root / "main_live.py"
+    if main_live.exists():
+        content = main_live.read_text()
+
+        # reconciliation=True (commit 1b7d15f)
+        if "reconciliation=True" in content:
+            print_ok("reconciliation=True ✓ (commit 1b7d15f)")
+            result['fixes_verified'].append("reconciliation=True")
+        elif "reconciliation=False" in content:
+            result['issues'].append("reconciliation=False (应为 True, 参考 commit 1b7d15f)")
+        else:
+            result['warnings'].append("未找到 reconciliation 设置")
+
+        # load_all=True (commit fa738be)
+        if "load_all=True" in content:
+            print_ok("load_all=True ✓ (commit fa738be)")
+            result['fixes_verified'].append("load_all=True")
+        elif "load_all=False" in content:
+            result['issues'].append("load_all=False (应为 True, 参考 commit fa738be)")
+        else:
+            result['warnings'].append("未找到 load_all 设置")
+
+    # =========================================================================
+    # 检查 2: SL/TP 字段名匹配 (commit 0d02da8)
+    # =========================================================================
+    print_info("检查 2: SL/TP 字段名匹配...")
+    strategy_file = project_root / "strategy" / "deepseek_strategy.py"
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+
+        # 应该使用 'stop_loss' 而不是 'stop_loss_multi'
+        if "stop_loss_multi" in content and "get('stop_loss_multi')" in content:
+            # 检查是否正确使用
+            if "get('stop_loss')" in content:
+                print_ok("SL/TP 字段名正确使用 'stop_loss' ✓ (commit 0d02da8)")
+                result['fixes_verified'].append("SL/TP field names")
+            else:
+                result['issues'].append("可能使用错误的 SL/TP 字段名 (stop_loss_multi vs stop_loss)")
+        elif "latest_signal_data.get('stop_loss')" in content:
+            print_ok("SL/TP 字段名正确 ✓")
+            result['fixes_verified'].append("SL/TP field names")
+
+        # 检查 MultiAgent 信号是否被正确使用
+        if "self.multi_agent.analyze" in content:
+            print_ok("使用 MultiAgent 架构 ✓ (commit c1afae7)")
+            result['fixes_verified'].append("MultiAgent architecture")
+
+            # 确认 process_signals 已被移除
+            if "process_signals(" in content:
+                result['warnings'].append("process_signals() 仍在使用 (方案B 应移除)")
+            else:
+                print_ok("process_signals() 已移除 ✓")
+
+    # =========================================================================
+    # 检查 3: MIN_SL_DISTANCE_PCT 一致性 (commit a9a3655)
+    # =========================================================================
+    print_info("检查 3: MIN_SL_DISTANCE_PCT 一致性...")
+
+    trading_logic = project_root / "strategy" / "trading_logic.py"
+    multi_agent = project_root / "agents" / "multi_agent_analyzer.py"
+
+    min_sl_values = {}
+
+    if trading_logic.exists():
+        content = trading_logic.read_text()
+        import re
+        match = re.search(r'MIN_SL_DISTANCE_PCT\s*=\s*([\d.]+)', content)
+        if match:
+            min_sl_values['trading_logic'] = float(match.group(1))
+
+    if multi_agent.exists():
+        content = multi_agent.read_text()
+
+        # 检查是否从 trading_logic 导入
+        if "from strategy.trading_logic import" in content and "MIN_SL_DISTANCE_PCT" in content:
+            print_ok("multi_agent_analyzer.py 从 trading_logic 导入 MIN_SL_DISTANCE_PCT ✓")
+            result['fixes_verified'].append("MIN_SL_DISTANCE_PCT import")
+        else:
+            # 检查是否有本地定义
+            match = re.search(r'MIN_SL_DISTANCE_PCT\s*=\s*([\d.]+)', content)
+            if match:
+                min_sl_values['multi_agent'] = float(match.group(1))
+
+    # 检查值是否一致
+    if len(min_sl_values) > 1:
+        values = list(min_sl_values.values())
+        if len(set(values)) > 1:
+            result['issues'].append(
+                f"MIN_SL_DISTANCE_PCT 不一致: {min_sl_values} (应统一为 0.01)"
+            )
+        else:
+            print_ok(f"MIN_SL_DISTANCE_PCT 一致: {values[0]} ✓")
+    elif 'trading_logic' in min_sl_values:
+        val = min_sl_values['trading_logic']
+        if val >= 0.01:
+            print_ok(f"MIN_SL_DISTANCE_PCT = {val} (≥1%) ✓")
+        else:
+            result['warnings'].append(f"MIN_SL_DISTANCE_PCT = {val} (建议 ≥0.01)")
+
+    # =========================================================================
+    # 检查 4: SL/TP 回退常量 (commit ebdfccd)
+    # =========================================================================
+    print_info("检查 4: SL/TP 回退常量...")
+
+    if trading_logic.exists():
+        content = trading_logic.read_text()
+
+        constants_found = []
+        for const in ['DEFAULT_SL_PCT', 'DEFAULT_TP_PCT_BUY', 'DEFAULT_TP_PCT_SELL']:
+            if const in content:
+                constants_found.append(const)
+
+        if len(constants_found) == 3:
+            print_ok("SL/TP 回退常量已定义 ✓ (commit ebdfccd)")
+            result['fixes_verified'].append("SL/TP fallback constants")
+        else:
+            missing = set(['DEFAULT_SL_PCT', 'DEFAULT_TP_PCT_BUY', 'DEFAULT_TP_PCT_SELL']) - set(constants_found)
+            result['warnings'].append(f"缺少 SL/TP 回退常量: {missing}")
+
+    # =========================================================================
+    # 检查 5: Risk Manager 提示词 (commit e522eaa)
+    # =========================================================================
+    print_info("检查 5: Risk Manager SL 距离...")
+
+    if multi_agent.exists():
+        content = multi_agent.read_text()
+
+        # 检查 Risk Manager 是否有 SL 距离验证
+        if "validate" in content.lower() and "sl" in content.lower():
+            print_ok("Risk Manager 包含 SL 验证逻辑 ✓")
+
+        # 检查是否使用共享验证函数
+        if "validate_multiagent_sltp" in content:
+            print_ok("使用共享 validate_multiagent_sltp 函数 ✓")
+            result['fixes_verified'].append("shared SL/TP validation")
+
+    # =========================================================================
+    # 检查 6: 方案B 架构完整性 (commit c1afae7)
+    # =========================================================================
+    print_info("检查 6: 方案B (TradingAgents) 架构完整性...")
+
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+
+        checks = {
+            "Bull/Bear 辩论": "Bull" in content and "Bear" in content,
+            "Judge 决策": "judge" in content.lower() or "Judge" in content,
+            "Risk 评估": "risk" in content.lower(),
+            "_execute_trade 调用": "_execute_trade(signal_data" in content,
+        }
+
+        for check_name, passed in checks.items():
+            if passed:
+                print_ok(f"  {check_name} ✓")
+            else:
+                result['warnings'].append(f"方案B: {check_name} 可能缺失")
+
+    # =========================================================================
+    # 检查 7: Bracket Order 使用 (commit 7a4a68b, f45ad73)
+    # =========================================================================
+    print_info("检查 7: Bracket Order 使用...")
+
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+
+        if "_submit_bracket_order" in content:
+            print_ok("使用 _submit_bracket_order 提交订单 ✓")
+            result['fixes_verified'].append("bracket order")
+
+            # 检查是否在开仓时使用
+            if "_open_new_position" in content:
+                # 检查 _open_new_position 是否调用 _submit_bracket_order
+                import re
+                open_pos_match = re.search(
+                    r'def _open_new_position.*?(?=\n    def |\nclass |\Z)',
+                    content,
+                    re.DOTALL
+                )
+                if open_pos_match and "_submit_bracket_order" in open_pos_match.group():
+                    print_ok("_open_new_position 使用 bracket order ✓")
+                else:
+                    result['warnings'].append("_open_new_position 可能未使用 bracket order")
+        else:
+            result['warnings'].append("未找到 _submit_bracket_order 方法")
+
+    # =========================================================================
+    # 检查 8: Telegram Webhook 冲突修复 (commit 639f667)
+    # =========================================================================
+    print_info("检查 8: Telegram Webhook 处理...")
+
+    telegram_handler = project_root / "utils" / "telegram_command_handler.py"
+    if telegram_handler.exists():
+        content = telegram_handler.read_text()
+
+        if "delete_webhook" in content:
+            print_ok("Telegram webhook 删除逻辑存在 ✓ (commit 639f667)")
+            result['fixes_verified'].append("telegram webhook cleanup")
+        else:
+            result['warnings'].append("未找到 Telegram webhook 删除逻辑")
+
+    # =========================================================================
+    # 检查 9: 线程安全 (commit 8cecd6e)
+    # =========================================================================
+    print_info("检查 9: Rust 指标线程安全...")
+
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+
+        if "_cached_current_price" in content:
+            print_ok("使用 _cached_current_price 避免跨线程访问 ✓ (commit 8cecd6e)")
+            result['fixes_verified'].append("thread safety")
+        else:
+            result['warnings'].append("未找到 _cached_current_price (线程安全)")
+
+        if "_state_lock" in content:
+            print_ok("使用 _state_lock 线程锁 ✓")
+        else:
+            result['warnings'].append("未找到 _state_lock (线程锁)")
+
+    # =========================================================================
+    # 总结
+    # =========================================================================
+    print("\n  " + "-"*50)
+    print(f"  已验证修复: {len(result['fixes_verified'])}")
+    for fix in result['fixes_verified']:
+        print(f"    ✅ {fix}")
+
+    if result['issues']:
+        print_error(f"\n  发现 {len(result['issues'])} 个严重问题:")
+        for issue in result['issues']:
+            print(f"    ❌ {issue}")
+
+    if result['warnings']:
+        print_warn(f"\n  发现 {len(result['warnings'])} 个警告:")
+        for warn in result['warnings']:
+            print(f"    ⚠️ {warn}")
+
+    if not result['issues'] and not result['warnings']:
+        print_ok("\n  所有已知问题修复均已正确应用!")
+
+    return result
+
+# =============================================================================
 # 6. Timer 触发检查
 # =============================================================================
 def check_timer_trigger() -> Dict[str, Any]:
@@ -766,6 +1039,9 @@ def main():
     # 5. 配置检查
     all_results['config'] = check_configuration()
 
+    # 5.5 已知问题检查 (基于提交历史)
+    all_results['known_issues'] = check_known_issues_from_commits()
+
     # 6. Timer 检查
     all_results['timer'] = check_timer_trigger()
 
@@ -807,6 +1083,12 @@ def main():
     # 检查配置
     if all_results.get('config', {}).get('issues'):
         issues.extend(all_results['config']['issues'])
+
+    # 检查已知问题 (提交历史)
+    if all_results.get('known_issues', {}).get('issues'):
+        issues.extend(all_results['known_issues']['issues'])
+    if all_results.get('known_issues', {}).get('warnings'):
+        warnings.extend(all_results['known_issues']['warnings'])
 
     # 检查执行
     if 'execution' in all_results:
