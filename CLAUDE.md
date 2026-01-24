@@ -83,6 +83,56 @@ sudo journalctl -u nautilus-trader -f --no-hostname
 python3 diagnose.py --update --restart
 ```
 
+### 服务器代码同步与实时诊断
+
+完整流程 (强制同步远程代码 + 清除缓存 + 验证版本 + 运行诊断):
+
+```bash
+# 1. 进入项目目录
+cd /home/linuxuser/nautilus_AItrader
+
+# 2. 停止服务 (避免文件锁定)
+sudo systemctl stop nautilus-trader
+
+# 3. 强制同步远程代码 + 清除缓存
+git fetch origin main
+git reset --hard origin/main
+find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null
+find . -type f -name "*.pyc" -delete 2>/dev/null
+
+# 4. 显示最近提交记录 (验证版本)
+echo ""
+echo "========== 最近 5 次提交 =========="
+git log --oneline -5
+echo ""
+echo "========== 当前 HEAD =========="
+git rev-parse HEAD
+echo ""
+
+# 5. 激活虚拟环境
+source venv/bin/activate
+
+# 6. 运行实时诊断
+python3 diagnose_realtime.py
+
+# 7. (可选) 重启服务
+# sudo systemctl start nautilus-trader
+```
+
+**一行命令版本** (复制粘贴即用):
+
+```bash
+cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && git fetch origin main && git reset --hard origin/main && find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null && echo "=== 最近提交 ===" && git log --oneline -5 && source venv/bin/activate && python3 diagnose_realtime.py
+```
+
+| 步骤 | 命令 | 作用 |
+|------|------|------|
+| 停止服务 | `systemctl stop` | 避免运行中的进程锁定文件 |
+| 强制同步 | `git reset --hard origin/main` | 丢弃本地修改，完全同步远程 |
+| 清除缓存 | `find ... __pycache__` | 删除 Python 编译缓存，确保使用最新代码 |
+| 显示提交 | `git log --oneline -5` | 核对 commit hash 确认版本 |
+| 实时诊断 | `diagnose_realtime.py` | 调用真实 API，验证完整数据流 |
+
 ## systemd 服务配置
 
 ```ini
