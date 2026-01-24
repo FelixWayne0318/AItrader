@@ -61,11 +61,7 @@ strategy:
     rsi_extreme_threshold_lower: 30  # Raised from 25 for earlier oversold detection
     rsi_extreme_multiplier: 0.7
 
-    # Multi-Agent 系统配置
-    # 设为 false 可禁用 MultiAgent，只使用 DeepSeek (与参考仓库一致，更简单)
-    enable_multi_agent: false  # ⚠️ 临时禁用以排查问题
-
-    # Multi-Agent 分歧处理 (Divergence Handling) - 仅当 enable_multi_agent=true 时生效
+    # Multi-Agent 分歧处理 (Divergence Handling)
     # 当 DeepSeek 和 MultiAgent 信号相反时 (BUY vs SELL) 的处理方式
     skip_on_divergence: true           # 完全跳过分歧 (保守模式的后备)
     use_confidence_fusion: true        # 启用加权信心融合 (推荐)

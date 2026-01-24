@@ -215,10 +215,7 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
         rsi_extreme_threshold_lower=25.0,
         rsi_extreme_multiplier=0.7,
 
-        # Multi-Agent System
-        enable_multi_agent=strategy_yaml.get('risk', {}).get('enable_multi_agent', True),
-
-        # Multi-Agent Divergence Handling (only applies when enable_multi_agent=True)
+        # Multi-Agent Divergence Handling
         skip_on_divergence=strategy_yaml.get('risk', {}).get('skip_on_divergence', True),
         use_confidence_fusion=strategy_yaml.get('risk', {}).get('use_confidence_fusion', True),
 
