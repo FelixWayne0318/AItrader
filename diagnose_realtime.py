@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v8.0 (TradingAgents 架构)
+实盘信号诊断脚本 v9.0 (TradingAgents 架构)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -9,6 +9,7 @@
 4. 检查 Binance 真实持仓
 5. 模拟完整的 _execute_trade 流程（包括完整的 SL/TP 验证逻辑）
 6. 输出实盘环境下会产生的真实结果
+7. 检查可能导致不能下单的关键配置 (v9.0 新增)
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -18,6 +19,10 @@
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
 历史更新:
+v9.0:
+- 添加关键配置检查 (load_all, reconciliation, SL/TP 字段名)
+- 检测可能导致不能下单的配置问题
+
 v8.0:
 - 添加完整的 Bracket Order SL/TP 验证逻辑（与实盘100%一致）
 - 添加 --summary 选项用于快速诊断
@@ -53,7 +58,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v8.0')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v9.0')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 args = parser.parse_args()
@@ -74,122 +79,136 @@ def print_wrapped(text: str, indent: str = "    ", width: int = 80) -> None:
     for i in range(0, len(text), width):
         print(f"{indent}{text[i:i+width]}")
 
-def validate_multiagent_sltp(
-    side: str,  # 'BUY' or 'SELL'
-    multi_sl: Optional[float],
-    multi_tp: Optional[float],
-    entry_price: float
-) -> Tuple[bool, Optional[float], Optional[float], str]:
+
+def check_critical_config() -> Tuple[list, list]:
     """
-    验证 MultiAgent SL/TP 是否有效（与 deepseek_strategy.py:1276-1325 完全一致）
+    检查可能导致不能下单的关键配置 (v9.0 新增)
+
+    检查项:
+    1. main_live.py: load_all=True (instrument 初始化)
+    2. main_live.py: reconciliation=True (仓位对账)
+    3. deepseek_strategy.py: SL/TP 字段名正确使用
 
     Returns:
-        (is_valid, final_sl, final_tp, reason)
+        (issues, warnings): 问题列表和警告列表
     """
-    MIN_SL_DISTANCE_PCT = 0.001  # 0.1% minimum distance
-    MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum distance
+    import re
 
-    if not multi_sl or not multi_tp or multi_sl <= 0 or multi_tp <= 0:
-        return False, None, None, "MultiAgent SL/TP not provided or invalid"
+    issues = []  # 严重问题
+    warnings = []  # 警告
 
-    sl_distance = abs(multi_sl - entry_price) / entry_price
-    tp_distance = abs(multi_tp - entry_price) / entry_price
+    project_root = Path(__file__).parent
 
-    if side == 'BUY':
-        # BUY: SL must be < entry, TP must be > entry
-        if multi_sl >= entry_price:
-            return False, None, None, f"BUY SL (${multi_sl:,.2f}) must be < entry (${entry_price:,.2f})"
-        if multi_tp <= entry_price:
-            return False, None, None, f"BUY TP (${multi_tp:,.2f}) must be > entry (${entry_price:,.2f})"
+    # ==========================================================================
+    # 检查 1: main_live.py 中的 load_all 配置
+    # ==========================================================================
+    main_live_path = project_root / "main_live.py"
+    if main_live_path.exists():
+        with open(main_live_path, 'r', encoding='utf-8') as f:
+            main_live_content = f.read()
 
-        # Check minimum distances
-        if sl_distance < MIN_SL_DISTANCE_PCT:
-            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%)"
-        if tp_distance < MIN_TP_DISTANCE_PCT:
-            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%)"
+        # 检查 load_all 设置
+        # 匹配 load_all=True 或 load_all=False
+        load_all_matches = re.findall(r'load_all\s*=\s*(True|False)', main_live_content)
 
-        return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
-
-    else:  # SELL
-        # SELL: SL must be > entry, TP must be < entry
-        if multi_sl <= entry_price:
-            return False, None, None, f"SELL SL (${multi_sl:,.2f}) must be > entry (${entry_price:,.2f})"
-        if multi_tp >= entry_price:
-            return False, None, None, f"SELL TP (${multi_tp:,.2f}) must be >= entry (${entry_price:,.2f})"
-
-        # Check minimum distances
-        if sl_distance < MIN_SL_DISTANCE_PCT:
-            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%)"
-        if tp_distance < MIN_TP_DISTANCE_PCT:
-            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%)"
-
-        return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
-
-def calculate_technical_sltp(
-    side: str,
-    entry_price: float,
-    support: float,
-    resistance: float,
-    confidence: str,
-    use_support_resistance: bool = True,
-    sl_buffer_pct: float = 0.001
-) -> Tuple[float, float, str]:
-    """
-    计算基于技术分析的 SL/TP（与 deepseek_strategy.py:1332-1388 完全一致）
-
-    Returns:
-        (stop_loss_price, take_profit_price, calculation_method)
-    """
-    PRICE_EPSILON = max(entry_price * 1e-8, 1e-8)
-
-    # TP 配置（与 deepseek_strategy.py 一致）
-    tp_pct_config = {
-        'HIGH': 0.03,    # 3%
-        'MEDIUM': 0.02,  # 2%
-        'LOW': 0.01,     # 1%
-    }
-
-    if side == 'BUY':
-        # BUY: Stop loss below entry
-        default_sl = entry_price * 0.98  # Default 2% below
-
-        if use_support_resistance and support > 0:
-            potential_sl = support * (1 - sl_buffer_pct)
-            if potential_sl < entry_price - PRICE_EPSILON:
-                stop_loss_price = potential_sl
-                method = f"Support-based SL (${support:,.2f} - buffer)"
-            else:
-                stop_loss_price = default_sl
-                method = f"Default 2% SL (support ${support:,.2f} > entry)"
+        if not load_all_matches:
+            warnings.append("main_live.py: 未找到 load_all 配置")
+        elif 'False' in load_all_matches:
+            issues.append(
+                "❌ main_live.py: load_all=False\n"
+                "   → 可能导致 instrument 初始化不完整，订单无法执行\n"
+                "   → 修复: 改为 load_all=True"
+            )
         else:
-            stop_loss_price = default_sl
-            method = "Default 2% SL"
+            # 所有都是 True
+            pass  # 正常
 
-        # TP
-        tp_pct = tp_pct_config.get(confidence, 0.02)
-        take_profit_price = entry_price * (1 + tp_pct)
+        # 检查 reconciliation 设置
+        reconciliation_matches = re.findall(r'reconciliation\s*=\s*(True|False)', main_live_content)
 
-    else:  # SELL
-        # SELL: Stop loss above entry
-        default_sl = entry_price * 1.02  # Default 2% above
+        if not reconciliation_matches:
+            warnings.append("main_live.py: 未找到 reconciliation 配置")
+        elif 'False' in reconciliation_matches:
+            issues.append(
+                "❌ main_live.py: reconciliation=False\n"
+                "   → 仓位不同步，可能导致订单管理异常\n"
+                "   → 修复: 改为 reconciliation=True"
+            )
+    else:
+        issues.append("❌ main_live.py 文件不存在!")
 
-        if use_support_resistance and resistance > 0:
-            potential_sl = resistance * (1 + sl_buffer_pct)
-            if potential_sl > entry_price + PRICE_EPSILON:
-                stop_loss_price = potential_sl
-                method = f"Resistance-based SL (${resistance:,.2f} + buffer)"
-            else:
-                stop_loss_price = default_sl
-                method = f"Default 2% SL (resistance ${resistance:,.2f} < entry)"
-        else:
-            stop_loss_price = default_sl
-            method = "Default 2% SL"
+    # ==========================================================================
+    # 检查 2: deepseek_strategy.py 中的 SL/TP 字段名使用
+    # ==========================================================================
+    strategy_path = project_root / "strategy" / "deepseek_strategy.py"
+    if strategy_path.exists():
+        with open(strategy_path, 'r', encoding='utf-8') as f:
+            strategy_content = f.read()
 
-        # TP
-        tp_pct = tp_pct_config.get(confidence, 0.02)
-        take_profit_price = entry_price * (1 - tp_pct)
+        # 检查是否使用了错误的字段名 stop_loss_multi / take_profit_multi
+        if "stop_loss_multi" in strategy_content:
+            issues.append(
+                "❌ deepseek_strategy.py: 使用了 'stop_loss_multi' 字段名\n"
+                "   → MultiAgent 返回的字段名是 'stop_loss'\n"
+                "   → 这会导致 SL 值永远为 None\n"
+                "   → 修复: 改为 .get('stop_loss')"
+            )
 
-    return stop_loss_price, take_profit_price, method
+        if "take_profit_multi" in strategy_content:
+            issues.append(
+                "❌ deepseek_strategy.py: 使用了 'take_profit_multi' 字段名\n"
+                "   → MultiAgent 返回的字段名是 'take_profit'\n"
+                "   → 这会导致 TP 值永远为 None\n"
+                "   → 修复: 改为 .get('take_profit')"
+            )
+
+        # 检查是否正确使用了字段名
+        correct_sl = re.search(r"\.get\(['\"]stop_loss['\"]\)", strategy_content)
+        correct_tp = re.search(r"\.get\(['\"]take_profit['\"]\)", strategy_content)
+
+        if not correct_sl:
+            warnings.append("deepseek_strategy.py: 未找到 .get('stop_loss') 调用")
+        if not correct_tp:
+            warnings.append("deepseek_strategy.py: 未找到 .get('take_profit') 调用")
+    else:
+        warnings.append("deepseek_strategy.py 文件不存在")
+
+    # ==========================================================================
+    # 检查 3: multi_agent_analyzer.py 中的 SL 距离验证
+    # ==========================================================================
+    analyzer_path = project_root / "agents" / "multi_agent_analyzer.py"
+    if analyzer_path.exists():
+        with open(analyzer_path, 'r', encoding='utf-8') as f:
+            analyzer_content = f.read()
+
+        # 检查是否有 SL 距离验证
+        if "MIN_SL_DISTANCE_PCT" not in analyzer_content:
+            warnings.append(
+                "multi_agent_analyzer.py: 未找到 MIN_SL_DISTANCE_PCT\n"
+                "   → Risk Manager 可能允许 SL 距离过近"
+            )
+
+        # 检查 SL 距离阈值
+        min_sl_match = re.search(r'MIN_SL_DISTANCE_PCT\s*=\s*([\d.]+)', analyzer_content)
+        if min_sl_match:
+            min_sl_pct = float(min_sl_match.group(1))
+            if min_sl_pct < 0.01:  # 小于 1%
+                warnings.append(
+                    f"multi_agent_analyzer.py: MIN_SL_DISTANCE_PCT={min_sl_pct}\n"
+                    f"   → 建议至少设置为 0.01 (1%)"
+                )
+
+    # ==========================================================================
+    # 检查 4: patches 是否正确应用
+    # ==========================================================================
+    patches_init = project_root / "patches" / "__init__.py"
+    binance_enums = project_root / "patches" / "binance_enums.py"
+
+    if not binance_enums.exists():
+        warnings.append("patches/binance_enums.py 不存在 - 可能缺少枚举兼容性补丁")
+
+    return issues, warnings
+
 
 # =============================================================================
 # 关键: 使用与 main_live.py 完全相同的初始化流程
@@ -218,17 +237,59 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v8.0 (TradingAgents 架构){mode_str}")
+print(f"  实盘信号诊断工具 v9.0 (TradingAgents 架构){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
 print()
 
 # =============================================================================
+# 0. 关键配置检查 (v9.0 新增 - 检测可能导致不能下单的配置问题)
+# =============================================================================
+print("[0/10] 关键配置检查 (检测可能导致不能下单的问题)...")
+print("-" * 70)
+
+config_issues, config_warnings = check_critical_config()
+
+if config_issues:
+    print()
+    print("  🚨 发现严重问题 (可能导致不能下单):")
+    print()
+    for issue in config_issues:
+        for line in issue.split('\n'):
+            print(f"  {line}")
+        print()
+
+if config_warnings:
+    print("  ⚠️ 警告:")
+    for warning in config_warnings:
+        for line in warning.split('\n'):
+            print(f"     {line}")
+    print()
+
+if not config_issues and not config_warnings:
+    print("  ✅ load_all=True")
+    print("  ✅ reconciliation=True")
+    print("  ✅ SL/TP 字段名正确")
+    print("  ✅ 所有关键配置检查通过")
+
+if config_issues:
+    print("  " + "=" * 66)
+    print("  ⛔ 发现严重配置问题! 请先修复上述问题再运行实盘交易。")
+    print("  " + "=" * 66)
+    print()
+    response = input("  是否继续诊断? (y/N): ")
+    if response.lower() != 'y':
+        print("  退出诊断。")
+        sys.exit(1)
+
+print()
+
+# =============================================================================
 # 1. 从 main_live.py 导入并获取真实配置
 # =============================================================================
 if not SUMMARY_MODE:
-    print("[1/9] 从 main_live.py 加载真实配置...")
+    print("[1/10] 从 main_live.py 加载真实配置...")
 
 try:
     from main_live import get_strategy_config, load_yaml_config
@@ -272,7 +333,7 @@ print()
 # =============================================================================
 # 2. 获取市场数据 (与实盘相同的数据源)
 # =============================================================================
-print("[2/9] 获取市场数据 (Binance Futures)...")
+print("[2/10] 获取市场数据 (Binance Futures)...")
 
 import requests
 
@@ -326,7 +387,7 @@ print()
 # =============================================================================
 # 3. 使用真实配置初始化 TechnicalIndicatorManager
 # =============================================================================
-print("[3/9] 初始化 TechnicalIndicatorManager (使用实盘配置)...")
+print("[3/10] 初始化 TechnicalIndicatorManager (使用实盘配置)...")
 
 try:
     from indicators.technical_manager import TechnicalIndicatorManager
@@ -389,7 +450,7 @@ print()
 # =============================================================================
 # 3.5. 检查 Binance 真实持仓 (与实盘一致)
 # =============================================================================
-print("[3.5/9] 检查 Binance 真实持仓...")
+print("[3.5/10] 检查 Binance 真实持仓...")
 print("-" * 70)
 
 current_position = None  # 默认无持仓
@@ -441,7 +502,7 @@ print()
 # =============================================================================
 # 4. 获取技术数据 (与 on_timer 相同)
 # =============================================================================
-print("[4/9] 获取技术数据 (模拟 on_timer 流程)...")
+print("[4/10] 获取技术数据 (模拟 on_timer 流程)...")
 
 try:
     technical_data = indicator_manager.get_technical_data(current_price)
@@ -480,7 +541,7 @@ print()
 # =============================================================================
 # 5. 初始化并获取情绪数据 (使用实盘配置)
 # =============================================================================
-print("[5/9] 获取情绪数据 (使用实盘配置)...")
+print("[5/10] 获取情绪数据 (使用实盘配置)...")
 
 try:
     from utils.sentiment_client import SentimentDataFetcher
@@ -530,7 +591,7 @@ print()
 # =============================================================================
 # 6. 构建价格数据 (与 on_timer 相同结构)
 # =============================================================================
-print("[6/9] 构建价格数据...")
+print("[6/10] 构建价格数据...")
 
 kline_data = indicator_manager.get_kline_data(count=10)
 
@@ -563,7 +624,7 @@ print()
 # =============================================================================
 # 7. MultiAgent 层级决策 (TradingAgents 架构 - 使用实盘配置)
 # =============================================================================
-print("[7/9] MultiAgent 层级决策 (TradingAgents 架构)...")
+print("[7/10] MultiAgent 层级决策 (TradingAgents 架构)...")
 print("-" * 70)
 print("  📋 决策流程:")
 print("     Phase 1: Bull/Bear Debate (辩论)")
@@ -646,13 +707,15 @@ print()
 # =============================================================================
 # 8. 交易决策 (TradingAgents - Judge 决策即最终决策)
 # =============================================================================
-print("[8/9] 交易决策 (TradingAgents - Judge 决策即最终决策)...")
+print("[8/10] 交易决策 (TradingAgents - Judge 决策即最终决策)...")
 print("-" * 70)
 
-# 导入共享模块 (只需要 check_confidence_threshold 和 calculate_position_size)
+# 导入共享模块 (与实盘使用完全相同的函数)
 from strategy.trading_logic import (
     check_confidence_threshold,
     calculate_position_size,
+    validate_multiagent_sltp,
+    calculate_technical_sltp,
     CONFIDENCE_LEVELS,
 )
 
