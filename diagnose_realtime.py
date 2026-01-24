@@ -202,7 +202,11 @@ def check_critical_config() -> Tuple[list, list]:
         with open(analyzer_path, 'r', encoding='utf-8') as f:
             analyzer_content = f.read()
 
-        if "from strategy.trading_logic import MIN_SL_DISTANCE_PCT" not in analyzer_content:
+        # 支持单行和多行导入格式
+        has_trading_logic_import = "from strategy.trading_logic import" in analyzer_content
+        has_min_sl_constant = "MIN_SL_DISTANCE_PCT" in analyzer_content
+
+        if not (has_trading_logic_import and has_min_sl_constant):
             warnings.append(
                 "multi_agent_analyzer.py: 未从 trading_logic 导入 MIN_SL_DISTANCE_PCT\n"
                 "   → 可能导致 SL 验证不一致"
