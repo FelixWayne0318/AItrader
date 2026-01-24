@@ -7,9 +7,11 @@ This module contains core trading logic functions that are used by both:
 
 This ensures 100% consistency between diagnostic and live trading behavior.
 
-层级决策架构 (Hierarchical Decision Architecture) 更新 (v6.0):
-- check_confidence_threshold() - 仍在使用
-- calculate_position_size() - 仍在使用
+当前使用的函数 (v9.0):
+- check_confidence_threshold() - 信心阈值检查
+- calculate_position_size() - 仓位计算
+- validate_multiagent_sltp() - MultiAgent SL/TP 验证 (v9.0 新增)
+- calculate_technical_sltp() - 技术分析 SL/TP 计算 (v9.0 新增)
 
 以下函数已被标记为 LEGACY (不再使用):
 - process_signals() - 层级架构使用Judge决策，无需信号合并
@@ -356,6 +358,178 @@ def calculate_position_size(
     }
 
     return btc_quantity, details
+
+
+# =============================================================================
+# SL/TP VALIDATION FUNCTIONS (v9.0)
+# Used by both deepseek_strategy.py and diagnose_realtime.py
+# =============================================================================
+
+# SL/TP validation constants
+MIN_SL_DISTANCE_PCT = 0.001  # 0.1% minimum SL distance
+MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum TP distance
+
+# TP percentage configuration by confidence level
+TP_PCT_CONFIG = {
+    'HIGH': 0.03,    # 3%
+    'MEDIUM': 0.02,  # 2%
+    'LOW': 0.01,     # 1%
+}
+
+
+def validate_multiagent_sltp(
+    side: str,
+    multi_sl: Optional[float],
+    multi_tp: Optional[float],
+    entry_price: float,
+) -> Tuple[bool, Optional[float], Optional[float], str]:
+    """
+    Validate MultiAgent SL/TP values.
+
+    This function validates that SL/TP values from MultiAgent are correct:
+    - BUY: SL must be below entry, TP must be above entry
+    - SELL: SL must be above entry, TP must be below entry
+    - Both must have minimum distance from entry
+
+    Parameters
+    ----------
+    side : str
+        Trade side ('BUY' or 'SELL')
+    multi_sl : float, optional
+        Stop loss price from MultiAgent
+    multi_tp : float, optional
+        Take profit price from MultiAgent
+    entry_price : float
+        Entry price
+
+    Returns
+    -------
+    Tuple[bool, Optional[float], Optional[float], str]
+        (is_valid, final_sl, final_tp, reason)
+    """
+    if not multi_sl or not multi_tp or multi_sl <= 0 or multi_tp <= 0:
+        return False, None, None, "MultiAgent SL/TP not provided or invalid"
+
+    sl_distance = abs(multi_sl - entry_price) / entry_price
+    tp_distance = abs(multi_tp - entry_price) / entry_price
+
+    if side == 'BUY':
+        # BUY: SL must be < entry, TP must be > entry
+        if multi_sl >= entry_price:
+            return False, None, None, f"BUY SL (${multi_sl:,.2f}) must be < entry (${entry_price:,.2f})"
+        if multi_tp <= entry_price:
+            return False, None, None, f"BUY TP (${multi_tp:,.2f}) must be > entry (${entry_price:,.2f})"
+
+        # Check minimum distances
+        if sl_distance < MIN_SL_DISTANCE_PCT:
+            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%)"
+        if tp_distance < MIN_TP_DISTANCE_PCT:
+            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%)"
+
+        return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
+
+    else:  # SELL
+        # SELL: SL must be > entry, TP must be < entry
+        if multi_sl <= entry_price:
+            return False, None, None, f"SELL SL (${multi_sl:,.2f}) must be > entry (${entry_price:,.2f})"
+        if multi_tp >= entry_price:
+            return False, None, None, f"SELL TP (${multi_tp:,.2f}) must be < entry (${entry_price:,.2f})"
+
+        # Check minimum distances
+        if sl_distance < MIN_SL_DISTANCE_PCT:
+            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%)"
+        if tp_distance < MIN_TP_DISTANCE_PCT:
+            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%)"
+
+        return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
+
+
+def calculate_technical_sltp(
+    side: str,
+    entry_price: float,
+    support: float,
+    resistance: float,
+    confidence: str,
+    use_support_resistance: bool = True,
+    sl_buffer_pct: float = 0.001,
+) -> Tuple[float, float, str]:
+    """
+    Calculate SL/TP based on technical analysis.
+
+    This function calculates stop loss and take profit prices using:
+    - Support/resistance levels (if available and valid)
+    - Default percentage-based fallback
+
+    Parameters
+    ----------
+    side : str
+        Trade side ('BUY' or 'SELL')
+    entry_price : float
+        Entry price
+    support : float
+        Support level price
+    resistance : float
+        Resistance level price
+    confidence : str
+        Signal confidence ('HIGH', 'MEDIUM', 'LOW')
+    use_support_resistance : bool
+        Whether to use support/resistance levels
+    sl_buffer_pct : float
+        Buffer percentage to add to support/resistance
+
+    Returns
+    -------
+    Tuple[float, float, str]
+        (stop_loss_price, take_profit_price, calculation_method)
+    """
+    PRICE_EPSILON = max(entry_price * 1e-8, 1e-8)
+
+    if side == 'BUY':
+        # BUY: Stop loss below entry
+        default_sl = entry_price * 0.98  # Default 2% below
+
+        if use_support_resistance and support > 0:
+            potential_sl = support * (1 - sl_buffer_pct)
+            if potential_sl < entry_price - PRICE_EPSILON:
+                stop_loss_price = potential_sl
+                method = f"Support-based SL (${support:,.2f} - buffer)"
+            else:
+                stop_loss_price = default_sl
+                method = f"Default 2% SL (support ${support:,.2f} >= entry)"
+        else:
+            stop_loss_price = default_sl
+            method = "Default 2% SL"
+
+        # TP
+        tp_pct = TP_PCT_CONFIG.get(confidence, 0.02)
+        take_profit_price = entry_price * (1 + tp_pct)
+
+    else:  # SELL
+        # SELL: Stop loss above entry
+        default_sl = entry_price * 1.02  # Default 2% above
+
+        if use_support_resistance and resistance > 0:
+            potential_sl = resistance * (1 + sl_buffer_pct)
+            if potential_sl > entry_price + PRICE_EPSILON:
+                stop_loss_price = potential_sl
+                method = f"Resistance-based SL (${resistance:,.2f} + buffer)"
+            else:
+                stop_loss_price = default_sl
+                method = f"Default 2% SL (resistance ${resistance:,.2f} <= entry)"
+        else:
+            stop_loss_price = default_sl
+            method = "Default 2% SL"
+
+        # TP
+        tp_pct = TP_PCT_CONFIG.get(confidence, 0.02)
+        take_profit_price = entry_price * (1 - tp_pct)
+
+    return stop_loss_price, take_profit_price, method
+
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
 
 
 def create_hold_signal(reason: str) -> Dict[str, Any]:

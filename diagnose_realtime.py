@@ -79,123 +79,6 @@ def print_wrapped(text: str, indent: str = "    ", width: int = 80) -> None:
     for i in range(0, len(text), width):
         print(f"{indent}{text[i:i+width]}")
 
-def validate_multiagent_sltp(
-    side: str,  # 'BUY' or 'SELL'
-    multi_sl: Optional[float],
-    multi_tp: Optional[float],
-    entry_price: float
-) -> Tuple[bool, Optional[float], Optional[float], str]:
-    """
-    验证 MultiAgent SL/TP 是否有效（与 deepseek_strategy.py:1276-1325 完全一致）
-
-    Returns:
-        (is_valid, final_sl, final_tp, reason)
-    """
-    MIN_SL_DISTANCE_PCT = 0.001  # 0.1% minimum distance
-    MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum distance
-
-    if not multi_sl or not multi_tp or multi_sl <= 0 or multi_tp <= 0:
-        return False, None, None, "MultiAgent SL/TP not provided or invalid"
-
-    sl_distance = abs(multi_sl - entry_price) / entry_price
-    tp_distance = abs(multi_tp - entry_price) / entry_price
-
-    if side == 'BUY':
-        # BUY: SL must be < entry, TP must be > entry
-        if multi_sl >= entry_price:
-            return False, None, None, f"BUY SL (${multi_sl:,.2f}) must be < entry (${entry_price:,.2f})"
-        if multi_tp <= entry_price:
-            return False, None, None, f"BUY TP (${multi_tp:,.2f}) must be > entry (${entry_price:,.2f})"
-
-        # Check minimum distances
-        if sl_distance < MIN_SL_DISTANCE_PCT:
-            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%)"
-        if tp_distance < MIN_TP_DISTANCE_PCT:
-            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%)"
-
-        return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
-
-    else:  # SELL
-        # SELL: SL must be > entry, TP must be < entry
-        if multi_sl <= entry_price:
-            return False, None, None, f"SELL SL (${multi_sl:,.2f}) must be > entry (${entry_price:,.2f})"
-        if multi_tp >= entry_price:
-            return False, None, None, f"SELL TP (${multi_tp:,.2f}) must be >= entry (${entry_price:,.2f})"
-
-        # Check minimum distances
-        if sl_distance < MIN_SL_DISTANCE_PCT:
-            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%)"
-        if tp_distance < MIN_TP_DISTANCE_PCT:
-            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%)"
-
-        return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
-
-def calculate_technical_sltp(
-    side: str,
-    entry_price: float,
-    support: float,
-    resistance: float,
-    confidence: str,
-    use_support_resistance: bool = True,
-    sl_buffer_pct: float = 0.001
-) -> Tuple[float, float, str]:
-    """
-    计算基于技术分析的 SL/TP（与 deepseek_strategy.py:1332-1388 完全一致）
-
-    Returns:
-        (stop_loss_price, take_profit_price, calculation_method)
-    """
-    PRICE_EPSILON = max(entry_price * 1e-8, 1e-8)
-
-    # TP 配置（与 deepseek_strategy.py 一致）
-    tp_pct_config = {
-        'HIGH': 0.03,    # 3%
-        'MEDIUM': 0.02,  # 2%
-        'LOW': 0.01,     # 1%
-    }
-
-    if side == 'BUY':
-        # BUY: Stop loss below entry
-        default_sl = entry_price * 0.98  # Default 2% below
-
-        if use_support_resistance and support > 0:
-            potential_sl = support * (1 - sl_buffer_pct)
-            if potential_sl < entry_price - PRICE_EPSILON:
-                stop_loss_price = potential_sl
-                method = f"Support-based SL (${support:,.2f} - buffer)"
-            else:
-                stop_loss_price = default_sl
-                method = f"Default 2% SL (support ${support:,.2f} > entry)"
-        else:
-            stop_loss_price = default_sl
-            method = "Default 2% SL"
-
-        # TP
-        tp_pct = tp_pct_config.get(confidence, 0.02)
-        take_profit_price = entry_price * (1 + tp_pct)
-
-    else:  # SELL
-        # SELL: Stop loss above entry
-        default_sl = entry_price * 1.02  # Default 2% above
-
-        if use_support_resistance and resistance > 0:
-            potential_sl = resistance * (1 + sl_buffer_pct)
-            if potential_sl > entry_price + PRICE_EPSILON:
-                stop_loss_price = potential_sl
-                method = f"Resistance-based SL (${resistance:,.2f} + buffer)"
-            else:
-                stop_loss_price = default_sl
-                method = f"Default 2% SL (resistance ${resistance:,.2f} < entry)"
-        else:
-            stop_loss_price = default_sl
-            method = "Default 2% SL"
-
-        # TP
-        tp_pct = tp_pct_config.get(confidence, 0.02)
-        take_profit_price = entry_price * (1 - tp_pct)
-
-    return stop_loss_price, take_profit_price, method
-
 
 def check_critical_config() -> Tuple[list, list]:
     """
@@ -827,10 +710,12 @@ print()
 print("[8/10] 交易决策 (TradingAgents - Judge 决策即最终决策)...")
 print("-" * 70)
 
-# 导入共享模块 (只需要 check_confidence_threshold 和 calculate_position_size)
+# 导入共享模块 (与实盘使用完全相同的函数)
 from strategy.trading_logic import (
     check_confidence_threshold,
     calculate_position_size,
+    validate_multiagent_sltp,
+    calculate_technical_sltp,
     CONFIDENCE_LEVELS,
 )
 
