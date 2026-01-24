@@ -6,6 +6,16 @@ This module contains core trading logic functions that are used by both:
 - diagnose_realtime.py (diagnostic tool)
 
 This ensures 100% consistency between diagnostic and live trading behavior.
+
+方案B 更新 (v6.0):
+- check_confidence_threshold() - 仍在使用
+- calculate_position_size() - 仍在使用
+
+以下函数已被标记为 LEGACY (不再使用):
+- process_signals() - 方案B使用Judge层级决策，无需信号合并
+- check_divergence() - 方案B不存在信号分歧
+- resolve_divergence_by_confidence() - 方案B不存在信号分歧
+- create_hold_signal() - 可选保留
 """
 
 import math
@@ -27,6 +37,11 @@ CONFIDENCE_LEVELS = {
 }
 
 VALID_CONFIDENCES = {'HIGH', 'MEDIUM', 'LOW'}
+
+
+# =============================================================================
+# LEGACY FUNCTIONS - 方案B不再使用，保留用于向后兼容
+# =============================================================================
 
 
 def check_divergence(

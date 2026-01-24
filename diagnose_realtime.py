@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v5.0
+实盘信号诊断脚本 v6.0 (方案B - 层级决策架构)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
-3. 使用共享 trading_logic 模块，与 deepseek_strategy.py 100% 一致
+3. 使用 MultiAgent 层级决策架构，与 deepseek_strategy.py 100% 一致
 4. 检查 Binance 真实持仓
 5. 模拟完整的 _execute_trade 流程
 6. 输出实盘环境下会产生的真实结果
+
+v6.0 更新 (方案B):
+- 移除 DeepSeek 独立分析，改用 MultiAgent Judge 层级决策
+- 移除 process_signals() 信号合并逻辑
+- Judge 决策即最终决策，不存在信号冲突
+- 架构: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
+- 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
 v5.0 更新:
 - 添加 Binance 真实持仓检查
 - 添加 _manage_existing_position 逻辑模拟
 - 添加仓位为0检查
 - 添加 Telegram/交易执行流程说明
-- 与实盘 on_timer -> _execute_trade 流程 100% 一致
-
-v4.0 更新:
-- 引入 strategy/trading_logic.py 共享模块
-- process_signals() - 信号处理逻辑
-- calculate_position_size() - 仓位计算逻辑
-- check_confidence_threshold() - 信心阈值检查
-- 消除代码重复，保证诊断与实盘 100% 一致
 
 使用方法:
     cd /home/linuxuser/nautilus_AItrader
@@ -381,64 +380,15 @@ print("  ✅ 价格数据构建成功")
 print()
 
 # =============================================================================
-# 7. DeepSeek AI 分析 (阶段6 - 使用实盘配置)
+# 7. MultiAgent 层级决策 (方案B - 使用实盘配置)
 # =============================================================================
-print("[7/9] 阶段6: DeepSeek AI 分析 (使用实盘配置)...")
+print("[7/8] 阶段6: MultiAgent 层级决策 (方案B - TradingAgents架构)...")
 print("-" * 70)
-
-try:
-    from utils.deepseek_client import DeepSeekAnalyzer
-
-    # 使用与 deepseek_strategy.py 完全相同的初始化参数
-    deepseek = DeepSeekAnalyzer(
-        api_key=strategy_config.deepseek_api_key,
-        model=strategy_config.deepseek_model,
-        temperature=strategy_config.deepseek_temperature,
-        max_retries=strategy_config.deepseek_max_retries,
-    )
-
-    print(f"  Model: {strategy_config.deepseek_model}")
-    print(f"  Temperature: {strategy_config.deepseek_temperature}")
-    print(f"  Max Retries: {strategy_config.deepseek_max_retries}")
-    print("  正在调用 DeepSeek API...")
-
-    # 调用分析 (与 on_timer 相同，使用真实持仓)
-    signal_deepseek = deepseek.analyze(
-        price_data=price_data,
-        technical_data=technical_data,
-        sentiment_data=sentiment_data,
-        current_position=current_position,  # 使用真实持仓
-    )
-
-    print()
-    print("  🤖 DeepSeek 分析结果:")
-    print(f"     Signal: {signal_deepseek.get('signal', 'N/A')}")
-    print(f"     Confidence: {signal_deepseek.get('confidence', 'N/A')}")
-    print(f"     Stop Loss: {signal_deepseek.get('stop_loss', 'N/A')}")
-    print(f"     Take Profit: {signal_deepseek.get('take_profit', 'N/A')}")
-    reason = signal_deepseek.get('reason', 'N/A')
-    print(f"     Reason: {reason[:150]}..." if len(reason) > 150 else f"     Reason: {reason}")
-    print("  ✅ DeepSeek 分析成功")
-
-except Exception as e:
-    print(f"  ❌ DeepSeek 分析失败: {e}")
-    import traceback
-    traceback.print_exc()
-    signal_deepseek = {
-        'signal': 'ERROR',
-        'confidence': 'LOW',
-        'reason': str(e),
-        'stop_loss': None,
-        'take_profit': None,
-    }
-
+print("  📋 决策流程:")
+print("     Phase 1: Bull/Bear Debate (辩论)")
+print("     Phase 2: Judge (Portfolio Manager) Decision")
+print("     Phase 3: Risk Evaluation")
 print()
-
-# =============================================================================
-# 8. MultiAgent 辩论 (阶段7 - 使用实盘配置)
-# =============================================================================
-print("[8/9] 阶段7: MultiAgent 辩论 (使用实盘配置)...")
-print("-" * 70)
 
 try:
     from agents.multi_agent_analyzer import MultiAgentAnalyzer
@@ -454,13 +404,15 @@ try:
     print(f"  Model: {strategy_config.deepseek_model}")
     print(f"  Temperature: {strategy_config.deepseek_temperature}")
     print(f"  Debate Rounds: {strategy_config.debate_rounds}")
-    print("  正在进行 Bull/Bear 辩论...")
+    print()
     print("  🐂 Bull Agent 分析中...")
     print("  🐻 Bear Agent 分析中...")
     print("  ⚖️ Judge Agent 判断中...")
+    print("  🛡️ Risk Manager 评估中...")
 
     # 调用分析 (与 on_timer 相同，使用真实持仓)
-    signal_multi = multi_agent.analyze(
+    # 方案B: Judge 决策即最终决策，不需要与 DeepSeek 合并
+    signal_data = multi_agent.analyze(
         symbol="BTCUSDT",
         technical_report=technical_data,
         sentiment_report=sentiment_data,
@@ -469,84 +421,70 @@ try:
     )
 
     print()
-    print("  🎯 MultiAgent 辩论结果:")
-    print(f"     Signal: {signal_multi.get('signal', 'N/A')}")
-    print(f"     Confidence: {signal_multi.get('confidence', 'N/A')}")
-    print(f"     Stop Loss: {signal_multi.get('stop_loss', 'N/A')}")
-    print(f"     Take Profit: {signal_multi.get('take_profit', 'N/A')}")
-    if signal_multi.get('debate_summary'):
-        summary = signal_multi['debate_summary']
+    print("  🎯 Judge 最终决策:")
+    print(f"     Signal: {signal_data.get('signal', 'N/A')}")
+    print(f"     Confidence: {signal_data.get('confidence', 'N/A')}")
+    print(f"     Risk Level: {signal_data.get('risk_level', 'N/A')}")
+    print(f"     Stop Loss: {signal_data.get('stop_loss', 'N/A')}")
+    print(f"     Take Profit: {signal_data.get('take_profit', 'N/A')}")
+
+    # 显示 Judge 详细决策
+    judge_decision = signal_data.get('judge_decision', {})
+    if judge_decision:
+        winning_side = judge_decision.get('winning_side', 'N/A')
+        key_reasons = judge_decision.get('key_reasons', [])
+        print(f"     Winning Side: {winning_side}")
+        if key_reasons:
+            print(f"     Key Reasons: {', '.join(key_reasons[:3])}")
+
+    if signal_data.get('debate_summary'):
+        summary = signal_data['debate_summary']
         print(f"     Debate Summary: {summary[:150]}..." if len(summary) > 150 else f"     Debate Summary: {summary}")
-    print("  ✅ MultiAgent 辩论成功")
+
+    reason = signal_data.get('reason', 'N/A')
+    print(f"     Reason: {reason[:150]}..." if len(reason) > 150 else f"     Reason: {reason}")
+    print("  ✅ MultiAgent 层级决策成功")
 
 except Exception as e:
-    print(f"  ❌ MultiAgent 辩论失败: {e}")
+    print(f"  ❌ MultiAgent 层级决策失败: {e}")
     import traceback
     traceback.print_exc()
-    signal_multi = {
+    signal_data = {
         'signal': 'ERROR',
         'confidence': 'LOW',
         'reason': str(e),
+        'stop_loss': None,
+        'take_profit': None,
     }
 
 print()
 
 # =============================================================================
-# 9. 共识检查和最终决策 (使用共享 trading_logic 模块 - 100% 一致)
+# 8. 交易决策 (方案B - Judge 决策即最终决策)
 # =============================================================================
-print("[9/9] 共识检查和交易决策 (调用共享 trading_logic 模块)...")
+print("[8/8] 交易决策 (方案B - Judge 决策即最终决策)...")
 print("-" * 70)
 
-# 导入共享模块 (与 strategy 使用相同代码)
+# 导入共享模块 (只需要 check_confidence_threshold 和 calculate_position_size)
 from strategy.trading_logic import (
-    process_signals,
     check_confidence_threshold,
     calculate_position_size,
     CONFIDENCE_LEVELS,
 )
 
-deepseek_signal_str = signal_deepseek.get('signal', 'ERROR')
-multi_signal_str = signal_multi.get('signal', 'ERROR')
+# 方案B: Judge 决策即最终决策，不需要信号合并
+final_signal = signal_data.get('signal', 'HOLD')
+confidence = signal_data.get('confidence', 'LOW')
 
-print(f"  DeepSeek Signal: {deepseek_signal_str}")
-print(f"  MultiAgent Signal: {multi_signal_str}")
+print(f"  🎯 Final Signal: {final_signal}")
+print(f"  📊 Confidence: {confidence}")
 print()
 
-# 获取分歧处理配置
-skip_on_divergence = getattr(strategy_config, 'skip_on_divergence', True)
-use_confidence_fusion = getattr(strategy_config, 'use_confidence_fusion', True)
-print(f"  skip_on_divergence: {skip_on_divergence}")
-print(f"  use_confidence_fusion: {use_confidence_fusion}")
-print()
-
-# 创建简单的 print logger 用于诊断输出
-class PrintLogger:
-    def info(self, msg):
-        print(f"  {msg}")
-    def warning(self, msg):
-        print(f"  {msg}")
-    def error(self, msg):
-        print(f"  {msg}")
-
-diag_logger = PrintLogger()
-
-# 使用共享模块处理信号 (与 strategy 完全相同的逻辑)
-final_signal_data, consensus, status_msg = process_signals(
-    signal_deepseek=signal_deepseek,
-    signal_multi=signal_multi,
-    use_confidence_fusion=use_confidence_fusion,
-    skip_on_divergence=skip_on_divergence,
-    logger=diag_logger,
-)
-
-final_signal = final_signal_data.get('signal', 'HOLD')
-confidence = final_signal_data.get('confidence', 'LOW')
-
-# 显示 MultiAgent SL/TP (如果有)
-if consensus and signal_multi.get('stop_loss') and signal_multi.get('take_profit'):
-    print(f"  📊 Using MultiAgent SL/TP:")
-    print(f"     SL: ${signal_multi['stop_loss']:,.2f}")
-    print(f"     TP: ${signal_multi['take_profit']:,.2f}")
+# 显示 SL/TP
+if signal_data.get('stop_loss') and signal_data.get('take_profit'):
+    print(f"  📊 Judge's SL/TP:")
+    print(f"     Stop Loss: ${signal_data['stop_loss']:,.2f}")
+    print(f"     Take Profit: ${signal_data['take_profit']:,.2f}")
 
 print()
 
@@ -703,17 +641,17 @@ print()
 if would_trade and final_signal in ['BUY', 'SELL']:
     print(f"  🟢 WOULD EXECUTE: {final_signal} {btc_quantity:.4f} BTC @ ${current_price:,.2f}")
     print(f"     Notional: ${btc_quantity * current_price:.2f}")
-    # 显示最终信号的 SL/TP (来自 final_signal_data，不是 signal_deepseek)
-    final_sl = final_signal_data.get('stop_loss')
-    final_tp = final_signal_data.get('take_profit')
+    # 显示最终信号的 SL/TP (来自 Judge 决策)
+    final_sl = signal_data.get('stop_loss')
+    final_tp = signal_data.get('take_profit')
     if final_sl:
         print(f"     Stop Loss: ${final_sl:,.2f}")
     if final_tp:
         print(f"     Take Profit: ${final_tp:,.2f}")
 elif final_signal == 'HOLD':
-    print("  🟡 NO TRADE: AI recommends HOLD")
-    reason = final_signal_data.get('reason', signal_deepseek.get('reason', 'N/A'))
-    print(f"     Reason: {reason[:100]}...")
+    print("  🟡 NO TRADE: Judge recommends HOLD")
+    reason = signal_data.get('reason', 'N/A')
+    print(f"     Reason: {reason[:100]}..." if len(reason) > 100 else f"     Reason: {reason}")
 elif not would_trade and final_signal in ['BUY', 'SELL']:
     # 信号是 BUY/SELL 但因为持仓原因不会执行
     print(f"  🔴 NO TRADE: Signal={final_signal}, but blocked by position management")
@@ -888,22 +826,41 @@ elif ls_ratio < 0.7:
 else:
     print("    → ⚪ 多空平衡")
 
-# 4. 为什么 AI 返回 HOLD
+# 4. 为什么 AI 返回该信号 (方案B: Judge 决策分析)
 print()
-print("[分析4] AI 决策原因分析")
+print("[分析4] Judge 决策原因分析 (方案B)")
 print("-" * 50)
 
-print(f"  DeepSeek 完整理由:")
-deepseek_reason = signal_deepseek.get('reason', 'N/A')
-# 分行显示
-for i in range(0, len(deepseek_reason), 80):
-    print(f"    {deepseek_reason[i:i+80]}")
+print(f"  ⚖️ Judge 最终决策: {signal_data.get('signal', 'N/A')}")
+print()
+
+# 显示 Judge 详细决策
+judge_decision = signal_data.get('judge_decision', {})
+if judge_decision:
+    print(f"  Winning Side: {judge_decision.get('winning_side', 'N/A')}")
+    key_reasons = judge_decision.get('key_reasons', [])
+    if key_reasons:
+        print(f"  Key Reasons:")
+        for reason in key_reasons[:3]:
+            print(f"    • {reason}")
+    risks = judge_decision.get('acknowledged_risks', [])
+    if risks:
+        print(f"  Acknowledged Risks:")
+        for risk in risks[:2]:
+            print(f"    • {risk}")
 
 print()
-print(f"  MultiAgent 辩论摘要:")
-multi_summary = signal_multi.get('debate_summary', signal_multi.get('reason', 'N/A'))
-for i in range(0, len(str(multi_summary)), 80):
-    print(f"    {str(multi_summary)[i:i+80]}")
+print(f"  📋 Judge 完整理由:")
+judge_reason = signal_data.get('reason', 'N/A')
+# 分行显示
+for i in range(0, len(judge_reason), 80):
+    print(f"    {judge_reason[i:i+80]}")
+
+print()
+print(f"  🗣️ 辩论摘要:")
+debate_summary = signal_data.get('debate_summary', 'N/A')
+for i in range(0, len(str(debate_summary)), 80):
+    print(f"    {str(debate_summary)[i:i+80]}")
 
 # 5. 触发交易的条件 (基于更新后的提示词)
 print()

@@ -932,10 +932,8 @@ class DeepSeekAIStrategy(Strategy):
 
         return None
 
-    # NOTE: _create_hold_signal and _resolve_divergence_by_confidence methods
-    # have been removed. Signal processing now uses the shared process_signals()
-    # function from strategy.trading_logic module for 100% consistency with
-    # diagnose_realtime.py diagnostic tool.
+    # NOTE: 方案B (Hierarchical Decision) - MultiAgent Judge 作为唯一决策者
+    # 不再需要信号合并逻辑，Judge 决策即最终决策
 
     def _execute_trade(
         self,
