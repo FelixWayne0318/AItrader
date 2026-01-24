@@ -170,14 +170,60 @@ class TelegramBot:
             return False
 
     def _run_sync_in_new_loop(self, message: str, kwargs: dict) -> bool:
-        """Helper to run async code in a new event loop."""
+        """Helper to run async code in a new event loop.
+
+        IMPORTANT: Creates a new Bot instance for each call to avoid
+        'TCPTransport closed' errors. python-telegram-bot v20+ uses
+        httpx which binds HTTP sessions to specific event loops.
+        """
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(self.send_message(message, **kwargs))
+            # Create a fresh Bot instance for this event loop
+            # This avoids httpx session conflicts across event loops
+            fresh_bot = Bot(token=self.token)
+            return loop.run_until_complete(
+                self._send_with_bot(fresh_bot, message, **kwargs)
+            )
         finally:
             loop.close()
-            # Don't set event loop to None - it might interfere with other threads
+
+    async def _send_with_bot(
+        self,
+        bot: 'Bot',
+        message: str,
+        parse_mode: str = 'Markdown',
+        disable_notification: bool = False
+    ) -> bool:
+        """Send message using a specific Bot instance."""
+        try:
+            await bot.send_message(
+                chat_id=self.chat_id,
+                text=message,
+                parse_mode=parse_mode,
+                disable_notification=disable_notification
+            )
+            self.logger.info(f"📱 Telegram message sent: {message[:50]}...")
+            return True
+        except TelegramError as e:
+            if "can't parse" in str(e).lower() or "parse entities" in str(e).lower():
+                self.logger.warning(f"⚠️ Markdown parse error, retrying without formatting")
+                try:
+                    await bot.send_message(
+                        chat_id=self.chat_id,
+                        text=message,
+                        parse_mode=None,
+                        disable_notification=disable_notification
+                    )
+                    return True
+                except Exception as e2:
+                    self.logger.error(f"❌ Telegram error (plain text): {e2}")
+                    return False
+            self.logger.error(f"❌ Telegram error: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"❌ Telegram error: {e}")
+            return False
     
     # Message Formatters
     
