@@ -215,7 +215,7 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
         rsi_extreme_threshold_lower=25.0,
         rsi_extreme_multiplier=0.7,
 
-        # [LEGACY - 方案B不再使用] Multi-Agent Divergence Handling
+        # [LEGACY - 不再使用] Multi-Agent Divergence Handling
         # 保留用于向后兼容，但不再生效
         skip_on_divergence=strategy_yaml.get('risk', {}).get('skip_on_divergence', True),
         use_confidence_fusion=strategy_yaml.get('risk', {}).get('use_confidence_fusion', True),

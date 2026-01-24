@@ -61,11 +61,11 @@ strategy:
     rsi_extreme_threshold_lower: 30  # Raised from 25 for earlier oversold detection
     rsi_extreme_multiplier: 0.7
 
-    # [LEGACY - 方案B不再使用] Multi-Agent 分歧处理
-    # 方案B 采用层级决策架构，Judge 决策即最终决策，不存在信号分歧
+    # [LEGACY - 不再使用] Multi-Agent 分歧处理
+    # 层级决策架构中，Judge 决策即最终决策，不存在信号分歧
     # 以下选项保留用于向后兼容，但不再生效
-    skip_on_divergence: true           # [LEGACY] 方案B不使用
-    use_confidence_fusion: true        # [LEGACY] 方案B不使用
+    skip_on_divergence: true           # [LEGACY] 不再使用
+    use_confidence_fusion: true        # [LEGACY] 不再使用
     
     # Stop Loss & Take Profit (自动止损止盈)
     enable_auto_sl_tp: true  # 启用自动止损止盈

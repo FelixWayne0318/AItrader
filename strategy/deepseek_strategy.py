@@ -6,7 +6,7 @@ AI-powered cryptocurrency trading strategy using TradingAgents-inspired architec
 - Judge (Portfolio Manager): Evaluates debate and makes final decision
 - Risk Manager: Determines position sizing and stop/take profit levels
 
-This implements 方案B (Hierarchical Decision) where the Judge's decision is final,
+This implements a hierarchical decision architecture where the Judge's decision is final,
 avoiding signal conflicts that can occur with parallel multi-agent systems.
 
 Reference: TradingAgents (UCLA/MIT) - https://github.com/TauricResearch/TradingAgents
@@ -39,7 +39,7 @@ from agents.multi_agent_analyzer import MultiAgentAnalyzer
 from strategy.trading_logic import (
     check_confidence_threshold,
     calculate_position_size,
-    # process_signals removed - 方案B uses MultiAgent Judge as final decision maker
+    # process_signals removed - Hierarchical architecture uses MultiAgent Judge as final decision maker
 )
 # OCOManager no longer needed - using NautilusTrader's built-in bracket orders
 
@@ -93,11 +93,11 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     rsi_extreme_threshold_lower: float = 25.0
     rsi_extreme_multiplier: float = 0.7
 
-    # [LEGACY - 方案B不再使用] Multi-Agent Divergence Handling
-    # 方案B采用层级决策架构，Judge决策即最终决策，不存在信号合并/冲突
+    # [LEGACY - 不再使用] Multi-Agent Divergence Handling
+    # 层级决策架构中，Judge决策即最终决策，不存在信号合并/冲突
     # 以下选项保留用于向后兼容，但不再生效
-    skip_on_divergence: bool = True  # [LEGACY] 方案B不使用
-    use_confidence_fusion: bool = True  # [LEGACY] 方案B不使用
+    skip_on_divergence: bool = True  # [LEGACY] 不再使用
+    use_confidence_fusion: bool = True  # [LEGACY] 不再使用
     
     # Stop Loss & Take Profit
     enable_auto_sl_tp: bool = True
@@ -776,7 +776,7 @@ class DeepSeekAIStrategy(Strategy):
                 f"{current_position['quantity']} @ ${current_position['avg_px']:.2f}"
             )
 
-        # ========== 方案B: 层级决策架构 (TradingAgents) ==========
+        # ========== 层级决策架构 (TradingAgents) ==========
         # MultiAgent 的 Judge 作为最终决策者，不再与 DeepSeek 并行合并
         # 流程: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
         try:
@@ -832,7 +832,7 @@ class DeepSeekAIStrategy(Strategy):
                             'support': technical_data.get('support', 0),
                             'resistance': technical_data.get('resistance', 0),
                             'reasoning': signal_data.get('reason', ''),
-                            # 方案B additional fields
+                            # Hierarchical architecture additional fields
                             'winning_side': winning_side,
                             'debate_summary': debate_summary[:100] if debate_summary else '',
                         })
@@ -932,7 +932,7 @@ class DeepSeekAIStrategy(Strategy):
 
         return None
 
-    # NOTE: 方案B (Hierarchical Decision) - MultiAgent Judge 作为唯一决策者
+    # NOTE: Hierarchical Decision Architecture - MultiAgent Judge 作为唯一决策者
     # 不再需要信号合并逻辑，Judge 决策即最终决策
 
     def _execute_trade(
