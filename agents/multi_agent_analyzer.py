@@ -190,6 +190,13 @@ class MultiAgentAnalyzer:
         """
         Run multi-agent analysis with Bull/Bear debate.
 
+        HYBRID APPROACH (v2.0):
+        - Phase 1: Bull/Bear debate (2 AI calls)
+        - Phase 2: Deterministic decision based on confirmation counts (NO AI)
+        - Phase 3: Risk evaluation only if signal actionable (0-1 AI calls)
+
+        Total: 2-3 AI calls (down from 4)
+
         Parameters
         ----------
         symbol : str
@@ -220,7 +227,7 @@ class MultiAgentAnalyzer:
             }
         """
         try:
-            self.logger.info("Starting multi-agent analysis...")
+            self.logger.info("Starting multi-agent analysis (Hybrid v2.0)...")
 
             # Format reports for prompts
             tech_summary = self._format_technical_report(technical_report)
@@ -229,7 +236,7 @@ class MultiAgentAnalyzer:
             # Get current price for calculations
             current_price = price_data.get('price', 0) if price_data else technical_report.get('price', 0)
 
-            # Phase 1: Bull/Bear Debate
+            # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
             debate_history = ""
             bull_argument = ""
@@ -261,22 +268,37 @@ class MultiAgentAnalyzer:
             # Store transcript for debugging
             self.last_debate_transcript = debate_history
 
-            # Phase 2: Judge makes decision
-            self.logger.info("Phase 2: Judge evaluating debate...")
-            judge_decision = self._get_judge_decision(
+            # Phase 2: Deterministic Decision (NO AI - pure algorithmic logic)
+            self.logger.info("Phase 2: Counting confirmations and making decision (deterministic)...")
+            judge_decision = self._make_deterministic_decision(
+                bull_argument=bull_argument,
+                bear_argument=bear_argument,
+                technical_report=technical_report,
                 debate_history=debate_history,
-                past_memories=self._get_past_memories(),
             )
 
-            # Phase 3: Risk evaluation and final decision
-            self.logger.info("Phase 3: Risk evaluation...")
-            final_decision = self._evaluate_risk(
-                proposed_action=judge_decision,
-                technical_report=tech_summary,
-                sentiment_report=sent_summary,
-                current_position=current_position,
-                current_price=current_price,
+            self.logger.info(
+                f"📊 Bullish confirmations: {judge_decision.get('bullish_count', 0)}/5, "
+                f"Bearish confirmations: {judge_decision.get('bearish_count', 0)}/5 → "
+                f"Decision: {judge_decision.get('decision', 'HOLD')} ({judge_decision.get('confidence', 'LOW')})"
             )
+
+            # Phase 3: Risk evaluation only if actionable (0-1 AI calls)
+            if judge_decision.get('decision') != 'HOLD':
+                self.logger.info("Phase 3: Risk evaluation for actionable signal...")
+                final_decision = self._evaluate_risk(
+                    proposed_action=judge_decision,
+                    technical_report=tech_summary,
+                    sentiment_report=sent_summary,
+                    current_position=current_position,
+                    current_price=current_price,
+                )
+            else:
+                self.logger.info("Phase 3: Skipped (HOLD signal)")
+                final_decision = self._format_hold_signal(
+                    judge_decision=judge_decision,
+                    current_price=current_price,
+                )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
                            f"({final_decision.get('confidence')} confidence)")
@@ -381,12 +403,274 @@ Deliver your argument now (2-3 paragraphs):"""
             {"role": "user", "content": prompt}
         ])
 
+    def _count_technical_confirmations(
+        self,
+        agent_analysis: str,
+        technical_data: Dict[str, Any],
+        side: str,
+    ) -> int:
+        """
+        Count technical confirmations from debate arguments and actual data.
+
+        This is DETERMINISTIC - no AI involved, pure algorithmic counting.
+
+        Parameters
+        ----------
+        agent_analysis : str
+            Bull or Bear analyst's argument text
+        technical_data : Dict
+            Actual technical indicator values
+        side : str
+            "BULL" or "BEAR"
+
+        Returns
+        -------
+        int
+            Count of confirmations (0-5)
+        """
+        count = 0
+        analysis_lower = agent_analysis.lower()
+
+        # Get technical values
+        current_price = technical_data.get('price', 0)
+        sma_5 = technical_data.get('sma_5', 0)
+        sma_20 = technical_data.get('sma_20', 0)
+        sma_50 = technical_data.get('sma_50', 0)
+        rsi = technical_data.get('rsi', 50)
+        macd = technical_data.get('macd', 0)
+        macd_signal = technical_data.get('macd_signal', 0)
+        macd_hist = technical_data.get('macd_histogram', 0)
+        bb_upper = technical_data.get('bb_upper', 0)
+        bb_lower = technical_data.get('bb_lower', 0)
+        support = technical_data.get('support', 0)
+        resistance = technical_data.get('resistance', 0)
+
+        if side == "BULL":
+            # BULLISH Confirmation 1: Price above SMA20 or SMA50
+            if current_price > 0 and (current_price > sma_20 or current_price > sma_50):
+                count += 1
+                self.logger.debug("✅ Bullish #1: Price above SMA20/50")
+
+            # BULLISH Confirmation 2: RSI < 60 (not overbought, room to rise)
+            if rsi < 60:
+                count += 1
+                self.logger.debug(f"✅ Bullish #2: RSI {rsi:.1f} < 60 (healthy)")
+
+            # BULLISH Confirmation 3: MACD bullish (> signal OR positive histogram)
+            if macd > macd_signal or macd_hist > 0:
+                count += 1
+                self.logger.debug("✅ Bullish #3: MACD bullish crossover/positive histogram")
+
+            # BULLISH Confirmation 4: Price near support or BB lower band
+            if support > 0 and bb_lower > 0:
+                support_dist = abs(current_price - support) / current_price
+                bb_lower_dist = abs(current_price - bb_lower) / current_price
+                if support_dist < 0.02 or bb_lower_dist < 0.02:  # Within 2%
+                    count += 1
+                    self.logger.debug("✅ Bullish #4: Price near support/BB lower")
+
+            # BULLISH Confirmation 5: Volume/momentum mentions (text analysis)
+            volume_keywords = ['increasing volume', 'volume surge', 'strong volume', 'bullish volume',
+                             'momentum', 'buying pressure']
+            if any(keyword in analysis_lower for keyword in volume_keywords):
+                count += 1
+                self.logger.debug("✅ Bullish #5: Positive volume/momentum mentioned")
+
+        elif side == "BEAR":
+            # BEARISH Confirmation 1: Price below SMA20 or SMA50
+            if current_price > 0 and (current_price < sma_20 or current_price < sma_50):
+                count += 1
+                self.logger.debug("✅ Bearish #1: Price below SMA20/50")
+
+            # BEARISH Confirmation 2: RSI > 40 (showing weakness or overbought)
+            if rsi > 40:
+                count += 1
+                self.logger.debug(f"✅ Bearish #2: RSI {rsi:.1f} > 40 (weakness)")
+
+            # BEARISH Confirmation 3: MACD bearish (< signal OR negative histogram)
+            if macd < macd_signal or macd_hist < 0:
+                count += 1
+                self.logger.debug("✅ Bearish #3: MACD bearish crossover/negative histogram")
+
+            # BEARISH Confirmation 4: Price near resistance or BB upper band
+            if resistance > 0 and bb_upper > 0:
+                resistance_dist = abs(current_price - resistance) / current_price
+                bb_upper_dist = abs(current_price - bb_upper) / current_price
+                if resistance_dist < 0.02 or bb_upper_dist < 0.02:  # Within 2%
+                    count += 1
+                    self.logger.debug("✅ Bearish #4: Price near resistance/BB upper")
+
+            # BEARISH Confirmation 5: Volume/momentum mentions (text analysis)
+            volume_keywords = ['decreasing volume', 'volume decline', 'weak volume', 'bearish volume',
+                             'selling pressure', 'distribution']
+            if any(keyword in analysis_lower for keyword in volume_keywords):
+                count += 1
+                self.logger.debug("✅ Bearish #5: Negative volume/momentum mentioned")
+
+        return count
+
+    def _make_deterministic_decision(
+        self,
+        bull_argument: str,
+        bear_argument: str,
+        technical_data: Dict[str, Any],
+        debate_history: str,
+    ) -> Dict[str, Any]:
+        """
+        Make trading decision based on quantitative confirmation counts.
+
+        This is DETERMINISTIC and TRANSPARENT - no AI interpretation.
+        Same inputs = same output, every time.
+
+        Parameters
+        ----------
+        bull_argument : str
+            Final bull analyst argument
+        bear_argument : str
+            Final bear analyst argument
+        technical_data : Dict
+            Technical indicator values
+        debate_history : str
+            Full debate transcript
+
+        Returns
+        -------
+        Dict
+            Decision with structure:
+            {
+                "decision": "LONG|SHORT|HOLD",
+                "confidence": "HIGH|MEDIUM|LOW",
+                "bullish_count": int,
+                "bearish_count": int,
+                "key_reasons": List[str],
+                "debate_summary": str
+            }
+        """
+        # Count confirmations from both sides
+        bullish_count = self._count_technical_confirmations(
+            bull_argument, technical_data, "BULL"
+        )
+        bearish_count = self._count_technical_confirmations(
+            bear_argument, technical_data, "BEAR"
+        )
+
+        # Apply deterministic decision rules
+        decision = "HOLD"
+        confidence = "LOW"
+        winning_side = "TIE"
+        key_reasons = []
+
+        # HIGH confidence rules (3+ confirmations)
+        if bullish_count >= 3:
+            decision = "LONG"
+            confidence = "HIGH"
+            winning_side = "BULL"
+            key_reasons = [
+                f"{bullish_count}/5 bullish confirmations",
+                "Strong technical alignment for upside",
+                "Clear trend with multiple indicator support"
+            ]
+        elif bearish_count >= 3:
+            decision = "SHORT"
+            confidence = "HIGH"
+            winning_side = "BEAR"
+            key_reasons = [
+                f"{bearish_count}/5 bearish confirmations",
+                "Strong technical alignment for downside",
+                "Clear trend with multiple indicator support"
+            ]
+        # MEDIUM confidence rules (2 confirmations + superiority)
+        elif bullish_count == 2 and bullish_count > bearish_count:
+            decision = "LONG"
+            confidence = "MEDIUM"
+            winning_side = "BULL"
+            key_reasons = [
+                f"{bullish_count}/5 bullish vs {bearish_count}/5 bearish",
+                "Moderate bullish technical setup",
+                "Bull argument outweighs bear concerns"
+            ]
+        elif bearish_count == 2 and bearish_count > bullish_count:
+            decision = "SHORT"
+            confidence = "MEDIUM"
+            winning_side = "BEAR"
+            key_reasons = [
+                f"{bearish_count}/5 bearish vs {bullish_count}/5 bullish",
+                "Moderate bearish technical setup",
+                "Bear argument outweighs bull case"
+            ]
+        # HOLD (both < 2 OR tied)
+        else:
+            decision = "HOLD"
+            confidence = "LOW"
+            winning_side = "TIE"
+            key_reasons = [
+                f"Insufficient confirmations (Bull: {bullish_count}/5, Bear: {bearish_count}/5)",
+                "Mixed or neutral technical signals",
+                "Waiting for clearer market direction"
+            ]
+
+        # Create brief debate summary
+        debate_summary = (
+            f"Bull presented {bullish_count}/5 technical confirmations. "
+            f"Bear presented {bearish_count}/5 confirmations. "
+            f"Quantitative analysis favors {winning_side}."
+        )
+
+        return {
+            "decision": decision,
+            "confidence": confidence,
+            "winning_side": winning_side,
+            "bullish_count": bullish_count,
+            "bearish_count": bearish_count,
+            "key_reasons": key_reasons,
+            "debate_summary": debate_summary,
+            "acknowledged_risks": [
+                "Market volatility",
+                "Unexpected news events"
+            ]
+        }
+
+    def _format_hold_signal(
+        self,
+        judge_decision: Dict[str, Any],
+        current_price: float,
+    ) -> Dict[str, Any]:
+        """
+        Format HOLD signal without calling Risk Evaluator AI.
+
+        Parameters
+        ----------
+        judge_decision : Dict
+            Decision from deterministic judge
+        current_price : float
+            Current market price
+
+        Returns
+        -------
+        Dict
+            Formatted HOLD signal
+        """
+        return {
+            "signal": "HOLD",
+            "confidence": judge_decision.get("confidence", "LOW"),
+            "risk_level": "LOW",
+            "position_size_pct": 0,
+            "stop_loss": current_price,
+            "take_profit": current_price,
+            "reason": "; ".join(judge_decision.get("key_reasons", ["No clear signal"])),
+            "debate_summary": judge_decision.get("debate_summary", "Market analysis inconclusive"),
+            "judge_decision": judge_decision,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
     def _get_judge_decision(
         self,
         debate_history: str,
         past_memories: str,
     ) -> Dict[str, Any]:
         """
+        [DEPRECATED - Kept for compatibility]
+
         Judge evaluates the debate and makes decision.
 
         Borrowed from: TradingAgents/agents/managers/research_manager.py
