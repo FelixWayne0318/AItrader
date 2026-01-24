@@ -7,13 +7,14 @@ Manages all technical indicators using NautilusTrader's built-in indicators.
 from typing import Dict, Any, List
 from decimal import Decimal
 
-from nautilus_trader.core.nautilus_pyo3 import (
-    SimpleMovingAverage,
-    ExponentialMovingAverage,
-    RelativeStrengthIndex,
-    MovingAverageConvergenceDivergence,
-    AverageTrueRange,
-)
+# Use Cython indicators (not Rust PyO3) to avoid thread safety panics
+# Original: from nautilus_trader.core.nautilus_pyo3 import ...
+# Issue: Rust indicators panic when accessed from different threads (on_timer vs on_bar)
+# Solution: Use nautilus_trader.indicators which are Cython-based and thread-safe
+from nautilus_trader.indicators.average.sma import SimpleMovingAverage
+from nautilus_trader.indicators.average.ema import ExponentialMovingAverage
+from nautilus_trader.indicators.momentum.rsi import RelativeStrengthIndex
+from nautilus_trader.indicators.momentum.macd import MovingAverageConvergenceDivergence
 from nautilus_trader.model.data import Bar
 
 
