@@ -1,8 +1,8 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.2
+> 版本: 2.3
 > 日期: 2026-01-24
-> 状态: **Phase 0 已完成，继续实施 Phase 1-6**
+> 状态: **Phase 0 已完成，风险评估已补充，可实施 Phase 1-6**
 > 审查: CONFIG_PROPOSAL_REVIEW.md
 
 ---
@@ -1228,7 +1228,7 @@ class AppSettings(BaseSettings):
 
 ## 9. 风险评估
 
-### 8.1 风险矩阵
+### 9.1 风险矩阵
 
 | 风险 | 概率 | 影响 | 缓解措施 |
 |------|------|------|---------|
@@ -1238,8 +1238,212 @@ class AppSettings(BaseSettings):
 | 性能影响 | 低 | 低 | YAML 解析只在启动时进行 |
 | **Phase 0 行为变化** | **高** | **中** | 先在测试环境验证 |
 | **trading_logic 迁移影响** | 中 | 中 | 添加配置缓存机制 |
+| **敏感信息泄露** | 中 | **高** | API_KEY 掩蔽机制 |
+| **多线程安全** | 中 | 中 | ConfigManager 单例模式 |
+| **配置版本不兼容** | 低 | 中 | 版本号和迁移脚本 |
 
-### 8.2 Phase 0 行为变化说明
+### 9.2 高优先级风险详细评估
+
+#### 🔴 风险 1: 敏感信息泄露
+
+**风险描述**: API_KEY、API_SECRET 等敏感信息可能在日志、调试输出或错误信息中泄露。
+
+**影响范围**:
+- `BINANCE_API_KEY` / `BINANCE_API_SECRET`
+- `DEEPSEEK_API_KEY`
+- `TELEGRAM_BOT_TOKEN`
+
+**缓解措施**:
+
+```python
+# ConfigManager 中添加敏感字段掩蔽
+SENSITIVE_FIELDS = {'api_key', 'api_secret', 'bot_token', 'password'}
+
+def _mask_sensitive(self, key: str, value: str) -> str:
+    """掩蔽敏感信息"""
+    if any(s in key.lower() for s in SENSITIVE_FIELDS):
+        if len(value) > 8:
+            return value[:4] + '****' + value[-4:]
+        return '****'
+    return value
+
+def _log_config_summary(self):
+    """记录配置摘要 (敏感信息已掩蔽)"""
+    # 不记录 API_KEY 原始值
+    self.logger.info(f"  Binance API: {self._mask_sensitive('api_key', self.get('binance', 'api_key', default=''))}")
+```
+
+**验证检查清单**:
+- [ ] ConfigManager 日志不包含明文 API_KEY
+- [ ] 错误信息不包含敏感配置值
+- [ ] 调试模式下敏感字段已掩蔽
+
+---
+
+#### 🔴 风险 2: 多线程安全
+
+**风险描述**: NautilusTrader 使用多线程架构，ConfigManager 可能被多个线程同时访问。
+
+**影响场景**:
+- 主线程: 策略初始化
+- 后台线程: Telegram 命令处理
+- 定时器线程: on_timer 回调
+
+**缓解措施**:
+
+```python
+# 方案 A: 单例模式 + 启动时加载 (推荐)
+_config_instance = None
+_config_lock = threading.Lock()
+
+def get_config() -> ConfigManager:
+    """获取全局配置实例 (线程安全)"""
+    global _config_instance
+    if _config_instance is None:
+        with _config_lock:
+            if _config_instance is None:
+                _config_instance = ConfigManager()
+                _config_instance.load()
+    return _config_instance
+
+# 方案 B: 配置只读 + 启动时冻结
+class ConfigManager:
+    def __init__(self):
+        self._frozen = False
+
+    def load(self):
+        # ... 加载配置 ...
+        self._frozen = True  # 加载后冻结
+
+    def set(self, *path, value):
+        if self._frozen:
+            raise RuntimeError("Configuration is frozen after load")
+```
+
+**设计原则**:
+1. 配置只在启动时加载一次
+2. 加载后配置不可变 (immutable)
+3. 使用单例模式保证全局一致性
+
+**验证检查清单**:
+- [ ] ConfigManager 使用单例模式
+- [ ] 配置加载后标记为只读
+- [ ] 多线程访问测试通过
+
+---
+
+#### 🔴 风险 3: 运行时性能影响
+
+**风险描述**: YAML 解析和配置验证可能增加启动时间。
+
+**性能预期**:
+
+| 操作 | 预期时间 | 可接受阈值 |
+|------|---------|-----------|
+| YAML 加载 (base.yaml) | < 10ms | 50ms |
+| 环境文件合并 | < 5ms | 20ms |
+| 配置验证 | < 20ms | 100ms |
+| **总启动开销** | **< 50ms** | **200ms** |
+
+**缓解措施**:
+
+```python
+# 添加性能监控
+import time
+
+def load(self) -> Dict[str, Any]:
+    start = time.perf_counter()
+
+    # ... 加载逻辑 ...
+
+    elapsed = (time.perf_counter() - start) * 1000
+    self.logger.info(f"Configuration loaded in {elapsed:.1f}ms")
+
+    if elapsed > 200:
+        self.logger.warning(f"Configuration loading exceeded threshold: {elapsed:.1f}ms > 200ms")
+```
+
+**性能优化建议**:
+1. 使用 `yaml.CSafeLoader` 代替 `yaml.SafeLoader` (C 实现更快)
+2. 避免在验证中进行网络请求
+3. 缓存解析结果，避免重复加载
+
+**验证检查清单**:
+- [ ] 启动时间基准测试 < 200ms
+- [ ] 使用 CSafeLoader 加速 YAML 解析
+- [ ] 配置加载时间记录到日志
+
+---
+
+#### 🔴 风险 4: 配置版本管理
+
+**风险描述**: 升级 base.yaml 时，用户自定义的 production.yaml 可能与新版本不兼容。
+
+**不兼容场景**:
+- 新增必填字段，旧配置缺失
+- 字段重命名，旧配置使用旧名称
+- 字段类型变更，旧配置类型错误
+- 字段废弃，旧配置仍在使用
+
+**缓解措施**:
+
+```yaml
+# base.yaml 添加版本号
+_meta:
+  version: "2.2"
+  min_compatible_version: "2.0"
+  deprecated_fields:
+    - "risk.skip_on_divergence"      # 已废弃，使用 TradingAgents 架构
+    - "risk.use_confidence_fusion"   # 已废弃
+```
+
+```python
+# ConfigManager 添加版本检查
+def _check_version_compatibility(self):
+    """检查配置版本兼容性"""
+    meta = self._config.get('_meta', {})
+    version = meta.get('version', '1.0')
+    min_version = meta.get('min_compatible_version', '1.0')
+
+    # 检查用户配置版本
+    user_version = self._user_config.get('_meta', {}).get('version', '1.0')
+    if self._version_compare(user_version, min_version) < 0:
+        self._errors.append(ConfigValidationError(
+            field='_meta.version',
+            message=f"Configuration version {user_version} is incompatible. Minimum required: {min_version}",
+            value=user_version
+        ))
+
+    # 警告废弃字段
+    deprecated = meta.get('deprecated_fields', [])
+    for field in deprecated:
+        if self._get_nested(self._user_config, field.split('.')):
+            self._warnings.append(ConfigValidationError(
+                field=field,
+                message=f"Field '{field}' is deprecated and will be removed in future versions",
+                value=None,
+                severity="warning"
+            ))
+```
+
+**迁移脚本设计**:
+
+```bash
+# scripts/migrate_config.py
+# 用途: 升级用户配置到新版本
+
+python scripts/migrate_config.py --from 2.1 --to 2.2 --config production.yaml
+```
+
+**验证检查清单**:
+- [ ] base.yaml 包含 `_meta.version` 字段
+- [ ] ConfigManager 检查版本兼容性
+- [ ] 废弃字段产生警告而非错误
+- [ ] 提供迁移脚本文档
+
+---
+
+### 9.3 Phase 0 行为变化说明
 
 修复配置冲突后，以下参数将改变：
 
@@ -1251,13 +1455,33 @@ class AppSettings(BaseSettings):
 
 **建议**: 如需保持旧行为，可以在 production.yaml 中覆盖这些值。
 
-### 8.3 测试计划
+### 9.4 测试计划
 
 1. **单元测试**: ConfigManager 各方法测试
 2. **集成测试**: 完整配置加载流程测试
 3. **回归测试**: 与旧系统行为对比
 4. **Phase 0 验证**: 在测试账户运行 24 小时
 5. **生产验证**: 先在小资金账户验证
+6. **性能测试**: 配置加载时间 < 200ms
+7. **多线程测试**: 并发访问配置无竞态条件
+8. **安全测试**: 日志和错误信息不包含敏感数据
+
+### 9.5 实施前检查清单
+
+#### 必须完成 (阻塞实施)
+
+- [ ] **敏感信息保护**: API_KEY 掩蔽机制已实现
+- [ ] **线程安全**: ConfigManager 使用单例模式
+- [ ] **性能基准**: 配置加载时间 < 200ms
+- [ ] **版本管理**: base.yaml 包含 `_meta.version`
+- [ ] **回滚方案**: 各 Phase 回滚步骤已验证
+
+#### 建议完成 (不阻塞)
+
+- [ ] 配置权限检查 (.env 应为 600 权限)
+- [ ] 配置导出/导入功能
+- [ ] Telegram `/config` 命令支持
+- [ ] 配置变更审计日志
 
 ---
 
@@ -1293,7 +1517,8 @@ class AppSettings(BaseSettings):
 | 2.0 | 2026-01-24 | 基于代码审查更新:<br>- 添加 trading_logic.py 新文件<br>- 识别 3 处配置冲突<br>- 硬编码从 36 处更新到 42 处<br>- 添加 Phase 0 紧急修复<br>- 扩展 base.yaml 配置结构<br>- 增强 ConfigManager 验证逻辑 |
 | 2.1 | 2026-01-24 | 补充遗漏项 (基于 CLAUDE.md 规范):<br>- 硬编码从 42 处更新到 48 处<br>- 新增: TP_PCT_CONFIG 止盈配置字典<br>- 新增: 仓位精度调整步长 (0.001)<br>- 新增: bar_persistence 超时和限制<br>- 新增: oco_manager Redis 超时<br>- 更新 ConfigManager 验证规则 |
 | 2.2 | 2026-01-24 | 执行建议并更新方案:<br>- ✅ **Phase 0 完成**: 修复 main_live.py 配置冲突<br>- 硬编码从 48 处更新到 50 处<br>- 新增: indicators/technical_manager.py 参数<br>- 新增: 第 8 章 Pydantic 升级建议<br>- 更新统计表标记 Phase 0 已完成 |
+| 2.3 | 2026-01-24 | 补充高优先级风险评估:<br>- 🔴 敏感信息泄露防护 (API_KEY 掩蔽机制)<br>- 🔴 多线程安全 (单例模式设计)<br>- 🔴 运行时性能影响 (< 200ms 基准)<br>- 🔴 配置版本管理 (版本号 + 迁移脚本)<br>- 新增: 实施前检查清单<br>- 修正: 第 9 章节编号 |
 
 ---
 
-*方案已审查，可以开始实施。建议从 Phase 0 (修复配置冲突) 开始。*
+*方案 v2.3 已完成风险评估补充。Phase 0 已完成，可按检查清单开始实施 Phase 1。*
