@@ -408,10 +408,33 @@ Past Trading Mistakes to AVOID:
 FULL DEBATE TRANSCRIPT:
 {debate_history}
 
-DECISION FRAMEWORK:
-- If Bull's arguments are stronger → LONG
-- If Bear's arguments are stronger → SHORT
-- If genuinely 50/50 with high uncertainty → HOLD
+QUANTITATIVE DECISION FRAMEWORK:
+Count the number of technical confirmations mentioned in the debate for each side:
+
+BULLISH confirmations (look for these in Bull's arguments):
+1. Price above SMA20 or SMA50
+2. RSI < 60 (not overbought, room to rise)
+3. MACD > Signal (bullish crossover) OR positive MACD histogram
+4. Price near support level or BB lower band (bounce potential)
+5. Increasing volume or bullish volume patterns
+
+BEARISH confirmations (look for these in Bear's arguments):
+1. Price below SMA20 or SMA50
+2. RSI > 40 (showing weakness or overbought)
+3. MACD < Signal (bearish crossover) OR negative MACD histogram
+4. Price near resistance level or BB upper band (rejection potential)
+5. Decreasing volume or bearish volume patterns
+
+DECISION RULES (follow this logic):
+- Bullish count >= 3 → decision: "LONG", confidence: "HIGH"
+- Bearish count >= 3 → decision: "SHORT", confidence: "HIGH"
+- Bullish count = 2 AND > Bearish count → decision: "LONG", confidence: "MEDIUM"
+- Bearish count = 2 AND > Bullish count → decision: "SHORT", confidence: "MEDIUM"
+- Bullish count >= 2 AND Bull made more compelling arguments → decision: "LONG", confidence: "MEDIUM"
+- Bearish count >= 2 AND Bear made more compelling arguments → decision: "SHORT", confidence: "MEDIUM"
+- ONLY use "HOLD" if both counts < 2 AND arguments are truly balanced
+
+This quantitative approach prevents over-conservative HOLD decisions and ensures actionable signals.
 
 Provide your decision in this exact JSON format:
 {{
