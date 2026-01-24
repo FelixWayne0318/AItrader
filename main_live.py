@@ -318,15 +318,11 @@ def setup_trading_node() -> TradingNodeConfig:
     )
 
     # Trading node config
-    # IMPORTANT: reconciliation=False because Binance account has non-ASCII positions
-    # (e.g., '币安人生USDT-PERP') that cause Rust panic during parsing.
-    # The filter_position_reports happens AFTER parsing, so it doesn't prevent the crash.
-    # Solution: Remove '币安人生' product from Binance account, then re-enable reconciliation.
     config = TradingNodeConfig(
         trader_id=TraderId("DeepSeekTrader-001"),
         logging=logging_config,
         exec_engine=LiveExecEngineConfig(
-            reconciliation=False,  # Disabled - Binance has non-ASCII position '币安人生USDT-PERP'
+            reconciliation=True,  # Enable position reconciliation with Binance
             inflight_check_interval_ms=5000,  # Check in-flight orders every 5s
             filter_position_reports=True,  # Filter positions to only known instruments
             filter_unclaimed_external_orders=True,  # Filter unknown external orders
