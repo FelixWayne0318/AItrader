@@ -772,7 +772,7 @@ def check_known_issues_from_commits() -> Dict[str, Any]:
             result['warnings'].append("未找到 Telegram webhook 删除逻辑")
 
     # =========================================================================
-    # 检查 9: 线程安全 (commit 8cecd6e)
+    # 检查 9: 线程安全 (commit 8cecd6e, cd036b4)
     # =========================================================================
     print_info("检查 9: Rust 指标线程安全...")
 
@@ -781,7 +781,7 @@ def check_known_issues_from_commits() -> Dict[str, Any]:
 
         if "_cached_current_price" in content:
             print_ok("使用 _cached_current_price 避免跨线程访问 ✓ (commit 8cecd6e)")
-            result['fixes_verified'].append("thread safety")
+            result['fixes_verified'].append("thread safety cache")
         else:
             result['warnings'].append("未找到 _cached_current_price (线程安全)")
 
@@ -789,6 +789,27 @@ def check_known_issues_from_commits() -> Dict[str, Any]:
             print_ok("使用 _state_lock 线程锁 ✓")
         else:
             result['warnings'].append("未找到 _state_lock (线程锁)")
+
+    # 检查 technical_manager.py 使用 Cython 指标 (关键修复)
+    tech_manager = project_root / "indicators" / "technical_manager.py"
+    if tech_manager.exists():
+        content = tech_manager.read_text()
+
+        # 检查是否使用 Cython 指标 (正确)
+        uses_cython = "from nautilus_trader.indicators" in content
+        # 检查是否使用 Rust PyO3 指标 (错误，会导致 panic)
+        uses_rust_pyo3 = "from nautilus_trader.core.nautilus_pyo3" in content
+
+        if uses_cython and not uses_rust_pyo3:
+            print_ok("使用 Cython 指标 (nautilus_trader.indicators) ✓ (commit cd036b4)")
+            result['fixes_verified'].append("Cython indicators")
+        elif uses_rust_pyo3:
+            result['issues'].append(
+                "使用 Rust PyO3 指标会导致线程安全 panic! "
+                "应改用 from nautilus_trader.indicators (参考 commit cd036b4)"
+            )
+        else:
+            result['warnings'].append("无法确定指标导入方式")
 
     # =========================================================================
     # 检查 10: 止损验证逻辑 (commit 7f940fb)
@@ -986,6 +1007,64 @@ def check_known_issues_from_commits() -> Dict[str, Any]:
                 if "instrument" in on_start_content and ("cache" in on_start_content or "wait" in on_start_content.lower()):
                     print_ok("on_start 包含 instrument 检查 ✓")
                     result['fixes_verified'].append("instrument loading")
+
+    # =========================================================================
+    # 检查 19: Telegram 使用 requests 库 (commit ee43d22)
+    # =========================================================================
+    print_info("检查 19: Telegram API 调用方式...")
+
+    telegram_bot = project_root / "utils" / "telegram_bot.py"
+    if telegram_bot.exists():
+        content = telegram_bot.read_text()
+
+        # 检查 send_message_sync 是否使用 requests 库
+        if "import requests" in content or "requests.post" in content:
+            print_ok("Telegram 使用 requests 库直接调用 API ✓ (commit ee43d22)")
+            result['fixes_verified'].append("Telegram requests")
+        elif "asyncio" in content and "run_until_complete" in content:
+            result['warnings'].append(
+                "Telegram 仍使用 asyncio 混合模式 (建议改用 requests 直接调用)"
+            )
+        else:
+            result['warnings'].append("无法确定 Telegram API 调用方式")
+
+        # 检查是否有 api.telegram.org 直接调用
+        if "api.telegram.org" in content:
+            print_ok("直接调用 Telegram Bot API ✓")
+    else:
+        result['warnings'].append("telegram_bot.py 不存在")
+
+    # =========================================================================
+    # 检查 20: 情绪数据默认值 (commit 相关修复)
+    # =========================================================================
+    print_info("检查 20: 情绪数据默认字段...")
+
+    deepseek_client = project_root / "utils" / "deepseek_client.py"
+    if deepseek_client.exists():
+        content = deepseek_client.read_text()
+
+        required_fields = ['net_sentiment', 'positive_ratio', 'negative_ratio']
+        missing_fields = []
+
+        for field in required_fields:
+            if field not in content:
+                missing_fields.append(field)
+
+        if not missing_fields:
+            print_ok("情绪数据包含所有必需字段 ✓")
+            result['fixes_verified'].append("sentiment default fields")
+        else:
+            result['warnings'].append(f"情绪数据可能缺少字段: {missing_fields}")
+
+    # 同时检查 strategy 中的 .get() 防护
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+        if ".get('net_sentiment'" in content or ".get(\"net_sentiment\"" in content:
+            print_ok("使用 .get() 访问情绪数据 (防止 KeyError) ✓")
+        elif "['net_sentiment']" in content or "[\"net_sentiment\"]" in content:
+            result['warnings'].append(
+                "直接使用 [] 访问 net_sentiment (建议改用 .get() 防止 KeyError)"
+            )
 
     # =========================================================================
     # 总结
