@@ -34,6 +34,20 @@ import sys
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Optional
+
+# 分析阈值常量 (避免魔法数字)
+BB_OVERBOUGHT_THRESHOLD = 80  # 布林带上轨接近阈值
+BB_OVERSOLD_THRESHOLD = 20    # 布林带下轨接近阈值
+LS_RATIO_EXTREME_BULLISH = 2.0  # 多空比极度看多阈值
+LS_RATIO_BULLISH = 1.5          # 多空比偏多阈值
+LS_RATIO_EXTREME_BEARISH = 0.5  # 多空比极度看空阈值
+LS_RATIO_BEARISH = 0.7          # 多空比偏空阈值
+
+def print_wrapped(text: str, indent: str = "    ", width: int = 80) -> None:
+    """打印自动换行的文本"""
+    for i in range(0, len(text), width):
+        print(f"{indent}{text[i:i+width]}")
 
 # =============================================================================
 # 关键: 使用与 main_live.py 完全相同的初始化流程
@@ -61,7 +75,7 @@ else:
     load_dotenv()
 
 print("=" * 70)
-print("  实盘信号诊断工具 v5.0 (共享模块 + 持仓检查)")
+print("  实盘信号诊断工具 v6.0 (方案B - Judge 层级决策)")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -96,11 +110,14 @@ try:
     print()
     print(f"  ⏰ 注意: 实盘每 {timer_min:.0f} 分钟分析一次")
     print(f"     如果刚启动服务，需等待第一个周期触发")
-except Exception as e:
+except (ImportError, AttributeError, KeyError, ValueError) as e:
     print(f"  ❌ 配置加载失败: {e}")
     import traceback
     traceback.print_exc()
     sys.exit(1)
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -113,6 +130,7 @@ import requests
 
 # 从 bar_type 解析时间周期 (注意: 必须先检查更长的字符串)
 bar_type_str = strategy_config.bar_type
+# 按照从长到短的顺序检查，避免子字符串匹配错误
 if "15-MINUTE" in bar_type_str:
     interval = "15m"
 elif "5-MINUTE" in bar_type_str:
@@ -148,9 +166,12 @@ try:
     else:
         print(f"  ❌ K线数据异常: {klines_raw}")
         sys.exit(1)
-except Exception as e:
+except (requests.RequestException, ValueError, KeyError) as e:
     print(f"  ❌ 获取市场数据失败: {e}")
     sys.exit(1)
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -206,11 +227,14 @@ try:
     else:
         print(f"  ⚠️ 指标未完全初始化，可能数据不足")
 
-except Exception as e:
+except (ImportError, AttributeError, TypeError, ValueError) as e:
     print(f"  ❌ TechnicalIndicatorManager 失败: {e}")
     import traceback
     traceback.print_exc()
     sys.exit(1)
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -257,9 +281,12 @@ try:
     else:
         print("  ✅ 无持仓")
 
-except Exception as e:
+except (ImportError, AttributeError, KeyError, ValueError, requests.RequestException) as e:
     print(f"  ⚠️ 持仓检查失败: {e}")
     print("  → 继续假设无持仓")
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -291,11 +318,14 @@ try:
     print(f"  Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
     print("  ✅ 技术数据获取成功")
 
-except Exception as e:
+except (AttributeError, KeyError, TypeError, ValueError) as e:
     print(f"  ❌ 技术数据获取失败: {e}")
     import traceback
     traceback.print_exc()
     sys.exit(1)
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -335,7 +365,7 @@ try:
         }
         print("  ⚠️ 使用中性默认值 (与 on_timer fallback 相同)")
 
-except Exception as e:
+except (ImportError, AttributeError, requests.RequestException, ValueError) as e:
     print(f"  ❌ 情绪数据获取失败: {e}")
     sentiment_data = {
         'long_short_ratio': 1.0,
@@ -343,6 +373,9 @@ except Exception as e:
         'short_account_pct': 50.0,
         'source': 'fallback',
     }
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
@@ -382,7 +415,7 @@ print()
 # =============================================================================
 # 7. MultiAgent 层级决策 (方案B - 使用实盘配置)
 # =============================================================================
-print("[7/8] 阶段6: MultiAgent 层级决策 (方案B - TradingAgents架构)...")
+print("[7/9] MultiAgent 层级决策 (方案B - TradingAgents架构)...")
 print("-" * 70)
 print("  📋 决策流程:")
 print("     Phase 1: Bull/Bear Debate (辩论)")
@@ -445,7 +478,7 @@ try:
     print(f"     Reason: {reason[:150]}..." if len(reason) > 150 else f"     Reason: {reason}")
     print("  ✅ MultiAgent 层级决策成功")
 
-except Exception as e:
+except (ImportError, AttributeError, requests.RequestException, ValueError, KeyError) as e:
     print(f"  ❌ MultiAgent 层级决策失败: {e}")
     import traceback
     traceback.print_exc()
@@ -456,13 +489,16 @@ except Exception as e:
         'stop_loss': None,
         'take_profit': None,
     }
+except (KeyboardInterrupt, SystemExit):
+    print("\n  用户中断")
+    raise
 
 print()
 
 # =============================================================================
 # 8. 交易决策 (方案B - Judge 决策即最终决策)
 # =============================================================================
-print("[8/8] 交易决策 (方案B - Judge 决策即最终决策)...")
+print("[8/9] 交易决策 (方案B - Judge 决策即最终决策)...")
 print("-" * 70)
 
 # 导入共享模块 (只需要 check_confidence_threshold 和 calculate_position_size)
@@ -782,10 +818,10 @@ print(f"  BB Lower: ${bb_lower:,.2f}")
 print(f"  BB Width: ${bb_width:,.2f} ({bb_width/current_price*100:.2f}%)")
 print(f"  价格在带内位置: {bb_position:.1f}%")
 
-if bb_position > 80:
-    print("    → 🔴 接近上轨 (可能超买)")
-elif bb_position < 20:
-    print("    → 🟢 接近下轨 (可能超卖)")
+if bb_position > BB_OVERBOUGHT_THRESHOLD:
+    print(f"    → 🔴 接近上轨 (>{BB_OVERBOUGHT_THRESHOLD}%, 可能超买)")
+elif bb_position < BB_OVERSOLD_THRESHOLD:
+    print(f"    → 🟢 接近下轨 (<{BB_OVERSOLD_THRESHOLD}%, 可能超卖)")
 else:
     print("    → ⚪ 带内中间区域")
 
@@ -802,11 +838,15 @@ if len(bars) >= 10:
     price_10_bars_ago = float(bars[-10].close)
     price_change_10 = ((current_price - price_10_bars_ago) / price_10_bars_ago) * 100
     print(f"  近10根K线变化: {price_change_10:+.2f}%")
+else:
+    print(f"  近10根K线变化: N/A (K线数量不足: {len(bars)})")
 
 if len(bars) >= 20:
     price_20_bars_ago = float(bars[-20].close)
     price_change_20 = ((current_price - price_20_bars_ago) / price_20_bars_ago) * 100
     print(f"  近20根K线变化: {price_change_20:+.2f}%")
+else:
+    print(f"  近20根K线变化: N/A (K线数量不足: {len(bars)})")
 
 # 3. 情绪分析
 print()
@@ -816,14 +856,14 @@ print("-" * 50)
 ls_ratio = sentiment_data.get('long_short_ratio', 1.0)
 print(f"  多空比: {ls_ratio:.4f}")
 
-if ls_ratio > 2.0:
-    print("    → 🔴 极度看多 (逆向指标: 可能下跌)")
-elif ls_ratio > 1.5:
-    print("    → 🟡 偏多 (市场乐观)")
-elif ls_ratio < 0.5:
-    print("    → 🔴 极度看空 (逆向指标: 可能上涨)")
-elif ls_ratio < 0.7:
-    print("    → 🟡 偏空 (市场悲观)")
+if ls_ratio > LS_RATIO_EXTREME_BULLISH:
+    print(f"    → 🔴 极度看多 (>{LS_RATIO_EXTREME_BULLISH}, 逆向指标: 可能下跌)")
+elif ls_ratio > LS_RATIO_BULLISH:
+    print(f"    → 🟡 偏多 (>{LS_RATIO_BULLISH}, 市场乐观)")
+elif ls_ratio < LS_RATIO_EXTREME_BEARISH:
+    print(f"    → 🔴 极度看空 (<{LS_RATIO_EXTREME_BEARISH}, 逆向指标: 可能上涨)")
+elif ls_ratio < LS_RATIO_BEARISH:
+    print(f"    → 🟡 偏空 (<{LS_RATIO_BEARISH}, 市场悲观)")
 else:
     print("    → ⚪ 多空平衡")
 
@@ -853,15 +893,12 @@ if judge_decision:
 print()
 print(f"  📋 Judge 完整理由:")
 judge_reason = signal_data.get('reason', 'N/A')
-# 分行显示
-for i in range(0, len(judge_reason), 80):
-    print(f"    {judge_reason[i:i+80]}")
+print_wrapped(judge_reason)
 
 print()
 print(f"  🗣️ 辩论摘要:")
 debate_summary = signal_data.get('debate_summary', 'N/A')
-for i in range(0, len(str(debate_summary)), 80):
-    print(f"    {str(debate_summary)[i:i+80]}")
+print_wrapped(str(debate_summary))
 
 # 5. 触发交易的条件 (基于更新后的提示词)
 print()
@@ -920,9 +957,9 @@ if final_signal == 'HOLD':
         bearish_score += 1
 
     # Long/Short ratio (逆向)
-    if ls_ratio > 2.0:
+    if ls_ratio > LS_RATIO_EXTREME_BULLISH:
         bearish_score += 1
-    elif ls_ratio < 0.7:
+    elif ls_ratio < LS_RATIO_BEARISH:
         bullish_score += 1
 
     print(f"    多头信号得分: {bullish_score}/5")
