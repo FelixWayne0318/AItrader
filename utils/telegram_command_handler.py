@@ -96,14 +96,24 @@ class TelegramCommandHandler:
         return is_authorized
     
     async def _send_response(self, update: Update, message: str):
-        """Send response message."""
+        """Send response message with Markdown parse error handling."""
         try:
             await update.message.reply_text(
                 message,
                 parse_mode='Markdown'
             )
         except Exception as e:
-            self.logger.error(f"Failed to send response: {e}")
+            error_str = str(e).lower()
+            # Handle Markdown parse errors - retry without formatting
+            if "can't parse" in error_str or "parse entities" in error_str:
+                self.logger.warning(f"⚠️ Markdown parse error, retrying without formatting: {e}")
+                try:
+                    await update.message.reply_text(message)  # No parse_mode
+                    return
+                except Exception as retry_error:
+                    self.logger.error(f"Failed to send plain text response: {retry_error}")
+            else:
+                self.logger.error(f"Failed to send response: {e}")
     
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command."""
