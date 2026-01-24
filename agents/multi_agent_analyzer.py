@@ -23,6 +23,14 @@ from datetime import datetime
 
 from openai import OpenAI
 
+# Import shared constants for consistency
+from strategy.trading_logic import (
+    MIN_SL_DISTANCE_PCT,
+    DEFAULT_SL_PCT,
+    DEFAULT_TP_PCT_BUY,
+    DEFAULT_TP_PCT_SELL,
+)
+
 
 class MultiAgentAnalyzer:
     """
@@ -642,22 +650,22 @@ JSON response only:"""
         sl = decision.get("stop_loss", 0) or 0  # Handle None
         tp = decision.get("take_profit", 0) or 0  # Handle None
 
-        # Minimum SL distance: 1% (to avoid too tight stops)
-        MIN_SL_DISTANCE_PCT = 0.01
+        # MIN_SL_DISTANCE_PCT is imported from strategy.trading_logic
+        # to ensure consistency with validate_multiagent_sltp()
 
         if signal == "BUY":
             # For LONG: SL should be below entry, TP above
             sl_distance = (current_price - sl) / current_price if sl > 0 else 0
 
             if sl >= current_price:
-                decision["stop_loss"] = current_price * 0.98  # 2% below
+                decision["stop_loss"] = current_price * (1 - DEFAULT_SL_PCT)
                 self.logger.warning(f"Fixed BUY stop loss (wrong side): {sl} -> {decision['stop_loss']}")
             elif sl_distance < MIN_SL_DISTANCE_PCT:
-                decision["stop_loss"] = current_price * 0.98  # 2% below
+                decision["stop_loss"] = current_price * (1 - DEFAULT_SL_PCT)
                 self.logger.warning(f"Fixed BUY stop loss (too close {sl_distance*100:.2f}%): {sl} -> {decision['stop_loss']}")
 
             if tp <= current_price:
-                decision["take_profit"] = current_price * 1.03  # 3% above
+                decision["take_profit"] = current_price * (1 + DEFAULT_TP_PCT_BUY)
                 self.logger.warning(f"Fixed BUY take profit: {tp} -> {decision['take_profit']}")
 
         elif signal == "SELL":
@@ -665,14 +673,14 @@ JSON response only:"""
             sl_distance = (sl - current_price) / current_price if sl > 0 else 0
 
             if sl <= current_price:
-                decision["stop_loss"] = current_price * 1.02  # 2% above
+                decision["stop_loss"] = current_price * (1 + DEFAULT_SL_PCT)
                 self.logger.warning(f"Fixed SELL stop loss (wrong side): {sl} -> {decision['stop_loss']}")
             elif sl_distance < MIN_SL_DISTANCE_PCT:
-                decision["stop_loss"] = current_price * 1.02  # 2% above
+                decision["stop_loss"] = current_price * (1 + DEFAULT_SL_PCT)
                 self.logger.warning(f"Fixed SELL stop loss (too close {sl_distance*100:.2f}%): {sl} -> {decision['stop_loss']}")
 
             if tp >= current_price:
-                decision["take_profit"] = current_price * 0.97  # 3% below
+                decision["take_profit"] = current_price * (1 - DEFAULT_TP_PCT_SELL)
                 self.logger.warning(f"Fixed SELL take profit: {tp} -> {decision['take_profit']}")
 
         return decision
@@ -813,8 +821,8 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
             "confidence": "LOW",
             "risk_level": "HIGH",
             "position_size_pct": 0,
-            "stop_loss": price * 0.98 if price else 0,
-            "take_profit": price * 1.02 if price else 0,
+            "stop_loss": price * (1 - DEFAULT_SL_PCT) if price else 0,
+            "take_profit": price * (1 + DEFAULT_SL_PCT) if price else 0,  # Use SL_PCT for HOLD
             "reason": "Multi-agent analysis failed - defaulting to HOLD",
             "debate_summary": "Analysis error occurred",
             "is_fallback": True,
