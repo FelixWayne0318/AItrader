@@ -26,7 +26,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.position import Position
 from nautilus_trader.model.orders import MarketOrder
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -476,10 +476,15 @@ class DeepSeekAIStrategy(Strategy):
         self.subscribe_bars(self.bar_type)
         self.log.info(f"Subscribed to {self.bar_type}")
 
-        # Set up timer for periodic analysis
+        # Set up timer for periodic analysis (clock-aligned to 00/15/30/45 minutes)
+        interval_minutes = self.config.timer_interval_sec // 60  # 默认 15 分钟
+        next_aligned_time = self._calculate_next_aligned_time(interval_minutes)
+        self.log.info(f"Timer aligned to clock: next trigger at {next_aligned_time.strftime('%H:%M:%S')} UTC")
+
         self.clock.set_timer(
             name="analysis_timer",
             interval=timedelta(seconds=self.config.timer_interval_sec),
+            start_time=next_aligned_time,
             callback=self.on_timer,
         )
 
@@ -524,6 +529,35 @@ class DeepSeekAIStrategy(Strategy):
         self.unsubscribe_bars(self.bar_type)
 
         self.log.info("Strategy stopped")
+
+    def _calculate_next_aligned_time(self, interval_minutes: int = 15) -> datetime:
+        """
+        Calculate the next clock-aligned time point.
+
+        For 15-minute interval, returns next 00/15/30/45 minute mark.
+        For 5-minute interval, returns next 00/05/10/.../55 minute mark.
+
+        Args:
+            interval_minutes: Timer interval in minutes (default 15)
+
+        Returns:
+            datetime: Next aligned UTC time
+        """
+        now = datetime.utcnow()
+
+        # Calculate next aligned minute
+        current_minute = now.minute
+        minutes_since_aligned = current_minute % interval_minutes
+        minutes_to_next = interval_minutes - minutes_since_aligned
+
+        if minutes_to_next == interval_minutes:
+            # We're exactly at an aligned time, go to next interval
+            minutes_to_next = interval_minutes
+
+        # Calculate next aligned time (reset seconds and microseconds)
+        next_time = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_next)
+
+        return next_time
 
     def _update_real_balance(self) -> Dict[str, float]:
         """
