@@ -190,12 +190,12 @@ class MultiAgentAnalyzer:
         """
         Run multi-agent analysis with Bull/Bear debate.
 
-        HYBRID APPROACH (v2.0):
+        TradingAgents Architecture (方案A):
         - Phase 1: Bull/Bear debate (2 AI calls)
-        - Phase 2: Deterministic decision based on confirmation counts (NO AI)
-        - Phase 3: Risk evaluation only if signal actionable (0-1 AI calls)
+        - Phase 2: Judge decision (1 AI call with optimized prompt)
+        - Phase 3: Risk evaluation (1 AI call)
 
-        Total: 2-3 AI calls (down from 4)
+        Total: 4 AI calls (complete TradingAgents framework)
 
         Parameters
         ----------
@@ -227,7 +227,7 @@ class MultiAgentAnalyzer:
             }
         """
         try:
-            self.logger.info("Starting multi-agent analysis (Hybrid v2.0)...")
+            self.logger.info("Starting multi-agent analysis (TradingAgents architecture)...")
 
             # Format reports for prompts
             tech_summary = self._format_technical_report(technical_report)
@@ -268,37 +268,27 @@ class MultiAgentAnalyzer:
             # Store transcript for debugging
             self.last_debate_transcript = debate_history
 
-            # Phase 2: Deterministic Decision (NO AI - pure algorithmic logic)
-            self.logger.info("Phase 2: Counting confirmations and making decision (deterministic)...")
-            judge_decision = self._make_deterministic_decision(
-                bull_argument=bull_argument,
-                bear_argument=bear_argument,
-                technical_report=technical_report,
+            # Phase 2: Judge makes decision (1 AI call)
+            self.logger.info("Phase 2: Judge evaluating debate...")
+            judge_decision = self._get_judge_decision(
                 debate_history=debate_history,
+                past_memories=self._get_past_memories(),
             )
 
             self.logger.info(
-                f"📊 Bullish confirmations: {judge_decision.get('bullish_count', 0)}/5, "
-                f"Bearish confirmations: {judge_decision.get('bearish_count', 0)}/5 → "
-                f"Decision: {judge_decision.get('decision', 'HOLD')} ({judge_decision.get('confidence', 'LOW')})"
+                f"🎯 Judge decision: {judge_decision.get('decision', 'HOLD')} "
+                f"({judge_decision.get('confidence', 'LOW')} confidence)"
             )
 
-            # Phase 3: Risk evaluation only if actionable (0-1 AI calls)
-            if judge_decision.get('decision') != 'HOLD':
-                self.logger.info("Phase 3: Risk evaluation for actionable signal...")
-                final_decision = self._evaluate_risk(
-                    proposed_action=judge_decision,
-                    technical_report=tech_summary,
-                    sentiment_report=sent_summary,
-                    current_position=current_position,
-                    current_price=current_price,
-                )
-            else:
-                self.logger.info("Phase 3: Skipped (HOLD signal)")
-                final_decision = self._format_hold_signal(
-                    judge_decision=judge_decision,
-                    current_price=current_price,
-                )
+            # Phase 3: Risk evaluation (1 AI call)
+            self.logger.info("Phase 3: Risk evaluation...")
+            final_decision = self._evaluate_risk(
+                proposed_action=judge_decision,
+                technical_report=tech_summary,
+                sentiment_report=sent_summary,
+                current_position=current_position,
+                current_price=current_price,
+            )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
                            f"({final_decision.get('confidence')} confidence)")
@@ -403,288 +393,26 @@ Deliver your argument now (2-3 paragraphs):"""
             {"role": "user", "content": prompt}
         ])
 
-    def _count_technical_confirmations(
-        self,
-        agent_analysis: str,
-        technical_data: Dict[str, Any],
-        side: str,
-    ) -> int:
-        """
-        Count technical confirmations from debate arguments and actual data.
-
-        This is DETERMINISTIC - no AI involved, pure algorithmic counting.
-
-        Parameters
-        ----------
-        agent_analysis : str
-            Bull or Bear analyst's argument text
-        technical_data : Dict
-            Actual technical indicator values
-        side : str
-            "BULL" or "BEAR"
-
-        Returns
-        -------
-        int
-            Count of confirmations (0-5)
-        """
-        count = 0
-        analysis_lower = agent_analysis.lower()
-
-        # Get technical values
-        current_price = technical_data.get('price', 0)
-        sma_5 = technical_data.get('sma_5', 0)
-        sma_20 = technical_data.get('sma_20', 0)
-        sma_50 = technical_data.get('sma_50', 0)
-        rsi = technical_data.get('rsi', 50)
-        macd = technical_data.get('macd', 0)
-        macd_signal = technical_data.get('macd_signal', 0)
-        macd_hist = technical_data.get('macd_histogram', 0)
-        bb_upper = technical_data.get('bb_upper', 0)
-        bb_lower = technical_data.get('bb_lower', 0)
-        support = technical_data.get('support', 0)
-        resistance = technical_data.get('resistance', 0)
-
-        if side == "BULL":
-            # BULLISH Confirmation 1: Price above SMA20 or SMA50
-            if current_price > 0 and (current_price > sma_20 or current_price > sma_50):
-                count += 1
-                self.logger.debug("✅ Bullish #1: Price above SMA20/50")
-
-            # BULLISH Confirmation 2: RSI < 60 (not overbought, room to rise)
-            if rsi < 60:
-                count += 1
-                self.logger.debug(f"✅ Bullish #2: RSI {rsi:.1f} < 60 (healthy)")
-
-            # BULLISH Confirmation 3: MACD bullish (> signal OR positive histogram)
-            if macd > macd_signal or macd_hist > 0:
-                count += 1
-                self.logger.debug("✅ Bullish #3: MACD bullish crossover/positive histogram")
-
-            # BULLISH Confirmation 4: Price near support or BB lower band
-            if support > 0 and bb_lower > 0:
-                support_dist = abs(current_price - support) / current_price
-                bb_lower_dist = abs(current_price - bb_lower) / current_price
-                if support_dist < 0.02 or bb_lower_dist < 0.02:  # Within 2%
-                    count += 1
-                    self.logger.debug("✅ Bullish #4: Price near support/BB lower")
-
-            # BULLISH Confirmation 5: Volume/momentum mentions (text analysis)
-            volume_keywords = ['increasing volume', 'volume surge', 'strong volume', 'bullish volume',
-                             'momentum', 'buying pressure']
-            if any(keyword in analysis_lower for keyword in volume_keywords):
-                count += 1
-                self.logger.debug("✅ Bullish #5: Positive volume/momentum mentioned")
-
-        elif side == "BEAR":
-            # BEARISH Confirmation 1: Price below SMA20 or SMA50
-            if current_price > 0 and (current_price < sma_20 or current_price < sma_50):
-                count += 1
-                self.logger.debug("✅ Bearish #1: Price below SMA20/50")
-
-            # BEARISH Confirmation 2: RSI > 40 (showing weakness or overbought)
-            if rsi > 40:
-                count += 1
-                self.logger.debug(f"✅ Bearish #2: RSI {rsi:.1f} > 40 (weakness)")
-
-            # BEARISH Confirmation 3: MACD bearish (< signal OR negative histogram)
-            if macd < macd_signal or macd_hist < 0:
-                count += 1
-                self.logger.debug("✅ Bearish #3: MACD bearish crossover/negative histogram")
-
-            # BEARISH Confirmation 4: Price near resistance or BB upper band
-            if resistance > 0 and bb_upper > 0:
-                resistance_dist = abs(current_price - resistance) / current_price
-                bb_upper_dist = abs(current_price - bb_upper) / current_price
-                if resistance_dist < 0.02 or bb_upper_dist < 0.02:  # Within 2%
-                    count += 1
-                    self.logger.debug("✅ Bearish #4: Price near resistance/BB upper")
-
-            # BEARISH Confirmation 5: Volume/momentum mentions (text analysis)
-            volume_keywords = ['decreasing volume', 'volume decline', 'weak volume', 'bearish volume',
-                             'selling pressure', 'distribution']
-            if any(keyword in analysis_lower for keyword in volume_keywords):
-                count += 1
-                self.logger.debug("✅ Bearish #5: Negative volume/momentum mentioned")
-
-        return count
-
-    def _make_deterministic_decision(
-        self,
-        bull_argument: str,
-        bear_argument: str,
-        technical_data: Dict[str, Any],
-        debate_history: str,
-    ) -> Dict[str, Any]:
-        """
-        Make trading decision based on quantitative confirmation counts.
-
-        This is DETERMINISTIC and TRANSPARENT - no AI interpretation.
-        Same inputs = same output, every time.
-
-        Parameters
-        ----------
-        bull_argument : str
-            Final bull analyst argument
-        bear_argument : str
-            Final bear analyst argument
-        technical_data : Dict
-            Technical indicator values
-        debate_history : str
-            Full debate transcript
-
-        Returns
-        -------
-        Dict
-            Decision with structure:
-            {
-                "decision": "LONG|SHORT|HOLD",
-                "confidence": "HIGH|MEDIUM|LOW",
-                "bullish_count": int,
-                "bearish_count": int,
-                "key_reasons": List[str],
-                "debate_summary": str
-            }
-        """
-        # Count confirmations from both sides
-        bullish_count = self._count_technical_confirmations(
-            bull_argument, technical_data, "BULL"
-        )
-        bearish_count = self._count_technical_confirmations(
-            bear_argument, technical_data, "BEAR"
-        )
-
-        # Apply deterministic decision rules
-        decision = "HOLD"
-        confidence = "LOW"
-        winning_side = "TIE"
-        key_reasons = []
-
-        # HIGH confidence rules (3+ confirmations)
-        if bullish_count >= 3:
-            decision = "LONG"
-            confidence = "HIGH"
-            winning_side = "BULL"
-            key_reasons = [
-                f"{bullish_count}/5 bullish confirmations",
-                "Strong technical alignment for upside",
-                "Clear trend with multiple indicator support"
-            ]
-        elif bearish_count >= 3:
-            decision = "SHORT"
-            confidence = "HIGH"
-            winning_side = "BEAR"
-            key_reasons = [
-                f"{bearish_count}/5 bearish confirmations",
-                "Strong technical alignment for downside",
-                "Clear trend with multiple indicator support"
-            ]
-        # MEDIUM confidence rules (2 confirmations + superiority)
-        elif bullish_count == 2 and bullish_count > bearish_count:
-            decision = "LONG"
-            confidence = "MEDIUM"
-            winning_side = "BULL"
-            key_reasons = [
-                f"{bullish_count}/5 bullish vs {bearish_count}/5 bearish",
-                "Moderate bullish technical setup",
-                "Bull argument outweighs bear concerns"
-            ]
-        elif bearish_count == 2 and bearish_count > bullish_count:
-            decision = "SHORT"
-            confidence = "MEDIUM"
-            winning_side = "BEAR"
-            key_reasons = [
-                f"{bearish_count}/5 bearish vs {bullish_count}/5 bullish",
-                "Moderate bearish technical setup",
-                "Bear argument outweighs bull case"
-            ]
-        # HOLD (both < 2 OR tied)
-        else:
-            decision = "HOLD"
-            confidence = "LOW"
-            winning_side = "TIE"
-            key_reasons = [
-                f"Insufficient confirmations (Bull: {bullish_count}/5, Bear: {bearish_count}/5)",
-                "Mixed or neutral technical signals",
-                "Waiting for clearer market direction"
-            ]
-
-        # Create brief debate summary
-        debate_summary = (
-            f"Bull presented {bullish_count}/5 technical confirmations. "
-            f"Bear presented {bearish_count}/5 confirmations. "
-            f"Quantitative analysis favors {winning_side}."
-        )
-
-        return {
-            "decision": decision,
-            "confidence": confidence,
-            "winning_side": winning_side,
-            "bullish_count": bullish_count,
-            "bearish_count": bearish_count,
-            "key_reasons": key_reasons,
-            "debate_summary": debate_summary,
-            "acknowledged_risks": [
-                "Market volatility",
-                "Unexpected news events"
-            ]
-        }
-
-    def _format_hold_signal(
-        self,
-        judge_decision: Dict[str, Any],
-        current_price: float,
-    ) -> Dict[str, Any]:
-        """
-        Format HOLD signal without calling Risk Evaluator AI.
-
-        Parameters
-        ----------
-        judge_decision : Dict
-            Decision from deterministic judge
-        current_price : float
-            Current market price
-
-        Returns
-        -------
-        Dict
-            Formatted HOLD signal
-        """
-        return {
-            "signal": "HOLD",
-            "confidence": judge_decision.get("confidence", "LOW"),
-            "risk_level": "LOW",
-            "position_size_pct": 0,
-            "stop_loss": current_price,
-            "take_profit": current_price,
-            "reason": "; ".join(judge_decision.get("key_reasons", ["No clear signal"])),
-            "debate_summary": judge_decision.get("debate_summary", "Market analysis inconclusive"),
-            "judge_decision": judge_decision,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-
     def _get_judge_decision(
         self,
         debate_history: str,
         past_memories: str,
     ) -> Dict[str, Any]:
         """
-        [DEPRECATED - Kept for compatibility]
-
         Judge evaluates the debate and makes decision.
 
         Borrowed from: TradingAgents/agents/managers/research_manager.py
+        Optimized with prescriptive prompt engineering to reduce HOLD bias.
         """
         prompt = f"""You are the Portfolio Manager and Debate Judge.
 Your role is to evaluate the Bull vs Bear debate and make a DEFINITIVE trading decision.
 
-CRITICAL RULES:
-1. You MUST choose a side - LONG or SHORT whenever possible
-2. HOLD is ONLY valid when there is TRUE 50/50 uncertainty (extremely rare!)
-3. Do NOT use HOLD as a safe default - it causes missed opportunities
-4. One side almost always has STRONGER arguments - FIND that side and commit
-5. In crypto markets, momentum often continues - lean towards trend continuation
-6. When in doubt between LONG/SHORT, the side with more technical confirmation wins
+=== MANDATORY RULES (YOU MUST FOLLOW EXACTLY) ===
+
+1. ⚠️ YOU MUST COUNT TECHNICAL CONFIRMATIONS BEFORE DECIDING
+2. ⚠️ YOU MUST FOLLOW THE DECISION RULES ALGORITHMICALLY - NO SUBJECTIVE INTERPRETATION
+3. ⚠️ DO NOT DEFAULT TO HOLD - It causes missed opportunities
+4. ⚠️ One side almost always has stronger evidence - FIND IT and COMMIT TO IT
 
 Past Trading Mistakes to AVOID:
 {past_memories if past_memories else "No past data - this is a fresh start."}
@@ -692,56 +420,105 @@ Past Trading Mistakes to AVOID:
 FULL DEBATE TRANSCRIPT:
 {debate_history}
 
-QUANTITATIVE DECISION FRAMEWORK:
-Count the number of technical confirmations mentioned in the debate for each side:
+=== STEP 1: COUNT TECHNICAL CONFIRMATIONS (MANDATORY) ===
 
-BULLISH confirmations (look for these in Bull's arguments):
-1. Price above SMA20 or SMA50
-2. RSI < 60 (not overbought, room to rise)
-3. MACD > Signal (bullish crossover) OR positive MACD histogram
-4. Price near support level or BB lower band (bounce potential)
-5. Increasing volume or bullish volume patterns
+You MUST count how many of these specific confirmations each side presented:
 
-BEARISH confirmations (look for these in Bear's arguments):
-1. Price below SMA20 or SMA50
+BULLISH Confirmations (count in Bull's arguments):
+1. Price above SMA20 OR Price above SMA50
+2. RSI < 60 (not overbought, has room to rise)
+3. MACD > Signal (bullish crossover) OR MACD histogram > 0
+4. Price near support level OR Price near BB lower band
+5. Increasing volume OR bullish volume pattern mentioned
+
+BEARISH Confirmations (count in Bear's arguments):
+1. Price below SMA20 OR Price below SMA50
 2. RSI > 40 (showing weakness or overbought)
-3. MACD < Signal (bearish crossover) OR negative MACD histogram
-4. Price near resistance level or BB upper band (rejection potential)
-5. Decreasing volume or bearish volume patterns
+3. MACD < Signal (bearish crossover) OR MACD histogram < 0
+4. Price near resistance level OR Price near BB upper band
+5. Decreasing volume OR bearish volume pattern mentioned
 
-DECISION RULES (follow this logic):
-- Bullish count >= 3 → decision: "LONG", confidence: "HIGH"
-- Bearish count >= 3 → decision: "SHORT", confidence: "HIGH"
-- Bullish count = 2 AND > Bearish count → decision: "LONG", confidence: "MEDIUM"
-- Bearish count = 2 AND > Bullish count → decision: "SHORT", confidence: "MEDIUM"
-- Bullish count >= 2 AND Bull made more compelling arguments → decision: "LONG", confidence: "MEDIUM"
-- Bearish count >= 2 AND Bear made more compelling arguments → decision: "SHORT", confidence: "MEDIUM"
-- ONLY use "HOLD" if both counts < 2 AND arguments are truly balanced
+IMPORTANT: Each confirmation is worth 1 point if ANY of the conditions in that item are true.
+Example: If price is above SMA50 but below SMA20, confirmation #1 STILL COUNTS as 1.
 
-This quantitative approach prevents over-conservative HOLD decisions and ensures actionable signals.
+=== STEP 2: APPLY DECISION RULES (MANDATORY - NO EXCEPTIONS) ===
 
-Provide your decision in this exact JSON format:
+You MUST follow these rules EXACTLY as written:
+
+IF Bullish count >= 3:
+    → decision = "LONG"
+    → confidence = "HIGH"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE IF Bearish count >= 3:
+    → decision = "SHORT"
+    → confidence = "HIGH"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE IF Bullish count == 2 AND Bullish count > Bearish count:
+    → decision = "LONG"
+    → confidence = "MEDIUM"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE IF Bearish count == 2 AND Bearish count > Bullish count:
+    → decision = "SHORT"
+    → confidence = "MEDIUM"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE IF Bullish count >= 2 AND Bull's argument quality is clearly superior:
+    → decision = "LONG"
+    → confidence = "MEDIUM"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE IF Bearish count >= 2 AND Bear's argument quality is clearly superior:
+    → decision = "SHORT"
+    → confidence = "MEDIUM"
+    → STOP HERE, DO NOT CONTINUE
+
+ELSE:
+    → decision = "HOLD"
+    → confidence = "LOW"
+    (This should be RARE - only when both sides have < 2 confirmations AND are truly balanced)
+
+=== STEP 3: VERIFICATION CHECKLIST (BEFORE RESPONDING) ===
+
+Before you provide your JSON response, verify:
+✓ Did you count all 5 bullish confirmations? (Write the count)
+✓ Did you count all 5 bearish confirmations? (Write the count)
+✓ Did you apply the decision rules EXACTLY as written above?
+✓ Did you avoid using HOLD as a default safe choice?
+✓ If you chose HOLD, are BOTH counts < 2 AND truly balanced?
+
+=== OUTPUT FORMAT ===
+
+Provide your decision in this EXACT JSON format (no additional text):
 {{
     "decision": "LONG|SHORT|HOLD",
     "winning_side": "BULL|BEAR|TIE",
     "confidence": "HIGH|MEDIUM|LOW",
+    "bullish_count": <number 0-5>,
+    "bearish_count": <number 0-5>,
     "key_reasons": ["reason1", "reason2", "reason3"],
     "acknowledged_risks": ["risk1", "risk2"]
 }}
 
-JSON response only:"""
+JSON response only (no preamble, no explanation):"""
 
         # Use JSON retry mechanism to improve reliability
         decision = self._extract_json_with_retry(
             messages=[
-                {"role": "system", "content": "You are a decisive Portfolio Manager. Make clear trading decisions based on debate evidence. Avoid excessive hedging."},
+                {"role": "system", "content": "You are a Portfolio Manager. You MUST follow the quantitative decision rules EXACTLY. Do NOT use subjective judgment to override the rules. Count confirmations accurately and apply the decision logic algorithmically."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,  # Lower temperature for more decisive output
+            temperature=0.1,  # Lower temperature for more consistent output
             max_json_retries=2,
         )
 
         if decision:
+            # Log the confirmation counts for transparency
+            bullish = decision.get('bullish_count', 'N/A')
+            bearish = decision.get('bearish_count', 'N/A')
+            self.logger.info(f"📊 Judge counted: Bullish {bullish}/5, Bearish {bearish}/5")
             return decision
 
         # Fallback decision if all retries failed
@@ -750,6 +527,8 @@ JSON response only:"""
             "decision": "HOLD",
             "winning_side": "TIE",
             "confidence": "LOW",
+            "bullish_count": 0,
+            "bearish_count": 0,
             "key_reasons": ["JSON parse error - defaulting to HOLD"],
             "acknowledged_risks": ["Parse failure"]
         }
