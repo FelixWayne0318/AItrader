@@ -23,6 +23,9 @@ from datetime import datetime
 
 from openai import OpenAI
 
+# Import shared constant for consistency
+from strategy.trading_logic import MIN_SL_DISTANCE_PCT
+
 
 class MultiAgentAnalyzer:
     """
@@ -642,8 +645,8 @@ JSON response only:"""
         sl = decision.get("stop_loss", 0) or 0  # Handle None
         tp = decision.get("take_profit", 0) or 0  # Handle None
 
-        # Minimum SL distance: 1% (to avoid too tight stops)
-        MIN_SL_DISTANCE_PCT = 0.01
+        # MIN_SL_DISTANCE_PCT is imported from strategy.trading_logic
+        # to ensure consistency with validate_multiagent_sltp()
 
         if signal == "BUY":
             # For LONG: SL should be below entry, TP above

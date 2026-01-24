@@ -366,7 +366,8 @@ def calculate_position_size(
 # =============================================================================
 
 # SL/TP validation constants
-MIN_SL_DISTANCE_PCT = 0.001  # 0.1% minimum SL distance
+# NOTE: Must match multi_agent_analyzer.py MIN_SL_DISTANCE_PCT
+MIN_SL_DISTANCE_PCT = 0.01   # 1% minimum SL distance (avoid too tight stops)
 MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum TP distance
 
 # TP percentage configuration by confidence level

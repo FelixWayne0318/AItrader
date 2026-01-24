@@ -174,29 +174,39 @@ def check_critical_config() -> Tuple[list, list]:
         warnings.append("deepseek_strategy.py 文件不存在")
 
     # ==========================================================================
-    # 检查 3: multi_agent_analyzer.py 中的 SL 距离验证
+    # 检查 3: trading_logic.py 中的 SL 距离验证常量
     # ==========================================================================
+    trading_logic_path = project_root / "strategy" / "trading_logic.py"
+    if trading_logic_path.exists():
+        with open(trading_logic_path, 'r', encoding='utf-8') as f:
+            trading_logic_content = f.read()
+
+        # 检查 SL 距离阈值 (应该在 trading_logic.py 中定义)
+        min_sl_match = re.search(r'MIN_SL_DISTANCE_PCT\s*=\s*([\d.]+)', trading_logic_content)
+        if not min_sl_match:
+            warnings.append(
+                "trading_logic.py: 未找到 MIN_SL_DISTANCE_PCT\n"
+                "   → SL 距离验证可能不生效"
+            )
+        else:
+            min_sl_pct = float(min_sl_match.group(1))
+            if min_sl_pct < 0.01:  # 小于 1%
+                warnings.append(
+                    f"trading_logic.py: MIN_SL_DISTANCE_PCT={min_sl_pct}\n"
+                    f"   → 建议至少设置为 0.01 (1%)"
+                )
+
+    # 检查 multi_agent_analyzer.py 是否正确导入共享常量
     analyzer_path = project_root / "agents" / "multi_agent_analyzer.py"
     if analyzer_path.exists():
         with open(analyzer_path, 'r', encoding='utf-8') as f:
             analyzer_content = f.read()
 
-        # 检查是否有 SL 距离验证
-        if "MIN_SL_DISTANCE_PCT" not in analyzer_content:
+        if "from strategy.trading_logic import MIN_SL_DISTANCE_PCT" not in analyzer_content:
             warnings.append(
-                "multi_agent_analyzer.py: 未找到 MIN_SL_DISTANCE_PCT\n"
-                "   → Risk Manager 可能允许 SL 距离过近"
+                "multi_agent_analyzer.py: 未从 trading_logic 导入 MIN_SL_DISTANCE_PCT\n"
+                "   → 可能导致 SL 验证不一致"
             )
-
-        # 检查 SL 距离阈值
-        min_sl_match = re.search(r'MIN_SL_DISTANCE_PCT\s*=\s*([\d.]+)', analyzer_content)
-        if min_sl_match:
-            min_sl_pct = float(min_sl_match.group(1))
-            if min_sl_pct < 0.01:  # 小于 1%
-                warnings.append(
-                    f"multi_agent_analyzer.py: MIN_SL_DISTANCE_PCT={min_sl_pct}\n"
-                    f"   → 建议至少设置为 0.01 (1%)"
-                )
 
     # ==========================================================================
     # 检查 4: patches 是否正确应用
