@@ -39,6 +39,8 @@ from agents.multi_agent_analyzer import MultiAgentAnalyzer
 from strategy.trading_logic import (
     check_confidence_threshold,
     calculate_position_size,
+    validate_multiagent_sltp,
+    calculate_technical_sltp,
     # process_signals removed - Hierarchical architecture uses MultiAgent Judge as final decision maker
 )
 # OCOManager no longer needed - using NautilusTrader's built-in bracket orders
@@ -1272,120 +1274,35 @@ class DeepSeekAIStrategy(Strategy):
         # Note: MultiAgent returns 'stop_loss' and 'take_profit' fields directly
         multi_sl = self.latest_signal_data.get('stop_loss')
         multi_tp = self.latest_signal_data.get('take_profit')
-        use_multi_sltp = False
 
-        # Validate MultiAgent SL/TP values
-        if multi_sl and multi_tp and multi_sl > 0 and multi_tp > 0:
-            # Verify SL is on correct side of entry price
-            sl_distance = abs(multi_sl - entry_price) / entry_price
-            tp_distance = abs(multi_tp - entry_price) / entry_price
-            MIN_SL_DISTANCE_PCT = 0.001  # 0.1% minimum distance to avoid extreme values
-            MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum distance for take profit
+        # Use shared function to validate MultiAgent SL/TP (same logic as diagnose_realtime.py)
+        is_valid, validated_sl, validated_tp, validation_reason = validate_multiagent_sltp(
+            side=side.name,  # Convert OrderSide.BUY → 'BUY'
+            multi_sl=multi_sl,
+            multi_tp=multi_tp,
+            entry_price=entry_price,
+        )
 
-            if side == OrderSide.BUY and multi_sl < entry_price and multi_tp > entry_price:
-                # Additional validation: check minimum distance
-                if sl_distance < MIN_SL_DISTANCE_PCT:
-                    self.log.warning(
-                        f"⚠️ MultiAgent SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%), "
-                        f"falling back to technical analysis"
-                    )
-                elif tp_distance < MIN_TP_DISTANCE_PCT:
-                    self.log.warning(
-                        f"⚠️ MultiAgent TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%), "
-                        f"falling back to technical analysis"
-                    )
-                else:
-                    use_multi_sltp = True
-                    self.log.info(
-                        f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f} ({sl_distance*100:.2f}%), "
-                        f"TP=${multi_tp:,.2f} ({tp_distance*100:.2f}%)"
-                    )
-            elif side == OrderSide.SELL and multi_sl > entry_price and multi_tp < entry_price:
-                # Additional validation: check minimum distance
-                if sl_distance < MIN_SL_DISTANCE_PCT:
-                    self.log.warning(
-                        f"⚠️ MultiAgent SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%), "
-                        f"falling back to technical analysis"
-                    )
-                elif tp_distance < MIN_TP_DISTANCE_PCT:
-                    self.log.warning(
-                        f"⚠️ MultiAgent TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%), "
-                        f"falling back to technical analysis"
-                    )
-                else:
-                    use_multi_sltp = True
-                    self.log.info(
-                        f"🎯 Using MultiAgent SL/TP (consensus): SL=${multi_sl:,.2f} ({sl_distance*100:.2f}%), "
-                        f"TP=${multi_tp:,.2f} ({tp_distance*100:.2f}%)"
-                    )
-            else:
-                self.log.warning(
-                    f"⚠️ MultiAgent SL/TP invalid for {side.name} "
-                    f"(SL=${multi_sl:,.2f}, TP=${multi_tp:,.2f}, Entry=${entry_price:,.2f}), "
-                    f"falling back to technical analysis"
-                )
-
-        # If MultiAgent values are valid, use them directly
-        if use_multi_sltp:
-            stop_loss_price = multi_sl
-            tp_price = multi_tp
+        if is_valid:
+            # MultiAgent SL/TP validated successfully
+            stop_loss_price = validated_sl
+            tp_price = validated_tp
+            self.log.info(f"🎯 Using MultiAgent SL/TP: {validation_reason}")
         else:
-            # Calculate Stop Loss price using technical analysis
-            # CRITICAL: Stop loss MUST be on the correct side of entry price
-            # - For BUY (LONG): SL must be BELOW entry price
-            # - For SELL (SHORT): SL must be ABOVE entry price
-            # Use epsilon for floating point comparison to avoid precision issues
-            # Add absolute minimum to handle extreme price scenarios
-            PRICE_EPSILON = max(entry_price * 1e-8, 1e-8)  # Relative tolerance with absolute floor
+            # Fall back to technical analysis using shared function
+            if multi_sl or multi_tp:
+                self.log.warning(f"⚠️ MultiAgent SL/TP invalid: {validation_reason}, falling back to technical analysis")
 
-            if side == OrderSide.BUY:
-                # BUY: Stop loss below entry price
-                default_sl = entry_price * 0.98  # Default 2% below entry
-
-                if self.sl_use_support_resistance and support > 0:
-                    potential_sl = support * (1 - self.sl_buffer_pct)
-                    # VALIDATION: Ensure SL is BELOW entry price (with epsilon tolerance)
-                    if potential_sl < entry_price - PRICE_EPSILON:
-                        stop_loss_price = potential_sl
-                        self.log.info(f"📍 Using support level for SL: ${support:,.2f} → ${stop_loss_price:,.2f}")
-                    else:
-                        # Support is above entry (market dropped rapidly) - use default
-                        stop_loss_price = default_sl
-                        self.log.warning(
-                            f"⚠️ Support ${support:,.2f} is above entry ${entry_price:,.2f}, "
-                            f"using default SL: ${stop_loss_price:,.2f}"
-                        )
-                else:
-                    stop_loss_price = default_sl
-                    self.log.info(f"📍 Using default 2% SL: ${stop_loss_price:,.2f}")
-            else:
-                # SELL: Stop loss above entry price
-                default_sl = entry_price * 1.02  # Default 2% above entry
-
-                if self.sl_use_support_resistance and resistance > 0:
-                    potential_sl = resistance * (1 + self.sl_buffer_pct)
-                    # VALIDATION: Ensure SL is ABOVE entry price (with epsilon tolerance)
-                    if potential_sl > entry_price + PRICE_EPSILON:
-                        stop_loss_price = potential_sl
-                        self.log.info(f"📍 Using resistance level for SL: ${resistance:,.2f} → ${stop_loss_price:,.2f}")
-                    else:
-                        # Resistance is below entry (market rallied rapidly) - use default
-                        stop_loss_price = default_sl
-                        self.log.warning(
-                            f"⚠️ Resistance ${resistance:,.2f} is below entry ${entry_price:,.2f}, "
-                            f"using default SL: ${stop_loss_price:,.2f}"
-                        )
-                else:
-                    stop_loss_price = default_sl
-                    self.log.info(f"📍 Using default 2% SL: ${stop_loss_price:,.2f}")
-
-            # Calculate Take Profit price (use first level for bracket order)
-            # Note: Bracket orders support single TP. For multiple TPs, we'll submit additional orders after entry fills
-            tp_pct = self.tp_pct_config.get(confidence, 0.02)
-            if side == OrderSide.BUY:
-                tp_price = entry_price * (1 + tp_pct)
-            else:
-                tp_price = entry_price * (1 - tp_pct)
+            stop_loss_price, tp_price, calc_method = calculate_technical_sltp(
+                side=side.name,  # Convert OrderSide.BUY → 'BUY'
+                entry_price=entry_price,
+                support=support,
+                resistance=resistance,
+                confidence=confidence,
+                use_support_resistance=self.sl_use_support_resistance,
+                sl_buffer_pct=self.sl_buffer_pct,
+            )
+            self.log.info(f"📍 Using technical analysis: {calc_method}")
 
         # Log SL/TP summary
         self.log.info(
