@@ -370,6 +370,11 @@ def calculate_position_size(
 MIN_SL_DISTANCE_PCT = 0.01   # 1% minimum SL distance (avoid too tight stops)
 MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum TP distance
 
+# Default SL/TP fallback percentages (used when AI returns invalid values)
+DEFAULT_SL_PCT = 0.02        # 2% default stop loss distance
+DEFAULT_TP_PCT_BUY = 0.03    # 3% take profit for BUY (above entry)
+DEFAULT_TP_PCT_SELL = 0.03   # 3% take profit for SELL (below entry)
+
 # TP percentage configuration by confidence level
 TP_PCT_CONFIG = {
     'HIGH': 0.03,    # 3%
