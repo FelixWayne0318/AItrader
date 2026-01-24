@@ -218,6 +218,13 @@ Environment=AUTO_CONFIRM=true
     - 防护：`_format_sentiment_data()` 改用 `.get()` 防止 KeyError
     - 文件：`strategy/deepseek_strategy.py`, `utils/deepseek_client.py`
 
+12. **Telegram TCPTransport closed 错误** (跨事件循环问题)
+    - 问题：发送 Telegram 消息时报错 `RuntimeError: unable to perform operation on <TCPTransport closed=True>`
+    - 原因：python-telegram-bot v20+ 使用 httpx 作为 HTTP 客户端
+    - 根因：httpx 会话与创建时的事件循环绑定，在新事件循环中使用旧 Bot 实例会失败
+    - 修复：在 `_run_sync_in_new_loop` 中为每个新事件循环创建新的 Bot 实例
+    - 文件：`utils/telegram_bot.py`
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
