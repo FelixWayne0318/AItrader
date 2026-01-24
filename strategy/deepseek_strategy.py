@@ -1,8 +1,15 @@
 """
-DeepSeek AI Strategy for NautilusTrader
+Multi-Agent Hierarchical Trading Strategy for NautilusTrader
 
-AI-powered cryptocurrency trading strategy using DeepSeek for decision making,
-technical indicators for market analysis, and sentiment data for validation.
+AI-powered cryptocurrency trading strategy using TradingAgents-inspired architecture:
+- Bull/Bear Analyst Debate: Two opposing AI agents argue market direction
+- Judge (Portfolio Manager): Evaluates debate and makes final decision
+- Risk Manager: Determines position sizing and stop/take profit levels
+
+This implements 方案B (Hierarchical Decision) where the Judge's decision is final,
+avoiding signal conflicts that can occur with parallel multi-agent systems.
+
+Reference: TradingAgents (UCLA/MIT) - https://github.com/TauricResearch/TradingAgents
 """
 
 import os
@@ -30,13 +37,9 @@ from utils.sentiment_client import SentimentDataFetcher
 from utils.binance_account import BinanceAccountFetcher
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
 from strategy.trading_logic import (
-    check_divergence,
-    resolve_divergence_by_confidence,
     check_confidence_threshold,
     calculate_position_size,
-    create_hold_signal,
-    process_signals,
-    CONFIDENCE_LEVELS,
+    # process_signals removed - 方案B uses MultiAgent Judge as final decision maker
 )
 # OCOManager no longer needed - using NautilusTrader's built-in bracket orders
 
@@ -90,13 +93,11 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     rsi_extreme_threshold_lower: float = 25.0
     rsi_extreme_multiplier: float = 0.7
 
-    # Multi-Agent Divergence Handling
-    # When DeepSeek and MultiAgent have opposing signals (BUY vs SELL),
-    # use weighted confidence fusion instead of simple skip.
-    # Based on industry best practices: QuantAgent, TradingAgents frameworks
-    skip_on_divergence: bool = True  # 完全跳过分歧（保守模式）
-    use_confidence_fusion: bool = True  # 启用加权信心融合（推荐）
-    # 当两者都启用时，confidence_fusion 优先
+    # [LEGACY - 方案B不再使用] Multi-Agent Divergence Handling
+    # 方案B采用层级决策架构，Judge决策即最终决策，不存在信号合并/冲突
+    # 以下选项保留用于向后兼容，但不再生效
+    skip_on_divergence: bool = True  # [LEGACY] 方案B不使用
+    use_confidence_fusion: bool = True  # [LEGACY] 方案B不使用
     
     # Stop Loss & Take Profit
     enable_auto_sl_tp: bool = True
@@ -775,117 +776,52 @@ class DeepSeekAIStrategy(Strategy):
                 f"{current_position['quantity']} @ ${current_position['avg_px']:.2f}"
             )
 
-        # Analyze with DeepSeek AI
+        # ========== 方案B: 层级决策架构 (TradingAgents) ==========
+        # MultiAgent 的 Judge 作为最终决策者，不再与 DeepSeek 并行合并
+        # 流程: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
         try:
-            self.log.info("Calling DeepSeek AI for analysis...")
-            signal_deepseek = self.deepseek.analyze(
-                price_data=price_data,
-                technical_data=technical_data,
-                sentiment_data=sentiment_data,
+            self.log.info("🎭 Starting Multi-Agent Hierarchical Analysis...")
+            self.log.info("   Phase 1: Bull/Bear Debate")
+            self.log.info("   Phase 2: Judge (Portfolio Manager) Decision")
+            self.log.info("   Phase 3: Risk Evaluation")
+
+            signal_data = self.multi_agent.analyze(
+                symbol="BTCUSDT",
+                technical_report=technical_data,
+                sentiment_report=sentiment_data,
                 current_position=current_position,
+                price_data=price_data,
             )
+
+            # Log Judge's final decision
             self.log.info(
-                f"🤖 DeepSeek: {signal_deepseek['signal']} | "
-                f"Confidence: {signal_deepseek['confidence']} | "
-                f"Reason: {signal_deepseek['reason']}"
+                f"🎯 Judge Decision: {signal_data['signal']} | "
+                f"Confidence: {signal_data['confidence']} | "
+                f"Risk: {signal_data.get('risk_level', 'N/A')}"
             )
+            self.log.info(f"📋 Reason: {signal_data.get('reason', 'N/A')}")
 
-            # Multi-Agent parallel analysis (Bull/Bear debate) for comparison
-            signal_multi = None
-            try:
-                self.log.info("🎭 Starting Multi-Agent analysis (Bull/Bear debate)...")
-                signal_multi = self.multi_agent.analyze(
-                    symbol="BTCUSDT",
-                    technical_report=technical_data,
-                    sentiment_report=sentiment_data,
-                    current_position=current_position,
-                    price_data=price_data,
-                )
-                self.log.info(
-                    f"🎯 MultiAgent: {signal_multi['signal']} | "
-                    f"Confidence: {signal_multi['confidence']}"
-                )
-                if signal_multi.get('debate_summary'):
-                    self.log.info(f"📋 Debate: {signal_multi['debate_summary'][:200]}...")
+            if signal_data.get('debate_summary'):
+                self.log.info(f"🗣️ Debate Summary: {signal_data['debate_summary'][:200]}...")
 
-                # Log comparison result and apply MultiAgent SL/TP when consensus exists
-                if signal_deepseek['signal'] == signal_multi['signal']:
-                    self.log.info("✅ Consensus: Both analyzers agree")
-                    # When consensus, use MultiAgent's SL/TP if available (more refined from debate)
-                    if signal_multi.get('stop_loss') and signal_multi.get('take_profit'):
-                        signal_deepseek['stop_loss_multi'] = signal_multi['stop_loss']
-                        signal_deepseek['take_profit_multi'] = signal_multi['take_profit']
-                        self.log.info(
-                            f"📊 Using MultiAgent SL/TP: SL=${signal_multi['stop_loss']:,.2f}, "
-                            f"TP=${signal_multi['take_profit']:,.2f}"
-                        )
-                else:
-                    # Check for opposing actionable signals (BUY vs SELL)
-                    opposing_signals = {signal_deepseek['signal'], signal_multi['signal']} == {'BUY', 'SELL'}
-
-                    # Check for HOLD vs actionable signal (HOLD vs BUY or HOLD vs SELL)
-                    hold_vs_action = (
-                        (signal_deepseek['signal'] == 'HOLD' and signal_multi['signal'] in ['BUY', 'SELL']) or
-                        (signal_multi['signal'] == 'HOLD' and signal_deepseek['signal'] in ['BUY', 'SELL'])
-                    )
-
-                    if opposing_signals or hold_vs_action:
-                        # Use weighted confidence fusion if enabled (recommended)
-                        if self.use_confidence_fusion:
-                            resolved_signal = self._resolve_divergence_by_confidence(
-                                signal_deepseek, signal_multi
-                            )
-                            if resolved_signal:
-                                signal_deepseek = resolved_signal
-                            # If fusion returns None, fall through to skip_on_divergence check
-                            elif self.skip_on_divergence:
-                                self.log.warning(
-                                    f"🚫 Equal confidence divergence: "
-                                    f"DeepSeek={signal_deepseek['signal']}({signal_deepseek['confidence']}), "
-                                    f"MultiAgent={signal_multi['signal']}({signal_multi['confidence']}) - SKIPPING"
-                                )
-                                signal_deepseek = self._create_hold_signal(
-                                    "Equal confidence divergence - trade skipped for safety"
-                                )
-                            else:
-                                # Equal confidence but skip_on_divergence=False - use DeepSeek signal
-                                self.log.warning(
-                                    f"⚠️ Equal confidence divergence: "
-                                    f"DeepSeek={signal_deepseek['signal']}({signal_deepseek.get('confidence', 'N/A')}), "
-                                    f"MultiAgent={signal_multi['signal']}({signal_multi.get('confidence', 'N/A')}) "
-                                    f"- using DeepSeek signal (skip_on_divergence=False)"
-                                )
-                        elif self.skip_on_divergence:
-                            # Legacy behavior: skip all opposing signals
-                            self.log.warning(
-                                f"🚫 Opposing signals: DeepSeek={signal_deepseek['signal']}, "
-                                f"MultiAgent={signal_multi['signal']} - SKIPPING trade (skip_on_divergence=True)"
-                            )
-                            signal_deepseek = self._create_hold_signal(
-                                f"Trade skipped: opposing signals (DeepSeek={signal_deepseek['signal']}, MultiAgent={signal_multi['signal']})"
-                            )
-                        else:
-                            self.log.warning(
-                                f"⚠️ Divergence: DeepSeek={signal_deepseek['signal']}, "
-                                f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
-                            )
-                    else:
-                        # Non-actionable divergence (e.g., both HOLD with different reasons)
-                        self.log.info(
-                            f"ℹ️ Minor divergence: DeepSeek={signal_deepseek['signal']}, "
-                            f"MultiAgent={signal_multi['signal']} - using DeepSeek signal"
-                        )
-            except Exception as e:
-                self.log.warning(f"⚠️ Multi-Agent comparison failed (non-critical): {e}")
-
-            # Use DeepSeek signal for actual trading (safe during validation period)
-            # MultiAgent's SL/TP may be attached when consensus exists
-            signal_data = signal_deepseek
+            # Log judge's detailed decision if available
+            judge_decision = signal_data.get('judge_decision', {})
+            if judge_decision:
+                winning_side = judge_decision.get('winning_side', 'N/A')
+                key_reasons = judge_decision.get('key_reasons', [])
+                self.log.info(f"⚖️ Winning Side: {winning_side}")
+                if key_reasons:
+                    self.log.info(f"📌 Key Reasons: {', '.join(key_reasons[:3])}")
 
             # Send Telegram signal notification (only for actionable signals)
             if self.telegram_bot and self.enable_telegram and self.telegram_notify_signals:
                 if signal_data['signal'] in ['BUY', 'SELL']:
                     try:
+                        # Include Judge decision details in notification
+                        judge_info = signal_data.get('judge_decision', {})
+                        winning_side = judge_info.get('winning_side', 'N/A')
+                        debate_summary = signal_data.get('debate_summary', '')
+
                         signal_notification = self.telegram_bot.format_trade_signal({
                             'signal': signal_data['signal'],
                             'confidence': signal_data['confidence'],
@@ -895,21 +831,24 @@ class DeepSeekAIStrategy(Strategy):
                             'macd': technical_data.get('macd', 0),
                             'support': technical_data.get('support', 0),
                             'resistance': technical_data.get('resistance', 0),
-                            'reasoning': signal_data['reason'],
+                            'reasoning': signal_data.get('reason', ''),
+                            # 方案B additional fields
+                            'winning_side': winning_side,
+                            'debate_summary': debate_summary[:100] if debate_summary else '',
                         })
                         self.telegram_bot.send_message_sync(signal_notification)
                     except Exception as e:
                         self.log.warning(f"Failed to send Telegram signal notification: {e}")
                         
         except Exception as e:
-            self.log.error(f"DeepSeek AI analysis failed: {e}", exc_info=True)
-            
+            self.log.error(f"Multi-Agent analysis failed: {e}", exc_info=True)
+
             # Send error notification
             if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
                 try:
                     error_msg = self.telegram_bot.format_error_alert({
                         'level': 'ERROR',
-                        'message': f"AI Analysis Failed: {str(e)[:100]}",
+                        'message': f"Multi-Agent Analysis Failed: {str(e)[:100]}",
                         'context': 'on_timer'
                     })
                     self.telegram_bot.send_message_sync(error_msg)
@@ -993,66 +932,8 @@ class DeepSeekAIStrategy(Strategy):
 
         return None
 
-    def _create_hold_signal(self, reason: str) -> Dict[str, Any]:
-        """
-        Create a standardized HOLD signal dictionary.
-
-        Parameters
-        ----------
-        reason : str
-            The reason for holding (skipping trade)
-
-        Returns
-        -------
-        Dict[str, Any]
-            Standardized HOLD signal with LOW confidence
-        """
-        return {
-            'signal': 'HOLD',
-            'confidence': 'LOW',
-            'reason': reason,
-            'stop_loss': None,
-            'take_profit': None,
-        }
-
-    def _resolve_divergence_by_confidence(
-        self,
-        signal_deepseek: Dict[str, Any],
-        signal_multi: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Resolve opposing signals using weighted confidence fusion.
-
-        Uses shared trading_logic module to ensure consistency with diagnostic tool.
-
-        Parameters
-        ----------
-        signal_deepseek : Dict
-            DeepSeek AI signal with 'signal' and 'confidence'
-        signal_multi : Dict
-            MultiAgent signal with 'signal' and 'confidence'
-
-        Returns
-        -------
-        Optional[Dict]
-            Resolved signal dict, or None if equal confidence (should skip)
-        """
-        # Create a simple logger adapter that uses self.log
-        class LogAdapter:
-            def __init__(self, strategy_log):
-                self._log = strategy_log
-            def info(self, msg):
-                self._log.info(msg)
-            def warning(self, msg):
-                self._log.warning(msg)
-            def error(self, msg):
-                self._log.error(msg)
-
-        logger = LogAdapter(self.log)
-        resolved, _ = resolve_divergence_by_confidence(
-            signal_deepseek, signal_multi, logger
-        )
-        return resolved
+    # NOTE: 方案B (Hierarchical Decision) - MultiAgent Judge 作为唯一决策者
+    # 不再需要信号合并逻辑，Judge 决策即最终决策
 
     def _execute_trade(
         self,
@@ -2215,10 +2096,13 @@ class DeepSeekAIStrategy(Strategy):
                 price = float(fill.last_px)
                 ts = fill.ts_event
 
-                # Format timestamp
+                # Format timestamp with defensive handling
                 from datetime import datetime
-                dt = datetime.utcfromtimestamp(ts / 1e9)
-                time_str = dt.strftime("%m-%d %H:%M")
+                try:
+                    dt = datetime.utcfromtimestamp(ts / 1e9) if ts else datetime.utcnow()
+                    time_str = dt.strftime("%m-%d %H:%M")
+                except (ValueError, TypeError, OSError):
+                    time_str = "N/A"
 
                 msg += f"{side_emoji} {side} {qty:.4f} @ ${price:,.2f}\n"
                 msg += f"   Time: {time_str} UTC\n\n"

@@ -70,9 +70,14 @@ class SentimentDataFetcher:
             }
         """
         try:
+            # Input validation: ensure token is a valid string
+            if not isinstance(token, str) or not token.isalnum() or len(token) > 10:
+                print(f"⚠️ Invalid token: {token}")
+                return None
+
             # Build request
             params = {
-                "symbol": f"{token}USDT",
+                "symbol": f"{token.upper()}USDT",  # Normalize to uppercase
                 "period": self.timeframe,
                 "limit": 1
             }

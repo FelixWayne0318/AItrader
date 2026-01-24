@@ -47,15 +47,19 @@ python3 diagnose.py --update --restart
 
 ## Expected Output
 
-### Normal Operation Signs
+### Normal Operation Signs (方案B)
 ```
 ✅ Configuration loaded successfully
 ✅ Market data fetched successfully
 ✅ TechnicalIndicatorManager initialized
 ✅ Technical data retrieved
 ✅ Sentiment data retrieved
-✅ DeepSeek analysis successful
-✅ MultiAgent debate successful
+✅ MultiAgent 层级决策成功
+   🐂 Bull Agent 分析中...
+   🐻 Bear Agent 分析中...
+   ⚖️ Judge Agent 判断中...
+   🛡️ Risk Manager 评估中...
+🎯 Judge 最终决策: BUY/SELL/HOLD
 ```
 
 ### Key Checkpoints
@@ -64,33 +68,44 @@ python3 diagnose.py --update --restart
 |-------|--------------|-------------------|
 | RSI | 0-100 | Out of range = data error |
 | MACD | Any value | NaN = insufficient data |
-| DeepSeek Signal | BUY/SELL/HOLD | ERROR = API failure |
-| MultiAgent Signal | BUY/SELL/HOLD | Compare with DeepSeek |
+| Judge Signal | BUY/SELL/HOLD | ERROR = API failure |
+| Winning Side | BULL/BEAR/TIE | 显示辩论胜方 |
 
-## Signal Divergence Handling
+## 信号决策流程 (方案B - 层级决策架构)
 
-```yaml
-use_confidence_fusion: true   # Weighted confidence fusion (recommended)
-skip_on_divergence: true      # Skip on divergence (fallback)
+**v6.0 更新**: 采用 TradingAgents 层级决策架构，Judge 决策即最终决策
+
+```
+决策流程:
+Phase 1: Bull/Bear Debate (辩论)
+  └→ 🐂 Bull Agent: 寻找做多理由
+  └→ 🐻 Bear Agent: 寻找做空理由
+
+Phase 2: Judge (Portfolio Manager) Decision
+  └→ ⚖️ 评估辩论结果，做出最终决策
+
+Phase 3: Risk Evaluation
+  └→ 🛡️ 确定仓位大小和止损止盈
 ```
 
-**Divergence Scenarios**:
-- BUY vs SELL → Use higher confidence signal (fusion mode)
-- BUY vs HOLD → Use DeepSeek signal
-- SELL vs HOLD → Use DeepSeek signal
+**注意**: 以下配置已标记为 LEGACY，不再生效:
+```yaml
+skip_on_divergence: true      # [LEGACY] 方案B不使用
+use_confidence_fusion: true   # [LEGACY] 方案B不使用
+```
 
 ## Common Issues
 
 ### 1. No Trading Signals
 
-**Possible Causes**:
-- AI returns HOLD (unclear market)
+**Possible Causes** (方案B):
+- Judge returns HOLD (Bull/Bear辩论无明显胜者)
 - Confidence below min_confidence_to_trade
-- BUY vs SELL divergence with equal confidence
+- Risk Manager 认为风险过高
 
 **Check Command**:
 ```bash
-python3 diagnose.py 2>&1 | grep -E "(Final Signal|Confidence|Divergence)"
+python3 diagnose_realtime.py 2>&1 | grep -E "(Judge|Final Signal|Confidence|Winning Side)"
 ```
 
 ### 2. DeepSeek API Failure

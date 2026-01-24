@@ -120,13 +120,13 @@ Environment=AUTO_CONFIRM=true
    - 问题：`log_file_format` 和 `log_colors` 参数不被支持
    - 修复：移除这两个参数
 
-6. **多代理分歧处理** (skip_on_divergence)
-   - 问题：当 DeepSeek 和 MultiAgent 信号完全对立 (BUY vs SELL) 时，系统仍会执行交易
-   - 风险：在 AI 系统意见分歧时交易可能导致损失
-   - 修复：添加 `skip_on_divergence` 配置项 (默认 True)
-   - 行为：当 BUY vs SELL 分歧时，自动转为 HOLD 跳过交易
-   - 参考：[TradingAgents Framework](https://github.com/TauricResearch/TradingAgents) 业界最佳实践
-   - 配置：`strategy/deepseek_strategy.py` 中的 `skip_on_divergence: bool = True`
+6. **多代理分歧处理** (skip_on_divergence) → **已被方案B取代**
+   - 问题：当 DeepSeek 和 MultiAgent 信号完全对立 (BUY vs SELL) 时，信号合并会导致过多 HOLD
+   - **方案B修复**：改用层级决策架构，MultiAgent Judge 作为唯一决策者
+   - 架构：Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
+   - 参考：[TradingAgents Framework](https://github.com/TauricResearch/TradingAgents) UCLA/MIT 论文
+   - 文件：`strategy/deepseek_strategy.py`, `agents/multi_agent_analyzer.py`
+   - 注意：`skip_on_divergence` 和 `use_confidence_fusion` 配置项已标记为 LEGACY，不再生效
 
 7. **时间周期解析Bug**
    - 问题：`15-MINUTE` 被错误解析为 `5m`

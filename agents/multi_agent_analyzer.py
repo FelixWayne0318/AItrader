@@ -378,12 +378,15 @@ JSON response only:"""
         self.logger.debug(f"Judge raw response: {result}")
 
         try:
-            # Extract JSON from response
+            # Extract JSON from response with explicit validation
             start = result.find('{')
             end = result.rfind('}') + 1
-            if start != -1 and end > start:
-                return json.loads(result[start:end])
-        except json.JSONDecodeError as e:
+            # Validate: start found, end found (end > 0), and start comes before end
+            if start != -1 and end > 0 and start < end:
+                json_str = result[start:end]
+                if json_str.strip():  # Ensure non-empty
+                    return json.loads(json_str)
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             self.logger.warning(f"Failed to parse judge decision: {e}")
 
         # Fallback decision
@@ -472,19 +475,23 @@ JSON response only:"""
         self.logger.debug(f"Risk evaluation raw response: {result}")
 
         try:
+            # Extract JSON from response with explicit validation
             start = result.find('{')
             end = result.rfind('}') + 1
-            if start != -1 and end > start:
-                decision = json.loads(result[start:end])
-                decision["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                decision["debate_rounds"] = self.debate_rounds
-                decision["judge_decision"] = proposed_action
+            # Validate: start found, end found (end > 0), and start comes before end
+            if start != -1 and end > 0 and start < end:
+                json_str = result[start:end]
+                if json_str.strip():  # Ensure non-empty
+                    decision = json.loads(json_str)
+                    decision["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    decision["debate_rounds"] = self.debate_rounds
+                    decision["judge_decision"] = proposed_action
 
-                # Validate stop loss / take profit
-                decision = self._validate_sl_tp(decision, current_price)
+                    # Validate stop loss / take profit
+                    decision = self._validate_sl_tp(decision, current_price)
 
-                return decision
-        except json.JSONDecodeError as e:
+                    return decision
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
             self.logger.warning(f"Failed to parse risk evaluation: {e}")
 
         # Fallback
@@ -492,9 +499,14 @@ JSON response only:"""
 
     def _validate_sl_tp(self, decision: Dict[str, Any], current_price: float) -> Dict[str, Any]:
         """Validate and fix stop loss / take profit values."""
+        # Defensive check: ensure current_price is valid before calculations
+        if current_price is None or current_price <= 0:
+            self.logger.warning(f"Invalid current_price ({current_price}) for SL/TP validation, skipping")
+            return decision
+
         signal = decision.get("signal", "HOLD")
-        sl = decision.get("stop_loss", 0)
-        tp = decision.get("take_profit", 0)
+        sl = decision.get("stop_loss", 0) or 0  # Handle None
+        tp = decision.get("take_profit", 0) or 0  # Handle None
 
         if signal == "BUY":
             # For LONG: SL should be below entry, TP above
