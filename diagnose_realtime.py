@@ -538,7 +538,7 @@ if would_trade and final_signal in ['BUY', 'SELL']:
 
     # 使用共享模块计算仓位 (与 strategy._calculate_position_size 完全相同)
     btc_quantity, calc_details = calculate_position_size(
-        signal_data=final_signal_data,
+        signal_data=signal_data,  # 方案B: 使用 Judge 的决策数据
         price_data=price_data,
         technical_data=technical_data,
         config=position_config,
