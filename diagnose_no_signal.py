@@ -129,9 +129,12 @@ def analyze_logs() -> Dict[str, Any]:
         "on_timer_count": 0,
         "signal_count": 0,
         "error_count": 0,
+        "warning_count": 0,
+        "telegram_markdown_errors": 0,
         "last_timer": None,
         "last_signal": None,
         "errors": [],
+        "warnings": [],
         "signals": [],
     }
 
@@ -146,48 +149,75 @@ def analyze_logs() -> Dict[str, Any]:
         for line in lines:
             line_lower = line.lower()
 
-            # 检查 on_timer 触发
-            if 'on_timer' in line_lower or 'timer triggered' in line_lower:
+            # 检查 on_timer 触发 (多种模式匹配)
+            # 实际日志: "Running periodic analysis..."
+            if 'running periodic analysis' in line_lower or \
+               'on_timer' in line_lower or \
+               'timer triggered' in line_lower:
                 result['on_timer_count'] += 1
-                result['last_timer'] = line[:25]  # 时间戳
+                result['last_timer'] = line[:50]  # 时间戳 + 部分内容
 
-            # 检查信号生成
-            if 'signal:' in line_lower or 'judge decision' in line_lower:
+            # 检查信号生成 (Judge Decision 是主要模式)
+            if 'judge decision' in line_lower:
                 result['signal_count'] += 1
                 result['last_signal'] = line
                 if len(result['signals']) < 5:
                     result['signals'].append(line)
 
-            # 检查错误
-            if 'error' in line_lower or 'failed' in line_lower or 'exception' in line_lower:
-                result['error_count'] += 1
-                if len(result['errors']) < 10:
-                    result['errors'].append(line)
+            # 检查 Telegram Markdown 错误
+            if "can't parse entities" in line_lower or "parse entities" in line_lower:
+                result['telegram_markdown_errors'] += 1
+
+            # 检查错误 (区分 ERROR 和 WARNING)
+            if '[error]' in line_lower or 'error:' in line_lower:
+                # 排除 Telegram Markdown 错误 (已单独统计)
+                if "can't parse entities" not in line_lower:
+                    result['error_count'] += 1
+                    if len(result['errors']) < 10:
+                        result['errors'].append(line)
+            elif '[warning]' in line_lower or 'warning:' in line_lower:
+                result['warning_count'] += 1
+                if len(result['warnings']) < 5:
+                    result['warnings'].append(line)
 
         # 输出结果
         if result['on_timer_count'] > 0:
             print_ok(f"on_timer 触发次数: {result['on_timer_count']}")
-            print_info(f"最近触发: {result['last_timer']}")
+            if result['last_timer']:
+                print_info(f"最近触发: {result['last_timer']}")
+        elif result['signal_count'] > 0:
+            # 如果有信号生成，说明 on_timer 触发了，只是日志模式没匹配
+            print_ok(f"on_timer 已触发 (检测到 {result['signal_count']} 个信号)")
         else:
-            print_error("最近 30 分钟内 on_timer 未触发!")
+            print_warn("最近 30 分钟内 on_timer 未触发")
             print_info("可能原因:")
-            print_info("  - 服务刚启动，需等待下一个 15 分钟周期")
+            print_info("  - 服务刚启动，需等待下一个时钟对齐周期 (00/15/30/45 分)")
             print_info("  - 服务未正常运行")
-            print_info("  - K线数据未收到")
 
         if result['signal_count'] > 0:
             print_ok(f"信号生成次数: {result['signal_count']}")
             for sig in result['signals'][:3]:
-                print_info(f"  {sig[-100:]}")
+                # 提取信号部分
+                if 'Judge Decision' in sig:
+                    sig_part = sig[sig.find('Judge Decision'):]
+                    print_info(f"  {sig_part[:80]}")
+                else:
+                    print_info(f"  {sig[-100:]}")
         else:
             print_warn("最近 30 分钟内无信号生成记录")
 
+        # Telegram Markdown 错误
+        if result['telegram_markdown_errors'] > 0:
+            print_warn(f"Telegram Markdown 解析错误: {result['telegram_markdown_errors']} 次")
+            print_info("  已有重试机制，消息会以纯文本发送")
+
+        # 其他错误
         if result['error_count'] > 0:
-            print_error(f"错误数量: {result['error_count']}")
-            for err in result['errors'][:5]:
-                print_info(f"  {err[-150:]}")
+            print_error(f"其他错误数量: {result['error_count']}")
+            for err in result['errors'][:3]:
+                print_info(f"  {err[-120:]}")
         else:
-            print_ok("无错误记录")
+            print_ok("无严重错误记录")
 
     except subprocess.CalledProcessError as e:
         print_warn(f"无法获取日志: {e}")
@@ -1074,6 +1104,53 @@ def check_known_issues_from_commits() -> Dict[str, Any]:
             )
 
     # =========================================================================
+    # 检查 21: Telegram Markdown 转义 (commit cfb57da)
+    # =========================================================================
+    print_info("检查 21: Telegram Markdown 转义...")
+
+    telegram_bot = project_root / "utils" / "telegram_bot.py"
+    telegram_handler = project_root / "utils" / "telegram_command_handler.py"
+
+    md_escape_ok = False
+    md_retry_ok = False
+
+    if telegram_bot.exists():
+        content = telegram_bot.read_text()
+        if 'escape_markdown' in content:
+            print_ok("telegram_bot.py 包含 escape_markdown 方法 ✓")
+            md_escape_ok = True
+            result['fixes_verified'].append("Telegram escape_markdown")
+        else:
+            result['warnings'].append("telegram_bot.py 缺少 escape_markdown 方法")
+
+    if telegram_handler.exists():
+        content = telegram_handler.read_text()
+        if "can't parse" in content.lower() or "parse entities" in content.lower():
+            print_ok("telegram_command_handler.py 包含 Markdown 错误重试逻辑 ✓")
+            md_retry_ok = True
+            result['fixes_verified'].append("Telegram Markdown retry")
+        else:
+            result['warnings'].append("telegram_command_handler.py 缺少 Markdown 错误重试逻辑")
+
+    if md_escape_ok and md_retry_ok:
+        print_ok("Telegram Markdown 解析错误防护完整 ✓ (commit cfb57da)")
+
+    # =========================================================================
+    # 检查 22: 时钟对齐定时器 (commit 309328c)
+    # =========================================================================
+    print_info("检查 22: 时钟对齐定时器...")
+
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+        if '_calculate_next_aligned_time' in content and 'start_time=' in content:
+            print_ok("定时器使用时钟对齐模式 (00/15/30/45 分) ✓ (commit 309328c)")
+            result['fixes_verified'].append("clock-aligned timer")
+        elif 'start_time=' in content:
+            print_ok("定时器包含 start_time 参数 ✓")
+        else:
+            print_info("定时器使用间隔模式 (从启动时间计算)")
+
+    # =========================================================================
     # 总结
     # =========================================================================
     print("\n  " + "-"*50)
@@ -1150,6 +1227,8 @@ def check_bar_data() -> Dict[str, Any]:
 
     result = {
         "bar_count": 0,
+        "prefetch_count": 0,
+        "subscribed": False,
         "last_bar": None,
     }
 
@@ -1159,19 +1238,46 @@ def check_bar_data() -> Dict[str, Any]:
         output = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
 
         for line in output.strip().split('\n'):
-            if 'bar' in line.lower() or 'kline' in line.lower() or 'on_bar' in line.lower():
+            line_lower = line.lower()
+
+            # 检查订阅状态
+            if 'subscribed to' in line_lower and 'bar' in line_lower:
+                result['subscribed'] = True
+
+            # 检查预取数据 (启动时从 Binance API 获取)
+            if 'received' in line_lower and 'bars from binance' in line_lower:
+                result['prefetch_count'] += 1
+                result['last_bar'] = line
+
+            # 检查实时 K线 (WebSocket 数据)
+            # NautilusTrader 的 on_bar 不一定有日志，但 indicator 更新会有
+            if 'bar_type' in line_lower or 'on_bar' in line_lower:
                 result['bar_count'] += 1
                 result['last_bar'] = line
 
-        if result['bar_count'] > 0:
-            print_ok(f"K线数据记录数: {result['bar_count']}")
+        # 分析结果
+        if result['subscribed']:
+            print_ok("已订阅 K线数据流")
+
+        if result['prefetch_count'] > 0:
+            print_ok(f"预取历史数据成功 ({result['prefetch_count']} 次)")
             if result['last_bar']:
-                print_info(f"最新: {result['last_bar'][-100:]}")
+                # 提取有用部分
+                if 'Received' in result['last_bar']:
+                    bar_info = result['last_bar'][result['last_bar'].find('Received'):]
+                    print_info(f"  {bar_info[:60]}")
+
+        if result['bar_count'] > 0:
+            print_ok(f"实时 K线记录数: {result['bar_count']}")
+
+        # 如果订阅成功且预取成功，即使没有实时记录也是正常的
+        if result['subscribed'] or result['prefetch_count'] > 0:
+            print_ok("K线数据系统正常")
         else:
-            print_warn("最近 30 分钟内无 K线数据记录")
+            print_warn("未检测到 K线数据活动")
             print_info("可能原因:")
             print_info("  - WebSocket 连接问题")
-            print_info("  - 服务刚启动")
+            print_info("  - 服务刚启动，等待数据")
 
     except Exception as e:
         print_warn(f"无法检查: {e}")
@@ -1340,16 +1446,34 @@ def main():
 
     issues = []
     warnings = []
+    info_notes = []
 
     # 检查服务
     if not all_results['service'].get('running'):
         issues.append("服务未运行")
 
-    # 检查日志
-    if all_results['logs'].get('on_timer_count', 0) == 0:
-        issues.append("on_timer 最近 30 分钟内未触发")
-    if all_results['logs'].get('error_count', 0) > 0:
-        warnings.append(f"日志中有 {all_results['logs']['error_count']} 个错误")
+    # 检查日志 (改进: 信号生成意味着 on_timer 触发了)
+    logs = all_results.get('logs', {})
+    on_timer_count = logs.get('on_timer_count', 0)
+    signal_count = logs.get('signal_count', 0)
+    error_count = logs.get('error_count', 0)
+    telegram_md_errors = logs.get('telegram_markdown_errors', 0)
+
+    # on_timer 检测: 有信号生成就说明触发了
+    if on_timer_count == 0 and signal_count == 0:
+        # 真正的问题: 既没有检测到 timer 触发，也没有信号
+        warnings.append("on_timer 最近 30 分钟内未触发 (可能刚启动)")
+    elif signal_count > 0:
+        # 有信号说明正常工作
+        info_notes.append(f"on_timer 正常触发，已生成 {signal_count} 个信号")
+
+    # 错误检查 (排除 Telegram Markdown 错误，那是已知问题)
+    if error_count > 0:
+        warnings.append(f"日志中有 {error_count} 个错误 (非 Telegram 格式)")
+
+    # Telegram Markdown 错误 (信息提示，不是严重问题)
+    if telegram_md_errors > 0:
+        info_notes.append(f"Telegram 格式错误 {telegram_md_errors} 次 (已有重试机制)")
 
     # 检查 API
     if not all_results['api'].get('deepseek'):
@@ -1367,11 +1491,18 @@ def main():
     if all_results.get('known_issues', {}).get('warnings'):
         warnings.extend(all_results['known_issues']['warnings'])
 
-    # 检查执行
+    # 检查执行模拟 (只有在真的有问题时才警告)
     if 'execution' in all_results:
-        if not all_results['execution'].get('would_execute'):
-            reason = all_results['execution'].get('blocking_reason', '未知原因')
-            warnings.append(f"模拟执行被阻止: {reason}")
+        execution = all_results['execution']
+        reason = execution.get('blocking_reason', '')
+        # HOLD 信号是正常的市场判断，不是问题
+        if not execution.get('would_execute'):
+            if 'HOLD' in reason:
+                info_notes.append("当前市场信号为 HOLD (正常，等待更好时机)")
+            elif 'Confidence' in reason and 'LOW' in reason:
+                info_notes.append("当前信号置信度不足 (正常，风险控制)")
+            else:
+                warnings.append(f"模拟执行被阻止: {reason}")
 
     # 输出总结
     if issues:
@@ -1386,16 +1517,25 @@ def main():
         for i, warn in enumerate(warnings, 1):
             print(f"  {i}. {warn}")
 
+    if info_notes:
+        print_info(f"补充信息 ({len(info_notes)} 条):")
+        for note in info_notes:
+            print(f"    • {note}")
+
     # 建议
     print_section("建议操作")
 
     if not all_results['service'].get('running'):
         print_info("1. 启动服务: sudo systemctl start nautilus-trader")
         print_info("2. 查看日志: sudo journalctl -u nautilus-trader -f --no-hostname")
-    elif all_results['logs'].get('on_timer_count', 0) == 0:
-        print_info("1. 服务已运行但 on_timer 未触发")
+    elif signal_count > 0:
+        # 系统正常工作
+        print_ok("系统运行正常，已在生成交易信号")
+        print_info("如需调整策略参数，编辑: configs/strategy_config.yaml")
+    elif on_timer_count == 0 and signal_count == 0:
+        print_info("1. 服务已运行但尚未触发分析")
         print_info(f"2. 等待到下次触发时间: {all_results['timer'].get('next_trigger', 'N/A')}")
-        print_info("3. 或重启服务: sudo systemctl restart nautilus-trader")
+        print_info("3. 当前使用时钟对齐模式 (00/15/30/45 分)")
     else:
         print_info("1. 查看完整日志分析错误原因")
         print_info("2. 运行 diagnose_realtime.py 进行详细诊断")
