@@ -137,47 +137,60 @@ class TelegramBot:
     
     def send_message_sync(self, message: str, **kwargs) -> bool:
         """
-        Synchronous wrapper for send_message.
+        Synchronous method to send Telegram message.
 
-        Creates an event loop if needed and sends the message.
-        Useful for calling from non-async contexts.
+        Uses the `requests` library to call Telegram API directly.
+        This is the recommended approach for sending messages from
+        synchronous code, as python-telegram-bot v20+ is fully async
+        and not thread-safe.
+
+        Reference: https://github.com/python-telegram-bot/python-telegram-bot/discussions/4096
         """
-        try:
-            # Always create a new event loop for thread safety
-            # This avoids "no event loop in thread" errors
-            import threading
-            current_thread = threading.current_thread()
+        if not self.enabled:
+            self.logger.debug("Telegram bot is disabled, skipping message")
+            return False
 
-            # Check if we're in the main thread with a running loop
-            try:
-                loop = asyncio.get_running_loop()
-                # We're in an async context, but send_message_sync should still work
-                # We need to run in a new thread to avoid blocking
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(self._run_sync_in_new_loop, message, kwargs)
-                    # Increased timeout to 30s to handle slow Telegram API responses
-                    return future.result(timeout=30)
-            except RuntimeError:
-                # No running loop - create a new one
-                return self._run_sync_in_new_loop(message, kwargs)
-        except concurrent.futures.TimeoutError:
-            # Telegram API timeout - log but don't crash strategy
-            self.logger.warning("⚠️ Telegram message timed out (30s) - message may not have been sent")
+        import requests
+
+        parse_mode = kwargs.get('parse_mode', 'Markdown')
+        disable_notification = kwargs.get('disable_notification', False)
+
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        payload = {
+            'chat_id': self.chat_id,
+            'text': message,
+            'disable_notification': disable_notification,
+        }
+        if parse_mode:
+            payload['parse_mode'] = parse_mode
+
+        try:
+            response = requests.post(url, json=payload, timeout=30)
+            result = response.json()
+
+            if result.get('ok'):
+                self.logger.info(f"📱 Telegram message sent: {message[:50]}...")
+                return True
+
+            # Handle Markdown parse errors - retry without formatting
+            error_desc = result.get('description', '')
+            if "can't parse" in error_desc.lower() or "parse entities" in error_desc.lower():
+                self.logger.warning(f"⚠️ Markdown parse error, retrying without formatting")
+                payload.pop('parse_mode', None)
+                response = requests.post(url, json=payload, timeout=30)
+                result = response.json()
+                if result.get('ok'):
+                    return True
+
+            self.logger.error(f"❌ Telegram API error: {error_desc}")
+            return False
+
+        except requests.Timeout:
+            self.logger.warning("⚠️ Telegram message timed out (30s)")
             return False
         except Exception as e:
-            self.logger.error(f"❌ Error in send_message_sync: {e}")
+            self.logger.error(f"❌ Error sending Telegram message: {e}")
             return False
-
-    def _run_sync_in_new_loop(self, message: str, kwargs: dict) -> bool:
-        """Helper to run async code in a new event loop."""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(self.send_message(message, **kwargs))
-        finally:
-            loop.close()
-            # Don't set event loop to None - it might interfere with other threads
     
     # Message Formatters
     
