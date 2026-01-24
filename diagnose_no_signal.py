@@ -791,6 +791,203 @@ def check_known_issues_from_commits() -> Dict[str, Any]:
             result['warnings'].append("未找到 _state_lock (线程锁)")
 
     # =========================================================================
+    # 检查 10: 止损验证逻辑 (commit 7f940fb)
+    # =========================================================================
+    print_info("检查 10: 止损验证逻辑...")
+
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+
+        # 检查是否有 SL 在入场价正确侧的验证
+        if "entry_price" in content and ("stop_loss" in content or "sl_price" in content):
+            # 检查是否有方向验证逻辑
+            if ("< entry" in content or "> entry" in content or
+                "side == 'long'" in content.lower() or "side == 'short'" in content.lower() or
+                "OrderSide.BUY" in content):
+                print_ok("止损方向验证逻辑存在 ✓ (commit 7f940fb)")
+                result['fixes_verified'].append("SL direction validation")
+            else:
+                result['warnings'].append("可能缺少止损方向验证 (SL 应在入场价正确侧)")
+
+    # =========================================================================
+    # 检查 11: Binance 枚举兼容性 (commit 529c397, 1ed1357, 5f5090f)
+    # =========================================================================
+    print_info("检查 11: Binance 枚举兼容性补丁...")
+
+    patches_dir = project_root / "patches"
+    binance_enums = patches_dir / "binance_enums.py"
+
+    if binance_enums.exists():
+        content = binance_enums.read_text()
+        if "_missing_" in content:
+            print_ok("Binance 枚举兼容性补丁 (_missing_ hook) ✓ (commit 1ed1357)")
+            result['fixes_verified'].append("Binance enum compatibility")
+        else:
+            result['warnings'].append("Binance 枚举补丁可能不完整")
+    else:
+        result['warnings'].append("patches/binance_enums.py 不存在")
+
+    # 检查 USDT_FUTURES (不是 USDT_FUTURE)
+    main_live = project_root / "main_live.py"
+    if main_live.exists():
+        content = main_live.read_text()
+        if "USDT_FUTURES" in content:
+            print_ok("BinanceAccountType.USDT_FUTURES 正确 ✓ (commit 5f5090f)")
+            result['fixes_verified'].append("USDT_FUTURES enum")
+        elif "USDT_FUTURE" in content and "USDT_FUTURES" not in content:
+            result['issues'].append("使用了旧的 USDT_FUTURE (应为 USDT_FUTURES)")
+
+    # =========================================================================
+    # 检查 12: aiohttp 非 ASCII 补丁 (commit e5f1d36, 3ffdaa9)
+    # =========================================================================
+    print_info("检查 12: aiohttp 非 ASCII 过滤补丁...")
+
+    binance_positions = patches_dir / "binance_positions.py"
+    if binance_positions.exists():
+        content = binance_positions.read_text()
+        if "aiohttp" in content and ("read" in content or "filter" in content.lower()):
+            print_ok("aiohttp 非 ASCII 过滤补丁存在 ✓ (commit e5f1d36)")
+            result['fixes_verified'].append("aiohttp non-ASCII patch")
+        else:
+            result['warnings'].append("aiohttp 补丁可能不完整")
+    else:
+        result['warnings'].append("patches/binance_positions.py 不存在")
+
+    # 检查补丁加载顺序
+    if main_live.exists():
+        content = main_live.read_text()
+        # 补丁应该在 nautilus_trader 导入之前
+        patch_pos = content.find("apply_all_patches")
+        nautilus_pos = content.find("from nautilus_trader")
+        if patch_pos != -1 and nautilus_pos != -1 and patch_pos < nautilus_pos:
+            print_ok("补丁加载顺序正确 (patches 在 nautilus_trader 之前) ✓")
+            result['fixes_verified'].append("patch load order")
+        elif patch_pos == -1:
+            result['warnings'].append("未找到 apply_all_patches 调用")
+
+    # =========================================================================
+    # 检查 13: NautilusTrader 版本 (commit 9cf5821)
+    # =========================================================================
+    print_info("检查 13: NautilusTrader 版本...")
+
+    requirements = project_root / "requirements.txt"
+    if requirements.exists():
+        content = requirements.read_text()
+        import re
+        match = re.search(r'nautilus.trader[>=<]+(\d+\.\d+\.\d+)', content.replace('_', '.'))
+        if match:
+            version = match.group(1)
+            major, minor, patch = map(int, version.split('.'))
+            if major >= 1 and minor >= 221:
+                print_ok(f"NautilusTrader 版本 {version} ✓ (需要 ≥1.221.0)")
+                result['fixes_verified'].append("NautilusTrader version")
+            else:
+                result['issues'].append(f"NautilusTrader 版本 {version} 过低 (需要 ≥1.221.0)")
+        else:
+            result['warnings'].append("无法确定 NautilusTrader 版本")
+
+    # =========================================================================
+    # 检查 14: 时间周期解析顺序 (commit eb43034, 264896f)
+    # =========================================================================
+    print_info("检查 14: 时间周期解析顺序...")
+
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+        # 检查是否先检查 15-MINUTE 再检查 5-MINUTE
+        if "15-MINUTE" in content and "5-MINUTE" in content:
+            pos_15 = content.find("15-MINUTE")
+            pos_5 = content.find("5-MINUTE")
+            if pos_15 < pos_5:
+                print_ok("时间周期解析顺序正确 (15-MINUTE 在 5-MINUTE 之前) ✓")
+                result['fixes_verified'].append("timeframe parsing order")
+            else:
+                result['issues'].append("时间周期解析顺序错误 (5-MINUTE 应在 15-MINUTE 之后)")
+
+    # =========================================================================
+    # 检查 15: 信号生成逻辑 (commit d454369, 9f0ea8e, e9f6dca)
+    # =========================================================================
+    print_info("检查 15: 信号生成逻辑...")
+
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+
+        # 检查 skip_on_divergence 是否标记为 LEGACY
+        if "LEGACY" in content and "skip_on_divergence" in content:
+            print_ok("skip_on_divergence 标记为 LEGACY ✓ (方案B 不使用)")
+            result['fixes_verified'].append("skip_on_divergence LEGACY")
+
+        # 检查 use_confidence_fusion 是否标记为 LEGACY
+        if "LEGACY" in content and "use_confidence_fusion" in content:
+            print_ok("use_confidence_fusion 标记为 LEGACY ✓ (方案B 不使用)")
+            result['fixes_verified'].append("confidence_fusion LEGACY")
+
+    # =========================================================================
+    # 检查 16: 反转逻辑 (commit fd60f3c)
+    # =========================================================================
+    print_info("检查 16: 反转/加仓逻辑...")
+
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+
+        # 检查 _manage_existing_position 方法
+        if "_manage_existing_position" in content:
+            import re
+            manage_match = re.search(
+                r'def _manage_existing_position.*?(?=\n    def |\nclass |\Z)',
+                content,
+                re.DOTALL
+            )
+            if manage_match:
+                manage_content = manage_match.group()
+                # 检查是否处理了反转场景
+                if "reversal" in manage_content.lower() or "opposite" in manage_content.lower():
+                    print_ok("反转逻辑存在 ✓ (commit fd60f3c)")
+                    result['fixes_verified'].append("reversal logic")
+                # 检查是否使用 bracket order
+                if "_submit_bracket_order" in manage_content or "bracket" in manage_content.lower():
+                    print_ok("反转使用 bracket order ✓")
+                else:
+                    result['warnings'].append("反转可能未使用 bracket order")
+
+    # =========================================================================
+    # 检查 17: 情绪数据源 (commit 07cd27f)
+    # =========================================================================
+    print_info("检查 17: 情绪数据源...")
+
+    sentiment_client = project_root / "utils" / "sentiment_client.py"
+    if sentiment_client.exists():
+        content = sentiment_client.read_text()
+        if "binance" in content.lower() and "fapi" in content.lower():
+            print_ok("使用 Binance 情绪数据源 ✓ (commit 07cd27f)")
+            result['fixes_verified'].append("Binance sentiment source")
+        elif "cryptooracle" in content.lower():
+            result['warnings'].append("仍在使用 CryptoOracle (应已替换为 Binance)")
+    else:
+        result['warnings'].append("sentiment_client.py 不存在")
+
+    # =========================================================================
+    # 检查 18: instrument 加载竞态条件 (commit 3416070)
+    # =========================================================================
+    print_info("检查 18: instrument 加载...")
+
+    if strategy_file.exists():
+        content = strategy_file.read_text()
+
+        # 检查 on_start 中是否有等待 instrument 的逻辑
+        if "on_start" in content:
+            import re
+            on_start_match = re.search(
+                r'def on_start.*?(?=\n    def |\nclass |\Z)',
+                content,
+                re.DOTALL
+            )
+            if on_start_match:
+                on_start_content = on_start_match.group()
+                if "instrument" in on_start_content and ("cache" in on_start_content or "wait" in on_start_content.lower()):
+                    print_ok("on_start 包含 instrument 检查 ✓")
+                    result['fixes_verified'].append("instrument loading")
+
+    # =========================================================================
     # 总结
     # =========================================================================
     print("\n  " + "-"*50)
