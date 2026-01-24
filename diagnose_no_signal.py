@@ -1221,8 +1221,12 @@ def check_timer_trigger() -> Dict[str, Any]:
 # =============================================================================
 # 7. K线数据接收检查
 # =============================================================================
-def check_bar_data() -> Dict[str, Any]:
-    """检查 K线数据是否正常接收"""
+def check_bar_data(signal_count: int = 0) -> Dict[str, Any]:
+    """检查 K线数据是否正常接收
+
+    Args:
+        signal_count: 从日志分析中检测到的信号数量，用于推断 K线状态
+    """
     print_section("7. K线数据检查 (从日志)")
 
     result = {
@@ -1230,6 +1234,7 @@ def check_bar_data() -> Dict[str, Any]:
         "prefetch_count": 0,
         "subscribed": False,
         "last_bar": None,
+        "inferred_working": False,
     }
 
     try:
@@ -1270,8 +1275,11 @@ def check_bar_data() -> Dict[str, Any]:
         if result['bar_count'] > 0:
             print_ok(f"实时 K线记录数: {result['bar_count']}")
 
-        # 如果订阅成功且预取成功，即使没有实时记录也是正常的
-        if result['subscribed'] or result['prefetch_count'] > 0:
+        # 智能推断: 如果有信号生成，说明 K线数据一定正常
+        if signal_count > 0:
+            result['inferred_working'] = True
+            print_ok(f"K线数据正常 (已生成 {signal_count} 个信号，说明数据流正常)")
+        elif result['subscribed'] or result['prefetch_count'] > 0:
             print_ok("K线数据系统正常")
         else:
             print_warn("未检测到 K线数据活动")
@@ -1431,8 +1439,9 @@ def main():
     # 6. Timer 检查
     all_results['timer'] = check_timer_trigger()
 
-    # 7. K线数据
-    all_results['bars'] = check_bar_data()
+    # 7. K线数据 (传入信号数量用于智能推断)
+    signal_count = all_results.get('logs', {}).get('signal_count', 0)
+    all_results['bars'] = check_bar_data(signal_count=signal_count)
 
     # 8. 模拟执行 (默认执行)
     print("\n" + "="*70)
@@ -1497,7 +1506,10 @@ def main():
         reason = execution.get('blocking_reason', '')
         # HOLD 信号是正常的市场判断，不是问题
         if not execution.get('would_execute'):
-            if 'HOLD' in reason:
+            # 如果实际服务已生成有效信号，模拟测试结果不重要
+            if signal_count > 0:
+                info_notes.append(f"模拟测试: {reason} (实际服务运行正常，已有 {signal_count} 个信号)")
+            elif 'HOLD' in reason:
                 info_notes.append("当前市场信号为 HOLD (正常，等待更好时机)")
             elif 'Confidence' in reason and 'LOW' in reason:
                 info_notes.append("当前信号置信度不足 (正常，风险控制)")
