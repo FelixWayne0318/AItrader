@@ -146,6 +146,8 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
     
     # Get strategy parameters from env or YAML or use defaults
     position_config = strategy_yaml.get('position_management', {})
+    deepseek_config = strategy_yaml.get('deepseek', {})
+    risk_config = strategy_yaml.get('risk', {})
     equity = get_env_float('EQUITY', str(strategy_yaml.get('equity', '1000')))
     leverage = get_env_float('LEVERAGE', str(strategy_yaml.get('leverage', '5')))
     base_position = get_env_float('BASE_POSITION_USDT', str(position_config.get('base_usdt_amount', '100')))
@@ -184,7 +186,7 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
         low_confidence_multiplier=get_env_float('LOW_CONFIDENCE_MULTIPLIER', str(position_config.get('low_confidence_multiplier', '0.5'))),
         max_position_ratio=get_env_float('MAX_POSITION_RATIO', str(position_config.get('max_position_ratio', '0.30'))),
         trend_strength_multiplier=get_env_float('TREND_STRENGTH_MULTIPLIER', str(position_config.get('trend_strength_multiplier', '1.2'))),
-        min_trade_amount=0.001,  # Binance minimum
+        min_trade_amount=position_config.get('min_trade_amount', 0.001),  # From YAML
 
         # Technical indicators - Production mode (standard periods)
         # Use reduced periods only for 1m bars (for testing)
@@ -198,7 +200,7 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
         # AI
         deepseek_api_key=deepseek_api_key,
         deepseek_model="deepseek-chat",
-        deepseek_temperature=0.1,
+        deepseek_temperature=deepseek_config.get('temperature', 0.3),  # From YAML (was hardcoded 0.1)
         deepseek_max_retries=2,
 
         # Sentiment
@@ -211,8 +213,8 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
         min_confidence_to_trade=get_env_str('MIN_CONFIDENCE_TO_TRADE', 'MEDIUM'),
         allow_reversals=True,
         require_high_confidence_for_reversal=False,
-        rsi_extreme_threshold_upper=75.0,
-        rsi_extreme_threshold_lower=25.0,
+        rsi_extreme_threshold_upper=risk_config.get('rsi_extreme_threshold_upper', 70.0),  # From YAML (was hardcoded 75)
+        rsi_extreme_threshold_lower=risk_config.get('rsi_extreme_threshold_lower', 30.0),  # From YAML (was hardcoded 25)
         rsi_extreme_multiplier=0.7,
 
         # [LEGACY - 不再使用] Multi-Agent Divergence Handling

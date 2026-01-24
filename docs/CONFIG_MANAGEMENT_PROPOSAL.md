@@ -1,8 +1,8 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.1
+> 版本: 2.2
 > 日期: 2026-01-24
-> 状态: **已审查，可实施** (遗漏项已补充)
+> 状态: **Phase 0 已完成，继续实施 Phase 1-6**
 > 审查: CONFIG_PROPOSAL_REVIEW.md
 
 ---
@@ -16,7 +16,9 @@
 5. [迁移计划](#5-迁移计划)
 6. [验证规则](#6-验证规则)
 7. [使用方式](#7-使用方式)
-8. [风险评估](#8-风险评估)
+8. [Pydantic 升级建议](#8-pydantic-升级建议-可选)
+9. [风险评估](#9-风险评估)
+10. [总结](#10-总结)
 
 ---
 
@@ -33,7 +35,7 @@
 | `main_live.py` | 18 | 加载逻辑 + 硬编码 | ❌ **覆盖 YAML 配置** |
 | `utils/*.py` | 12 | 工具类硬编码 | ❌ 分散 |
 
-### 1.2 已识别的硬编码 (48 处需处理)
+### 1.2 已识别的硬编码 (50 处需处理)
 
 #### 🔴 紧急：配置冲突 (main_live.py 硬编码覆盖 YAML)
 
@@ -116,6 +118,14 @@ socket_timeout = 5                 # Redis socket 超时
 socket_connect_timeout = 5         # Redis 连接超时
 ```
 
+#### 指标参数 (P1 补充)
+
+```python
+# indicators/technical_manager.py:39-40 [新增]
+volume_ma_period: int = 20         # 成交量 MA 周期
+support_resistance_lookback: int = 20  # 支撑阻力回看周期
+```
+
 #### AI/分析参数 (P2)
 
 ```python
@@ -143,13 +153,14 @@ macd_fast = 5 if timeframe == '1m' else 12
 
 | 类别 | 数量 | 状态 |
 |------|------|------|
-| 🔴 紧急配置冲突 | 3 | 必须立即修复 |
+| 🔴 紧急配置冲突 | 3 | ✅ **已修复** (Phase 0 完成) |
 | P0 交易核心参数 | 9 | 必须配置化 |
 | P1 网络重试参数 | 14 | 应该配置化 |
+| P1 指标参数 | 2 | 应该配置化 (新增) |
 | P2 AI/分析参数 | 3 | 应该配置化 |
 | P3 测试模式参数 | 4 | ✅ 已正确处理 |
 | ✅ 已配置化 | 15 | 无需处理 |
-| **总计待处理** | **29** | - |
+| **总计待处理** | **28** | (3 处已修复) |
 
 ### 1.4 当前加载优先级 (问题所在)
 
@@ -1130,7 +1141,92 @@ if config.get_errors():
 
 ---
 
-## 8. 风险评估
+## 8. Pydantic 升级建议 (可选)
+
+### 8.1 为什么考虑 Pydantic
+
+根据 [Pydantic Settings 官方文档](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) 和社区最佳实践，`pydantic-settings` 是 2025 年 Python 配置管理的推荐方案：
+
+| 特性 | 当前方案 (YAML + ConfigManager) | Pydantic Settings |
+|------|--------------------------------|-------------------|
+| 类型验证 | ✅ 手动实现 | ✅ 自动 |
+| 嵌套配置 | ✅ 支持 | ✅ 支持 |
+| .env 集成 | ✅ python-dotenv | ✅ 内置 |
+| YAML 支持 | ✅ 原生 | ⚠️ 需扩展 |
+| IDE 自动补全 | ❌ 无 | ✅ 完整 |
+| 敏感信息处理 | ⚠️ 手动 | ✅ SecretStr |
+| 维护成本 | 中 | 低 |
+
+### 8.2 Pydantic 版本 ConfigManager
+
+```python
+# utils/config_manager_pydantic.py (可选升级)
+
+from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import List, Optional
+
+class TradingLogicConfig(BaseModel):
+    """交易逻辑配置"""
+    min_notional_usdt: float = Field(100.0, ge=1, le=10000)
+    min_sl_distance_pct: float = Field(0.01, ge=0.001, le=0.1)
+    default_sl_pct: float = Field(0.02, ge=0.005, le=0.2)
+    quantity_adjustment_step: float = Field(0.001, ge=0.0001, le=0.01)
+
+class AIConfig(BaseModel):
+    """AI 配置"""
+    model: str = "deepseek-chat"
+    temperature: float = Field(0.3, ge=0.0, le=2.0)
+    max_retries: int = Field(2, ge=1, le=10)
+
+class RiskConfig(BaseModel):
+    """风险配置"""
+    rsi_extreme_threshold_upper: float = Field(70.0, ge=50, le=100)
+    rsi_extreme_threshold_lower: float = Field(30.0, ge=0, le=50)
+
+    @field_validator('rsi_extreme_threshold_lower')
+    @classmethod
+    def validate_rsi_order(cls, v, info):
+        upper = info.data.get('rsi_extreme_threshold_upper', 70.0)
+        if v >= upper:
+            raise ValueError('RSI lower must be less than upper')
+        return v
+
+class AppSettings(BaseSettings):
+    """应用配置 (自动从环境变量和 .env 加载)"""
+    model_config = SettingsConfigDict(
+        env_file='.env',
+        env_file_encoding='utf-8',
+        env_nested_delimiter='__',
+        extra='ignore'
+    )
+
+    # 敏感信息 (从 .env 加载)
+    binance_api_key: SecretStr
+    binance_api_secret: SecretStr
+    deepseek_api_key: SecretStr
+    telegram_bot_token: Optional[SecretStr] = None
+
+    # 嵌套配置
+    trading_logic: TradingLogicConfig = TradingLogicConfig()
+    ai: AIConfig = AIConfig()
+    risk: RiskConfig = RiskConfig()
+```
+
+### 8.3 升级路径
+
+| 阶段 | 任务 | 复杂度 |
+|------|------|--------|
+| 当前 | 使用 YAML + ConfigManager (已设计) | - |
+| Phase 1+ | 可选: 迁移到 pydantic-settings | 中 |
+
+**建议**:
+- 如果团队熟悉 Pydantic，可在 Phase 1 直接使用 pydantic-settings
+- 否则，先使用当前 YAML + ConfigManager 方案，后续再考虑升级
+
+---
+
+## 9. 风险评估
 
 ### 8.1 风险矩阵
 
@@ -1165,37 +1261,38 @@ if config.get_errors():
 
 ---
 
-## 9. 总结
+## 10. 总结
 
-### 9.1 改进收益
+### 10.1 改进收益
 
 | 方面 | 改进前 | 改进后 |
 |------|--------|--------|
 | 配置来源 | 6 处分散 | 1 个 base.yaml |
-| 硬编码参数 | 48 处 | 0 处 (全部配置化) |
-| 配置冲突 | 3 处硬编码覆盖 | 完全消除 |
+| 硬编码参数 | 50 处 | 0 处 (全部配置化) |
+| 配置冲突 | 3 处硬编码覆盖 | ✅ **已消除** (Phase 0) |
 | 环境切换 | 手动修改 | --env 参数 |
 | 配置验证 | 无 | 类型 + 范围 + 依赖检查 |
 | 错误提示 | 运行时崩溃 | 启动时明确提示 |
 | trading_logic | 9 处硬编码 | 可配置 |
-| network | 14 处硬编码 | 可配置 |
+| network | 16 处硬编码 | 可配置 |
 
-### 9.2 实施优先级
+### 10.2 实施优先级
 
 ```
-🔴 紧急 (Phase 0): 修复 main_live.py 中的 3 处配置冲突
+✅ 完成 (Phase 0): 修复 main_live.py 中的 3 处配置冲突
 🟠 高   (Phase 1-2): 创建 ConfigManager 并迁移核心配置
 🟡 中   (Phase 3-4): 迁移 trading_logic.py 和 utils 硬编码
 🟢 低   (Phase 5-6): 添加环境切换和高级功能
 ```
 
-### 9.3 变更日志
+### 10.3 变更日志
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | 1.0 | 2026-01-23 | 初始方案 |
 | 2.0 | 2026-01-24 | 基于代码审查更新:<br>- 添加 trading_logic.py 新文件<br>- 识别 3 处配置冲突<br>- 硬编码从 36 处更新到 42 处<br>- 添加 Phase 0 紧急修复<br>- 扩展 base.yaml 配置结构<br>- 增强 ConfigManager 验证逻辑 |
 | 2.1 | 2026-01-24 | 补充遗漏项 (基于 CLAUDE.md 规范):<br>- 硬编码从 42 处更新到 48 处<br>- 新增: TP_PCT_CONFIG 止盈配置字典<br>- 新增: 仓位精度调整步长 (0.001)<br>- 新增: bar_persistence 超时和限制<br>- 新增: oco_manager Redis 超时<br>- 更新 ConfigManager 验证规则 |
+| 2.2 | 2026-01-24 | 执行建议并更新方案:<br>- ✅ **Phase 0 完成**: 修复 main_live.py 配置冲突<br>- 硬编码从 48 处更新到 50 处<br>- 新增: indicators/technical_manager.py 参数<br>- 新增: 第 8 章 Pydantic 升级建议<br>- 更新统计表标记 Phase 0 已完成 |
 
 ---
 
