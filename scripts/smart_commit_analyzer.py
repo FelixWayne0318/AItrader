@@ -21,25 +21,62 @@ from datetime import datetime
 from typing import Optional
 
 # 规则存储文件
-RULES_FILE = Path(__file__).parent / "configs" / "auto_generated_rules.json"
+RULES_FILE = Path(__file__).parent.parent / "configs" / "auto_generated_rules.json"
+
+# 文件移动检测：常见的新位置
+FILE_SEARCH_PATHS = [
+    "",           # 原位置 (相对于项目根目录)
+    "scripts/",   # 脚本目录
+    "tests/",     # 测试目录
+    "tools/",     # 工具目录
+    "docs/",      # 文档目录
+]
+
+
+def find_file(filepath: str) -> tuple[str, bool]:
+    """
+    查找文件，如果在原位置不存在，尝试在其他目录查找
+    返回: (实际路径, 是否被移动)
+    """
+    project_root = get_project_root()
+
+    # 先检查原位置
+    if (project_root / filepath).exists():
+        return filepath, False
+
+    # 文件不在原位置，尝试其他位置
+    filename = Path(filepath).name
+
+    for search_path in FILE_SEARCH_PATHS:
+        new_path = search_path + filename
+        if (project_root / new_path).exists():
+            return new_path, True
+
+    # 还找不到，返回原路径
+    return filepath, False
 
 
 def run_git(cmd: str) -> str:
-    """执行 git 命令"""
+    """执行 git 命令 (在项目根目录)"""
     result = subprocess.run(
         f"git {cmd}",
         shell=True,
         capture_output=True,
         text=True,
-        cwd=Path(__file__).parent
+        cwd=get_project_root()
     )
     return result.stdout.strip()
 
 
+def get_project_root() -> Path:
+    """获取项目根目录"""
+    return Path(__file__).parent.parent
+
+
 def get_file_content(filepath: str) -> Optional[str]:
-    """读取文件内容"""
+    """读取文件内容 (相对于项目根目录)"""
     try:
-        full_path = Path(__file__).parent / filepath
+        full_path = get_project_root() / filepath
         if full_path.exists():
             return full_path.read_text(encoding='utf-8', errors='ignore')
     except Exception:
@@ -201,7 +238,7 @@ def scan_git_history(limit: int = 100) -> list:
     return fix_commits
 
 
-def validate_rule(rule: dict) -> dict:
+def validate_rule(rule: dict, auto_fix_paths: bool = False) -> dict:
     """验证单条规则"""
     file_path = rule.get("file")
     pattern = rule.get("pattern")
@@ -212,15 +249,33 @@ def validate_rule(rule: dict) -> dict:
         "file": file_path,
         "commit": rule.get("commit"),
         "status": "unknown",
-        "message": ""
+        "message": "",
+        "moved_to": None,
+        "path_updated": False
     }
 
-    content = get_file_content(file_path)
+    # 检测文件是否被移动
+    actual_path, was_moved = find_file(file_path)
+
+    if was_moved:
+        result["moved_to"] = actual_path
+        if auto_fix_paths:
+            rule["file"] = actual_path
+            result["path_updated"] = True
+            result["message"] = f"Path updated: {file_path} → {actual_path}"
+
+    content = get_file_content(actual_path)
 
     if content is None:
         # 文件不存在 - 可能被删除或重命名
         result["status"] = "skipped"
         result["message"] = "File not found (may be renamed/deleted)"
+        return result
+
+    # 如果文件被移动但未自动修复，报告警告
+    if was_moved and not auto_fix_paths:
+        result["status"] = "warning"
+        result["message"] = f"File moved: {file_path} → {actual_path}"
         return result
 
     # 根据模式类型验证
@@ -302,7 +357,7 @@ def update_rules_from_git(limit: int = 100, verbose: bool = True) -> dict:
     }
 
 
-def validate_all_rules(verbose: bool = True) -> dict:
+def validate_all_rules(verbose: bool = True, auto_fix_paths: bool = False) -> dict:
     """验证所有规则"""
     rules_data = load_rules()
 
@@ -310,12 +365,24 @@ def validate_all_rules(verbose: bool = True) -> dict:
         "passed": [],
         "failed": [],
         "warnings": [],
-        "skipped": []
+        "skipped": [],
+        "moved_files": []
     }
 
+    paths_updated = 0
+
     for rule in rules_data["rules"]:
-        result = validate_rule(rule)
+        result = validate_rule(rule, auto_fix_paths)
         status = result["status"]
+
+        if result.get("moved_to"):
+            results["moved_files"].append({
+                "old_path": result["file"],
+                "new_path": result["moved_to"],
+                "updated": result.get("path_updated", False)
+            })
+            if result.get("path_updated"):
+                paths_updated += 1
 
         if status == "passed":
             results["passed"].append(result)
@@ -326,6 +393,12 @@ def validate_all_rules(verbose: bool = True) -> dict:
         else:
             results["skipped"].append(result)
 
+    # 如果有路径更新，保存规则
+    if paths_updated > 0:
+        save_rules(rules_data)
+        if verbose:
+            print(f"🔄 已自动更新 {paths_updated} 条规则的路径")
+
     if verbose:
         print(f"\n{'='*60}")
         print("📋 验证结果")
@@ -335,6 +408,15 @@ def validate_all_rules(verbose: bool = True) -> dict:
         print(f"⚠️  警告: {len(results['warnings'])}")
         print(f"⏭️  跳过: {len(results['skipped'])}")
 
+        # 显示移动的文件
+        if results["moved_files"]:
+            print(f"\n{'='*60}")
+            print("📂 检测到文件移动:")
+            print(f"{'='*60}")
+            for mf in results["moved_files"]:
+                status = "✅ 已更新" if mf["updated"] else "⚠️ 需要更新"
+                print(f"  {status}: {mf['old_path']} → {mf['new_path']}")
+
         if results["failed"]:
             print(f"\n{'='*60}")
             print("❌ 失败详情:")
@@ -343,15 +425,25 @@ def validate_all_rules(verbose: bool = True) -> dict:
                 print(f"  [{r['commit']}] {r['file']}")
                 print(f"    → {r['message']}")
 
+        if results["warnings"]:
+            print(f"\n{'='*60}")
+            print("⚠️ 警告详情:")
+            print(f"{'='*60}")
+            for r in results["warnings"]:
+                print(f"  [{r['commit']}] {r['file']}")
+                print(f"    → {r['message']}")
+
     return results
 
 
-def run_full_analysis(limit: int = 100, verbose: bool = True, json_output: bool = False) -> dict:
+def run_full_analysis(limit: int = 100, verbose: bool = True, json_output: bool = False, auto_fix_paths: bool = False) -> dict:
     """运行完整分析流程"""
 
     if verbose and not json_output:
         print("🔍 Smart Commit Analyzer")
         print("=" * 60)
+        if auto_fix_paths:
+            print("🔧 模式: 自动修复路径")
         print()
         print("Step 1: 从 Git 历史更新规则库...")
 
@@ -363,7 +455,7 @@ def run_full_analysis(limit: int = 100, verbose: bool = True, json_output: bool 
         print("Step 2: 验证所有规则...")
 
     # Step 2: 验证规则
-    validate_result = validate_all_rules(verbose and not json_output)
+    validate_result = validate_all_rules(verbose and not json_output, auto_fix_paths)
 
     # 组合结果
     result = {
@@ -372,9 +464,11 @@ def run_full_analysis(limit: int = 100, verbose: bool = True, json_output: bool 
             "passed": len(validate_result["passed"]),
             "failed": len(validate_result["failed"]),
             "warnings": len(validate_result["warnings"]),
-            "skipped": len(validate_result["skipped"])
+            "skipped": len(validate_result["skipped"]),
+            "moved_files": len(validate_result["moved_files"])
         },
         "failed_details": validate_result["failed"],
+        "moved_files": validate_result["moved_files"],
         "timestamp": datetime.now().isoformat()
     }
 
@@ -402,6 +496,7 @@ def main():
     parser.add_argument("--commits", type=int, default=100, help="扫描提交数量")
     parser.add_argument("--json", action="store_true", help="JSON 输出")
     parser.add_argument("--show-rules", action="store_true", help="显示所有规则")
+    parser.add_argument("--fix-paths", action="store_true", help="自动修复移动文件的路径")
 
     args = parser.parse_args()
 
@@ -422,9 +517,9 @@ def main():
     if args.update:
         update_rules_from_git(args.commits, not args.json)
     elif args.validate:
-        validate_all_rules(not args.json)
+        validate_all_rules(not args.json, args.fix_paths)
     else:
-        run_full_analysis(args.commits, True, args.json)
+        run_full_analysis(args.commits, True, args.json, args.fix_paths)
 
 
 if __name__ == "__main__":

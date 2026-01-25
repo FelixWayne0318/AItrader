@@ -24,11 +24,11 @@
 
 **修改后必须运行**：
 ```bash
-# 验证所有历史修复是否仍然正确应用
-python3 validate_commit_fixes.py
+# 智能回归检测 (规则自动从 git 历史生成，零维护)
+python3 scripts/smart_commit_analyzer.py
 
-# 预期结果: ✅ 所有关键修复已正确应用
-# 如果有 ❌ 失败项，必须修复后才能提交
+# 预期结果: ✅ 所有规则验证通过
+# 如果有 ❌ 失败项，检查是否引入了回归
 ```
 
 ## 📋 配置管理规范 (必读)
@@ -181,8 +181,40 @@ min_trade_amount = config.get('trading_logic', 'min_notional_usdt', default=100)
 - 性能基准测试: `scripts/benchmark_config.py`
 - 循环导入检测: `scripts/check_circular_imports.sh`
 - 全面诊断脚本: `scripts/comprehensive_diagnosis.py`
-- **提交修复验证**: `validate_commit_fixes.py` (检查所有历史修复是否正确应用)
-- **Git 历史分析**: `analyze_git_changes.py` (全自动从 git log/diff 推断修复并检测回归)
+
+### 提交分析工具 (自动化回归检测)
+
+| 工具 | 功能 | 运行方式 |
+|------|------|----------|
+| **smart_commit_analyzer.py** | 智能回归检测 (规则自动从 git 生成) | `python3 scripts/smart_commit_analyzer.py` |
+| **analyze_commits_ai.py** | AI 深度语义分析 (需要 DEEPSEEK_API_KEY) | `python3 scripts/analyze_commits_ai.py` |
+| **analyze_dependencies.py** | Python AST 依赖分析 (循环依赖/缺失模块) | `python3 scripts/analyze_dependencies.py` |
+| **analyze_git_changes.py** | Git 历史分析 (提交类型统计) | `python3 scripts/analyze_git_changes.py` |
+| **validate_commit_fixes.py** | 旧版手动规则检查 (已被 smart 替代) | `python3 scripts/validate_commit_fixes.py` |
+
+**GitHub Actions 自动运行**: 每次 push/PR 自动触发 `.github/workflows/commit-analysis.yml`
+
+### CodeQL 代码分析
+
+CodeQL 提供更深入的语义分析，包括安全漏洞检测和数据流分析。
+
+```bash
+# GitHub Actions 自动运行 (每周一 + 每次 push 到 main)
+# 配置文件: .github/workflows/codeql-analysis.yml
+
+# 自定义查询 (检测特定模式)
+.github/codeql/custom-queries/find-imports.ql      # 追踪所有 import 语句
+.github/codeql/custom-queries/hardcoded-paths.ql   # 检测硬编码文件路径
+```
+
+**CodeQL vs analyze_dependencies.py**:
+| 特性 | CodeQL | analyze_dependencies.py |
+|------|--------|------------------------|
+| 运行速度 | 较慢 (需构建数据库) | 快速 (直接 AST 解析) |
+| 分析深度 | 完整数据流/污点分析 | import 依赖关系 |
+| 安全检测 | SQL注入、命令注入等 | 无 |
+| 自定义查询 | QL 语言 | Python 代码 |
+| 本地运行 | 需安装 CodeQL CLI | 无需额外安装 |
 
 ## ⚠️ 关键信息
 
@@ -250,30 +282,33 @@ sudo journalctl -u nautilus-trader -f --no-hostname
 
 ```bash
 # 全面诊断 (唯一需要的检测工具)
-python3 diagnose.py              # 运行全部检查
-python3 diagnose.py --quick      # 快速检查 (跳过网络测试)
-python3 diagnose.py --update     # 先更新代码再检查
-python3 diagnose.py --restart    # 检查后重启服务
-python3 diagnose.py --json       # 输出JSON格式
+python3 scripts/diagnose.py              # 运行全部检查
+python3 scripts/diagnose.py --quick      # 快速检查 (跳过网络测试)
+python3 scripts/diagnose.py --update     # 先更新代码再检查
+python3 scripts/diagnose.py --restart    # 检查后重启服务
+python3 scripts/diagnose.py --json       # 输出JSON格式
 
-# 提交修复验证 (代码修改后必须运行)
-python3 validate_commit_fixes.py           # 完整检查所有历史修复
-python3 validate_commit_fixes.py --quick   # 快速检查 (跳过连锁反应)
-python3 validate_commit_fixes.py --json    # 输出 JSON 格式
-python3 validate_commit_fixes.py --category threading  # 只检查特定类别
+# 智能回归检测 (代码修改后必须运行) ⭐ 推荐
+python3 scripts/smart_commit_analyzer.py           # 完整分析 (规则自动从 git 生成)
+python3 scripts/smart_commit_analyzer.py --update  # 只更新规则库
+python3 scripts/smart_commit_analyzer.py --validate # 只验证规则
+python3 scripts/smart_commit_analyzer.py --show-rules # 查看所有规则
+python3 scripts/smart_commit_analyzer.py --json    # JSON 输出 (用于 CI/CD)
 
-# Git 历史自动分析 (全自动从 git log/diff 推断)
-python3 analyze_git_changes.py             # 分析最近 50 个提交
-python3 analyze_git_changes.py --check     # 运行回归检测
-python3 analyze_git_changes.py --fix-only  # 只显示修复提交
-python3 analyze_git_changes.py --commits 100 --check  # 分析更多提交
+# AI 深度分析 (可选，需要 DEEPSEEK_API_KEY)
+python3 scripts/analyze_commits_ai.py --commits 10 # 分析最近 10 个提交
+
+# Git 历史分析
+python3 scripts/analyze_git_changes.py             # 分析最近 50 个提交
+python3 scripts/analyze_git_changes.py --fix-only  # 只显示修复提交
+python3 scripts/analyze_git_changes.py --commits 100 # 分析更多提交
 
 # 服务器操作
 sudo systemctl restart nautilus-trader
 sudo journalctl -u nautilus-trader -f --no-hostname
 
 # 一键更新 + 重启
-python3 diagnose.py --update --restart
+python3 scripts/diagnose.py --update --restart
 ```
 
 ### 服务器代码同步与实时诊断
@@ -306,7 +341,7 @@ echo ""
 source venv/bin/activate
 
 # 6. 运行实时诊断
-python3 diagnose_realtime.py
+python3 scripts/diagnose_realtime.py
 
 # 7. (可选) 重启服务
 # sudo systemctl start nautilus-trader
@@ -315,7 +350,7 @@ python3 diagnose_realtime.py
 **一行命令版本** (复制粘贴即用):
 
 ```bash
-cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && git fetch origin main && git reset --hard origin/main && find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null && echo "=== 最近提交 ===" && git log --oneline -5 && source venv/bin/activate && python3 diagnose_realtime.py
+cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && git fetch origin main && git reset --hard origin/main && find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null && echo "=== 最近提交 ===" && git log --oneline -5 && source venv/bin/activate && python3 scripts/diagnose_realtime.py
 ```
 
 | 步骤 | 命令 | 作用 |
@@ -324,7 +359,7 @@ cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && g
 | 强制同步 | `git reset --hard origin/main` | 丢弃本地修改，完全同步远程 |
 | 清除缓存 | `find ... __pycache__` | 删除 Python 编译缓存，确保使用最新代码 |
 | 显示提交 | `git log --oneline -5` | 核对 commit hash 确认版本 |
-| 实时诊断 | `diagnose_realtime.py` | 调用真实 API，验证完整数据流 |
+| 实时诊断 | `scripts/diagnose_realtime.py` | 调用真实 API，验证完整数据流 |
 
 ## systemd 服务配置
 
@@ -376,7 +411,7 @@ Environment=AUTO_CONFIRM=true
    - 问题：`15-MINUTE` 被错误解析为 `5m`
    - 原因：`5-MINUTE` 是 `15-MINUTE` 的子字符串
    - 修复：调整检查顺序，先检查更长的字符串
-   - 影响文件：`deepseek_strategy.py`, `diagnose_realtime.py`
+   - 影响文件：`strategy/deepseek_strategy.py`, `scripts/diagnose_realtime.py`
 
 8. **Rust RSI 线程安全崩溃** (Telegram 命令处理)
    - 问题：服务崩溃，Rust panic: `RelativeStrengthIndex is unsendable, but sent to another thread`
@@ -458,44 +493,119 @@ Environment=AUTO_CONFIRM=true
 ├── reinstall.sh              # 一键清空重装脚本 (完全重新安装)
 ├── requirements.txt          # Python 依赖
 ├── nautilus-trader.service   # systemd 服务文件
+│
+├── .github/                  # GitHub 配置
+│   ├── workflows/            # GitHub Actions
+│   │   ├── commit-analysis.yml   # 智能提交分析 (每次 push/PR 自动运行)
+│   │   ├── codeql-analysis.yml   # CodeQL 安全分析 (每周 + push 到 main)
+│   │   └── claude.yml            # Claude Code Action
+│   └── codeql/               # CodeQL 自定义查询
+│       └── custom-queries/   # 项目专用查询
+│           ├── qlpack.yml        # 查询包配置
+│           ├── find-imports.ql   # 追踪所有 import
+│           └── hardcoded-paths.ql # 检测硬编码路径
+│
 ├── .claude/                  # Claude Code 配置
 │   ├── settings.json         # 权限配置
 │   └── skills/               # 自定义技能
-│       ├── code-review/      # 代码审查 (多维度: bugs/安全/架构)
-│       ├── deploy/           # 部署技能
-│       ├── server-status/    # 服务器状态检查
-│       ├── stop-loss-check/  # 止损验证
-│       └── nautilustrader/   # NautilusTrader 参考文档
-├── strategy/
-│   └── deepseek_strategy.py  # 主策略 (含止损修复)
-├── agents/
+│
+├── strategy/                 # 策略模块
+│   ├── deepseek_strategy.py  # 主策略 (含止损修复)
+│   └── trading_logic.py      # 交易逻辑常量和函数
+│
+├── agents/                   # 多代理系统
 │   └── multi_agent_analyzer.py # 多代理分析 (Bull/Bear/Judge)
-├── indicators/
-│   └── technical_manager.py  # 技术指标管理器
-├── utils/
+│
+├── indicators/               # 技术指标
+│   └── technical_manager.py  # 技术指标管理器 (Cython 版本)
+│
+├── utils/                    # 工具模块
+│   ├── config_manager.py     # 统一配置管理器 (ConfigManager)
 │   ├── deepseek_client.py    # DeepSeek AI 客户端
-│   ├── sentiment_client.py   # Binance 多空比 (替代 CryptoOracle)
+│   ├── sentiment_client.py   # Binance 多空比
 │   ├── telegram_bot.py       # Telegram 通知
 │   ├── telegram_command_handler.py # Telegram 命令处理
+│   ├── binance_account.py    # Binance 账户工具
 │   ├── bar_persistence.py    # K线数据持久化
-│   └── oco_manager.py        # OCO 订单管理 (已由 NautilusTrader 内置替代)
-├── patches/
-│   ├── binance_enums.py      # Binance枚举兼容性补丁
-│   └── binance_positions.py  # Binance持仓处理补丁
-├── configs/
-│   ├── strategy_config.yaml  # 策略配置
+│   └── oco_manager.py        # OCO 订单管理
+│
+├── patches/                  # 兼容性补丁
+│   ├── binance_enums.py      # Binance 枚举兼容性补丁
+│   └── binance_positions.py  # Binance 持仓处理补丁
+│
+├── configs/                  # 配置文件 (分层架构)
+│   ├── base.yaml             # 基础配置 (所有参数定义)
+│   ├── production.yaml       # 生产环境覆盖
+│   ├── development.yaml      # 开发环境覆盖
+│   ├── backtest.yaml         # 回测环境覆盖
+│   ├── auto_generated_rules.json # 自动生成的回归规则
+│   ├── strategy_config.yaml  # 旧版策略配置 (兼容)
 │   └── telegram_config.yaml  # Telegram 配置
+│
+├── scripts/                  # 脚本工具
+│   ├── # === 诊断工具 ===
+│   ├── diagnose.py           # 全面诊断工具 v2.0
+│   ├── diagnose_realtime.py  # 实时 API 诊断
+│   ├── diagnose_telegram.py  # Telegram 诊断
+│   ├── diagnose_no_signal.py # 无信号诊断
+│   ├── comprehensive_diagnosis.py # 全面诊断
+│   │
+│   ├── # === 提交分析工具 (GitHub Actions 自动运行) ===
+│   ├── smart_commit_analyzer.py  # 智能回归检测 (规则自动从 git 生成)
+│   ├── analyze_commits_ai.py     # AI 深度语义分析 (DeepSeek)
+│   ├── analyze_dependencies.py   # Python AST 依赖分析 (循环依赖检测)
+│   ├── analyze_git_changes.py    # Git 历史分析
+│   ├── validate_commit_fixes.py  # 旧版手动规则检查
+│   │
+│   ├── # === 配置工具 ===
+│   ├── validate_path_aliases.py  # 配置路径验证
+│   ├── benchmark_config.py       # 配置性能测试
+│   ├── check_circular_imports.sh # 循环导入检测
+│   │
+│   ├── # === 部署工具 ===
+│   ├── full_deploy.sh        # 完整部署
+│   ├── server_redeploy.sh    # 服务器重部署
+│   ├── sync_from_repo.sh     # 代码同步
+│   ├── health_check.sh       # 健康检查
+│   └── install-hooks.sh      # Git hooks 安装
+│
 ├── tests/                    # 测试目录
-│   ├── test_bracket_order.py # 括号订单测试
-│   ├── test_integration_mock.py # 集成测试 (Mock)
-│   ├── test_rounding_fix.py  # 四舍五入修复测试
-│   └── test_strategy_components.py # 策略组件测试
-├── test_sl_fix.py            # 止损修复测试 (根目录)
-├── test_binance_patch.py     # 枚举补丁测试 (根目录)
-├── test_multi_agent.py       # 多代理测试 (根目录)
-├── diagnose.py               # 全面诊断工具 v2.0 (唯一检测脚本)
-├── DEPLOYMENT.md             # 部署指南
-└── README.md                 # 项目文档
+│   ├── test_bracket_order.py
+│   ├── test_integration_mock.py
+│   ├── test_rounding_fix.py
+│   ├── test_strategy_components.py
+│   ├── test_binance_patch.py
+│   ├── test_multi_agent.py
+│   ├── test_telegram.py
+│   └── test_telegram_commands.py
+│
+├── tools/                    # 运维工具
+│   ├── debug_binance_positions.py  # Binance 持仓调试
+│   ├── debug_telegram_config.py    # Telegram 配置调试
+│   ├── monitor_redis.py            # Redis 监控
+│   ├── monitor_emulated_orders.sh  # OCO 订单监控
+│   └── check_emulated_status.sh    # OCO 状态检查
+│
+├── docs/                     # 文档目录
+│   ├── DEPLOYMENT.md         # 部署指南
+│   ├── SECURITY.md           # 安全指南
+│   ├── REFERENCE.md          # 参考文档
+│   ├── SYSTEM_OVERVIEW.md    # 系统概述
+│   ├── architecture/         # 架构文档
+│   ├── features/             # 功能文档
+│   ├── strategy/             # 策略文档
+│   ├── setup/                # 安装文档
+│   ├── troubleshooting/      # 故障排除
+│   ├── releases/             # 发布说明
+│   └── development/          # 开发文档
+│
+├── web/                      # Web 管理界面 (可选)
+│   ├── backend/              # FastAPI 后端
+│   └── frontend/             # 前端 (Vue/React)
+│
+├── CLAUDE.md                 # 本文档 (AI 助手指南)
+├── README.md                 # 项目文档
+└── QUICKSTART.md             # 快速入门
 ```
 
 ## 配置管理
@@ -586,7 +696,10 @@ TELEGRAM_CHAT_ID=xxx          # 你的个人用户 ID
 3. 容易造成配置分散，维护困难
 4. 参考：[12-Factor Config Misunderstandings](https://blog.doismellburning.co.uk/twelve-factor-config-misunderstandings-and-advice/)
 
-### 策略参数 (configs/strategy_config.yaml)
+### 策略参数 (configs/base.yaml)
+
+**注意**: 旧版 `strategy_config.yaml` 已被新的分层配置取代，但仍保留用于兼容。
+新系统使用 `base.yaml` + 环境覆盖文件 (`production.yaml`, `development.yaml`, `backtest.yaml`)。
 
 #### 资金配置
 | 参数 | 默认值 | 说明 |
@@ -663,15 +776,63 @@ TELEGRAM_CHAT_ID=xxx          # 你的个人用户 ID
 ### 修改配置
 
 ```bash
-# 修改策略参数
-nano /home/linuxuser/nautilus_AItrader/configs/strategy_config.yaml
+# 修改基础策略参数 (所有环境共享)
+nano /home/linuxuser/nautilus_AItrader/configs/base.yaml
 
-# 修改 API 密钥
+# 修改生产环境特定参数
+nano /home/linuxuser/nautilus_AItrader/configs/production.yaml
+
+# 修改开发环境特定参数
+nano /home/linuxuser/nautilus_AItrader/configs/development.yaml
+
+# 修改 API 密钥 (敏感信息)
 nano ~/.env.aitrader
 
 # 修改后重启服务生效
 sudo systemctl restart nautilus-trader
 ```
+
+## GitHub Actions 自动化
+
+每次 push 到 main 或创建 PR 时，自动运行以下检查：
+
+| 工作流 | 文件 | 功能 |
+|--------|------|------|
+| **Commit Analysis** | `.github/workflows/commit-analysis.yml` | 智能回归检测 + AI 分析 + 依赖分析 |
+| **CodeQL Analysis** | `.github/workflows/codeql-analysis.yml` | 安全漏洞 + 代码质量 (每周一 + push) |
+| **Claude Code** | `.github/workflows/claude.yml` | Claude Code Action |
+
+### Commit Analysis 工作流
+
+```yaml
+触发: push/PR 到 main
+Jobs:
+  1. Smart Regression Detection  # smart_commit_analyzer.py
+     - 自动从 git 历史生成规则
+     - 验证所有规则，检测回归
+  2. AI Deep Analysis            # analyze_commits_ai.py (需要 DEEPSEEK_API_KEY)
+     - DeepSeek 语义分析
+     - 自动跳过 (如果没有 API key)
+  3. Dependency Analysis         # analyze_dependencies.py
+     - Python AST 依赖分析
+     - 检测循环依赖和缺失模块
+```
+
+### CodeQL Analysis 工作流
+
+```yaml
+触发: push/PR 到 main + 每周一凌晨
+功能:
+  - 安全漏洞检测 (SQL注入、命令注入等)
+  - 数据流分析 (追踪变量传递)
+  - 代码质量检查
+  - 自定义查询 (硬编码路径检测等)
+```
+
+### 设置 Secrets
+
+在 GitHub 仓库设置中添加：
+- `DEEPSEEK_API_KEY` - 启用 AI 深度分析 (可选)
 
 ## 联系方式
 

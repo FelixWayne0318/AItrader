@@ -103,7 +103,7 @@ ADMIN_EMAILS=your-email@gmail.com
 
 # AItrader Integration
 AITRADER_PATH=/home/linuxuser/nautilus_AItrader
-AITRADER_CONFIG_PATH=/home/linuxuser/nautilus_AItrader/configs/strategy_config.yaml
+AITRADER_CONFIG_PATH=/home/linuxuser/nautilus_AItrader/configs/base.yaml
 AITRADER_SERVICE_NAME=nautilus-trader
 ```
 

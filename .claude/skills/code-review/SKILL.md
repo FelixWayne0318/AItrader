@@ -112,4 +112,14 @@ Multi-dimensional code review based on Claude Code best practices.
 | `utils/*.py` | API calls, error handling |
 | `patches/*.py` | Compatibility, side effects |
 | `main_live.py` | Config loading, initialization |
-| `configs/strategy_config.yaml` | Parameter completeness |
+| `configs/base.yaml` | Base configuration (all parameters) |
+| `configs/production.yaml` | Production environment overrides |
+
+## 回归检测 (审查后必须运行)
+
+```bash
+# 智能回归检测 (规则自动从 git 历史生成)
+python3 scripts/smart_commit_analyzer.py
+
+# 预期结果: ✅ 所有规则验证通过
+```

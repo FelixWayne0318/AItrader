@@ -69,7 +69,7 @@ python test_sl_fix.py                           # 测试修复
   - Volatility Bands (Bollinger 20, 2σ)
   - Support/Resistance Detection
   - Volume Analysis
-- **Sentiment Integration**: CryptoOracle API for real-time market sentiment analysis
+- **Sentiment Integration**: Binance Long/Short Ratio API for real-time market sentiment analysis
 - **Intelligent Position Sizing**: Dynamic sizing based on AI confidence, trend strength, RSI extremes, and risk limits
 - **Event-Driven Architecture**: Built on NautilusTrader's professional framework for high-performance execution
 
@@ -194,7 +194,7 @@ python test_sl_fix.py                           # 测试修复
          ┌───────────────┴───────────────┬────────────────┐
          │                               │                │
 ┌────────┴─────────┐        ┌───────────┴──────┐  ┌─────┴─────┐
-│ Binance Futures  │        │ CryptoOracle API │  │   Redis   │
+│ Binance Futures  │        │ Binance L/S API  │  │   Redis   │
 │  (Market Data &  │        │  (Sentiment Data)│  │  (OCO DB) │
 │   Execution)     │        └──────────────────┘  └───────────┘
 └──────────────────┘
@@ -213,14 +213,17 @@ Current Position → Risk Assessment → ┘   (with SL/TP/OCO/Trailing)
 ```
 nautilus_deepseek/
 ├── configs/
-│   └── strategy_config.yaml          # Strategy parameters & risk settings
+│   ├── base.yaml                     # Base configuration (all parameters)
+│   ├── production.yaml               # Production environment overrides
+│   ├── development.yaml              # Development environment overrides
+│   └── backtest.yaml                 # Backtesting environment overrides
 ├── indicators/
 │   └── technical_manager.py          # Technical indicator calculations
 ├── strategy/
 │   └── deepseek_strategy.py          # Main strategy class
 ├── utils/
 │   ├── deepseek_client.py            # DeepSeek AI API integration
-│   ├── sentiment_client.py           # CryptoOracle sentiment fetcher
+│   ├── sentiment_client.py           # Binance Long/Short ratio fetcher
 │   ├── telegram_bot.py               # Telegram notifications & control
 │   ├── oco_manager.py                # OCO order management with Redis
 │   └── telegram_command_handler.py   # Telegram command processor
@@ -433,7 +436,7 @@ git status  # .env should not appear
 
 ##### Strategy Configuration
 
-Edit `configs/strategy_config.yaml` for advanced settings. Key sections are documented in [Configuration](#configuration) section below.
+Edit `configs/base.yaml` for advanced settings, with environment-specific overrides in `configs/{env}.yaml`. Key sections are documented in [Configuration](#configuration) section below.
 
 #### 5. Binance Account Setup
 
@@ -633,7 +636,7 @@ deepseek:
 ```yaml
 sentiment:
   enabled: true
-  provider: "cryptoracle"
+  provider: "binance"                   # Binance Long/Short Ratio API
   update_interval_minutes: 15
   lookback_hours: 4
   weight: 0.30                          # 30% weight in decisions
@@ -1053,7 +1056,7 @@ kill $(cat trader.pid)
 1. **Data Collection**:
    - Latest market data from Binance
    - Technical indicators updated
-   - Sentiment data fetched from CryptoOracle
+   - Sentiment data fetched from Binance Long/Short Ratio API
 
 2. **AI Analysis**:
    - DeepSeek analyzes all data
@@ -1438,7 +1441,7 @@ grep "initialized" logs/trader.log
 
 **Solution:**
 ```yaml
-# Increase base position size in configs/strategy_config.yaml
+# Increase base position size in configs/base.yaml
 position_management:
   base_usdt_amount: 80  # Increase from 30
 
@@ -1489,7 +1492,7 @@ nslookup fstream.binance.com
 
 **Solution:**
 ```yaml
-# Increase analysis interval in configs/strategy_config.yaml
+# Increase analysis interval in configs/base.yaml
 timer_interval_sec: 1800  # 30 minutes instead of 15
 
 # Check for multiple running instances
@@ -1506,11 +1509,11 @@ ps aux | grep main_live.py  # Should only show one
 
 **Solution:**
 ```bash
-# Check CryptoOracle API
-curl https://api.cryptoracle.network/v1/health
+# Check Binance API
+curl https://fapi.binance.com/fapi/v1/ping
 
 # Temporarily disable sentiment
-# Edit configs/strategy_config.yaml:
+# Edit configs/base.yaml:
 sentiment:
   enabled: false
 ```
@@ -1522,13 +1525,13 @@ sentiment:
 **Checks:**
 ```bash
 # Verify configuration
-grep "enable_trailing_stop" configs/strategy_config.yaml  # Should be true
+grep "enable_trailing_stop" configs/base.yaml  # Should be true
 
 # Check current profit
 tail -f logs/trader.log | grep "Profit"
 
 # Verify activation threshold
-grep "trailing_activation_pct" configs/strategy_config.yaml
+grep "trailing_activation_pct" configs/base.yaml
 
 # Look for activation message
 grep "Trailing stop ACTIVATED" logs/trader.log
@@ -1550,7 +1553,7 @@ redis-cli get "nautilus:deepseek:oco:<group_id>"
 grep "Order belongs to OCO group" logs/trader.log
 
 # Verify OCO enabled
-grep "enable_oco" configs/strategy_config.yaml
+grep "enable_oco" configs/base.yaml
 ```
 
 ### Emergency Procedures
@@ -1592,7 +1595,7 @@ mkdir -p logs/backups/$(date +%Y%m%d)
 cp logs/trader*.log logs/backups/$(date +%Y%m%d)/
 
 # Backup configuration
-cp configs/strategy_config.yaml configs/strategy_config.yaml.backup
+cp configs/base.yaml configs/base.yaml.backup
 
 # Backup Redis (OCO data)
 redis-cli SAVE
@@ -1606,9 +1609,9 @@ chmod 600 .env.backup
 ### Debug Mode
 
 ```yaml
-# Enable verbose logging in configs/strategy_config.yaml
+# Enable verbose logging in configs/development.yaml
 logging:
-  log_level: "DEBUG"  # Instead of "INFO"
+  level: "DEBUG"  # Instead of "INFO"
 
 # Restart and monitor
 ./restart_trader.sh
@@ -1761,7 +1764,7 @@ Monthly Summary:
 - **NautilusTrader**: [https://nautilustrader.io/docs/](https://nautilustrader.io/docs/)
 - **DeepSeek API**: [https://platform.deepseek.com/docs](https://platform.deepseek.com/docs)
 - **Binance Futures API**: [https://binance-docs.github.io/apidocs/futures/en/](https://binance-docs.github.io/apidocs/futures/en/)
-- **CryptoOracle**: [https://cryptoracle.network/](https://cryptoracle.network/)
+- **Binance Long/Short Ratio**: [https://www.binance.com/en/futures/funding-history/4](https://www.binance.com/en/futures/funding-history/4)
 - **Redis**: [https://redis.io/documentation](https://redis.io/documentation)
 
 ---
@@ -1833,7 +1836,7 @@ This project is for **educational and research purposes only**.
 **Built with:**
 - [**NautilusTrader**](https://github.com/nautechsystems/nautilus_trader) - Professional algorithmic trading platform
 - [**DeepSeek**](https://www.deepseek.com/) - Advanced AI language model for decision making
-- [**CryptoOracle**](https://cryptoracle.network/) - Cryptocurrency sentiment data provider
+- [**Binance**](https://www.binance.com/) - Long/Short Ratio API for sentiment data
 - [**Binance**](https://www.binance.com/) - Cryptocurrency exchange and API
 - [**Redis**](https://redis.io/) - In-memory data store for OCO persistence
 - [**python-telegram-bot**](https://python-telegram-bot.org/) - Telegram bot library

@@ -1,0 +1,71 @@
+# CodeQL 代码分析工作流
+#
+# 功能:
+# 1. 安全漏洞检测 (SQL注入、命令注入等)
+# 2. 数据流分析 (追踪变量传递)
+# 3. 代码质量检查
+#
+# 触发: push/PR 到 main 分支
+
+name: CodeQL Analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每周一凌晨运行一次完整扫描
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: CodeQL Analyze
+    runs-on: ubuntu-latest
+
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          # 使用扩展查询包 (包含更多检测规则)
+          queries: +security-extended,security-and-quality
+          # 自定义查询 (如果存在)
+          # queries: +./.github/codeql/custom-queries
+
+      # CodeQL 自动构建 Python 项目 (无需手动构建)
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+          # 输出 SARIF 格式结果
+          output: codeql-results
+
+      - name: Upload SARIF results
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-sarif
+          path: codeql-results/*.sarif
+
+      - name: Generate Summary
+        run: |
+          echo "## 🔍 CodeQL Analysis Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "CodeQL has analyzed the Python codebase for:" >> $GITHUB_STEP_SUMMARY
+          echo "- Security vulnerabilities (SQL injection, command injection, etc.)" >> $GITHUB_STEP_SUMMARY
+          echo "- Data flow issues" >> $GITHUB_STEP_SUMMARY
+          echo "- Code quality problems" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View detailed results in the **Security** tab of this repository." >> $GITHUB_STEP_SUMMARY
