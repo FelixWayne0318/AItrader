@@ -624,7 +624,7 @@ class CommitFixValidator:
 # =============================================================================
 # 连锁反应检查 (Chain Reaction Detection)
 # =============================================================================
-def check_chain_reactions(project_root: Path = None) -> List[Dict[str, Any]]:
+def check_chain_reactions(project_root: Path = None, verbose: bool = True) -> List[Dict[str, Any]]:
     """
     检查可能的连锁反应
 
@@ -633,10 +633,12 @@ def check_chain_reactions(project_root: Path = None) -> List[Dict[str, Any]]:
     project_root = project_root or Path(__file__).parent
     issues = []
 
-    print_section("连锁反应检查")
+    if verbose:
+        print_section("连锁反应检查")
 
     # 1. 检查配置字段是否在 dataclass 和 main_live.py 中匹配
-    print_info("检查 1: Strategy dataclass vs main_live.py 字段匹配...")
+    if verbose:
+        print_info("检查 1: Strategy dataclass vs main_live.py 字段匹配...")
 
     strategy_file = project_root / "strategy" / "deepseek_strategy.py"
     main_live_file = project_root / "main_live.py"
@@ -680,12 +682,15 @@ def check_chain_reactions(project_root: Path = None) -> List[Dict[str, Any]]:
                                     f not in {'partial_tp_levels'}]  # 排除复杂类型
 
                 if important_missing:
-                    print_warn(f"可能缺少配置传递: {important_missing[:5]}...")
+                    if verbose:
+                        print_warn(f"可能缺少配置传递: {important_missing[:5]}...")
                 else:
-                    print_ok("dataclass 字段与 main_live.py 传递匹配")
+                    if verbose:
+                        print_ok("dataclass 字段与 main_live.py 传递匹配")
 
     # 2. 检查导入依赖
-    print_info("检查 2: 循环导入风险...")
+    if verbose:
+        print_info("检查 2: 循环导入风险...")
 
     import_issues = []
     for init_file in project_root.glob("*/__init__.py"):
@@ -698,17 +703,20 @@ def check_chain_reactions(project_root: Path = None) -> List[Dict[str, Any]]:
                 import_issues.append(str(init_file.relative_to(project_root)))
 
     if import_issues:
-        print_warn(f"可能有循环导入风险: {import_issues}")
+        if verbose:
+            print_warn(f"可能有循环导入风险: {import_issues}")
         issues.append({
             'type': 'circular_import_risk',
             'files': import_issues,
             'hint': '考虑使用延迟导入或移除 __init__.py 中的自动导入',
         })
     else:
-        print_ok("未检测到明显的循环导入风险")
+        if verbose:
+            print_ok("未检测到明显的循环导入风险")
 
     # 3. 检查常量定义一致性
-    print_info("检查 3: 常量定义一致性...")
+    if verbose:
+        print_info("检查 3: 常量定义一致性...")
 
     constants_to_check = ['MIN_SL_DISTANCE_PCT', 'MIN_NOTIONAL']
     for const in constants_to_check:
@@ -725,7 +733,8 @@ def check_chain_reactions(project_root: Path = None) -> List[Dict[str, Any]]:
                 pass
 
         if len(set(values_found.values())) > 1:
-            print_warn(f"{const} 定义不一致: {values_found}")
+            if verbose:
+                print_warn(f"{const} 定义不一致: {values_found}")
             issues.append({
                 'type': 'constant_inconsistency',
                 'constant': const,
@@ -733,7 +742,8 @@ def check_chain_reactions(project_root: Path = None) -> List[Dict[str, Any]]:
             })
 
     if not issues:
-        print_ok("常量定义一致")
+        if verbose:
+            print_ok("常量定义一致")
 
     return issues
 
@@ -775,7 +785,7 @@ def main():
 
     # 连锁反应检查
     if not args.quick:
-        chain_issues = check_chain_reactions()
+        chain_issues = check_chain_reactions(verbose=not args.json)
         results['chain_reactions'] = chain_issues
 
     # 输出结果
