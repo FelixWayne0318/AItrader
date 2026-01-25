@@ -1,0 +1,11 @@
+# configs/production.yaml
+# 生产环境配置覆盖
+
+capital:
+  leverage: 5                     # 生产环境使用适中杠杆
+
+timing:
+  timer_interval_sec: 900         # 15分钟
+
+logging:
+  level: "INFO"
