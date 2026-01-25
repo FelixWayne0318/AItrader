@@ -127,5 +127,17 @@ python3 diagnose.py 2>&1 | grep -E "(RSI|MACD|SMA)"
 | File | Purpose |
 |------|---------|
 | `diagnose.py` | Main diagnostic script |
+| `diagnose_realtime.py` | Real-time API diagnostic |
+| `smart_commit_analyzer.py` | Regression detection (auto-evolving rules) |
 | `strategy/deepseek_strategy.py` | Main strategy logic |
-| `configs/strategy_config.yaml` | Strategy configuration |
+| `configs/base.yaml` | Base configuration (all parameters) |
+| `configs/production.yaml` | Production environment overrides |
+
+## 回归检测 (修改代码后必须运行)
+
+```bash
+# 智能回归检测 (规则自动从 git 历史生成)
+python3 smart_commit_analyzer.py
+
+# 预期结果: ✅ 所有规则验证通过
+```
