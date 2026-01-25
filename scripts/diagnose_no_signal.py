@@ -95,7 +95,7 @@ def check_service_status() -> Dict[str, Any]:
                         try:
                             mb = int(value) / (1024 * 1024)
                             result['memory'] = f"{mb:.1f} MB"
-                        except:
+                        except Exception:
                             pass
                 elif key == 'ExecMainStartTimestamp':
                     if value and value != 'n/a':
