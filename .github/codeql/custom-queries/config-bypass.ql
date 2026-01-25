@@ -10,7 +10,7 @@
 
 import python
 
-from AssignStmt assign, Name target, NumericLiteral value
+from AssignStmt assign, Name target, Num value
 where
   target = assign.getTarget(0) and
   value = assign.getValue() and

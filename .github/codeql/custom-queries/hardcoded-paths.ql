@@ -10,7 +10,7 @@
 
 import python
 
-from StrConst str
+from StringLiteral str
 where
   // Match common Python file patterns
   str.getText().regexpMatch(".*\\.(py|yaml|yml|json|md)$")
