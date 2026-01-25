@@ -3,21 +3,34 @@
     "allow": [
       "Skill",
       "Bash(git:*)",
+      "Bash(gh:*)",
       "Bash(python3:*)",
       "Bash(pip:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
       "Bash(sudo systemctl:*)",
       "Bash(sudo journalctl:*)",
+      "Bash(docker:*)",
+      "Bash(npm:*)",
+      "Bash(yarn:*)",
       "Read",
       "Write",
       "Edit",
       "Glob",
-      "Grep"
+      "Grep",
+      "Task",
+      "WebFetch",
+      "WebSearch"
     ],
     "deny": [
       "Skill(deploy:*)",
       "Bash(rm -rf /)",
+      "Bash(rm -rf /*)",
       "Bash(shutdown)",
-      "Bash(reboot)"
+      "Bash(reboot)",
+      "Bash(dd if=*)",
+      "Bash(mkfs.*)",
+      "Bash(format *)"
     ]
   }
 }

@@ -21,11 +21,14 @@ jobs:
       )
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      actions: read
-      id-token: write
+      contents: write          # 读写代码
+      pull-requests: write     # 管理 PR
+      issues: write            # 管理 Issue
+      actions: read            # 读取 Actions 日志
+      id-token: write          # OIDC 认证
+      security-events: read    # 读取 Code Scanning 告警
+      checks: write            # 更新 CI 检查状态
+      statuses: write          # 更新 commit 状态
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
