@@ -1,0 +1,749 @@
+{
+  "rules": [
+    {
+      "id": "4febf586c627",
+      "commit": "d6d0f48",
+      "file": "validate_commit_fixes.py",
+      "message": "fix: suppress print output in JSON mode for validate_commit_fixes.py",
+      "pattern": "check_chain_reactions",
+      "pattern_type": "function_exists",
+      "created": "2026-01-25T11:38:00.617727",
+      "auto_generated": true
+    },
+    {
+      "id": "fca1d0224651",
+      "commit": "3c33048",
+      "file": "analyze_commits_ai.py",
+      "message": "feat: add analyze_commits_ai.py - AI-enhanced commit analysis",
+      "pattern": "import os",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:00.671601",
+      "auto_generated": true
+    },
+    {
+      "id": "ceb4383fd994",
+      "commit": "41882a2",
+      "file": "analyze_git_changes.py",
+      "message": "feat: add analyze_git_changes.py - automatic git history analyzer",
+      "pattern": "import os",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:00.711316",
+      "auto_generated": true
+    },
+    {
+      "id": "fe19777a6416",
+      "commit": "d10b646",
+      "file": "validate_commit_fixes.py",
+      "message": "feat: add validate_commit_fixes.py - commit regression checker",
+      "pattern": "import os",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:00.751674",
+      "auto_generated": true
+    },
+    {
+      "id": "1504e4e9186d",
+      "commit": "34cc984",
+      "file": "main_live.py",
+      "message": "fix: add missing SL/TP, trailing stop, OCO config passing from ConfigManager",
+      "pattern": "enable_auto_sl_tp=config_manager.get('risk', 'stop_loss', 'enabled', default=True),",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:00.790636",
+      "auto_generated": true
+    },
+    {
+      "id": "eba2a37e3432",
+      "commit": "bc04e08",
+      "file": "scripts/comprehensive_diagnosis.py",
+      "message": "fix(scripts): 修复 comprehensive_diagnosis.py 中的类名错误",
+      "pattern": "from utils.deepseek_client import DeepSeekAnalyzer",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:00.826762",
+      "auto_generated": true
+    },
+    {
+      "id": "f46c73aec911",
+      "commit": "321788f",
+      "file": "scripts/comprehensive_diagnosis.py",
+      "message": "feat(scripts): 添加配置管理方案全面诊断脚本",
+      "pattern": "import sys",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:00.863905",
+      "auto_generated": true
+    },
+    {
+      "id": "e4c6e49f5184",
+      "commit": "41a0990",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "feat(config): Phase 3 - trading_logic.py 常量迁移到 ConfigManager",
+      "pattern": "# Get configuration values (Phase 3: migrated to ConfigManager)",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:00.897387",
+      "auto_generated": true
+    },
+    {
+      "id": "1365d8469c0a",
+      "commit": "41a0990",
+      "file": "strategy/trading_logic.py",
+      "message": "feat(config): Phase 3 - trading_logic.py 常量迁移到 ConfigManager",
+      "pattern": "from utils.config_manager import get_config",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:00.915097",
+      "auto_generated": true
+    },
+    {
+      "id": "f26d12322df6",
+      "commit": "9d9ff66",
+      "file": "utils/config_manager.py",
+      "message": "fix(config): 修复 YAML None 值导致的 _set_nested TypeError",
+      "pattern": "if key not in d:",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:00.949327",
+      "auto_generated": true
+    },
+    {
+      "id": "cb53f82983d4",
+      "commit": "d7701d3",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 同步 RSI 默认值与 YAML 配置 (75/25 → 70/30)",
+      "pattern": "rsi_extreme_threshold_upper: float = 70.0  # 与 strategy_config.yaml 一致",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.105936",
+      "auto_generated": true
+    },
+    {
+      "id": "f9227e042526",
+      "commit": "333c17f",
+      "file": "main_live.py",
+      "message": "fix: 执行 Phase 0 修复配置冲突 + 更新方案至 v2.2",
+      "pattern": "deepseek_config = strategy_yaml.get('deepseek', {})",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.164365",
+      "auto_generated": true
+    },
+    {
+      "id": "3774db8fba72",
+      "commit": "52291cf",
+      "file": "diagnose_no_signal.py",
+      "message": "fix: 进一步优化诊断逻辑避免误报",
+      "pattern": "check_bar_data",
+      "pattern_type": "function_exists",
+      "created": "2026-01-25T11:38:01.249471",
+      "auto_generated": true
+    },
+    {
+      "id": "21ca68c485b0",
+      "commit": "9c22ab3",
+      "file": "diagnose_no_signal.py",
+      "message": "feat: 完善 diagnose_no_signal.py 诊断逻辑",
+      "pattern": "if 'running periodic analysis' in line_lower or \\",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.284599",
+      "auto_generated": true
+    },
+    {
+      "id": "7daa66bc8e4c",
+      "commit": "cfb57da",
+      "file": "utils/telegram_bot.py",
+      "message": "fix: 修复 Telegram Markdown 解析错误",
+      "pattern": "escape_markdown",
+      "pattern_type": "function_exists",
+      "created": "2026-01-25T11:38:01.319300",
+      "auto_generated": true
+    },
+    {
+      "id": "4cbb5bda227b",
+      "commit": "cfb57da",
+      "file": "utils/telegram_command_handler.py",
+      "message": "fix: 修复 Telegram Markdown 解析错误",
+      "pattern": "if \"can't parse\" in error_str or \"parse entities\" in error_str:",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.337025",
+      "auto_generated": true
+    },
+    {
+      "id": "320af7b012b0",
+      "commit": "2d83460",
+      "file": "diagnose_no_signal.py",
+      "message": "fix: 修正指标导入路径与原始仓库一致",
+      "pattern": "uses_cython = \"from nautilus_trader.indicators import\" in import_text or \\",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.370213",
+      "auto_generated": true
+    },
+    {
+      "id": "0e486308a538",
+      "commit": "2d83460",
+      "file": "indicators/technical_manager.py",
+      "message": "fix: 修正指标导入路径与原始仓库一致",
+      "pattern": "from nautilus_trader.indicators import (",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:01.387282",
+      "auto_generated": true
+    },
+    {
+      "id": "bd61a43e395d",
+      "commit": "9a157e8",
+      "file": "diagnose_no_signal.py",
+      "message": "fix: 修复诊断脚本误将注释识别为导入语句",
+      "pattern": "if line.strip().startswith('from ') or line.strip().startswith('import ')]",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.422262",
+      "auto_generated": true
+    },
+    {
+      "id": "82cd80c3a511",
+      "commit": "b866b66",
+      "file": "diagnose_no_signal.py",
+      "message": "chore: 更新 diagnose_no_signal.py 添加最新修复检查",
+      "pattern": "if tech_manager.exists():",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.456541",
+      "auto_generated": true
+    },
+    {
+      "id": "c7beafebd874",
+      "commit": "cd036b4",
+      "file": "indicators/technical_manager.py",
+      "message": "fix: 改用 Cython 指标避免 Rust 线程安全 panic",
+      "pattern": "from nautilus_trader.indicators.average.sma import SimpleMovingAverage",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:01.505232",
+      "auto_generated": true
+    },
+    {
+      "id": "426b3d634f26",
+      "commit": "ee43d22",
+      "file": "utils/telegram_bot.py",
+      "message": "fix: 改用 requests 直接调用 Telegram API (官方推荐)",
+      "pattern": "import requests",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:01.554704",
+      "auto_generated": true
+    },
+    {
+      "id": "1499132a781a",
+      "commit": "11bab54",
+      "file": "utils/telegram_bot.py",
+      "message": "fix: 修复 Telegram TCPTransport closed 错误",
+      "pattern": "return loop.run_until_complete(",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.604581",
+      "auto_generated": true
+    },
+    {
+      "id": "9554538b8049",
+      "commit": "8a43d43",
+      "file": "agents/__init__.py",
+      "message": "fix: 修复导致无交易信号的多个问题",
+      "pattern": "from agents.multi_agent_analyzer import MultiAgentAnalyzer",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:01.652922",
+      "auto_generated": true
+    },
+    {
+      "id": "bb1dddc0e93f",
+      "commit": "8a43d43",
+      "file": "strategy/__init__.py",
+      "message": "fix: 修复导致无交易信号的多个问题",
+      "pattern": "from strategy.deepseek_strategy import DeepSeekAIStrategy, DeepSeekAIStrategyConfig",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:01.668940",
+      "auto_generated": true
+    },
+    {
+      "id": "ab9dba65bf25",
+      "commit": "8a43d43",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复导致无交易信号的多个问题",
+      "pattern": "'net_sentiment': 0.0,    # Required by deepseek_client (long - short = 0)",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.689540",
+      "auto_generated": true
+    },
+    {
+      "id": "dbafcd3da858",
+      "commit": "8a43d43",
+      "file": "utils/deepseek_client.py",
+      "message": "fix: 修复导致无交易信号的多个问题",
+      "pattern": "# Use .get() with defaults to prevent KeyError",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.709521",
+      "auto_generated": true
+    },
+    {
+      "id": "f74c611b810c",
+      "commit": "262a3ee",
+      "file": "diagnose_no_signal.py",
+      "message": "feat: 完善诊断脚本 - 覆盖所有提交历史中的已知问题",
+      "pattern": "import re",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:01.743794",
+      "auto_generated": true
+    },
+    {
+      "id": "86fe07d75ed2",
+      "commit": "29907b2",
+      "file": "diagnose_no_signal.py",
+      "message": "feat: 增强诊断脚本 - 检查所有提交历史中的已知问题",
+      "pattern": "import re",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:01.776456",
+      "auto_generated": true
+    },
+    {
+      "id": "a15111c2e586",
+      "commit": "9aeabb8",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 修复 diagnose_realtime.py 多行导入检测逻辑",
+      "pattern": "if not (has_trading_logic_import and has_min_sl_constant):",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.809963",
+      "auto_generated": true
+    },
+    {
+      "id": "b182fbf6fc63",
+      "commit": "a9a3655",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 统一 MIN_SL_DISTANCE_PCT 常量为 1%",
+      "pattern": "from strategy.trading_logic import MIN_SL_DISTANCE_PCT",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:01.842587",
+      "auto_generated": true
+    },
+    {
+      "id": "a01b52785774",
+      "commit": "a9a3655",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 统一 MIN_SL_DISTANCE_PCT 常量为 1%",
+      "pattern": "if trading_logic_path.exists():",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.862080",
+      "auto_generated": true
+    },
+    {
+      "id": "e78fe09729aa",
+      "commit": "a9a3655",
+      "file": "strategy/trading_logic.py",
+      "message": "fix: 统一 MIN_SL_DISTANCE_PCT 常量为 1%",
+      "pattern": "MIN_SL_DISTANCE_PCT = 0.01   # 1% minimum SL distance (avoid too tight stops)",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.881175",
+      "auto_generated": true
+    },
+    {
+      "id": "3868168abce3",
+      "commit": "e4a52c2",
+      "file": "diagnose_realtime.py",
+      "message": "refactor: 将 SL/TP 验证函数移至共享模块",
+      "pattern": "validate_multiagent_sltp,",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.918531",
+      "auto_generated": true
+    },
+    {
+      "id": "57168b31126b",
+      "commit": "e4a52c2",
+      "file": "strategy/trading_logic.py",
+      "message": "refactor: 将 SL/TP 验证函数移至共享模块",
+      "pattern": "validate_multiagent_sltp",
+      "pattern_type": "function_exists",
+      "created": "2026-01-25T11:38:01.937231",
+      "auto_generated": true
+    },
+    {
+      "id": "79aaf47f2175",
+      "commit": "fa738be",
+      "file": "main_live.py",
+      "message": "fix: 修改 load_all=True 与参考仓库保持一致",
+      "pattern": "# The binance_positions.py patch provides additional filtering if needed",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:01.972659",
+      "auto_generated": true
+    },
+    {
+      "id": "145413ece351",
+      "commit": "e522eaa",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 修复 Risk Manager SL 距离过近问题",
+      "pattern": "sl_distance = (current_price - sl) / current_price if sl > 0 else 0",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.007531",
+      "auto_generated": true
+    },
+    {
+      "id": "b7a2800924a3",
+      "commit": "0d02da8",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修正 MultiAgent SL/TP 字段名匹配",
+      "pattern": "multi_sl = self.latest_signal_data.get('stop_loss')",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.042995",
+      "auto_generated": true
+    },
+    {
+      "id": "a05653ffae44",
+      "commit": "1d50912",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 统一架构命名，彻底移除\"方案A/B\"混淆",
+      "pattern": "This implements a hierarchical decision architecture where the Judge's decision is final,",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.094851",
+      "auto_generated": true
+    },
+    {
+      "id": "5eb23d22d848",
+      "commit": "1d50912",
+      "file": "strategy/trading_logic.py",
+      "message": "fix: 统一架构命名，彻底移除\"方案A/B\"混淆",
+      "pattern": "- check_divergence() - 层级架构不存在信号分歧",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.115083",
+      "auto_generated": true
+    },
+    {
+      "id": "cd3bfc039298",
+      "commit": "5e0f8ce",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 统一架构命名，消除方案A/B混淆",
+      "pattern": "Reference: https://github.com/TauricResearch/TradingAgents (UCLA/MIT paper)",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.149960",
+      "auto_generated": true
+    },
+    {
+      "id": "08ee8e890fc7",
+      "commit": "5e0f8ce",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 统一架构命名，消除方案A/B混淆",
+      "pattern": "3. 使用 TradingAgents 层级决策架构，与 deepseek_strategy.py 100% 一致",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.168111",
+      "auto_generated": true
+    },
+    {
+      "id": "a40f4bc74b9d",
+      "commit": "7f2ee3e",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 实现方案A - 恢复Judge AI并优化提示词",
+      "pattern": "f\"🎯 Judge decision: {judge_decision.get('decision', 'HOLD')} \"",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.202326",
+      "auto_generated": true
+    },
+    {
+      "id": "bb6202aa83e2",
+      "commit": "aac0af5",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 实现混合决策架构，移除Judge AI层，使用确定性量化逻辑",
+      "pattern": "_count_technical_confirmations",
+      "pattern_type": "function_exists",
+      "created": "2026-01-25T11:38:02.238251",
+      "auto_generated": true
+    },
+    {
+      "id": "ec764134887f",
+      "commit": "3db71ac",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 添加Judge量化决策规则，降低HOLD比例",
+      "pattern": "- ONLY use \"HOLD\" if both counts < 2 AND arguments are truly balanced",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.273594",
+      "auto_generated": true
+    },
+    {
+      "id": "3a00be1f1b58",
+      "commit": "fd60f3c",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 修复反转逻辑和错误处理的关键问题",
+      "pattern": "_extract_json_with_retry",
+      "pattern_type": "function_exists",
+      "created": "2026-01-25T11:38:02.341207",
+      "auto_generated": true
+    },
+    {
+      "id": "bccd4b7467c5",
+      "commit": "fd60f3c",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复反转逻辑和错误处理的关键问题",
+      "pattern": "if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.360850",
+      "auto_generated": true
+    },
+    {
+      "id": "f43dfcb73ac8",
+      "commit": "accba28",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复代码审查发现的安全和质量问题",
+      "pattern": "# Additional validation: check minimum distance",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.416243",
+      "auto_generated": true
+    },
+    {
+      "id": "cb9905f1b717",
+      "commit": "accba28",
+      "file": "utils/bar_persistence.py",
+      "message": "fix: 修复代码审查发现的安全和质量问题",
+      "pattern": "import logging",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:02.433127",
+      "auto_generated": true
+    },
+    {
+      "id": "7e6b8a5c4f4e",
+      "commit": "accba28",
+      "file": "web/backend/core/config.py",
+      "message": "fix: 修复代码审查发现的安全和质量问题",
+      "pattern": "if not os.getenv(\"DEBUG\", \"False\").lower() == \"true\":",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.451142",
+      "auto_generated": true
+    },
+    {
+      "id": "84c9aff0f474",
+      "commit": "accba28",
+      "file": "web/backend/services/config_service.py",
+      "message": "fix: 修复代码审查发现的安全和质量问题",
+      "pattern": "import re",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:02.468326",
+      "auto_generated": true
+    },
+    {
+      "id": "8dfef202a6f3",
+      "commit": "f45ad73",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复加仓和反转使用 bracket order 的严重 bug",
+      "pattern": "f\"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC\"",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.503160",
+      "auto_generated": true
+    },
+    {
+      "id": "85a8fd92eafa",
+      "commit": "890d154",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 移除 diagnose_realtime.py 中的旧变量引用",
+      "pattern": "judge_decision = signal_data.get('judge_decision', {})",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.539286",
+      "auto_generated": true
+    },
+    {
+      "id": "7db1e6b628dc",
+      "commit": "5c08838",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 修复 diagnose_realtime.py 变量名错误",
+      "pattern": "signal_data=signal_data,  # 方案B: 使用 Judge 的决策数据",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.573678",
+      "auto_generated": true
+    },
+    {
+      "id": "02475762eacf",
+      "commit": "70cc94a",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 代码审查问题修复 - 防御性编程增强",
+      "pattern": "if start != -1 and end > 0 and start < end:",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.608043",
+      "auto_generated": true
+    },
+    {
+      "id": "5968a73050a3",
+      "commit": "70cc94a",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 代码审查问题修复 - 防御性编程增强",
+      "pattern": "dt = datetime.utcfromtimestamp(ts / 1e9) if ts else datetime.utcnow()",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.631312",
+      "auto_generated": true
+    },
+    {
+      "id": "9bda3140f705",
+      "commit": "70cc94a",
+      "file": "utils/sentiment_client.py",
+      "message": "fix: 代码审查问题修复 - 防御性编程增强",
+      "pattern": "if not isinstance(token, str) or not token.isalnum() or len(token) > 10:",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.649476",
+      "auto_generated": true
+    },
+    {
+      "id": "6fdcbe4d53b7",
+      "commit": "79e168a",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 诊断脚本显示正确的 SL/TP (来自最终信号)",
+      "pattern": "final_sl = final_signal_data.get('stop_loss')",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.686914",
+      "auto_generated": true
+    },
+    {
+      "id": "df2e136b58a5",
+      "commit": "a1fb405",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 同步 diagnose_realtime.py 与最新策略逻辑",
+      "pattern": "if opposing_signals or hold_vs_action:",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.732139",
+      "auto_generated": true
+    },
+    {
+      "id": "e2045e56cca0",
+      "commit": "e9f6dca",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 修复过度保守的信号生成逻辑",
+      "pattern": "6. When in doubt between LONG/SHORT, the side with more technical confirmation wins",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.779859",
+      "auto_generated": true
+    },
+    {
+      "id": "f69356551d22",
+      "commit": "e9f6dca",
+      "file": "utils/deepseek_client.py",
+      "message": "fix: 修复过度保守的信号生成逻辑",
+      "pattern": "\"Always return responses strictly in JSON format.\"",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.799609",
+      "auto_generated": true
+    },
+    {
+      "id": "449c5bfc32bf",
+      "commit": "24bc34b",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: HOLD vs BUY/SELL 分歧也应用信心融合",
+      "pattern": "if opposing_signals or hold_vs_action:",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.838102",
+      "auto_generated": true
+    },
+    {
+      "id": "466727cfa94a",
+      "commit": "76a6c14",
+      "file": "web/backend/core/config.py",
+      "message": "fix: 修复 web 配置和部署问题",
+      "pattern": "\"http://139.180.157.152:3000\",",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:02.928840",
+      "auto_generated": true
+    },
+    {
+      "id": "8d68bc779e22",
+      "commit": "aacde24",
+      "file": "utils/telegram_command_handler.py",
+      "message": "fix: 限制 Bot 命令菜单仅在私聊中显示",
+      "pattern": "from telegram import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:03.030253",
+      "auto_generated": true
+    },
+    {
+      "id": "f26b180c7071",
+      "commit": "922f973",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 修复代码审查发现的问题",
+      "pattern": "resolve_divergence_by_confidence",
+      "pattern_type": "function_exists",
+      "created": "2026-01-25T11:38:03.067523",
+      "auto_generated": true
+    },
+    {
+      "id": "0f207da88bfc",
+      "commit": "922f973",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复代码审查发现的问题",
+      "pattern": "_create_hold_signal",
+      "pattern_type": "function_exists",
+      "created": "2026-01-25T11:38:03.090472",
+      "auto_generated": true
+    },
+    {
+      "id": "c4793da6523a",
+      "commit": "f1de3d1",
+      "file": "main_live.py",
+      "message": "fix: 同步 main_live.py fallback 默认值 (equity=1000, leverage=5)",
+      "pattern": "equity = get_env_float('EQUITY', str(strategy_yaml.get('equity', '1000')))",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:03.125347",
+      "auto_generated": true
+    },
+    {
+      "id": "806513d51de2",
+      "commit": "bc9aaa1",
+      "file": "utils/telegram_command_handler.py",
+      "message": "fix: 修复内联键盘按钮无响应 - 添加 callback_query 到 allowed_updates",
+      "pattern": "allowed_updates=[\"message\", \"callback_query\"],  # Listen to messages and button callbacks",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:03.164574",
+      "auto_generated": true
+    },
+    {
+      "id": "d7506fbc8125",
+      "commit": "639f667",
+      "file": "utils/telegram_command_handler.py",
+      "message": "fix: 修复 Telegram webhook 冲突 - 启动前主动删除 webhook",
+      "pattern": "from telegram import Bot",
+      "pattern_type": "import",
+      "created": "2026-01-25T11:38:03.199089",
+      "auto_generated": true
+    },
+    {
+      "id": "bc0974f690d4",
+      "commit": "5b8c064",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复 Telegram 线程安全 - 添加 from_telegram 参数",
+      "pattern": "_get_current_position_data",
+      "pattern_type": "function_exists",
+      "created": "2026-01-25T11:38:03.243713",
+      "auto_generated": true
+    },
+    {
+      "id": "bf89b9680237",
+      "commit": "a2574dd",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 完善 Rust RSI 线程安全修复 - _get_current_position_data",
+      "pattern": "_get_current_position_data",
+      "pattern_type": "function_exists",
+      "created": "2026-01-25T11:38:03.284095",
+      "auto_generated": true
+    },
+    {
+      "id": "7e885fd6b2dd",
+      "commit": "8cecd6e",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复 Rust RSI 线程安全崩溃 (Telegram 命令处理)",
+      "pattern": "# Fallback to entry price if no price cached yet",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:03.329407",
+      "auto_generated": true
+    },
+    {
+      "id": "99f7803a0a9f",
+      "commit": "264896f",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修正 deepseek_strategy.py 中时间周期解析顺序",
+      "pattern": "# NOTE: Must check longer strings first (15-MINUTE before 5-MINUTE)",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:03.374705",
+      "auto_generated": true
+    },
+    {
+      "id": "60a58d4e84cf",
+      "commit": "eb43034",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 修正 bar_type 时间周期解析顺序",
+      "pattern": "if \"15-MINUTE\" in bar_type_str:",
+      "pattern_type": "contains",
+      "created": "2026-01-25T11:38:03.415466",
+      "auto_generated": true
+    }
+  ],
+  "metadata": {
+    "created": "2026-01-25T11:38:00.517124",
+    "updated": "2026-01-25T11:38:03.415776",
+    "count": 74
+  }
+}

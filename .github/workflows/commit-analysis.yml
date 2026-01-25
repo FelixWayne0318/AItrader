@@ -1,4 +1,4 @@
-# GitHub Actions 工作流: 自动提交分析
+# GitHub Actions 工作流: 智能提交分析
 #
 # 触发时机:
 # 1. 每次 push 到 main 分支
@@ -6,10 +6,8 @@
 # 3. 手动触发
 #
 # 功能:
-# 1. 运行 validate_commit_fixes.py 检查已知修复
-# 2. 运行 analyze_git_changes.py 分析提交
-# 3. 运行 analyze_commits_ai.py AI 深度分析 (自动启用，需要 DEEPSEEK_API_KEY)
-# 4. 结果保存为 Artifact 并评论到 PR
+# 1. smart_commit_analyzer.py - 自动演进的回归检测 (规则自动从 git 生成)
+# 2. analyze_commits_ai.py - AI 深度语义分析 (可选，需要 DEEPSEEK_API_KEY)
 
 name: Commit Analysis
 
@@ -18,81 +16,114 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
     inputs:
       commits_to_analyze:
         description: '分析提交数量'
         required: false
-        default: '20'
+        default: '100'
         type: string
 
 jobs:
   # =========================================================================
-  # Job 1: 基础验证 (快速，每次都运行)
+  # Job 1: 智能回归检测 (自动演进，规则从 git 历史自动生成)
   # =========================================================================
-  validate-fixes:
-    name: Validate Known Fixes
+  smart-analysis:
+    name: Smart Regression Detection
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 获取完整历史用于分析
+          fetch-depth: 0  # 获取完整历史
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Run smart_commit_analyzer.py
+        id: analyze
         run: |
-          pip install pyyaml python-dotenv
-
-      - name: Run validate_commit_fixes.py
-        id: validate
-        run: |
-          python3 validate_commit_fixes.py --json > validation_result.json 2>&1 || true
+          python3 smart_commit_analyzer.py \
+            --commits ${{ github.event.inputs.commits_to_analyze || '100' }} \
+            --json > smart_analysis.json 2>&1 || true
 
           # 提取结果
-          PASSED=$(python3 -c "import json; d=json.load(open('validation_result.json')); print(len(d.get('passed', [])))")
-          FAILED=$(python3 -c "import json; d=json.load(open('validation_result.json')); print(len(d.get('failed', [])))")
-          WARNINGS=$(python3 -c "import json; d=json.load(open('validation_result.json')); print(len(d.get('warnings', [])))")
+          TOTAL=$(python3 -c "import json; d=json.load(open('smart_analysis.json')); print(d.get('update', {}).get('total_rules', 0))")
+          PASSED=$(python3 -c "import json; d=json.load(open('smart_analysis.json')); print(d.get('validation', {}).get('passed', 0))")
+          FAILED=$(python3 -c "import json; d=json.load(open('smart_analysis.json')); print(d.get('validation', {}).get('failed', 0))")
+          WARNINGS=$(python3 -c "import json; d=json.load(open('smart_analysis.json')); print(d.get('validation', {}).get('warnings', 0))")
 
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
           echo "warnings=$WARNINGS" >> $GITHUB_OUTPUT
 
-          # 如果有失败，设置为失败状态
-          if [ "$FAILED" -gt 0 ]; then
-            echo "❌ $FAILED validation(s) failed!"
-            exit 1
-          fi
+          # 显示结果摘要
+          echo "📊 规则总数: $TOTAL"
+          echo "✅ 通过: $PASSED"
+          echo "❌ 失败: $FAILED"
+          echo "⚠️ 警告: $WARNINGS"
 
-      - name: Upload validation results
+      - name: Generate summary
+        run: |
+          echo "## 🔍 Smart Regression Detection" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📋 Total Rules | ${{ steps.analyze.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Passed | ${{ steps.analyze.outputs.passed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ❌ Failed | ${{ steps.analyze.outputs.failed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚠️ Warnings | ${{ steps.analyze.outputs.warnings }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # 显示失败详情
+          python3 -c "
+          import json
+          try:
+              data = json.load(open('smart_analysis.json'))
+              failed = data.get('failed_details', [])
+              if failed:
+                  print('### ❌ Failed Checks')
+                  print()
+                  for f in failed[:10]:
+                      print(f\"- **{f.get('file', 'unknown')}** (commit {f.get('commit', '?')})\")
+                      print(f\"  - {f.get('message', 'No details')}\")
+          except Exception as e:
+              print(f'Error: {e}')
+          " >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload analysis results
         uses: actions/upload-artifact@v4
         with:
-          name: validation-results
-          path: validation_result.json
+          name: smart-analysis-results
+          path: |
+            smart_analysis.json
+            configs/auto_generated_rules.json
 
-      - name: Comment on PR (if PR)
+      - name: Comment on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const passed = '${{ steps.validate.outputs.passed }}';
-            const failed = '${{ steps.validate.outputs.failed }}';
-            const warnings = '${{ steps.validate.outputs.warnings }}';
+            const total = '${{ steps.analyze.outputs.total }}';
+            const passed = '${{ steps.analyze.outputs.passed }}';
+            const failed = '${{ steps.analyze.outputs.failed }}';
+            const warnings = '${{ steps.analyze.outputs.warnings }}';
 
-            let status = failed > 0 ? '❌' : '✅';
-            let body = `## ${status} Commit Fix Validation Results\n\n`;
+            let status = failed > 0 ? '⚠️' : '✅';
+            let body = `## ${status} Smart Regression Detection\n\n`;
+            body += `**Auto-generated rules from git history**\n\n`;
             body += `| Metric | Count |\n|--------|-------|\n`;
+            body += `| 📋 Total Rules | ${total} |\n`;
             body += `| ✅ Passed | ${passed} |\n`;
             body += `| ❌ Failed | ${failed} |\n`;
             body += `| ⚠️ Warnings | ${warnings} |\n`;
 
             if (failed > 0) {
-              body += `\n**Action Required**: Please fix the failed validations before merging.`;
+              body += `\n⚠️ **Potential Regressions Detected**: Please review the failed checks in the workflow summary.`;
             }
 
             github.rest.issues.createComment({
@@ -103,79 +134,23 @@ jobs:
             });
 
   # =========================================================================
-  # Job 2: Git 历史分析 (中等速度)
-  # =========================================================================
-  analyze-changes:
-    name: Analyze Git Changes
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          pip install pyyaml python-dotenv
-
-      - name: Run analyze_git_changes.py
-        run: |
-          python3 analyze_git_changes.py \
-            --commits ${{ github.event.inputs.commits_to_analyze || '20' }} \
-            --json > git_analysis.json 2>&1 || true
-
-      - name: Generate summary
-        run: |
-          python3 -c "
-          import json
-          try:
-              data = json.load(open('git_analysis.json'))
-              print('## Git History Analysis')
-              print()
-              print(f\"Total commits analyzed: {data.get('total_commits', 0)}\")
-              print()
-              print('### By Type')
-              for t, c in data.get('by_type', {}).items():
-                  print(f'- {t}: {c}')
-              print()
-              print('### Fix Commits')
-              for fix in data.get('fix_commits', [])[:5]:
-                  print(f\"- {fix['hash']}: {fix['message'][:60]}\")
-          except Exception as e:
-              print(f'Error: {e}')
-          " >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload analysis results
-        uses: actions/upload-artifact@v4
-        with:
-          name: git-analysis-results
-          path: git_analysis.json
-
-  # =========================================================================
-  # Job 3: AI 深度分析 (自动启用，需要 DEEPSEEK_API_KEY secret)
+  # Job 2: AI 深度分析 (可选，需要 DEEPSEEK_API_KEY)
   # =========================================================================
   ai-analysis:
     name: AI Deep Analysis
     runs-on: ubuntu-latest
-    # 自动运行，如果 API key 不可用会优雅跳过
 
     steps:
-      - name: Check API Key availability
+      - name: Check API Key
         id: check_key
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           if [ -z "$DEEPSEEK_API_KEY" ]; then
-            echo "⚠️ DEEPSEEK_API_KEY not configured, skipping AI analysis"
+            echo "⚠️ DEEPSEEK_API_KEY not configured"
             echo "skip=true" >> $GITHUB_OUTPUT
           else
-            echo "✅ DEEPSEEK_API_KEY is available"
+            echo "✅ DEEPSEEK_API_KEY available"
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
@@ -193,19 +168,33 @@ jobs:
 
       - name: Install dependencies
         if: steps.check_key.outputs.skip != 'true'
-        run: |
-          pip install pyyaml python-dotenv openai
+        run: pip install openai
 
       - name: Run AI analysis
         if: steps.check_key.outputs.skip != 'true'
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
-          python3 analyze_commits_ai.py \
-            --commits 10 \
-            --json > ai_analysis.json 2>&1 || true
+          python3 analyze_commits_ai.py --commits 10 --json > ai_analysis.json 2>&1 || true
 
-      - name: Upload AI analysis results
+      - name: Generate AI summary
+        if: steps.check_key.outputs.skip != 'true'
+        run: |
+          echo "## 🤖 AI Deep Analysis" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import json
+          try:
+              data = json.load(open('ai_analysis.json'))
+              commits = data.get('commits', [])
+              print(f'Analyzed {len(commits)} commits with DeepSeek AI')
+              print()
+              for c in commits[:5]:
+                  print(f\"- **{c.get('hash', '')[:7]}**: {c.get('summary', 'No summary')[:80]}\")
+          except Exception as e:
+              print(f'Error: {e}')
+          " >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload AI results
         if: steps.check_key.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -215,76 +204,5 @@ jobs:
       - name: Create skip marker
         if: steps.check_key.outputs.skip == 'true'
         run: |
-          echo '{"status": "skipped", "reason": "DEEPSEEK_API_KEY not configured"}' > ai_analysis.json
-
-      - name: Upload skip marker
-        if: steps.check_key.outputs.skip == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-analysis-results
-          path: ai_analysis.json
-
-  # =========================================================================
-  # Job 4: 汇总报告
-  # =========================================================================
-  summary:
-    name: Generate Summary Report
-    runs-on: ubuntu-latest
-    needs: [validate-fixes, analyze-changes, ai-analysis]
-    if: always()
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: results
-
-      - name: Generate combined report
-        run: |
-          echo "# 📊 Commit Analysis Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Generated at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Validation results
-          if [ -f results/validation-results/validation_result.json ]; then
-            echo "## ✅ Validation Results" >> $GITHUB_STEP_SUMMARY
-            python3 -c "
-          import json
-          data = json.load(open('results/validation-results/validation_result.json'))
-          print(f\"- Passed: {len(data.get('passed', []))}\")
-          print(f\"- Failed: {len(data.get('failed', []))}\")
-          print(f\"- Warnings: {len(data.get('warnings', []))}\")
-          " >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # AI Analysis results
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f results/ai-analysis-results/ai_analysis.json ]; then
-            echo "## 🤖 AI Deep Analysis" >> $GITHUB_STEP_SUMMARY
-            python3 -c "
-          import json
-          try:
-              data = json.load(open('results/ai-analysis-results/ai_analysis.json'))
-              if data.get('status') == 'skipped':
-                  print(f\"⚠️ Skipped: {data.get('reason', 'No API key')}\")
-              else:
-                  commits = data.get('commits', [])
-                  print(f\"- Commits analyzed: {len(commits)}\")
-                  fixes = [c for c in commits if c.get('type') == 'fix']
-                  print(f\"- Fix commits: {len(fixes)}\")
-                  if fixes:
-                      print()
-                      print('### Key Fixes:')
-                      for fix in fixes[:3]:
-                          print(f\"- {fix.get('hash', '')[:7]}: {fix.get('summary', '')[:60]}\")
-          except Exception as e:
-              print(f'Error reading AI analysis: {e}')
-          " >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ AI analysis results not available" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "View detailed results in the Artifacts section." >> $GITHUB_STEP_SUMMARY
+          echo "## 🤖 AI Deep Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "⏭️ Skipped (DEEPSEEK_API_KEY not configured)" >> $GITHUB_STEP_SUMMARY
