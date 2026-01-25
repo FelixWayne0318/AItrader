@@ -22,6 +22,15 @@
 - 将 `nautilus_trader.indicators` (Cython) 改为 `nautilus_trader.core.nautilus_pyo3` (Rust) 导致线程安全 panic
 - 未研究 python-telegram-bot v20 的异步模型就混合使用 asyncio/threading
 
+**修改后必须运行**：
+```bash
+# 验证所有历史修复是否仍然正确应用
+python3 validate_commit_fixes.py
+
+# 预期结果: ✅ 所有关键修复已正确应用
+# 如果有 ❌ 失败项，必须修复后才能提交
+```
+
 ## 📋 配置管理规范 (必读)
 
 本项目采用**统一配置管理**，禁止硬编码参数。所有可配置的值都必须通过 ConfigManager 管理。
@@ -172,6 +181,7 @@ min_trade_amount = config.get('trading_logic', 'min_notional_usdt', default=100)
 - 性能基准测试: `scripts/benchmark_config.py`
 - 循环导入检测: `scripts/check_circular_imports.sh`
 - 全面诊断脚本: `scripts/comprehensive_diagnosis.py`
+- **提交修复验证**: `validate_commit_fixes.py` (检查所有历史修复是否正确应用)
 
 ## ⚠️ 关键信息
 
@@ -244,6 +254,12 @@ python3 diagnose.py --quick      # 快速检查 (跳过网络测试)
 python3 diagnose.py --update     # 先更新代码再检查
 python3 diagnose.py --restart    # 检查后重启服务
 python3 diagnose.py --json       # 输出JSON格式
+
+# 提交修复验证 (代码修改后必须运行)
+python3 validate_commit_fixes.py           # 完整检查所有历史修复
+python3 validate_commit_fixes.py --quick   # 快速检查 (跳过连锁反应)
+python3 validate_commit_fixes.py --json    # 输出 JSON 格式
+python3 validate_commit_fixes.py --category threading  # 只检查特定类别
 
 # 服务器操作
 sudo systemctl restart nautilus-trader
