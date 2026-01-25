@@ -90,6 +90,7 @@ indicators:
 ai:
   # DeepSeek 配置
   deepseek:
+    api_key: ""                   # 从 .env 读取 (DEEPSEEK_API_KEY)
     model: "deepseek-chat"
     temperature: 0.3              # 注意: main_live.py 曾硬编码为 0.1
     max_retries: 2
@@ -200,7 +201,9 @@ network:
 # =============================================================================
 telegram:
   enabled: true
-  # bot_token 和 chat_id 从 .env 读取
+  # bot_token 和 chat_id 从 .env 读取 (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+  bot_token: ""
+  chat_id: ""
 
   # 通知类型
   notify:
@@ -268,3 +271,8 @@ runtime:
 binance:
   # api_key 和 api_secret 从 .env 读取 (BINANCE_API_KEY, BINANCE_API_SECRET)
   # testnet_api_key 和 testnet_api_secret 从 .env 读取 (可选)
+  # 注意: 以下字段会被 ConfigManager 从环境变量动态填充
+  api_key: ""
+  api_secret: ""
+  testnet_api_key: ""
+  testnet_api_secret: ""

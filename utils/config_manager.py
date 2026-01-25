@@ -176,9 +176,15 @@ class ConfigManager:
                 self._set_nested(self._config, config_path, value)
 
     def _set_nested(self, d: dict, path: tuple, value: Any):
-        """设置嵌套字典值"""
+        """设置嵌套字典值 (自动创建/修复父级字典)"""
         for key in path[:-1]:
-            d = d.setdefault(key, {})
+            # 如果键不存在，创建空字典
+            if key not in d:
+                d[key] = {}
+            # 如果键存在但不是字典 (例如 YAML 中的 None)，替换为空字典
+            elif not isinstance(d[key], dict):
+                d[key] = {}
+            d = d[key]
         d[path[-1]] = value
 
     def validate(self) -> bool:
