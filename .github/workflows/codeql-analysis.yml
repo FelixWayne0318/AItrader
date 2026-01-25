@@ -69,3 +69,30 @@ jobs:
           echo "- Code quality problems" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "View detailed results in the **Security** tab of this repository." >> $GITHUB_STEP_SUMMARY
+
+      # 可选: 如果发现高严重性问题则失败
+      # 取消下面的注释启用此功能
+      # - name: Check for high-severity issues
+      #   run: |
+      #     # 检查 SARIF 文件中是否有 high/critical 级别的问题
+      #     HIGH_COUNT=$(cat codeql-results/*.sarif | python3 -c "
+      #     import json, sys
+      #     data = json.load(sys.stdin)
+      #     count = 0
+      #     for run in data.get('runs', []):
+      #         for result in run.get('results', []):
+      #             level = result.get('level', '')
+      #             if level in ['error', 'warning']:
+      #                 rule_id = result.get('ruleId', '')
+      #                 # 检查是否是安全相关的高危规则
+      #                 if 'injection' in rule_id or 'credential' in rule_id:
+      #                     count += 1
+      #     print(count)
+      #     ")
+      #
+      #     if [ "$HIGH_COUNT" -gt 0 ]; then
+      #       echo "❌ Found $HIGH_COUNT high-severity security issues!"
+      #       echo "Check Security tab for details."
+      #       exit 1
+      #     fi
+      #     echo "✅ No critical security issues found"
