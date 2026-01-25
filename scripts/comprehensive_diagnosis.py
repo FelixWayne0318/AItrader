@@ -602,7 +602,7 @@ class ConfigManagementDiagnostic:
         try:
             # 尝试按依赖顺序导入所有模块
             from utils.config_manager import ConfigManager
-            from utils.deepseek_client import DeepSeekClient
+            from utils.deepseek_client import DeepSeekAnalyzer
             from agents.multi_agent_analyzer import MultiAgentAnalyzer
             from strategy.trading_logic import (
                 get_min_sl_distance_pct,
