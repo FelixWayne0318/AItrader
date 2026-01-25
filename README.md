@@ -524,8 +524,8 @@ risk:
   min_confidence_to_trade: "MEDIUM"     # Minimum signal confidence
   allow_reversals: true                 # Allow position reversals
   require_high_confidence_for_reversal: false
-  rsi_extreme_threshold_upper: 75       # RSI overbought level
-  rsi_extreme_threshold_lower: 25       # RSI oversold level
+  rsi_extreme_threshold_upper: 70       # RSI overbought level
+  rsi_extreme_threshold_lower: 30       # RSI oversold level
   rsi_extreme_multiplier: 0.7           # Size reduction in extremes
 
   # Stop Loss & Take Profit
@@ -1161,8 +1161,8 @@ require_high_confidence_for_reversal: true
 #### 4. RSI Extreme Handling
 
 ```yaml
-rsi_extreme_threshold_upper: 75
-rsi_extreme_threshold_lower: 25
+rsi_extreme_threshold_upper: 70
+rsi_extreme_threshold_lower: 30
 rsi_extreme_multiplier: 0.7
 
 # When RSI > 75 or RSI < 25:
