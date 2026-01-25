@@ -421,7 +421,7 @@ class DependencyAnalyzer:
                         # 转换为可能的文件路径
                         module_path = module.replace('.', '/') + '.py'
                         self._import_graph[relative_path].add(module_path)
-            except:
+            except Exception:
                 pass
 
     def get_dependents(self, file_path: str) -> List[str]:

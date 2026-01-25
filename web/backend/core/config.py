@@ -33,9 +33,10 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./algvex.db"
 
-    # AItrader paths
-    AITRADER_PATH: Path = Path("/home/linuxuser/nautilus_AItrader")
-    AITRADER_CONFIG_PATH: Path = Path("/home/linuxuser/nautilus_AItrader/configs/strategy_config.yaml")
+    # AItrader paths (configurable via environment variables)
+    AITRADER_PATH: Path = Path(os.getenv("AITRADER_PATH", "/home/linuxuser/nautilus_AItrader"))
+    AITRADER_CONFIG_PATH: Path = Path(os.getenv("AITRADER_CONFIG_PATH", "") or
+                                      f"{os.getenv('AITRADER_PATH', '/home/linuxuser/nautilus_AItrader')}/configs/strategy_config.yaml")
     AITRADER_ENV_PATH: Path = Path.home() / ".env.aitrader"
     AITRADER_SERVICE_NAME: str = "nautilus-trader"
 
