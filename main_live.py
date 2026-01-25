@@ -143,18 +143,19 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
     DeepSeekAIStrategyConfig
         Strategy configuration
     """
-    # Get API keys from environment
+    # Get API keys from environment (only sensitive info allowed in env vars)
     deepseek_api_key = get_env_str('DEEPSEEK_API_KEY', '')
     if not deepseek_api_key:
         raise ValueError("DEEPSEEK_API_KEY not found in environment variables")
 
-    # Get configuration values via ConfigManager
-    equity = get_env_float('EQUITY', str(config_manager.get('capital', 'equity', default=1000)))
-    leverage = get_env_float('LEVERAGE', str(config_manager.get('capital', 'leverage', default=5)))
-    base_position = get_env_float('BASE_POSITION_USDT', str(config_manager.get('position', 'base_usdt_amount', default=100)))
+    # Get configuration values from ConfigManager ONLY (no env var overrides for business params)
+    # Reference: CLAUDE.md - 配置分层架构原则
+    equity = config_manager.get('capital', 'equity', default=1000)
+    leverage = config_manager.get('capital', 'leverage', default=5)
+    base_position = config_manager.get('position', 'base_usdt_amount', default=100)
 
-    # Get timeframe from environment or config (production: 15m)
-    timeframe = get_env_str('TIMEFRAME', config_manager.get('trading', 'timeframe', default='15m'))
+    # Get timeframe from config (environment-specific via {env}.yaml)
+    timeframe = config_manager.get('trading', 'timeframe', default='15m')
 
     # Debug output
     print(f"[CONFIG] Equity: {equity}")
@@ -186,22 +187,22 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         leverage=leverage,
         use_real_balance_as_equity=config_manager.get('capital', 'use_real_balance_as_equity', default=True),
 
-        # Position sizing
+        # Position sizing (all from ConfigManager, no env var overrides)
         base_usdt_amount=base_position,
-        high_confidence_multiplier=get_env_float('HIGH_CONFIDENCE_MULTIPLIER', str(config_manager.get('position', 'high_confidence_multiplier', default=1.5))),
-        medium_confidence_multiplier=get_env_float('MEDIUM_CONFIDENCE_MULTIPLIER', str(config_manager.get('position', 'medium_confidence_multiplier', default=1.0))),
-        low_confidence_multiplier=get_env_float('LOW_CONFIDENCE_MULTIPLIER', str(config_manager.get('position', 'low_confidence_multiplier', default=0.5))),
-        max_position_ratio=get_env_float('MAX_POSITION_RATIO', str(config_manager.get('position', 'max_position_ratio', default=0.30))),
-        trend_strength_multiplier=get_env_float('TREND_STRENGTH_MULTIPLIER', str(config_manager.get('position', 'trend_strength_multiplier', default=1.2))),
+        high_confidence_multiplier=config_manager.get('position', 'high_confidence_multiplier', default=1.5),
+        medium_confidence_multiplier=config_manager.get('position', 'medium_confidence_multiplier', default=1.0),
+        low_confidence_multiplier=config_manager.get('position', 'low_confidence_multiplier', default=0.5),
+        max_position_ratio=config_manager.get('position', 'max_position_ratio', default=0.30),
+        trend_strength_multiplier=config_manager.get('position', 'trend_strength_multiplier', default=1.2),
         min_trade_amount=config_manager.get('position', 'min_trade_amount', default=0.001),
 
-        # Technical indicators - Production mode (standard periods)
-        # Use reduced periods only for 1m bars (for testing)
-        sma_periods=[3, 7, 15] if timeframe == '1m' else config_manager.get('indicators', 'sma_periods', default=[5, 20, 50]),
-        rsi_period=7 if timeframe == '1m' else config_manager.get('indicators', 'rsi_period', default=14),
-        macd_fast=5 if timeframe == '1m' else config_manager.get('indicators', 'macd_fast', default=12),
-        macd_slow=10 if timeframe == '1m' else config_manager.get('indicators', 'macd_slow', default=26),
-        bb_period=10 if timeframe == '1m' else config_manager.get('indicators', 'bb_period', default=20),
+        # Technical indicators (all from ConfigManager)
+        # For 1m timeframe, use development.yaml with shorter periods
+        sma_periods=config_manager.get('indicators', 'sma_periods', default=[5, 20, 50]),
+        rsi_period=config_manager.get('indicators', 'rsi_period', default=14),
+        macd_fast=config_manager.get('indicators', 'macd_fast', default=12),
+        macd_slow=config_manager.get('indicators', 'macd_slow', default=26),
+        bb_period=config_manager.get('indicators', 'bb_period', default=20),
         bb_std=config_manager.get('indicators', 'bb_std', default=2.0),
         volume_ma_period=config_manager.get('indicators', 'volume_ma_period', default=20),
         support_resistance_lookback=config_manager.get('indicators', 'support_resistance_lookback', default=20),
@@ -223,8 +224,8 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         # Set sentiment timeframe based on bar timeframe (default to 15m)
         sentiment_timeframe="1m" if timeframe == "1m" else ("5m" if timeframe == "5m" else config_manager.get('sentiment', 'timeframe', default='15m')),
 
-        # Risk
-        min_confidence_to_trade=get_env_str('MIN_CONFIDENCE_TO_TRADE', config_manager.get('risk', 'min_confidence_to_trade', default='MEDIUM')),
+        # Risk (all from ConfigManager, no env var overrides)
+        min_confidence_to_trade=config_manager.get('risk', 'min_confidence_to_trade', default='MEDIUM'),
         allow_reversals=config_manager.get('risk', 'allow_reversals', default=True),
         require_high_confidence_for_reversal=config_manager.get('risk', 'require_high_confidence_for_reversal', default=False),
         rsi_extreme_threshold_upper=config_manager.get('risk', 'rsi_extreme_threshold_upper', default=70.0),
@@ -240,8 +241,8 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         # Execution
         position_adjustment_threshold=config_manager.get('execution', 'position_adjustment_threshold', default=0.001),
 
-        # Timing
-        timer_interval_sec=get_env_int('TIMER_INTERVAL_SEC', str(config_manager.get('timing', 'timer_interval_sec', default=900))),
+        # Timing (from ConfigManager, environment-specific via {env}.yaml)
+        timer_interval_sec=config_manager.get('timing', 'timer_interval_sec', default=900),
 
         # Telegram Notifications
         enable_telegram=config_manager.get('telegram', 'enabled', default=False),
@@ -336,8 +337,8 @@ def setup_trading_node(config_manager: ConfigManager) -> TradingNodeConfig:
         config=strategy_config.dict(),
     )
 
-    # Logging configuration
-    log_level = get_env_str('LOG_LEVEL', 'INFO')
+    # Logging configuration (from ConfigManager, environment-specific via {env}.yaml)
+    log_level = config_manager.get('logging', 'level', default='INFO')
 
     # LoggingConfig - only use parameters supported by NautilusTrader 1.202.0
     logging_config = LoggingConfig(

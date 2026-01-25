@@ -26,6 +26,61 @@
 
 本项目采用**统一配置管理**，禁止硬编码参数。所有可配置的值都必须通过 ConfigManager 管理。
 
+### 配置分层架构原则
+
+基于 [12-Factor App](https://12factor.net/config) 和业界最佳实践，本项目采用**严格分层**的配置架构：
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Layer 1: 代码中的常量 (不变的业务逻辑规则)                          │
+│  ├─ CONFIDENCE_WEIGHT = {'HIGH': 3, 'MEDIUM': 2, 'LOW': 1}         │
+│  ├─ VALID_SIGNALS = {'BUY', 'SELL', 'HOLD'}                        │
+│  └─ 这些是业务规则，不是配置，不应该被修改                           │
+└─────────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Layer 2: configs/base.yaml (所有业务参数的单一来源)                 │
+│  ├─ 止损/止盈比例、仓位大小、杠杆倍数                               │
+│  ├─ 技术指标周期 (SMA, RSI, MACD, BB)                              │
+│  ├─ AI 参数 (temperature, model, retry_delay)                      │
+│  ├─ 网络参数 (timeout, cache_ttl)                                  │
+│  └─ 所有可调业务参数都必须在这里定义                                │
+└─────────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Layer 3: configs/{env}.yaml (环境覆盖)                             │
+│  ├─ production.yaml: timer=900s, log=INFO                          │
+│  ├─ development.yaml: timer=60s, log=DEBUG, 短周期指标参数          │
+│  └─ backtest.yaml: telegram=false, use_real_balance=false          │
+└─────────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  Layer 4: ~/.env.aitrader (仅敏感信息)                              │
+│  ├─ BINANCE_API_KEY, BINANCE_API_SECRET                            │
+│  ├─ DEEPSEEK_API_KEY                                               │
+│  ├─ TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID                           │
+│  │                                                                  │
+│  │  ⚠️ 禁止在此文件中放置业务参数！                                 │
+│  │  ❌ 不要: EQUITY, LEVERAGE, BASE_POSITION_USDT                  │
+│  │  ❌ 不要: TIMER_INTERVAL_SEC, LOG_LEVEL                         │
+│  └─ 这些应该在 YAML 配置文件中管理                                  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 配置来源优先级 (严格执行)
+
+| 数据类型 | 正确来源 | 错误做法 |
+|---------|---------|---------|
+| **敏感信息** (API keys) | `~/.env.aitrader` | ❌ 写在代码或 YAML 中 |
+| **业务参数** (止损比例等) | `configs/*.yaml` | ❌ 环境变量或代码硬编码 |
+| **环境差异** (日志级别等) | `configs/{env}.yaml` | ❌ 在代码中 if/else 判断 |
+| **业务规则常量** | 代码中 | ❌ 放在配置文件中 |
+
+**参考资料**:
+- [12-Factor App Config](https://12factor.net/config)
+- [Python Configuration Best Practices 2025](https://toxigon.com/best-practices-for-python-configuration-management)
+- [Dynaconf Documentation](https://www.dynaconf.com/)
+
 ### 必须配置化的参数类型
 
 ✅ **必须配置化** (禁止硬编码):
@@ -361,6 +416,7 @@ Environment=AUTO_CONFIRM=true
 - ❌ 使用 `nautilus_trader.core.nautilus_pyo3` 的指标 → ✅ 使用 `nautilus_trader.indicators` (Cython 版本，线程安全)
 - ❌ 在 `__init__.py` 中自动导入 → ✅ 直接导入模块 (避免循环导入)
 - ❌ 直接访问 `sentiment_data['key']` → ✅ 使用 `sentiment_data.get('key', default)` (防止 KeyError)
+- ❌ **在环境变量中存放业务参数** → ✅ **业务参数只在 configs/*.yaml 中** (环境变量仅用于 API keys)
 - ❌ **服务器命令不带 cd** → ✅ **始终先 cd 到项目目录**
   ```bash
   # 错误：直接执行命令会报 "not a git repository"
@@ -483,16 +539,29 @@ bash scripts/check_circular_imports.sh
 
 ### 环境变量 (~/.env.aitrader)
 
+**⚠️ 重要：环境变量仅用于敏感信息，禁止存放业务参数！**
+
 ```bash
-# 必填
+# ===== 允许的内容 (仅敏感信息) =====
 BINANCE_API_KEY=xxx           # Binance API Key
 BINANCE_API_SECRET=xxx        # Binance API Secret
 DEEPSEEK_API_KEY=xxx          # DeepSeek AI API Key
-
-# Telegram (可选，启用通知需要)
 TELEGRAM_BOT_TOKEN=xxx        # Telegram Bot Token
 TELEGRAM_CHAT_ID=xxx          # 你的个人用户 ID
+
+# ===== 禁止的内容 (业务参数应在 configs/*.yaml 中) =====
+# ❌ EQUITY=1000              # 应在 configs/base.yaml: capital.equity
+# ❌ LEVERAGE=5               # 应在 configs/base.yaml: capital.leverage
+# ❌ BASE_POSITION_USDT=100   # 应在 configs/base.yaml: position.base_usdt_amount
+# ❌ TIMER_INTERVAL_SEC=900   # 应在 configs/production.yaml: timing.timer_interval_sec
+# ❌ LOG_LEVEL=INFO           # 应在 configs/production.yaml: logging.level
 ```
+
+**为什么业务参数不应该在环境变量中？**
+1. 环境变量是扁平结构，无法表达复杂配置
+2. 难以追踪配置来源 (YAML 有版本控制)
+3. 容易造成配置分散，维护困难
+4. 参考：[12-Factor Config Misunderstandings](https://blog.doismellburning.co.uk/twelve-factor-config-misunderstandings-and-advice/)
 
 ### 策略参数 (configs/strategy_config.yaml)
 

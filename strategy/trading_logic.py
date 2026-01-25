@@ -40,13 +40,15 @@ def _get_trading_logic_config() -> Dict[str, Any]:
     Returns
     -------
     Dict[str, Any]
-        交易逻辑配置字典，包含所有 SL/TP 参数
+        交易逻辑配置字典，包含所有 SL/TP 参数和 Binance 交易限制
 
     Notes
     -----
     使用延迟导入避免循环依赖:
     - config_manager → strategy → utils (正常)
     - 不触发: trading_logic (模块级) → config_manager (循环)
+
+    Reference: CLAUDE.md - 配置分层架构原则
     """
     global _TRADING_LOGIC_CONFIG
     if _TRADING_LOGIC_CONFIG is None:
@@ -55,6 +57,7 @@ def _get_trading_logic_config() -> Dict[str, Any]:
         config = get_config()
 
         _TRADING_LOGIC_CONFIG = {
+            # SL/TP 参数
             'min_sl_distance_pct': config.get('trading_logic', 'min_sl_distance_pct', default=0.01),
             'min_tp_distance_pct': config.get('trading_logic', 'min_tp_distance_pct', default=0.005),
             'default_sl_pct': config.get('trading_logic', 'default_sl_pct', default=0.02),
@@ -64,6 +67,10 @@ def _get_trading_logic_config() -> Dict[str, Any]:
                 'medium': 0.02,
                 'low': 0.01,
             }),
+            # Binance 交易限制 (从配置读取，禁止硬编码)
+            'min_notional_usdt': config.get('trading_logic', 'min_notional_usdt', default=100.0),
+            'min_notional_safety_margin': config.get('trading_logic', 'min_notional_safety_margin', default=1.01),
+            'quantity_adjustment_step': config.get('trading_logic', 'quantity_adjustment_step', default=0.001),
         }
 
     return _TRADING_LOGIC_CONFIG
@@ -111,6 +118,21 @@ def get_tp_pct_by_confidence(confidence: str) -> float:
     """
     tp_config = _get_trading_logic_config()['tp_pct_by_confidence']
     return tp_config.get(confidence.lower(), tp_config['medium'])
+
+
+def get_min_notional_usdt() -> float:
+    """获取 Binance 最低名义价值 (USDT)"""
+    return _get_trading_logic_config()['min_notional_usdt']
+
+
+def get_min_notional_safety_margin() -> float:
+    """获取最低名义价值安全边际"""
+    return _get_trading_logic_config()['min_notional_safety_margin']
+
+
+def get_quantity_adjustment_step() -> float:
+    """获取仓位调整步长"""
+    return _get_trading_logic_config()['quantity_adjustment_step']
 
 
 # =============================================================================
@@ -382,10 +404,14 @@ def calculate_position_size(
     max_usdt = config['equity'] * config['max_position_ratio']
     final_usdt = min(suggested_usdt, max_usdt)
 
-    # Enforce Binance minimum notional requirement ($100)
-    MIN_NOTIONAL_USDT = 100.0
-    if final_usdt < MIN_NOTIONAL_USDT:
-        final_usdt = MIN_NOTIONAL_USDT
+    # Get Binance limits from config (禁止硬编码 - Reference: CLAUDE.md)
+    min_notional_usdt = get_min_notional_usdt()
+    min_notional_safety_margin = get_min_notional_safety_margin()
+    quantity_step = get_quantity_adjustment_step()
+
+    # Enforce Binance minimum notional requirement
+    if final_usdt < min_notional_usdt:
+        final_usdt = min_notional_usdt
 
     # Convert to BTC quantity
     current_price = price_data['price']
@@ -400,25 +426,24 @@ def calculate_position_size(
     btc_quantity = round(btc_quantity, 3)  # Binance BTC precision
 
     # CRITICAL: Re-check notional after rounding
-    MIN_NOTIONAL_SAFETY_MARGIN = 1.01  # 1% safety margin
-    MIN_NOTIONAL_WITH_MARGIN = MIN_NOTIONAL_USDT * MIN_NOTIONAL_SAFETY_MARGIN
+    min_notional_with_margin = min_notional_usdt * min_notional_safety_margin
 
     actual_notional = btc_quantity * current_price
     adjusted = False
-    if actual_notional < MIN_NOTIONAL_WITH_MARGIN:
+    if actual_notional < min_notional_with_margin:
         # Increase quantity to meet minimum notional with safety margin (round UP)
-        btc_quantity = MIN_NOTIONAL_WITH_MARGIN / current_price
-        # Round up to next 0.001
-        btc_quantity = math.ceil(btc_quantity * 1000) / 1000
+        btc_quantity = min_notional_with_margin / current_price
+        # Round up to next step
+        btc_quantity = math.ceil(btc_quantity / quantity_step) * quantity_step
         # Final verification
         final_notional = btc_quantity * current_price
-        if final_notional < MIN_NOTIONAL_USDT:
-            btc_quantity += 0.001
+        if final_notional < min_notional_usdt:
+            btc_quantity += quantity_step
         adjusted = True
         if logger:
             logger.warning(
                 f"⚠️ Adjusted quantity after rounding: {btc_quantity:.3f} BTC "
-                f"to meet ${MIN_NOTIONAL_USDT} minimum notional"
+                f"to meet ${min_notional_usdt} minimum notional"
             )
 
     # Calculate final notional
