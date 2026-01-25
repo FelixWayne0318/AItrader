@@ -8,7 +8,7 @@
 # 功能:
 # 1. 运行 validate_commit_fixes.py 检查已知修复
 # 2. 运行 analyze_git_changes.py 分析提交
-# 3. (可选) 运行 analyze_commits_ai.py AI 分析
+# 3. 运行 analyze_commits_ai.py AI 深度分析 (自动启用，需要 DEEPSEEK_API_KEY)
 # 4. 结果保存为 Artifact 并评论到 PR
 
 name: Commit Analysis
@@ -20,11 +20,6 @@ on:
     branches: [main]
   workflow_dispatch:  # 允许手动触发
     inputs:
-      ai_analysis:
-        description: '启用 AI 深度分析 (需要 API key)'
-        required: false
-        default: 'false'
-        type: boolean
       commits_to_analyze:
         description: '分析提交数量'
         required: false
@@ -163,42 +158,67 @@ jobs:
           path: git_analysis.json
 
   # =========================================================================
-  # Job 3: AI 深度分析 (可选，需要 API key)
+  # Job 3: AI 深度分析 (自动启用，需要 DEEPSEEK_API_KEY secret)
   # =========================================================================
   ai-analysis:
     name: AI Deep Analysis
     runs-on: ubuntu-latest
-    if: github.event.inputs.ai_analysis == 'true'
+    # 自动运行，如果 API key 不可用会优雅跳过
 
     steps:
+      - name: Check API Key availability
+        id: check_key
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          if [ -z "$DEEPSEEK_API_KEY" ]; then
+            echo "⚠️ DEEPSEEK_API_KEY not configured, skipping AI analysis"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ DEEPSEEK_API_KEY is available"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout code
+        if: steps.check_key.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Python
+        if: steps.check_key.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
+        if: steps.check_key.outputs.skip != 'true'
         run: |
           pip install pyyaml python-dotenv openai
 
       - name: Run AI analysis
+        if: steps.check_key.outputs.skip != 'true'
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
-          if [ -z "$DEEPSEEK_API_KEY" ]; then
-            echo "❌ DEEPSEEK_API_KEY not set"
-            exit 1
-          fi
-
           python3 analyze_commits_ai.py \
             --commits 10 \
             --json > ai_analysis.json 2>&1 || true
 
       - name: Upload AI analysis results
+        if: steps.check_key.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-analysis-results
+          path: ai_analysis.json
+
+      - name: Create skip marker
+        if: steps.check_key.outputs.skip == 'true'
+        run: |
+          echo '{"status": "skipped", "reason": "DEEPSEEK_API_KEY not configured"}' > ai_analysis.json
+
+      - name: Upload skip marker
+        if: steps.check_key.outputs.skip == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ai-analysis-results
@@ -210,7 +230,7 @@ jobs:
   summary:
     name: Generate Summary Report
     runs-on: ubuntu-latest
-    needs: [validate-fixes, analyze-changes]
+    needs: [validate-fixes, analyze-changes, ai-analysis]
     if: always()
 
     steps:
@@ -236,6 +256,33 @@ jobs:
           print(f\"- Failed: {len(data.get('failed', []))}\")
           print(f\"- Warnings: {len(data.get('warnings', []))}\")
           " >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # AI Analysis results
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f results/ai-analysis-results/ai_analysis.json ]; then
+            echo "## 🤖 AI Deep Analysis" >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+          import json
+          try:
+              data = json.load(open('results/ai-analysis-results/ai_analysis.json'))
+              if data.get('status') == 'skipped':
+                  print(f\"⚠️ Skipped: {data.get('reason', 'No API key')}\")
+              else:
+                  commits = data.get('commits', [])
+                  print(f\"- Commits analyzed: {len(commits)}\")
+                  fixes = [c for c in commits if c.get('type') == 'fix']
+                  print(f\"- Fix commits: {len(fixes)}\")
+                  if fixes:
+                      print()
+                      print('### Key Fixes:')
+                      for fix in fixes[:3]:
+                          print(f\"- {fix.get('hash', '')[:7]}: {fix.get('summary', '')[:60]}\")
+          except Exception as e:
+              print(f'Error reading AI analysis: {e}')
+          " >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ AI analysis results not available" >> $GITHUB_STEP_SUMMARY
           fi
 
           echo "" >> $GITHUB_STEP_SUMMARY
