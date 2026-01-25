@@ -487,9 +487,54 @@ print(f'✅ Strategy config loaded: {config.name}')
 
 ## Configuration
 
+### Configuration Management System
+
+**New**: ConfigManager provides unified configuration with multi-environment support.
+
+#### Environment Switching
+
+```bash
+# Production (15-minute bars, INFO logging)
+python3 main_live.py --env production
+
+# Development (1-minute bars, DEBUG logging)
+python3 main_live.py --env development
+
+# Backtest (fixed equity, no Telegram)
+python3 main_live.py --env backtest
+
+# Validate configuration (dry-run)
+python3 main_live.py --env development --dry-run
+```
+
+#### Configuration Files Structure
+
+```
+configs/
+├── base.yaml           # Complete configuration definition (all parameters)
+├── production.yaml     # Production environment overrides
+├── development.yaml    # Development environment overrides
+└── backtest.yaml       # Backtesting environment overrides
+
+~/.env.aitrader         # Sensitive information (API keys)
+```
+
+#### Validation Tools
+
+```bash
+# Validate PATH_ALIASES mappings
+python3 scripts/validate_path_aliases.py
+
+# Performance benchmark (target: < 200ms)
+python3 scripts/benchmark_config.py
+
+# Circular import check
+bash scripts/check_circular_imports.sh
+```
+
 ### Strategy Configuration File
 
-Location: `configs/strategy_config.yaml`
+Location: `configs/base.yaml` (with environment-specific overrides)
 
 #### Core Settings
 

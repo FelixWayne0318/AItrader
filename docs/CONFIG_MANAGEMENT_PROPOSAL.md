@@ -1,9 +1,33 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.6.0
+> 版本: 2.7.0
 > 日期: 2026-01-25
-> 状态: **Phase 0-1 已完成，可实施 Phase 2-6**
+> 状态: **Phase 0-2-4-5 已完成，Phase 6 部分完成，Phase 3 待实施**
 > 审查: CONFIG_PROPOSAL_AUDIT_REPORT.md (v2.5.4) + 规范修复 (v2.5.5)
+
+**v2.7.0 更新说明** (Phase 2, 4, 5 实施完成):
+- ✅ **Phase 2 完成**: main_live.py ConfigManager 集成
+  - 添加 ConfigManager 导入和初始化
+  - 替换 YAML 加载为 ConfigManager.load()
+  - 更新所有配置访问为 config_manager.get()
+  - 添加配置验证 (启动前检查)
+  - PATH_ALIASES 向后兼容支持
+- ✅ **Phase 4 完成**: 硬编码值迁移到配置参数
+  - utils/deepseek_client.py: 添加 signal_history_count, retry_delay 参数
+  - agents/multi_agent_analyzer.py: 添加 retry_delay, json_parse_max_retries 参数
+  - indicators/technical_manager.py: volume_ma_period, support_resistance_lookback (已参数化)
+  - strategy/deepseek_strategy.py: 添加 9 个新配置字段到 dataclass
+  - main_live.py: 从 ConfigManager 加载所有新参数
+- ✅ **Phase 5 完成**: CLI 环境切换
+  - 添加 argparse 支持 --env (production/development/backtest)
+  - 添加 --dry-run 模式 (配置验证但不启动交易)
+  - 环境特定配置自动加载
+- ⚠️ **Phase 3 待实施**: trading_logic.py 常量迁移 (循环导入风险，需谨慎处理)
+- ✅ **Phase 6 部分完成**: 文档同步
+  - CLAUDE.md 添加 ConfigManager 使用说明
+  - README.md 添加环境切换指南
+  - CONFIG_MANAGEMENT_PROPOSAL.md 更新实施状态
+- ✅ **验证通过**: 所有修改文件语法检查通过
 
 **v2.6.0 更新说明** (Phase 1 实施完成):
 - ✅ **Phase 1 完成**: ConfigManager 基础设施已实施

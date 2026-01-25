@@ -323,11 +323,67 @@ Environment=AUTO_CONFIRM=true
 └── README.md                 # 项目文档
 ```
 
+## 配置管理
+
+**重要更新 (Phase 1-2 完成)**: 配置现通过 ConfigManager 统一管理，支持多环境切换。
+
+### ConfigManager 使用
+
+```python
+from utils.config_manager import ConfigManager
+
+# 加载生产环境配置
+config = ConfigManager(env='production')
+config.load()
+
+# 访问配置值
+temperature = config.get('ai', 'deepseek', 'temperature')
+equity = config.get('capital', 'equity')
+```
+
+### 命令行环境切换
+
+```bash
+# 生产环境 (15分钟K线, INFO日志)
+python3 main_live.py --env production
+
+# 开发环境 (1分钟K线, DEBUG日志)
+python3 main_live.py --env development
+
+# 回测环境 (固定资金, 无Telegram)
+python3 main_live.py --env backtest
+
+# 验证配置 (加载但不启动交易)
+python3 main_live.py --env development --dry-run
+```
+
+### 配置文件结构
+
+配置采用分层加载机制：
+- **base.yaml** - 完整配置定义 (所有参数)
+- **production.yaml** - 生产环境覆盖
+- **development.yaml** - 开发环境覆盖
+- **backtest.yaml** - 回测环境覆盖
+- **~/.env.aitrader** - 敏感信息 (API keys)
+
+### 配置验证工具
+
+```bash
+# 验证配置路径别名
+python3 scripts/validate_path_aliases.py
+
+# 性能基线测试 (目标 < 200ms)
+python3 scripts/benchmark_config.py
+
+# 循环导入检测
+bash scripts/check_circular_imports.sh
+```
+
 ## 配置参数完整列表
 
 配置分为两部分：
 - **敏感信息**: `~/.env.aitrader` (API 密钥等)
-- **策略参数**: `configs/strategy_config.yaml`
+- **策略参数**: `configs/base.yaml` (通过环境文件覆盖)
 
 ### 环境变量 (~/.env.aitrader)
 
