@@ -2,7 +2,7 @@
 
 > 版本: 2.5
 > 日期: 2026-01-25
-> 状态: **Phase 0 已完成，关联影响完整性审查已通过，可实施 Phase 1-6**
+> 状态: **Phase 0 已完成，RSI 默认值已修复，可实施 Phase 1-6**
 > 审查: CONFIG_PROPOSAL_REVIEW.md
 
 **v2.5 更新说明**:
@@ -196,13 +196,15 @@ macd_fast = 5 if timeframe == '1m' else 12
 
 | 参数 | YAML 值 (正确) | 代码默认值 (错误) | 文件位置 |
 |------|---------------|-----------------|---------|
-| `rsi_extreme_threshold_upper` | 70 | **75.0** | `strategy/deepseek_strategy.py:94` |
-| `rsi_extreme_threshold_lower` | 30 | **25.0** | `strategy/deepseek_strategy.py:95` |
+| `rsi_extreme_threshold_upper` | 70 | ~~75.0~~ **70.0** ✅ | `strategy/deepseek_strategy.py:94` |
+| `rsi_extreme_threshold_lower` | 30 | ~~25.0~~ **30.0** ✅ | `strategy/deepseek_strategy.py:95` |
+
+**状态**: ✅ **已修复** (commit d7701d3)
 
 **影响分析**:
 - 正常情况: YAML 配置加载成功，使用 70/30 ✅
-- 异常情况: YAML 加载失败，回退到代码默认值 75/25 ❌
-- 后果: RSI 极值检测行为不一致，可能导致交易信号异常
+- 异常情况: YAML 加载失败，回退到代码默认值 ~~75/25~~ **70/30** ✅
+- 后果: ~~RSI 极值检测行为不一致~~ **已修复，代码与 YAML 一致**
 
 **验证命令**:
 
@@ -214,21 +216,21 @@ grep -n "rsi_extreme_threshold" strategy/deepseek_strategy.py | head -4
 grep -n "rsi_extreme_threshold" configs/strategy_config.yaml
 ```
 
-**修复要求** (Phase 1 实施前必须完成):
+**修复记录**:
 
 ```python
-# strategy/deepseek_strategy.py - 修改默认值与 YAML 一致
+# strategy/deepseek_strategy.py - 已修改默认值与 YAML 一致
 @dataclass
 class DeepSeekAIStrategyConfig:
     # ...
-    rsi_extreme_threshold_upper: float = 70.0  # 从 75.0 改为 70.0
-    rsi_extreme_threshold_lower: float = 30.0  # 从 25.0 改为 30.0
+    rsi_extreme_threshold_upper: float = 70.0  # ✅ 已从 75.0 改为 70.0
+    rsi_extreme_threshold_lower: float = 30.0  # ✅ 已从 25.0 改为 30.0
 ```
 
 **修复验证清单**:
-- [ ] `strategy/deepseek_strategy.py` 默认值已修改为 70.0/30.0
-- [ ] 运行 `python3 -c "from strategy.deepseek_strategy import DeepSeekAIStrategyConfig; c = DeepSeekAIStrategyConfig(); print(c.rsi_extreme_threshold_upper, c.rsi_extreme_threshold_lower)"` 输出 `70.0 30.0`
-- [ ] 运行 `python3 diagnose.py --quick` 无 RSI 相关警告
+- [x] `strategy/deepseek_strategy.py` 默认值已修改为 70.0/30.0
+- [ ] 运行 `python3 -c "from strategy.deepseek_strategy import DeepSeekAIStrategyConfig; c = DeepSeekAIStrategyConfig(); print(c.rsi_extreme_threshold_upper, c.rsi_extreme_threshold_lower)"` 输出 `70.0 30.0` (需在服务器 venv 中验证)
+- [ ] 运行 `python3 diagnose.py --quick` 无 RSI 相关警告 (需在服务器验证)
 
 ---
 
