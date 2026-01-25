@@ -11,25 +11,27 @@
 
 import python
 
-from StrConst str, string value
+from StringLiteral str
 where
-  value = str.getText() and
-  (
-    // API key patterns (length > 20 and alphanumeric)
-    value.regexpMatch("^[A-Za-z0-9]{20,}$") and
-    not value.regexpMatch("^[a-z]+$")  // Exclude all-lowercase words
-  )
-  or
-  (
-    // Common secret patterns
-    value.regexpMatch("(?i).*(api[_-]?key|api[_-]?secret|password|token|secret[_-]?key)\\s*[=:]\\s*['\"][^'\"]+['\"].*")
-  )
-  or
-  (
-    // Binance-like API key format
-    value.regexpMatch("^[A-Za-z0-9]{64}$")
+  exists(string value |
+    value = str.getText() and
+    (
+      // API key patterns (length > 20 and alphanumeric)
+      value.regexpMatch("^[A-Za-z0-9]{20,}$") and
+      not value.regexpMatch("^[a-z]+$")  // Exclude all-lowercase words
+    )
+    or
+    (
+      // Common secret patterns
+      value.regexpMatch("(?i).*(api[_-]?key|api[_-]?secret|password|token|secret[_-]?key)\\s*[=:]\\s*['\"][^'\"]+['\"].*")
+    )
+    or
+    (
+      // Binance-like API key format
+      value.regexpMatch("^[A-Za-z0-9]{64}$")
+    )
   )
   // Exclude test files and configs
   and not str.getLocation().getFile().getRelativePath().matches("%test%")
   and not str.getLocation().getFile().getRelativePath().matches("%.example%")
-select str, "Potential hardcoded secret detected: " + value.substring(0, 20) + "..."
+select str, "Potential hardcoded secret detected (check if this is a real key or test data)"
