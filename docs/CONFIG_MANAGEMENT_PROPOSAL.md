@@ -1,9 +1,14 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.5
+> 版本: 2.5.1
 > 日期: 2026-01-25
-> 状态: **Phase 0 已完成，RSI 默认值已修复，可实施 Phase 1-6**
+> 状态: **Phase 0 已完成，RSI 默认值已修复，回滚方案完整，可实施 Phase 1-6**
 > 审查: CONFIG_PROPOSAL_REVIEW.md
+
+**v2.5.1 更新说明**:
+- 🔴 **新增 Section 5.4.2.5**: Phase 2 回滚诊断 (main_live.py 配置加载失败)
+- 🔴 **新增 Section 5.4.4.5**: Phase 5 回滚诊断 (CLI 环境切换失败)
+- ✅ 关联影响完整性审查通过：所有 Phase 均有回滚方案
 
 **v2.5 更新说明**:
 - 🔴 **新增 Section 1.3**: 代码默认值不一致警告 (RSI 阈值 75/25 vs 70/30)
@@ -1305,6 +1310,58 @@ sudo systemctl restart nautilus-trader
 
 ---
 
+#### 5.4.2.5 Phase 2 回滚 (main_live.py 配置加载失败) 🔴 v2.5 新增
+
+**症状**: 启动时配置加载失败，报错 `KeyError` 或配置值为 None
+
+**诊断命令**:
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+
+# 1. 检查 main_live.py 是否能正确加载配置
+python3 -c "
+import sys
+sys.path.insert(0, '.')
+try:
+    from main_live import get_strategy_config, load_yaml_config
+    yaml_config = load_yaml_config('configs/strategy_config.yaml')
+    config = get_strategy_config(yaml_config)
+    print('✅ 配置加载成功')
+    print(f'  equity: {config.equity}')
+    print(f'  leverage: {config.leverage}')
+    print(f'  deepseek_temperature: {config.deepseek_temperature}')
+except Exception as e:
+    print(f'❌ 配置加载失败: {e}')
+"
+
+# 2. 检查 ConfigManager 路径映射是否正常
+python3 -c "
+from utils.config_manager import get_config
+config = get_config()
+# 测试新旧路径都能访问
+tests = [
+    ('position.base_usdt_amount', config.get('position', 'base_usdt_amount')),
+    ('strategy.position_management.base_usdt_amount', config.get('strategy', 'position_management', 'base_usdt_amount')),
+]
+for path, value in tests:
+    status = '✅' if value else '❌'
+    print(f'{status} {path}: {value}')
+"
+```
+
+**回滚命令**:
+
+```bash
+# 恢复 main_live.py 到 Phase 1 状态
+git log --oneline -5  # 找到 Phase 1 完成后的 commit
+git checkout <phase1-commit> -- main_live.py
+sudo systemctl restart nautilus-trader
+```
+
+---
+
 #### 5.4.3 Phase 3 回滚 (循环导入错误)
 
 **症状**: 启动失败，报错 `ImportError: cannot import name ... from partially initialized module`
@@ -1372,6 +1429,51 @@ git checkout HEAD~1 -- utils/telegram_command_handler.py
 
 # 或批量回滚所有 utils
 git checkout HEAD~1 -- utils/bar_persistence.py utils/telegram_command_handler.py utils/deepseek_client.py
+sudo systemctl restart nautilus-trader
+```
+
+---
+
+#### 5.4.4.5 Phase 5 回滚 (CLI 环境切换失败) 🔴 v2.5 新增
+
+**症状**: `--env` 参数无效，或环境配置加载错误
+
+**诊断命令**:
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+
+# 1. 检查 CLI 参数解析
+python3 main_live.py --help 2>&1 | grep -i "env"
+
+# 2. 测试不同环境配置加载
+for env in production development backtest; do
+    echo "=== Testing $env ==="
+    python3 -c "
+from utils.config_manager import ConfigManager
+try:
+    config = ConfigManager(env='$env')
+    config.load()
+    print(f'✅ {\"$env\"} 环境加载成功')
+    print(f'  timer_interval: {config.get(\"timing\", \"timer_interval_sec\")}')
+except Exception as e:
+    print(f'❌ {\"$env\"} 加载失败: {e}')
+" 2>&1
+done
+
+# 3. 检查环境配置文件是否存在
+ls -la configs/*.yaml
+```
+
+**回滚命令**:
+
+```bash
+# 恢复 main_live.py 到 Phase 4 状态 (移除 CLI 参数)
+git checkout HEAD~1 -- main_live.py
+
+# 或删除环境配置文件，只保留 base.yaml
+rm -f configs/development.yaml configs/backtest.yaml
 sudo systemctl restart nautilus-trader
 ```
 
