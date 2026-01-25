@@ -14,7 +14,7 @@ class ConfigService:
     """Service for managing AItrader configuration"""
 
     def __init__(self):
-        self.config_path = settings.AITRADER_CONFIG_PATH
+        self.config_path = settings.aitrader_config_path
         self.service_name = settings.AITRADER_SERVICE_NAME
 
         # Validate service name to prevent command injection

@@ -35,8 +35,12 @@ class Settings(BaseSettings):
 
     # AItrader paths (configurable via environment variables)
     AITRADER_PATH: Path = Path(os.getenv("AITRADER_PATH", "/home/linuxuser/nautilus_AItrader"))
-    AITRADER_CONFIG_PATH: Path = Path(os.getenv("AITRADER_CONFIG_PATH", "") or
-                                      f"{os.getenv('AITRADER_PATH', '/home/linuxuser/nautilus_AItrader')}/configs/strategy_config.yaml")
+
+    @property
+    def aitrader_config_path(self) -> Path:
+        """Derive config path from AITRADER_PATH"""
+        return self.AITRADER_PATH / "configs" / "strategy_config.yaml"
+
     AITRADER_ENV_PATH: Path = Path.home() / ".env.aitrader"
     AITRADER_SERVICE_NAME: str = "nautilus-trader"
 
