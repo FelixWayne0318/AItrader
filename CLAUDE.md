@@ -25,7 +25,7 @@
 **修改后必须运行**：
 ```bash
 # 智能回归检测 (规则自动从 git 历史生成，零维护)
-python3 smart_commit_analyzer.py
+python3 scripts/smart_commit_analyzer.py
 
 # 预期结果: ✅ 所有规则验证通过
 # 如果有 ❌ 失败项，检查是否引入了回归
@@ -186,10 +186,10 @@ min_trade_amount = config.get('trading_logic', 'min_notional_usdt', default=100)
 
 | 工具 | 功能 | 运行方式 |
 |------|------|----------|
-| **smart_commit_analyzer.py** | 智能回归检测 (规则自动从 git 生成) | `python3 smart_commit_analyzer.py` |
-| **analyze_commits_ai.py** | AI 深度语义分析 (需要 DEEPSEEK_API_KEY) | `python3 analyze_commits_ai.py` |
-| **analyze_git_changes.py** | Git 历史分析 (提交类型统计) | `python3 analyze_git_changes.py` |
-| **validate_commit_fixes.py** | 旧版手动规则检查 (已被 smart 替代) | `python3 validate_commit_fixes.py` |
+| **smart_commit_analyzer.py** | 智能回归检测 (规则自动从 git 生成) | `python3 scripts/smart_commit_analyzer.py` |
+| **analyze_commits_ai.py** | AI 深度语义分析 (需要 DEEPSEEK_API_KEY) | `python3 scripts/analyze_commits_ai.py` |
+| **analyze_git_changes.py** | Git 历史分析 (提交类型统计) | `python3 scripts/analyze_git_changes.py` |
+| **validate_commit_fixes.py** | 旧版手动规则检查 (已被 smart 替代) | `python3 scripts/validate_commit_fixes.py` |
 
 **GitHub Actions 自动运行**: 每次 push/PR 自动触发 `.github/workflows/commit-analysis.yml`
 
@@ -259,33 +259,33 @@ sudo journalctl -u nautilus-trader -f --no-hostname
 
 ```bash
 # 全面诊断 (唯一需要的检测工具)
-python3 diagnose.py              # 运行全部检查
-python3 diagnose.py --quick      # 快速检查 (跳过网络测试)
-python3 diagnose.py --update     # 先更新代码再检查
-python3 diagnose.py --restart    # 检查后重启服务
-python3 diagnose.py --json       # 输出JSON格式
+python3 scripts/diagnose.py              # 运行全部检查
+python3 scripts/diagnose.py --quick      # 快速检查 (跳过网络测试)
+python3 scripts/diagnose.py --update     # 先更新代码再检查
+python3 scripts/diagnose.py --restart    # 检查后重启服务
+python3 scripts/diagnose.py --json       # 输出JSON格式
 
 # 智能回归检测 (代码修改后必须运行) ⭐ 推荐
-python3 smart_commit_analyzer.py           # 完整分析 (规则自动从 git 生成)
-python3 smart_commit_analyzer.py --update  # 只更新规则库
-python3 smart_commit_analyzer.py --validate # 只验证规则
-python3 smart_commit_analyzer.py --show-rules # 查看所有规则
-python3 smart_commit_analyzer.py --json    # JSON 输出 (用于 CI/CD)
+python3 scripts/smart_commit_analyzer.py           # 完整分析 (规则自动从 git 生成)
+python3 scripts/smart_commit_analyzer.py --update  # 只更新规则库
+python3 scripts/smart_commit_analyzer.py --validate # 只验证规则
+python3 scripts/smart_commit_analyzer.py --show-rules # 查看所有规则
+python3 scripts/smart_commit_analyzer.py --json    # JSON 输出 (用于 CI/CD)
 
 # AI 深度分析 (可选，需要 DEEPSEEK_API_KEY)
-python3 analyze_commits_ai.py --commits 10 # 分析最近 10 个提交
+python3 scripts/analyze_commits_ai.py --commits 10 # 分析最近 10 个提交
 
 # Git 历史分析
-python3 analyze_git_changes.py             # 分析最近 50 个提交
-python3 analyze_git_changes.py --fix-only  # 只显示修复提交
-python3 analyze_git_changes.py --commits 100 # 分析更多提交
+python3 scripts/analyze_git_changes.py             # 分析最近 50 个提交
+python3 scripts/analyze_git_changes.py --fix-only  # 只显示修复提交
+python3 scripts/analyze_git_changes.py --commits 100 # 分析更多提交
 
 # 服务器操作
 sudo systemctl restart nautilus-trader
 sudo journalctl -u nautilus-trader -f --no-hostname
 
 # 一键更新 + 重启
-python3 diagnose.py --update --restart
+python3 scripts/diagnose.py --update --restart
 ```
 
 ### 服务器代码同步与实时诊断
@@ -318,7 +318,7 @@ echo ""
 source venv/bin/activate
 
 # 6. 运行实时诊断
-python3 diagnose_realtime.py
+python3 scripts/diagnose_realtime.py
 
 # 7. (可选) 重启服务
 # sudo systemctl start nautilus-trader
@@ -327,7 +327,7 @@ python3 diagnose_realtime.py
 **一行命令版本** (复制粘贴即用):
 
 ```bash
-cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && git fetch origin main && git reset --hard origin/main && find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null && echo "=== 最近提交 ===" && git log --oneline -5 && source venv/bin/activate && python3 diagnose_realtime.py
+cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && git fetch origin main && git reset --hard origin/main && find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null && echo "=== 最近提交 ===" && git log --oneline -5 && source venv/bin/activate && python3 scripts/diagnose_realtime.py
 ```
 
 | 步骤 | 命令 | 作用 |
@@ -336,7 +336,7 @@ cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && g
 | 强制同步 | `git reset --hard origin/main` | 丢弃本地修改，完全同步远程 |
 | 清除缓存 | `find ... __pycache__` | 删除 Python 编译缓存，确保使用最新代码 |
 | 显示提交 | `git log --oneline -5` | 核对 commit hash 确认版本 |
-| 实时诊断 | `diagnose_realtime.py` | 调用真实 API，验证完整数据流 |
+| 实时诊断 | `scripts/diagnose_realtime.py` | 调用真实 API，验证完整数据流 |
 
 ## systemd 服务配置
 
@@ -388,7 +388,7 @@ Environment=AUTO_CONFIRM=true
    - 问题：`15-MINUTE` 被错误解析为 `5m`
    - 原因：`5-MINUTE` 是 `15-MINUTE` 的子字符串
    - 修复：调整检查顺序，先检查更长的字符串
-   - 影响文件：`deepseek_strategy.py`, `diagnose_realtime.py`
+   - 影响文件：`strategy/deepseek_strategy.py`, `scripts/diagnose_realtime.py`
 
 8. **Rust RSI 线程安全崩溃** (Telegram 命令处理)
    - 问题：服务崩溃，Rust panic: `RelativeStrengthIndex is unsendable, but sent to another thread`
@@ -471,17 +471,6 @@ Environment=AUTO_CONFIRM=true
 ├── requirements.txt          # Python 依赖
 ├── nautilus-trader.service   # systemd 服务文件
 │
-├── # ===== 提交分析工具 (GitHub Actions 自动运行) =====
-├── smart_commit_analyzer.py  # 智能回归检测 (规则自动从 git 生成)
-├── analyze_commits_ai.py     # AI 深度语义分析 (DeepSeek)
-├── analyze_git_changes.py    # Git 历史分析
-├── validate_commit_fixes.py  # 旧版手动规则检查
-│
-├── # ===== 诊断工具 =====
-├── diagnose.py               # 全面诊断工具 v2.0
-├── diagnose_realtime.py      # 实时 API 诊断
-├── diagnose_telegram.py      # Telegram 诊断
-│
 ├── .github/workflows/        # GitHub Actions
 │   ├── commit-analysis.yml   # 智能提交分析 (每次 push/PR 自动运行)
 │   └── claude.yml            # Claude Code Action
@@ -490,17 +479,17 @@ Environment=AUTO_CONFIRM=true
 │   ├── settings.json         # 权限配置
 │   └── skills/               # 自定义技能
 │
-├── strategy/
+├── strategy/                 # 策略模块
 │   ├── deepseek_strategy.py  # 主策略 (含止损修复)
 │   └── trading_logic.py      # 交易逻辑常量和函数
 │
-├── agents/
+├── agents/                   # 多代理系统
 │   └── multi_agent_analyzer.py # 多代理分析 (Bull/Bear/Judge)
 │
-├── indicators/
+├── indicators/               # 技术指标
 │   └── technical_manager.py  # 技术指标管理器 (Cython 版本)
 │
-├── utils/
+├── utils/                    # 工具模块
 │   ├── config_manager.py     # 统一配置管理器 (ConfigManager)
 │   ├── deepseek_client.py    # DeepSeek AI 客户端
 │   ├── sentiment_client.py   # Binance 多空比
@@ -510,7 +499,7 @@ Environment=AUTO_CONFIRM=true
 │   ├── bar_persistence.py    # K线数据持久化
 │   └── oco_manager.py        # OCO 订单管理
 │
-├── patches/
+├── patches/                  # 兼容性补丁
 │   ├── binance_enums.py      # Binance 枚举兼容性补丁
 │   └── binance_positions.py  # Binance 持仓处理补丁
 │
@@ -523,31 +512,69 @@ Environment=AUTO_CONFIRM=true
 │   ├── strategy_config.yaml  # 旧版策略配置 (兼容)
 │   └── telegram_config.yaml  # Telegram 配置
 │
-├── scripts/                  # 辅助脚本
-│   ├── validate_path_aliases.py  # 配置路径验证
-│   ├── benchmark_config.py   # 配置性能测试
+├── scripts/                  # 脚本工具
+│   ├── # === 诊断工具 ===
+│   ├── diagnose.py           # 全面诊断工具 v2.0
+│   ├── diagnose_realtime.py  # 实时 API 诊断
+│   ├── diagnose_telegram.py  # Telegram 诊断
+│   ├── diagnose_no_signal.py # 无信号诊断
 │   ├── comprehensive_diagnosis.py # 全面诊断
+│   │
+│   ├── # === 提交分析工具 (GitHub Actions 自动运行) ===
+│   ├── smart_commit_analyzer.py  # 智能回归检测 (规则自动从 git 生成)
+│   ├── analyze_commits_ai.py     # AI 深度语义分析 (DeepSeek)
+│   ├── analyze_git_changes.py    # Git 历史分析
+│   ├── validate_commit_fixes.py  # 旧版手动规则检查
+│   │
+│   ├── # === 配置工具 ===
+│   ├── validate_path_aliases.py  # 配置路径验证
+│   ├── benchmark_config.py       # 配置性能测试
 │   ├── check_circular_imports.sh # 循环导入检测
+│   │
+│   ├── # === 部署工具 ===
+│   ├── full_deploy.sh        # 完整部署
+│   ├── server_redeploy.sh    # 服务器重部署
+│   ├── sync_from_repo.sh     # 代码同步
+│   ├── health_check.sh       # 健康检查
 │   └── install-hooks.sh      # Git hooks 安装
-│
-├── web/                      # Web 管理界面 (可选)
-│   ├── backend/              # FastAPI 后端
-│   │   ├── main.py           # 后端入口
-│   │   ├── api/              # API 路由
-│   │   ├── core/             # 核心配置
-│   │   ├── models/           # 数据模型
-│   │   └── services/         # 业务服务
-│   └── frontend/             # 前端 (Vue/React)
 │
 ├── tests/                    # 测试目录
 │   ├── test_bracket_order.py
 │   ├── test_integration_mock.py
 │   ├── test_rounding_fix.py
-│   └── test_strategy_components.py
+│   ├── test_strategy_components.py
+│   ├── test_binance_patch.py
+│   ├── test_multi_agent.py
+│   ├── test_telegram.py
+│   └── test_telegram_commands.py
+│
+├── tools/                    # 运维工具
+│   ├── debug_binance_positions.py  # Binance 持仓调试
+│   ├── debug_telegram_config.py    # Telegram 配置调试
+│   ├── monitor_redis.py            # Redis 监控
+│   ├── monitor_emulated_orders.sh  # OCO 订单监控
+│   └── check_emulated_status.sh    # OCO 状态检查
+│
+├── docs/                     # 文档目录
+│   ├── DEPLOYMENT.md         # 部署指南
+│   ├── SECURITY.md           # 安全指南
+│   ├── REFERENCE.md          # 参考文档
+│   ├── SYSTEM_OVERVIEW.md    # 系统概述
+│   ├── architecture/         # 架构文档
+│   ├── features/             # 功能文档
+│   ├── strategy/             # 策略文档
+│   ├── setup/                # 安装文档
+│   ├── troubleshooting/      # 故障排除
+│   ├── releases/             # 发布说明
+│   └── development/          # 开发文档
+│
+├── web/                      # Web 管理界面 (可选)
+│   ├── backend/              # FastAPI 后端
+│   └── frontend/             # 前端 (Vue/React)
 │
 ├── CLAUDE.md                 # 本文档 (AI 助手指南)
 ├── README.md                 # 项目文档
-└── DEPLOYMENT.md             # 部署指南
+└── QUICKSTART.md             # 快速入门
 ```
 
 ## 配置管理

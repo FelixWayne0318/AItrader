@@ -21,10 +21,10 @@ Automated tools for detecting regressions and analyzing code changes:
 
 | Tool | Purpose | Speed |
 |------|---------|-------|
-| **smart_commit_analyzer.py** | Auto-evolving regression detection | Fast |
-| **analyze_commits_ai.py** | AI semantic analysis (DeepSeek) | Slow |
-| **analyze_git_changes.py** | Git history statistics | Fast |
-| **validate_commit_fixes.py** | Legacy manual rules (deprecated) | Fast |
+| **scripts/smart_commit_analyzer.py** | Auto-evolving regression detection | Fast |
+| **scripts/analyze_commits_ai.py** | AI semantic analysis (DeepSeek) | Slow |
+| **scripts/analyze_git_changes.py** | Git history statistics | Fast |
+| **scripts/validate_commit_fixes.py** | Legacy manual rules (deprecated) | Fast |
 
 ## Recommended Tool: smart_commit_analyzer.py
 
@@ -34,19 +34,19 @@ Automated tools for detecting regressions and analyzing code changes:
 
 ```bash
 # Full analysis (update rules + validate)
-python3 smart_commit_analyzer.py
+python3 scripts/smart_commit_analyzer.py
 
 # Update rules only (scan git for new fixes)
-python3 smart_commit_analyzer.py --update
+python3 scripts/smart_commit_analyzer.py --update
 
 # Validate only (check existing rules)
-python3 smart_commit_analyzer.py --validate
+python3 scripts/smart_commit_analyzer.py --validate
 
 # Show all rules
-python3 smart_commit_analyzer.py --show-rules
+python3 scripts/smart_commit_analyzer.py --show-rules
 
 # JSON output (for CI/CD)
-python3 smart_commit_analyzer.py --json
+python3 scripts/smart_commit_analyzer.py --json
 ```
 
 ### Expected Output
@@ -100,23 +100,23 @@ Requires `DEEPSEEK_API_KEY` environment variable.
 
 ```bash
 # Analyze last 10 commits with AI
-python3 analyze_commits_ai.py --commits 10
+python3 scripts/analyze_commits_ai.py --commits 10
 
 # JSON output
-python3 analyze_commits_ai.py --commits 10 --json
+python3 scripts/analyze_commits_ai.py --commits 10 --json
 ```
 
 ## Git History Analysis
 
 ```bash
 # Analyze last 50 commits
-python3 analyze_git_changes.py
+python3 scripts/analyze_git_changes.py
 
 # Show only fix commits
-python3 analyze_git_changes.py --fix-only
+python3 scripts/analyze_git_changes.py --fix-only
 
 # Analyze more commits
-python3 analyze_git_changes.py --commits 100
+python3 scripts/analyze_git_changes.py --commits 100
 ```
 
 ## GitHub Actions Integration
@@ -125,25 +125,25 @@ These tools run automatically on every push/PR via `.github/workflows/commit-ana
 
 | Job | Tool | Trigger |
 |-----|------|---------|
-| Smart Regression Detection | smart_commit_analyzer.py | Always |
-| AI Deep Analysis | analyze_commits_ai.py | If DEEPSEEK_API_KEY set |
+| Smart Regression Detection | scripts/smart_commit_analyzer.py | Always |
+| AI Deep Analysis | scripts/analyze_commits_ai.py | If DEEPSEEK_API_KEY set |
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `smart_commit_analyzer.py` | Main regression detection tool |
+| `scripts/smart_commit_analyzer.py` | Main regression detection tool |
 | `configs/auto_generated_rules.json` | Auto-generated validation rules |
-| `analyze_commits_ai.py` | AI-powered analysis |
-| `analyze_git_changes.py` | Git history parser |
+| `scripts/analyze_commits_ai.py` | AI-powered analysis |
+| `scripts/analyze_git_changes.py` | Git history parser |
 | `.github/workflows/commit-analysis.yml` | GitHub Actions workflow |
 
 ## When to Run
 
-- **Before committing**: `python3 smart_commit_analyzer.py`
+- **Before committing**: `python3 scripts/smart_commit_analyzer.py`
 - **Before merging PR**: Automatic via GitHub Actions
-- **After pulling updates**: `python3 smart_commit_analyzer.py --validate`
-- **Investigating regressions**: `python3 smart_commit_analyzer.py --show-rules`
+- **After pulling updates**: `python3 scripts/smart_commit_analyzer.py --validate`
+- **Investigating regressions**: `python3 scripts/smart_commit_analyzer.py --show-rules`
 
 ## Interpreting Results
 

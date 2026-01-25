@@ -30,19 +30,19 @@ Use this skill when:
 ```bash
 cd /home/linuxuser/nautilus_AItrader
 source venv/bin/activate
-python3 diagnose.py
+python3 scripts/diagnose.py
 ```
 
 ### Quick Diagnostic (Skip AI calls)
 ```bash
 cd /home/linuxuser/nautilus_AItrader
 source venv/bin/activate
-python3 diagnose.py --quick
+python3 scripts/diagnose.py --quick
 ```
 
 ### With Update and Restart
 ```bash
-python3 diagnose.py --update --restart
+python3 scripts/diagnose.py --update --restart
 ```
 
 ## Expected Output
@@ -105,7 +105,7 @@ use_confidence_fusion: true   # [LEGACY] 不再使用
 
 **Check Command**:
 ```bash
-python3 diagnose_realtime.py 2>&1 | grep -E "(Judge|Final Signal|Confidence|Winning Side)"
+python3 scripts/diagnose_realtime.py 2>&1 | grep -E "(Judge|Final Signal|Confidence|Winning Side)"
 ```
 
 ### 2. DeepSeek API Failure
@@ -119,16 +119,16 @@ grep "DEEPSEEK_API_KEY" ~/.env.aitrader
 
 **Check**:
 ```bash
-python3 diagnose.py 2>&1 | grep -E "(RSI|MACD|SMA)"
+python3 scripts/diagnose.py 2>&1 | grep -E "(RSI|MACD|SMA)"
 ```
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `diagnose.py` | Main diagnostic script |
-| `diagnose_realtime.py` | Real-time API diagnostic |
-| `smart_commit_analyzer.py` | Regression detection (auto-evolving rules) |
+| `scripts/diagnose.py` | Main diagnostic script |
+| `scripts/diagnose_realtime.py` | Real-time API diagnostic |
+| `scripts/smart_commit_analyzer.py` | Regression detection (auto-evolving rules) |
 | `strategy/deepseek_strategy.py` | Main strategy logic |
 | `configs/base.yaml` | Base configuration (all parameters) |
 | `configs/production.yaml` | Production environment overrides |
@@ -137,7 +137,7 @@ python3 diagnose.py 2>&1 | grep -E "(RSI|MACD|SMA)"
 
 ```bash
 # 智能回归检测 (规则自动从 git 历史生成)
-python3 smart_commit_analyzer.py
+python3 scripts/smart_commit_analyzer.py
 
 # 预期结果: ✅ 所有规则验证通过
 ```

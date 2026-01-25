@@ -119,7 +119,7 @@ Multi-dimensional code review based on Claude Code best practices.
 
 ```bash
 # 智能回归检测 (规则自动从 git 历史生成)
-python3 smart_commit_analyzer.py
+python3 scripts/smart_commit_analyzer.py
 
 # 预期结果: ✅ 所有规则验证通过
 ```

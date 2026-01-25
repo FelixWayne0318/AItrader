@@ -46,7 +46,7 @@ jobs:
       - name: Run smart_commit_analyzer.py
         id: analyze
         run: |
-          python3 smart_commit_analyzer.py \
+          python3 scripts/smart_commit_analyzer.py \
             --commits ${{ github.event.inputs.commits_to_analyze || '100' }} \
             --json > smart_analysis.json 2>&1 || true
 
@@ -175,7 +175,7 @@ jobs:
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
-          python3 analyze_commits_ai.py --commits 10 --json > ai_analysis.json 2>&1 || true
+          python3 scripts/analyze_commits_ai.py --commits 10 --json > ai_analysis.json 2>&1 || true
 
       - name: Generate AI summary
         if: steps.check_key.outputs.skip != 'true'

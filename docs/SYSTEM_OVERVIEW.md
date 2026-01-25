@@ -286,13 +286,13 @@ TIMEFRAME=15m
 
 ## 6. 诊断工具
 
-### 6.1 全面诊断 (`diagnose.py`)
+### 6.1 全面诊断 (`scripts/diagnose.py`)
 
 ```bash
-python3 diagnose.py              # 完整检查
-python3 diagnose.py --quick      # 跳过网络测试
-python3 diagnose.py --update     # 更新代码后检查
-python3 diagnose.py --restart    # 检查后重启服务
+python3 scripts/diagnose.py              # 完整检查
+python3 scripts/diagnose.py --quick      # 跳过网络测试
+python3 scripts/diagnose.py --update     # 更新代码后检查
+python3 scripts/diagnose.py --restart    # 检查后重启服务
 ```
 
 **检查项目：**
@@ -310,7 +310,7 @@ python3 diagnose.py --restart    # 检查后重启服务
 12. Git 状态
 13. 模块导入测试
 
-### 6.2 实时诊断 (`diagnose_realtime.py`)
+### 6.2 实时诊断 (`scripts/diagnose_realtime.py`)
 
 调用真实 API 验证完整数据流：
 - 获取真实 K线数据
@@ -353,7 +353,7 @@ sudo systemctl stop nautilus-trader
 git fetch origin main && git reset --hard origin/main
 find . -name "__pycache__" -exec rm -rf {} + 2>/dev/null
 source venv/bin/activate
-python3 diagnose_realtime.py
+python3 scripts/diagnose_realtime.py
 ```
 
 ---
@@ -421,8 +421,14 @@ python3 diagnose_realtime.py
 │   ├── production.yaml       # 生产环境覆盖
 │   ├── development.yaml      # 开发环境覆盖
 │   └── backtest.yaml         # 回测环境覆盖
-├── diagnose.py               # 诊断工具
-├── diagnose_realtime.py      # 实时诊断
+├── scripts/                  # 脚本工具
+│   ├── diagnose.py           # 诊断工具
+│   ├── diagnose_realtime.py  # 实时诊断
+│   ├── smart_commit_analyzer.py # 智能回归检测
+│   └── ...                   # 其他脚本
+├── tests/                    # 测试目录
+├── tools/                    # 运维工具
+├── docs/                     # 文档目录
 ├── setup.sh                  # 安装脚本
 ├── reinstall.sh              # 重装脚本
 └── nautilus-trader.service   # Systemd 服务
