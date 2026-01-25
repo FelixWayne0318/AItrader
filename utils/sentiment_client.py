@@ -20,7 +20,12 @@ class SentimentDataFetcher:
     # Binance Futures API (free, no API key required)
     BINANCE_URL = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
 
-    def __init__(self, lookback_hours: int = 4, timeframe: str = "15m"):
+    def __init__(
+        self,
+        lookback_hours: int = 4,
+        timeframe: str = "15m",
+        timeout: float = 10.0,
+    ):
         """
         Initialize sentiment data fetcher.
 
@@ -30,10 +35,13 @@ class SentimentDataFetcher:
             Not used for Binance API (kept for compatibility)
         timeframe : str
             Time interval for data: "5m", "15m", "30m", "1h", "4h", "1d"
+        timeout : float, optional
+            Request timeout (seconds), default: 10.0
         """
         self.lookback_hours = lookback_hours
         # Map timeframe to Binance period format
         self.timeframe = self._map_timeframe(timeframe)
+        self.timeout = timeout
 
     def _map_timeframe(self, timeframe: str) -> str:
         """Map common timeframe formats to Binance period format."""
@@ -86,7 +94,7 @@ class SentimentDataFetcher:
             response = requests.get(
                 self.BINANCE_URL,
                 params=params,
-                timeout=10
+                timeout=self.timeout
             )
 
             if response.status_code == 200:

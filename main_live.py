@@ -251,6 +251,18 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         telegram_notify_fills=config_manager.get('telegram', 'notify_fills', default=True),
         telegram_notify_positions=config_manager.get('telegram', 'notify_positions', default=True),
         telegram_notify_errors=config_manager.get('telegram', 'notify_errors', default=True),
+
+        # Network configuration
+        network_telegram_startup_delay=config_manager.get('network', 'telegram', 'startup_delay', default=5.0),
+        network_telegram_polling_max_retries=config_manager.get('network', 'telegram', 'polling_max_retries', default=3),
+        network_telegram_polling_base_delay=config_manager.get('network', 'telegram', 'polling_base_delay', default=10.0),
+        network_binance_recv_window=config_manager.get('network', 'binance', 'recv_window', default=5000),
+        network_binance_balance_cache_ttl=config_manager.get('network', 'binance', 'balance_cache_ttl', default=5.0),
+        network_bar_persistence_max_limit=config_manager.get('network', 'bar_persistence', 'max_limit', default=1500),
+        network_bar_persistence_timeout=config_manager.get('network', 'bar_persistence', 'timeout', default=10.0),
+        network_oco_manager_socket_timeout=config_manager.get('network', 'oco_manager', 'socket_timeout', default=5.0),
+        network_oco_manager_socket_connect_timeout=config_manager.get('network', 'oco_manager', 'socket_connect_timeout', default=5.0),
+        sentiment_timeout=config_manager.get('sentiment', 'timeout', default=10.0),
     )
 
 

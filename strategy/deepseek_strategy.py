@@ -148,6 +148,18 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     # Timing
     timer_interval_sec: int = 900
 
+    # Network configuration
+    network_telegram_startup_delay: float = 5.0
+    network_telegram_polling_max_retries: int = 3
+    network_telegram_polling_base_delay: float = 10.0
+    network_binance_recv_window: int = 5000
+    network_binance_balance_cache_ttl: float = 5.0
+    network_bar_persistence_max_limit: int = 1500
+    network_bar_persistence_timeout: float = 10.0
+    network_oco_manager_socket_timeout: float = 5.0
+    network_oco_manager_socket_connect_timeout: float = 5.0
+    sentiment_timeout: float = 10.0
+
 
 class DeepSeekAIStrategy(Strategy):
     """
@@ -233,7 +245,11 @@ class DeepSeekAIStrategy(Strategy):
         self._cached_current_price: float = 0.0
 
         # Real-time Binance account fetcher for accurate balance info
-        self.binance_account = BinanceAccountFetcher(logger=self.log)
+        self.binance_account = BinanceAccountFetcher(
+            logger=self.log,
+            cache_ttl=config.network_binance_balance_cache_ttl,
+            recv_window=config.network_binance_recv_window,
+        )
         self._real_balance: Dict[str, float] = {}  # Cached real balance from Binance
 
         # Track trailing stop state for each position
@@ -331,7 +347,10 @@ class DeepSeekAIStrategy(Strategy):
                             token=bot_token,
                             allowed_chat_ids=allowed_chat_ids,
                             strategy_callback=command_callback,
-                            logger=self.log
+                            logger=self.log,
+                            startup_delay=config.network_telegram_startup_delay,
+                            polling_max_retries=config.network_telegram_polling_max_retries,
+                            polling_base_delay=config.network_telegram_polling_base_delay,
                         )
 
                         # Start command handler in background thread with isolated event loop
@@ -413,6 +432,7 @@ class DeepSeekAIStrategy(Strategy):
             self.sentiment_fetcher = SentimentDataFetcher(
                 lookback_hours=config.sentiment_lookback_hours,
                 timeframe=sentiment_tf,
+                timeout=config.sentiment_timeout,
             )
             self.log.info(f"Sentiment fetcher initialized with timeframe: {sentiment_tf}")
         else:
