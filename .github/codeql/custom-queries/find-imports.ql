@@ -14,16 +14,24 @@ from ImportingStmt imp, string moduleName
 where
   (
     imp instanceof Import and
-    moduleName = imp.(Import).getAName().getId()
+    exists(Import i, Alias a | i = imp and a = i.getAName() |
+      moduleName = a.getAsname().getId()
+      or
+      not exists(a.getAsname()) and moduleName = a.getValue().(Name).getId()
+    )
   )
   or
   (
     imp instanceof ImportStar and
-    moduleName = imp.(ImportStar).getModule().getName()
+    exists(ImportStar is | is = imp |
+      moduleName = is.getModule().(Name).getId()
+    )
   )
   or
   (
     imp instanceof ImportMember and
-    moduleName = imp.(ImportMember).getModule().getName()
+    exists(ImportMember im | im = imp |
+      moduleName = im.getModule().(Name).getId()
+    )
   )
 select imp, "Import of module: " + moduleName
