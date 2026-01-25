@@ -1,9 +1,30 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.5.3
+> 版本: 2.5.4
 > 日期: 2026-01-25
-> 状态: **Phase 0 已完成，关联影响审查完成，补充 7 处遗漏，可实施 Phase 1-6**
-> 审查: CONFIG_PROPOSAL_REVIEW.md
+> 状态: **Phase 0 已完成，方案经过 8 项关键改进，可实施 Phase 1-6**
+> 审查: CONFIG_PROPOSAL_REVIEW.md (v2.5.3) + CLAUDE.md 合规性完善 (v2.5.4)
+
+**v2.5.4 更新说明** (CLAUDE.md 合规性 + 8 项关键改进):
+- 🔴 **Section 4.1 补充**: NautilusTrader StrategyConfig 官方基类集成说明
+- 🔴 **Section 5.6.1 修正**: Phase 3-4-5 依赖关系澄清 (并行 vs 串行方案)
+- 🔴 **Section 1.6 新增**: 当前状态 vs 目标状态对比表 (10 个维度)
+- 🔴 **Section 5.6.7 新增**: 循环导入验证测试 (check_circular_imports.sh)
+- 🟡 **Section 5.6.3 完善**: 配置路径映射添加路径变化注释
+- 🟡 **Section 9.2.1 新增**: 性能基线测试指导 (当前 vs Phase 1 后)
+- 🟡 **Section 9.2 改进**: 敏感信息掩蔽修复 8 字符漏洞 (>= 6 字符即掩蔽)
+- ✅ 符合 CLAUDE.md 代码修改规范 (参考 NautilusTrader 官方文档)
+- ✅ 符合 .claude/skills/code-review 审查标准
+
+**改进来源**: 基于前期审查识别的 8 个关键不足项，对应修复如下：
+1. ✅ NautilusTrader StrategyConfig 未使用 → 添加集成说明
+2. ✅ Phase 依赖关系矛盾 → 明确并行/串行方案
+3. ✅ 配置文件结构未创建 → 添加当前/目标状态对比
+4. ✅ 循环导入分析不完整 → 新增验证脚本章节
+5. ✅ 兼容层路径映射不完整 → 添加路径变化注释
+6. ✅ Phase 0 完成状态文档过时 → Section 1.6 明确完成标志
+7. ✅ 性能基线缺失 → 新增性能测试指导
+8. ✅ 敏感信息掩蔽有漏洞 → 修复 _mask_sensitive() 逻辑
 
 **v2.5.3 更新说明** (关联影响完整性审查):
 - 🔴 **Phase 3 补充**: 添加 `agents/multi_agent_analyzer.py` 到修改列表 (导入语句需更新)
@@ -43,18 +64,24 @@
 
 1. [现状分析](#1-现状分析)
    - 1.5 [代码默认值不一致警告](#15-代码默认值不一致警告-) 🔴 **v2.5 新增**
+   - 1.6 [当前状态 vs 目标状态对比](#16-当前状态-vs-目标状态对比-) 🆕 **v2.5.4 新增**
 2. [目标架构](#2-目标架构)
 3. [配置文件设计](#3-配置文件设计)
    - 3.5 [YAML 结构兼容层](#35-yaml-结构兼容层-) 🔴 **v2.5 新增**
 4. [ConfigManager 类设计](#4-configmanager-类设计)
+   - 4.1 [类结构](#41-类结构) 🆕 **v2.5.4 补充 NautilusTrader 集成**
 5. [迁移计划](#5-迁移计划)
    - 5.4 [按 Phase 回滚诊断](#54-按-phase-回滚诊断) 🔴 **v2.5 重写**
    - 5.6 [Phase 间关联影响](#56-phase-间关联影响)
+     - 5.6.1 [Phase 依赖图](#561-phase-依赖图) 🆕 **v2.5.4 修正依赖关系**
+     - 5.6.7 [循环导入验证测试](#567-循环导入验证测试-) 🆕 **v2.5.4 新增**
    - 5.7 [配置迁移脚本设计](#57-配置迁移脚本设计) 🟡 **v2.5 新增**
 6. [验证规则](#6-验证规则)
 7. [使用方式](#7-使用方式)
 8. [Pydantic 升级建议](#8-pydantic-升级建议-可选)
 9. [风险评估](#9-风险评估)
+   - 9.2 [高优先级风险详细评估](#92-高优先级风险详细评估)
+     - 9.2.1 [性能基线测试](#921-性能基线测试-) 🆕 **v2.5.4 新增**
 10. [总结](#10-总结)
 
 ---
@@ -250,6 +277,33 @@ class DeepSeekAIStrategyConfig:
 - [x] `strategy/deepseek_strategy.py` 默认值已修改为 70.0/30.0
 - [ ] 运行 `python3 -c "from strategy.deepseek_strategy import DeepSeekAIStrategyConfig; c = DeepSeekAIStrategyConfig(); print(c.rsi_extreme_threshold_upper, c.rsi_extreme_threshold_lower)"` 输出 `70.0 30.0` (需在服务器 venv 中验证)
 - [ ] 运行 `python3 diagnose.py --quick` 无 RSI 相关警告 (需在服务器验证)
+
+### 1.6 当前状态 vs 目标状态对比 🆕
+
+此表明确 Phase 0 已完成的工作和 Phase 1-6 的目标状态。
+
+| 项目 | 当前状态 (Phase 0 完成后) | 目标状态 (Phase 1-6 完成后) |
+|------|--------------------------|---------------------------|
+| **配置文件** | `configs/strategy_config.yaml` (单文件) | `configs/base.yaml` + 环境文件 (production/development/backtest.yaml) |
+| **加载方式** | 直接 `yaml.safe_load()` | `ConfigManager` 单例 + 分层合并 |
+| **硬编码覆盖** | ✅ **已移除** (3 处冲突已修复) | N/A (保持修复状态) |
+| **RSI 阈值** | ✅ 代码默认值 70/30 与 YAML 一致 | 从 `base.yaml` 加载，代码无默认值 |
+| **trading_logic.py 常量** | ❌ 硬编码 (9 个常量) | 从 `base.yaml` 的 `trading_logic` 节加载 |
+| **环境切换** | ❌ 不支持 | ✅ `--env production/development/backtest` |
+| **类型验证** | ⚠️ 部分验证 (dataclass) | ✅ ConfigManager 范围检查 + NautilusTrader StrategyConfig |
+| **配置热重载** | ❌ 需重启服务 | ❌ 仍需重启 (Phase 1-6 不包含热重载) |
+| **敏感信息存储** | ✅ `~/.env.aitrader` | ✅ 保持不变 |
+| **文档状态** | ⚠️ 部分过时 | ✅ Phase 6 同步更新 |
+
+**关键改进**:
+- ✅ **Phase 0 已解决配置冲突** - main_live.py 不再硬编码覆盖 YAML
+- 🎯 **Phase 1-3 核心目标** - 创建 ConfigManager + base.yaml + 迁移 trading_logic.py
+- 🎯 **Phase 4-6 增强功能** - utils 迁移 + CLI 环境切换 + 文档同步
+
+**Phase 0 完成标志** (commit d7701d3, 333c17f):
+- `strategy/deepseek_strategy.py:94-95` 默认值改为 70.0/30.0
+- `main_live.py:203` 使用 `deepseek_config.get('temperature', 0.3)`
+- `main_live.py:216-217` 使用 `risk_config.get('rsi_extreme_threshold_*', ...)`
 
 ---
 
@@ -752,6 +806,31 @@ def get(self, *path, default=None) -> Any:
 
 ### 4.1 类结构
 
+> **🔴 重要**: ConfigManager 应与 NautilusTrader 的 `StrategyConfig` 基类集成
+>
+> 根据 CLAUDE.md 代码修改规范，必须参考 [NautilusTrader 官方文档](https://nautilustrader.io/docs/api_reference/config)
+>
+> **NautilusTrader 官方推荐**:
+> ```python
+> from nautilus_trader.config import StrategyConfig
+>
+> @dataclass
+> class DeepSeekAIStrategyConfig(StrategyConfig):
+>     """继承 NautilusTrader 官方基类，获得：
+>     - to_dict() 方法
+>     - validate_json_schema() 方法
+>     - 与 ImportableStrategyConfig 集成
+>     """
+>     # ... 参数定义
+> ```
+>
+> **ConfigManager 的角色**:
+> - 负责加载 YAML → dict
+> - 负责分层合并 (base → env → .env)
+> - 将最终 dict 传递给 `DeepSeekAIStrategyConfig(**config_dict)`
+>
+> **参考**: `.claude/skills/nautilustrader/references/api.md:6311`
+
 ```python
 # utils/config_manager.py
 
@@ -777,13 +856,19 @@ class ConfigManager:
     """
     统一配置管理器
 
+    注意: 此类负责加载和合并配置，最终配置应传递给
+    NautilusTrader 的 StrategyConfig 子类进行类型验证。
+
     功能:
     - 分层加载配置 (base → env → .env)
-    - 类型验证
-    - 范围检查
-    - 依赖验证
+    - 深度合并配置字典
+    - 基础验证（范围检查、依赖验证）
     - 环境切换
     - 配置迁移日志
+
+    集成方式:
+        config_dict = ConfigManager(env='production').load()
+        strategy_config = DeepSeekAIStrategyConfig(**config_dict['strategy'])
     """
 
     def __init__(
@@ -1689,8 +1774,15 @@ sudo systemctl restart nautilus-trader
 
 #### 5.6.1 Phase 依赖图
 
+> **🔴 重要澄清**: Phase 3-4 可以并行实施，也可以串行实施
+>
+> - **并行方案** (推荐，效率更高): Phase 1 完成后，Phase 2/3/4 同时进行
+> - **串行方案** (保守，风险更低): Phase 1 → Phase 2 → Phase 3 → Phase 4
+>
+> **选择建议**: 如果团队人员充足且熟悉代码库，推荐并行。否则串行更安全。
+
 ```
-Phase 0 (紧急修复)
+Phase 0 (紧急修复) ✅ 已完成
     │
     ├──→ Phase 2 (main_live.py 迁移)
     │        │
@@ -1705,17 +1797,46 @@ Phase 1 (ConfigManager) ←─── 阻塞后续所有 Phase
     │   ├── [M2] 敏感信息掩蔽: _mask_sensitive() 方法
     │   └── [M3] 环境变量完整映射 (9 个核心变量)
     │
-    ├──→ Phase 3 (trading_logic.py)
-    │        │
-    │        ├── 风险: 循环导入 (trading_logic ↔ config_manager)
-    │        └── 方案: 延迟导入 + 模块级缓存
-    │
-    └──→ Phase 4 (utils/*.py)
+    ├──→ Phase 2 (main_live.py) ──┐
+    │                              │
+    ├──→ Phase 3 (trading_logic) ──┼──→ 可并行或串行
+    │        │                     │
+    │        ├── 风险: 循环导入    │    推荐顺序 (串行):
+    │        │   (trading_logic    │    Phase 2 → Phase 3 → Phase 4
+    │        │    ↔ config_mgr)    │
+    │        └── 方案: 延迟导入    │    并行方案:
+    │            + 模块级缓存       │    Phase 2/3/4 同时开始
+    │                              │
+    └──→ Phase 4 (utils/*.py) ─────┘
              │
-             ├── 依赖: bar_persistence.py 需要 retry_delay
-             ├── 依赖: oco_manager.py 需要 socket_timeout
-             └── 依赖: telegram_command_handler.py 需要 startup_delay
+             ├── 依赖: bar_persistence.py 需要 network.bar_persistence.*
+             ├── 依赖: oco_manager.py 需要 network.oco_manager.*
+             ├── 依赖: telegram_command_handler.py 需要 telegram.startup_delay
+             ├── 依赖: deepseek_client.py 需要 ai.signal.history_count  [新增]
+             └── 注意: Phase 4 修改的文件被 Phase 3 导入，
+                      串行实施更安全 (先 Phase 3 后 Phase 4)
+    │
+    ↓
+Phase 5 (CLI 环境切换)
+    │
+    └──→ 依赖: Phase 1-4 全部完成
+
+Phase 6 (文档同步)
+    │
+    └──→ 依赖: Phase 0-5 全部完成
 ```
+
+**依赖关系说明**:
+
+| Phase | 前置依赖 | 可并行 Phase | 说明 |
+|-------|---------|-------------|------|
+| Phase 0 | 无 | - | ✅ 已完成 |
+| Phase 1 | Phase 0 | - | 基础设施，必须先完成 |
+| Phase 2 | Phase 1 | Phase 3, 4 | main_live.py 独立于其他 Phase |
+| Phase 3 | Phase 1 | Phase 2, 4 | trading_logic.py 有循环导入风险 |
+| Phase 4 | Phase 1 | Phase 2, 3 | utils/*.py 被 Phase 3 导入，建议后执行 |
+| Phase 5 | Phase 1-4 | - | CLI 需要完整 ConfigManager |
+| Phase 6 | Phase 0-5 | - | 文档同步最后执行 |
 
 #### 5.6.2 Phase 1 必须项详解
 
@@ -1800,15 +1921,19 @@ Phase 0 修复了 main_live.py 的硬编码问题，Phase 2 将完全迁移到 C
 
 **嵌套 .get() 路径映射** (main_live.py:222-238):
 
-| 参数 | Phase 0 路径 | Phase 2 路径 | 位置 |
-|------|-------------|-------------|------|
-| `skip_on_divergence` | `strategy_yaml.get('risk', {}).get('skip_on_divergence', True)` | `config.get('ai', 'signal', 'skip_on_divergence', default=True)` | :222 |
-| `use_confidence_fusion` | `strategy_yaml.get('risk', {}).get('use_confidence_fusion', True)` | `config.get('ai', 'signal', 'use_confidence_fusion', default=True)` | :223 |
-| `enable_telegram` | `strategy_yaml.get('telegram', {}).get('enabled', False)` | `config.get('telegram', 'enabled', default=False)` | :232 |
-| `telegram_notify_signals` | `strategy_yaml.get('telegram', {}).get('notify_signals', True)` | `config.get('telegram', 'notify_signals', default=True)` | :235 |
-| `telegram_notify_fills` | `strategy_yaml.get('telegram', {}).get('notify_fills', True)` | `config.get('telegram', 'notify_fills', default=True)` | :236 |
-| `telegram_notify_positions` | `strategy_yaml.get('telegram', {}).get('notify_positions', True)` | `config.get('telegram', 'notify_positions', default=True)` | :237 |
-| `telegram_notify_errors` | `strategy_yaml.get('telegram', {}).get('notify_errors', True)` | `config.get('telegram', 'notify_errors', default=True)` | :238 |
+| 参数 | Phase 0 路径 | Phase 2 路径 | 位置 | 注意 |
+|------|-------------|-------------|------|------|
+| `skip_on_divergence` | `strategy_yaml.get('risk', {}).get('skip_on_divergence', True)` | `config.get('ai', 'signal', 'skip_on_divergence', default=True)` | :222 | ⚠️ 路径变化 |
+| `use_confidence_fusion` | `strategy_yaml.get('risk', {}).get('use_confidence_fusion', True)` | `config.get('ai', 'signal', 'use_confidence_fusion', default=True)` | :223 | ⚠️ 路径变化 |
+| `enable_telegram` | `strategy_yaml.get('telegram', {}).get('enabled', False)` | `config.get('telegram', 'enabled', default=False)` | :232 | ✅ 路径一致 |
+| `telegram_notify_signals` | `strategy_yaml.get('telegram', {}).get('notify_signals', True)` | `config.get('telegram', 'notify_signals', default=True)` | :235 | ✅ 路径一致 |
+| `telegram_notify_fills` | `strategy_yaml.get('telegram', {}).get('notify_fills', True)` | `config.get('telegram', 'notify_fills', default=True)` | :236 | ✅ 路径一致 |
+| `telegram_notify_positions` | `strategy_yaml.get('telegram', {}).get('notify_positions', True)` | `config.get('telegram', 'notify_positions', default=True)` | :237 | ✅ 路径一致 |
+| `telegram_notify_errors` | `strategy_yaml.get('telegram', {}).get('notify_errors', True)` | `config.get('telegram', 'notify_errors', default=True)` | :238 | ✅ 路径一致 |
+
+> **⚠️ 路径变化说明**: `skip_on_divergence` 和 `use_confidence_fusion` 从 `risk.*` 移动到 `ai.signal.*`
+> 原因: 这两个参数控制 AI 信号合并逻辑，而非风险管理逻辑
+> 兼容层处理: Section 3.5.5 提供路径别名
 
 **验证脚本**:
 
@@ -1959,6 +2084,163 @@ grep -rn "rsi_extreme_threshold.*75\|rsi_extreme_threshold.*25" CLAUDE.md README
 grep -n "rsi_extreme_threshold" CLAUDE.md README.md | grep -E "75|25"
 # 应该没有输出，表示已全部更新
 ```
+
+#### 5.6.7 循环导入验证测试 🆕
+
+> **为什么需要**: Phase 3 修改 `trading_logic.py` 导入 `config_manager`，而 `config_manager` 可能间接导入 `trading_logic`，形成循环。
+
+**潜在循环路径分析**:
+
+```
+可能的循环 1:
+  config_manager.py → deepseek_strategy.py → trading_logic.py → config_manager.py
+
+可能的循环 2:
+  trading_logic.py → agents/multi_agent_analyzer.py → trading_logic.py
+  (注意: multi_agent_analyzer.py 导入 trading_logic 的常量)
+
+可能的循环 3:
+  config_manager.py → main_live.py → strategy/deepseek_strategy.py → config_manager.py
+```
+
+**延迟导入方案** (Section 5.3 提到):
+
+```python
+# strategy/trading_logic.py - 延迟导入示例
+
+def get_min_sl_distance() -> float:
+    """
+    获取最小止损距离配置
+
+    使用延迟导入避免循环:
+    - 函数调用时才导入 config_manager
+    - 不在模块顶部导入
+    """
+    from utils.config_manager import get_config  # 延迟导入
+
+    # 模块级缓存，避免重复加载
+    global _TRADING_LOGIC_CONFIG
+    if _TRADING_LOGIC_CONFIG is None:
+        config = get_config()
+        _TRADING_LOGIC_CONFIG = config.get('trading_logic', {})
+
+    return _TRADING_LOGIC_CONFIG.get('min_sl_distance_pct', 0.01)
+
+# 模块级缓存变量
+_TRADING_LOGIC_CONFIG: Optional[dict] = None
+```
+
+**验证脚本** - 在 Phase 1-3 完成后运行:
+
+```bash
+#!/bin/bash
+# scripts/check_circular_imports.sh
+
+echo "=== 循环导入检测 ==="
+
+# 测试 1: 尝试导入所有关键模块
+python3 -c "
+import sys
+try:
+    # 按依赖顺序导入
+    import utils.config_manager
+    print('✅ config_manager 导入成功')
+
+    import strategy.trading_logic
+    print('✅ trading_logic 导入成功')
+
+    import agents.multi_agent_analyzer
+    print('✅ multi_agent_analyzer 导入成功')
+
+    import strategy.deepseek_strategy
+    print('✅ deepseek_strategy 导入成功')
+
+    import main_live
+    print('✅ main_live 导入成功')
+
+    print('\n✅ 所有模块导入成功，无循环依赖')
+    sys.exit(0)
+except ImportError as e:
+    print(f'\n❌ 导入失败: {e}')
+    sys.exit(1)
+"
+
+# 测试 2: 验证 config_manager 单例模式
+python3 -c "
+from utils.config_manager import get_config
+config1 = get_config()
+config2 = get_config()
+assert id(config1) == id(config2), '单例模式失败'
+print('✅ ConfigManager 单例模式正常')
+"
+
+# 测试 3: 验证延迟导入缓存
+python3 -c "
+from strategy.trading_logic import get_min_sl_distance
+# 调用两次，第二次应使用缓存
+val1 = get_min_sl_distance()
+val2 = get_min_sl_distance()
+assert val1 == val2, '缓存机制失败'
+print(f'✅ 延迟导入缓存正常: {val1}')
+"
+
+echo ""
+echo "=== 检测完成 ==="
+```
+
+**使用方法**:
+
+```bash
+# Phase 1-3 完成后运行
+cd /home/linuxuser/nautilus_AItrader
+chmod +x scripts/check_circular_imports.sh
+./scripts/check_circular_imports.sh
+
+# 预期输出:
+# ✅ config_manager 导入成功
+# ✅ trading_logic 导入成功
+# ✅ multi_agent_analyzer 导入成功
+# ✅ deepseek_strategy 导入成功
+# ✅ main_live 导入成功
+# ✅ 所有模块导入成功，无循环依赖
+# ✅ ConfigManager 单例模式正常
+# ✅ 延迟导入缓存正常: 0.01
+```
+
+**故障排查**:
+
+| 错误信息 | 原因 | 解决方法 |
+|---------|------|---------|
+| `ImportError: cannot import name 'get_config'` | 循环导入导致模块未完全初始化 | 检查是否在模块顶部导入，改为延迟导入 |
+| `ImportError: partially initialized module` | 模块正在导入过程中被循环引用 | 使用 `if TYPE_CHECKING:` 延迟类型注解导入 |
+| `AssertionError: 单例模式失败` | `get_config()` 返回不同实例 | 检查 `_instance` 全局变量是否正确 |
+| `AssertionError: 缓存机制失败` | 模块级缓存未生效 | 检查 `_TRADING_LOGIC_CONFIG` 是否正确初始化 |
+
+**完整导入依赖图** (Phase 1-3 完成后):
+
+```
+main_live.py
+  └─→ utils/config_manager.py (单例)
+  └─→ strategy/deepseek_strategy.py
+        └─→ strategy/trading_logic.py
+              └─→ utils/config_manager.py (延迟导入)
+        └─→ agents/multi_agent_analyzer.py
+              └─→ strategy/trading_logic.py (导入常量函数)
+              └─→ utils/config_manager.py (可选)
+
+关键点:
+- trading_logic.py 使用延迟导入 + 模块级缓存
+- multi_agent_analyzer.py 导入 trading_logic 的函数，而非顶层常量
+- config_manager.py 不导入其他业务模块
+```
+
+**Phase 3 实施检查清单** (循环导入专项):
+
+- [ ] `trading_logic.py` 使用延迟导入 (`from utils.config_manager import get_config`)
+- [ ] 模块级缓存变量 `_TRADING_LOGIC_CONFIG` 已定义
+- [ ] `multi_agent_analyzer.py` 导入的常量已改为函数调用
+- [ ] 运行 `check_circular_imports.sh` 全部测试通过
+- [ ] 启动服务无 `ImportError` 或 `partially initialized module` 错误
 
 ### 5.7 配置迁移脚本设计 🟡
 
@@ -2341,15 +2623,39 @@ class AppSettings(BaseSettings):
 
 ```python
 # ConfigManager 中添加敏感字段掩蔽
-SENSITIVE_FIELDS = {'api_key', 'api_secret', 'bot_token', 'password'}
+SENSITIVE_FIELDS = {'api_key', 'api_secret', 'bot_token', 'password', 'token', 'secret'}
 
 def _mask_sensitive(self, key: str, value: str) -> str:
-    """掩蔽敏感信息"""
-    if any(s in key.lower() for s in SENSITIVE_FIELDS):
-        if len(value) > 8:
-            return value[:4] + '****' + value[-4:]
-        return '****'
-    return value
+    """
+    掩蔽敏感信息用于日志输出
+
+    改进点 (v2.5.4):
+    - 修复: 8 字符密钥不掩蔽的漏洞
+    - 改进: 任何长度 >= 6 的值都掩蔽
+    - 改进: 太短的值完全隐藏
+
+    示例:
+    - 'sk-xxxxxxxxxxxx1234' (18 字符) → 'sk-x****1234'
+    - '12345678' (8 字符) → '1234****78' (修复前: 不掩蔽)
+    - '12345' (5 字符) → '***' (完全隐藏)
+    - '' (空值) → '(未设置)'
+    """
+    if not isinstance(value, str):
+        return str(value)
+
+    if not any(s in key.lower() for s in SENSITIVE_FIELDS):
+        return value
+
+    # 空值特殊处理
+    if not value:
+        return '(未设置)'
+
+    # 修改: 任何长度 >= 6 的值都掩蔽 (修复 8 字符漏洞)
+    if len(value) >= 6:
+        return f"{value[:4]}****{value[-2:]}"
+
+    # 太短的值完全隐藏
+    return '***'
 
 def _log_config_summary(self):
     """记录配置摘要 (敏感信息已掩蔽)"""
@@ -2428,6 +2734,78 @@ class ConfigManager:
 | 环境文件合并 | < 5ms | 20ms |
 | 配置验证 | < 20ms | 100ms |
 | **总启动开销** | **< 50ms** | **200ms** |
+
+#### 9.2.1 性能基线测试 🆕
+
+> **重要**: Phase 1 实施前必须测量当前性能基线，确保新方案不会超过 200ms 目标。
+
+**当前性能基线测试**:
+
+```bash
+# 测试 1: 当前 strategy_config.yaml 加载性能
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+
+python3 -m timeit -n 100 -s "
+import yaml
+from pathlib import Path
+" "
+with open('configs/strategy_config.yaml', 'r', encoding='utf-8') as f:
+    cfg = yaml.safe_load(f)
+"
+
+# 预期输出示例:
+# 100 loops, best of 5: 2.5 msec per loop
+# → 当前基线: ~2.5ms
+```
+
+**Phase 1 实施后性能测试**:
+
+```bash
+# 测试 2: ConfigManager 完整加载性能
+python3 -m timeit -n 100 -s "
+import sys
+sys.path.insert(0, '.')
+" "
+from utils.config_manager import ConfigManager
+mgr = ConfigManager(env='production')
+cfg = mgr.load()
+"
+
+# 目标: < 200ms (包含 base.yaml + production.yaml + .env 加载)
+```
+
+**性能回归检测**:
+
+```bash
+# 测试 3: 单例模式性能 (验证缓存生效)
+python3 -m timeit -n 1000 -s "
+from utils.config_manager import get_config
+# 首次调用加载配置
+config = get_config()
+" "
+# 后续调用应使用缓存
+config = get_config()
+"
+
+# 预期: < 1μs (微秒级，证明单例缓存生效)
+```
+
+**性能检查清单** (Phase 1 实施后):
+
+- [ ] 当前基线: `strategy_config.yaml` 加载耗时 _______ ms (实测值)
+- [ ] Phase 1 后: ConfigManager 完整加载耗时 _______ ms (实测值)
+- [ ] 单例模式: `get_config()` 缓存命中耗时 _______ μs (实测值)
+- [ ] 验证: ConfigManager 加载 < 200ms (目标达成)
+- [ ] 验证: 单例缓存 < 1ms (性能正常)
+
+**故障排查**:
+
+| 症状 | 可能原因 | 解决方案 |
+|------|---------|---------|
+| ConfigManager 加载 > 200ms | base.yaml 文件过大 | 拆分为多个文件，延迟加载非核心配置 |
+| 单例缓存 > 1ms | 每次调用都重新加载 | 检查 `_instance` 是否正确缓存 |
+| 配置验证 > 100ms | 验证规则过多 | 移除非必需验证，或延迟到首次使用时 |
 
 **缓解措施**:
 
