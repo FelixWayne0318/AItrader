@@ -1,9 +1,16 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.4
-> 日期: 2026-01-24
-> 状态: **Phase 0 已完成，Phase 间关联影响已补充，可实施 Phase 1-6**
+> 版本: 2.5
+> 日期: 2026-01-25
+> 状态: **Phase 0 已完成，关联影响完整性审查已通过，可实施 Phase 1-6**
 > 审查: CONFIG_PROPOSAL_REVIEW.md
+
+**v2.5 更新说明**:
+- 🔴 **新增 Section 1.3**: 代码默认值不一致警告 (RSI 阈值 75/25 vs 70/30)
+- 🔴 **新增 Section 3.3**: YAML 结构兼容层设计 (解决 `strategy.*` vs 扁平结构问题)
+- 🔴 **重写 Section 5.4**: 按 Phase 回滚诊断命令 (具体可执行命令)
+- 🟡 **新增 Section 5.7**: 配置迁移脚本设计 (旧结构 → 新结构)
+- 🟡 **更新 base.yaml**: 新增诊断工具阈值配置
 
 **v2.4 更新说明**:
 - 新增 Section 5.6: Phase 间关联影响，包含依赖图、必须项详解、循环导入处理方案
@@ -16,11 +23,15 @@
 ## 目录
 
 1. [现状分析](#1-现状分析)
+   - 1.5 [代码默认值不一致警告](#15-代码默认值不一致警告-) 🔴 **v2.5 新增**
 2. [目标架构](#2-目标架构)
 3. [配置文件设计](#3-配置文件设计)
+   - 3.5 [YAML 结构兼容层](#35-yaml-结构兼容层-) 🔴 **v2.5 新增**
 4. [ConfigManager 类设计](#4-configmanager-类设计)
 5. [迁移计划](#5-迁移计划)
-   - 5.6 [Phase 间关联影响](#56-phase-间关联影响) ⭐ **新增**
+   - 5.4 [按 Phase 回滚诊断](#54-按-phase-回滚诊断) 🔴 **v2.5 重写**
+   - 5.6 [Phase 间关联影响](#56-phase-间关联影响)
+   - 5.7 [配置迁移脚本设计](#57-配置迁移脚本设计) 🟡 **v2.5 新增**
 6. [验证规则](#6-验证规则)
 7. [使用方式](#7-使用方式)
 8. [Pydantic 升级建议](#8-pydantic-升级建议-可选)
@@ -176,6 +187,48 @@ macd_fast = 5 if timeframe == '1m' else 12
                               ↑
                     main_live.py 硬编码值覆盖了 YAML 配置
 ```
+
+### 1.5 代码默认值不一致警告 🔴
+
+> ⚠️ **此问题必须在 Phase 1 实施前修复，否则 YAML 加载失败时会使用错误的默认值**
+
+**问题描述**: `DeepSeekAIStrategyConfig` 类中的默认值与 `strategy_config.yaml` 不一致。
+
+| 参数 | YAML 值 (正确) | 代码默认值 (错误) | 文件位置 |
+|------|---------------|-----------------|---------|
+| `rsi_extreme_threshold_upper` | 70 | **75.0** | `strategy/deepseek_strategy.py:94` |
+| `rsi_extreme_threshold_lower` | 30 | **25.0** | `strategy/deepseek_strategy.py:95` |
+
+**影响分析**:
+- 正常情况: YAML 配置加载成功，使用 70/30 ✅
+- 异常情况: YAML 加载失败，回退到代码默认值 75/25 ❌
+- 后果: RSI 极值检测行为不一致，可能导致交易信号异常
+
+**验证命令**:
+
+```bash
+# 检查当前代码默认值
+grep -n "rsi_extreme_threshold" strategy/deepseek_strategy.py | head -4
+
+# 检查 YAML 配置值
+grep -n "rsi_extreme_threshold" configs/strategy_config.yaml
+```
+
+**修复要求** (Phase 1 实施前必须完成):
+
+```python
+# strategy/deepseek_strategy.py - 修改默认值与 YAML 一致
+@dataclass
+class DeepSeekAIStrategyConfig:
+    # ...
+    rsi_extreme_threshold_upper: float = 70.0  # 从 75.0 改为 70.0
+    rsi_extreme_threshold_lower: float = 30.0  # 从 25.0 改为 30.0
+```
+
+**修复验证清单**:
+- [ ] `strategy/deepseek_strategy.py` 默认值已修改为 70.0/30.0
+- [ ] 运行 `python3 -c "from strategy.deepseek_strategy import DeepSeekAIStrategyConfig; c = DeepSeekAIStrategyConfig(); print(c.rsi_extreme_threshold_upper, c.rsi_extreme_threshold_lower)"` 输出 `70.0 30.0`
+- [ ] 运行 `python3 diagnose.py --quick` 无 RSI 相关警告
 
 ---
 
@@ -470,7 +523,30 @@ logging:
   log_signals: true
   log_positions: true
   log_ai_responses: true
+
+# =============================================================================
+# 诊断工具阈值 (diagnose_realtime.py 使用) 🟡 v2.5 新增
+# =============================================================================
+diagnostics:
+  # 布林带阈值
+  bb_overbought_threshold: 80       # BB% 超买阈值
+  bb_oversold_threshold: 20         # BB% 超卖阈值
+
+  # 多空比阈值
+  ls_ratio_extreme_bullish: 2.0     # 极度看多阈值
+  ls_ratio_bullish: 1.5             # 看多阈值
+  ls_ratio_extreme_bearish: 0.5     # 极度看空阈值
+  ls_ratio_bearish: 0.7             # 看空阈值
+
+  # MACD 阈值
+  macd_strong_signal_threshold: 50  # 强信号阈值
+
+  # 成交量阈值
+  volume_spike_multiplier: 2.0      # 成交量突增倍数
 ```
+
+> **说明**: 诊断工具阈值用于 `diagnose_realtime.py` 中的市场状态判断。
+> 将这些值配置化可确保诊断工具与策略使用相同的判断标准。
 
 ### 3.3 production.yaml (生产环境覆盖)
 
@@ -513,6 +589,90 @@ timing:
 
 logging:
   level: "DEBUG"
+```
+
+### 3.5 YAML 结构兼容层 🔴
+
+> ⚠️ **关键决策**: 当前 `strategy_config.yaml` 使用 `strategy.*` 前缀结构，与 `base.yaml` 设计的扁平结构不同
+
+#### 3.5.1 结构对比
+
+| 位置 | 当前结构 (`strategy_config.yaml`) | 设计结构 (`base.yaml`) |
+|------|--------------------------------|----------------------|
+| 仓位配置 | `strategy.position_management.base_usdt_amount` | `position.base_usdt_amount` |
+| AI 配置 | `strategy.deepseek.temperature` | `ai.deepseek.temperature` |
+| 风险配置 | `strategy.risk.rsi_extreme_threshold_upper` | `risk.rsi_extreme_threshold_upper` |
+| 指标配置 | `strategy.indicators.rsi_period` | `indicators.rsi_period` |
+
+#### 3.5.2 解决方案: 兼容层
+
+**推荐方案**: 在 ConfigManager 中实现路径别名兼容层
+
+```python
+# ConfigManager 兼容层设计
+class ConfigManager:
+    # 路径别名映射: 旧路径 → 新路径
+    PATH_ALIASES = {
+        ('strategy', 'position_management'): ('position',),
+        ('strategy', 'deepseek'): ('ai', 'deepseek'),
+        ('strategy', 'risk'): ('risk',),
+        ('strategy', 'indicators'): ('indicators',),
+        ('strategy', 'equity'): ('capital', 'equity'),
+        ('strategy', 'leverage'): ('capital', 'leverage'),
+    }
+
+    def get(self, *path, default=None) -> Any:
+        """
+        获取配置值，支持路径别名兼容
+
+        示例:
+        - config.get('strategy', 'position_management', 'base_usdt_amount')
+          → 自动映射到 config.get('position', 'base_usdt_amount')
+        """
+        # 1. 先尝试原始路径
+        value = self._get_nested(self._config, path)
+        if value is not None:
+            return value
+
+        # 2. 尝试路径别名
+        for old_prefix, new_prefix in self.PATH_ALIASES.items():
+            if path[:len(old_prefix)] == old_prefix:
+                new_path = new_prefix + path[len(old_prefix):]
+                value = self._get_nested(self._config, new_path)
+                if value is not None:
+                    self.logger.debug(f"Path alias: {path} → {new_path}")
+                    return value
+
+        return default
+```
+
+#### 3.5.3 迁移策略
+
+| 阶段 | 操作 | 兼容性 |
+|------|------|--------|
+| Phase 1 | ConfigManager 支持两种路径 | 旧代码继续工作 |
+| Phase 2 | main_live.py 使用新路径 | 旧 YAML 通过别名访问 |
+| Phase 3-4 | 其他文件使用新路径 | 旧 YAML 通过别名访问 |
+| Phase 5 | 迁移 YAML 到新结构 | 移除别名兼容层 |
+| Phase 6 | 删除 PATH_ALIASES | 只支持新结构 |
+
+#### 3.5.4 兼容层验证
+
+```bash
+# 验证兼容层工作正常
+python3 -c "
+from utils.config_manager import ConfigManager
+config = ConfigManager()
+config.load()
+
+# 测试两种路径都能访问
+old_path = config.get('strategy', 'position_management', 'base_usdt_amount')
+new_path = config.get('position', 'base_usdt_amount')
+print(f'Old path: {old_path}')
+print(f'New path: {new_path}')
+assert old_path == new_path, 'Path alias not working!'
+print('✅ 兼容层验证通过')
+"
 ```
 
 ---
@@ -1050,16 +1210,188 @@ def get_min_notional_usdt():
     return _get_config()['min_notional_usdt']
 ```
 
-### 5.4 回滚方案
+### 5.4 按 Phase 回滚诊断 🔴
 
-如果出现问题，可以快速回滚：
+> ⚠️ **每个 Phase 必须有明确的诊断命令和回滚步骤**
+
+#### 5.4.1 Phase 0 回滚 (RSI 行为异常)
+
+**症状**: RSI 极值检测提前/延迟触发，交易信号异常增加或减少
+
+**诊断命令**:
 
 ```bash
-# 保留旧的 main_live.py
-git checkout HEAD~1 -- main_live.py
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
 
-# 或完全回滚
-git revert <commit-hash>
+# 1. 检查当前 RSI 阈值配置
+python3 -c "
+import yaml
+with open('configs/strategy_config.yaml') as f:
+    cfg = yaml.safe_load(f)
+upper = cfg.get('strategy',{}).get('risk',{}).get('rsi_extreme_threshold_upper', 'NOT_SET')
+lower = cfg.get('strategy',{}).get('risk',{}).get('rsi_extreme_threshold_lower', 'NOT_SET')
+print(f'YAML RSI Upper: {upper}')
+print(f'YAML RSI Lower: {lower}')
+if upper == 70 and lower == 30:
+    print('✅ YAML 配置正确')
+else:
+    print('❌ YAML 配置异常')
+"
+
+# 2. 检查日志中的 RSI 值
+sudo journalctl -u nautilus-trader --since "1 hour ago" | grep -i "rsi"
+```
+
+**回滚命令**:
+
+```bash
+# 回滚 main_live.py 到 Phase 0 之前
+git log --oneline -5  # 找到 Phase 0 之前的 commit
+git checkout <commit-before-phase0> -- main_live.py
+sudo systemctl restart nautilus-trader
+```
+
+---
+
+#### 5.4.2 Phase 1 回滚 (ConfigManager 加载失败)
+
+**症状**: 启动失败，报错 `FileNotFoundError: base.yaml` 或 `ImportError: config_manager`
+
+**诊断命令**:
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+
+# 1. 检查 ConfigManager 是否能加载
+python3 -c "
+try:
+    from utils.config_manager import ConfigManager
+    config = ConfigManager()
+    config.load()
+    print('✅ ConfigManager 加载成功')
+    print(f'  Environment: {config.env}')
+    print(f'  Equity: {config.get(\"capital\", \"equity\")}')
+except Exception as e:
+    print(f'❌ ConfigManager 加载失败: {e}')
+"
+
+# 2. 检查 base.yaml 是否存在
+ls -la configs/base.yaml
+
+# 3. 检查 YAML 语法
+python3 -c "
+import yaml
+try:
+    with open('configs/base.yaml') as f:
+        yaml.safe_load(f)
+    print('✅ base.yaml 语法正确')
+except Exception as e:
+    print(f'❌ YAML 语法错误: {e}')
+"
+```
+
+**回滚命令**:
+
+```bash
+# 删除 ConfigManager，恢复旧加载方式
+git checkout HEAD~1 -- utils/config_manager.py main_live.py
+rm -f configs/base.yaml configs/production.yaml configs/development.yaml
+sudo systemctl restart nautilus-trader
+```
+
+---
+
+#### 5.4.3 Phase 3 回滚 (循环导入错误)
+
+**症状**: 启动失败，报错 `ImportError: cannot import name ... from partially initialized module`
+
+**诊断命令**:
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+
+# 1. 检查是否有循环导入
+python3 -c "
+try:
+    import strategy.trading_logic
+    print('✅ trading_logic 导入成功')
+except ImportError as e:
+    print(f'❌ 循环导入错误: {e}')
+"
+
+# 2. 检查模块导入顺序
+python3 -c "
+import sys
+sys.settrace(lambda *args: print(args[0].f_code.co_filename) if 'trading_logic' in str(args) else None)
+import strategy.trading_logic
+" 2>&1 | head -20
+```
+
+**回滚命令**:
+
+```bash
+# 恢复 trading_logic.py 常量硬编码
+git checkout HEAD~1 -- strategy/trading_logic.py
+sudo systemctl restart nautilus-trader
+```
+
+---
+
+#### 5.4.4 Phase 4 回滚 (单个 utils 文件失败)
+
+**症状**: 特定功能失败 (如 Telegram 通知、K线持久化)
+
+**诊断命令**:
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+
+# 1. 检查哪个 utils 模块有问题
+for module in telegram_bot telegram_command_handler bar_persistence binance_account deepseek_client; do
+    python3 -c "from utils.$module import *" 2>&1 | grep -q "Error" && echo "❌ $module" || echo "✅ $module"
+done
+
+# 2. 检查特定模块
+python3 -c "
+from utils.telegram_command_handler import TelegramCommandHandler
+print('✅ TelegramCommandHandler 导入成功')
+"
+```
+
+**回滚命令** (单文件):
+
+```bash
+# 只回滚有问题的文件
+git checkout HEAD~1 -- utils/telegram_command_handler.py
+
+# 或批量回滚所有 utils
+git checkout HEAD~1 -- utils/bar_persistence.py utils/telegram_command_handler.py utils/deepseek_client.py
+sudo systemctl restart nautilus-trader
+```
+
+---
+
+#### 5.4.5 跨 Phase 回滚表
+
+| 当前 Phase | 回滚到 | 需要恢复的文件 | 命令 |
+|-----------|-------|--------------|------|
+| Phase 1 | Phase 0 | `config_manager.py`, `main_live.py`, `base.yaml` | 见 5.4.2 |
+| Phase 2 | Phase 1 | `main_live.py` | `git checkout HEAD~1 -- main_live.py` |
+| Phase 3 | Phase 2 | `trading_logic.py` | `git checkout HEAD~1 -- strategy/trading_logic.py` |
+| Phase 4 | Phase 3 | `utils/*.py` (多文件) | `git checkout HEAD~1 -- utils/` |
+| Phase 5 | Phase 4 | `main_live.py` (CLI 参数) | `git checkout HEAD~1 -- main_live.py` |
+
+**完全回滚到初始状态**:
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+git fetch origin main
+git reset --hard origin/main
+sudo systemctl restart nautilus-trader
 ```
 
 ### 5.5 兼容性保证
@@ -1289,6 +1621,178 @@ git checkout HEAD~1 -- utils/oco_manager.py
 - [ ] 全量功能测试通过
 - [ ] 运行 `python3 diagnose.py` 全部检查通过
 - [ ] 更新 CLAUDE.md 和 README.md
+
+### 5.7 配置迁移脚本设计 🟡
+
+> 用于将旧的 `strategy_config.yaml` 结构迁移到新的 `base.yaml` 结构
+
+#### 5.7.1 迁移路径映射
+
+```python
+# scripts/migrate_config.py
+
+"""
+配置迁移脚本：strategy_config.yaml → base.yaml
+
+使用方法:
+    python3 scripts/migrate_config.py --input configs/strategy_config.yaml --output configs/base.yaml
+    python3 scripts/migrate_config.py --dry-run  # 只显示将要进行的更改
+"""
+
+# 路径映射规则
+PATH_MIGRATIONS = {
+    # 旧路径 → 新路径
+    ('strategy', 'instrument_id'): ('trading', 'instrument_id'),
+    ('strategy', 'bar_type'): ('trading', 'bar_type'),
+
+    # 资金配置
+    ('strategy', 'equity'): ('capital', 'equity'),
+    ('strategy', 'leverage'): ('capital', 'leverage'),
+    ('strategy', 'use_real_balance_as_equity'): ('capital', 'use_real_balance_as_equity'),
+
+    # 仓位管理
+    ('strategy', 'position_management', 'base_usdt_amount'): ('position', 'base_usdt_amount'),
+    ('strategy', 'position_management', 'high_confidence_multiplier'): ('position', 'high_confidence_multiplier'),
+    ('strategy', 'position_management', 'medium_confidence_multiplier'): ('position', 'medium_confidence_multiplier'),
+    ('strategy', 'position_management', 'low_confidence_multiplier'): ('position', 'low_confidence_multiplier'),
+    ('strategy', 'position_management', 'max_position_ratio'): ('position', 'max_position_ratio'),
+    ('strategy', 'position_management', 'min_trade_amount'): ('position', 'min_trade_amount'),
+
+    # 技术指标 (路径保持但去掉 strategy 前缀)
+    ('strategy', 'indicators', '*'): ('indicators', '*'),
+
+    # AI 配置
+    ('strategy', 'deepseek', '*'): ('ai', 'deepseek', '*'),
+
+    # 风险配置
+    ('strategy', 'risk', '*'): ('risk', '*'),
+
+    # Telegram
+    ('strategy', 'telegram', '*'): ('telegram', '*'),
+
+    # 时间配置
+    ('strategy', 'timer_interval_sec'): ('timing', 'timer_interval_sec'),
+
+    # 日志配置
+    ('logging', '*'): ('logging', '*'),
+}
+```
+
+#### 5.7.2 迁移脚本核心逻辑
+
+```python
+import yaml
+from pathlib import Path
+
+def migrate_config(old_config: dict) -> dict:
+    """
+    将旧配置结构迁移到新结构
+
+    Returns:
+        迁移后的配置字典
+    """
+    new_config = {}
+
+    def set_nested(d: dict, path: tuple, value):
+        """设置嵌套字典值"""
+        for key in path[:-1]:
+            d = d.setdefault(key, {})
+        d[path[-1]] = value
+
+    def get_nested(d: dict, path: tuple):
+        """获取嵌套字典值"""
+        for key in path:
+            if key == '*':
+                return d  # 通配符，返回整个子树
+            if not isinstance(d, dict) or key not in d:
+                return None
+            d = d[key]
+        return d
+
+    # 执行迁移
+    for old_path, new_path in PATH_MIGRATIONS.items():
+        if '*' in old_path:
+            # 通配符处理：迁移整个子树
+            prefix = old_path[:-1]
+            subtree = get_nested(old_config, prefix)
+            if subtree:
+                new_prefix = new_path[:-1] if new_path[-1] == '*' else new_path
+                set_nested(new_config, new_prefix, subtree)
+        else:
+            value = get_nested(old_config, old_path)
+            if value is not None:
+                set_nested(new_config, new_path, value)
+
+    return new_config
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description='Migrate config structure')
+    parser.add_argument('--input', default='configs/strategy_config.yaml')
+    parser.add_argument('--output', default='configs/base.yaml')
+    parser.add_argument('--dry-run', action='store_true')
+    args = parser.parse_args()
+
+    with open(args.input) as f:
+        old_config = yaml.safe_load(f)
+
+    new_config = migrate_config(old_config)
+
+    if args.dry_run:
+        print(yaml.dump(new_config, allow_unicode=True, default_flow_style=False))
+    else:
+        with open(args.output, 'w') as f:
+            yaml.dump(new_config, f, allow_unicode=True, default_flow_style=False)
+        print(f'✅ Migrated {args.input} → {args.output}')
+```
+
+#### 5.7.3 迁移验证
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+
+# 1. 干运行，查看将要迁移的内容
+python3 scripts/migrate_config.py --dry-run
+
+# 2. 执行迁移
+python3 scripts/migrate_config.py
+
+# 3. 验证迁移结果
+python3 -c "
+import yaml
+with open('configs/base.yaml') as f:
+    cfg = yaml.safe_load(f)
+
+# 验证关键路径
+checks = [
+    ('trading.instrument_id', cfg.get('trading', {}).get('instrument_id')),
+    ('capital.equity', cfg.get('capital', {}).get('equity')),
+    ('position.base_usdt_amount', cfg.get('position', {}).get('base_usdt_amount')),
+    ('ai.deepseek.temperature', cfg.get('ai', {}).get('deepseek', {}).get('temperature')),
+    ('risk.rsi_extreme_threshold_upper', cfg.get('risk', {}).get('rsi_extreme_threshold_upper')),
+]
+
+for path, value in checks:
+    status = '✅' if value is not None else '❌'
+    print(f'{status} {path}: {value}')
+"
+
+# 4. 对比新旧配置
+diff <(python3 -c "import yaml; print(yaml.dump(yaml.safe_load(open('configs/strategy_config.yaml')), sort_keys=True))") \
+     <(python3 -c "import yaml; print(yaml.dump(yaml.safe_load(open('configs/base.yaml')), sort_keys=True))")
+```
+
+#### 5.7.4 回滚迁移
+
+```bash
+# 如果迁移出现问题，可以从 git 恢复
+git checkout HEAD~1 -- configs/base.yaml
+
+# 或删除 base.yaml，继续使用旧结构
+rm configs/base.yaml
+# ConfigManager 会自动回退到 strategy_config.yaml
+```
 
 ---
 
