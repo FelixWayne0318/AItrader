@@ -9,6 +9,7 @@
 trading:
   # 交易对配置
   instrument_id: "BTCUSDT-PERP.BINANCE"
+  timeframe: "15m"                # 时间周期 (1m/5m/15m/1h/4h/1d)
   bar_type: "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL"
 
   # 数据获取
