@@ -74,13 +74,19 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     macd_slow: int = 26
     bb_period: int = 20
     bb_std: float = 2.0
+    volume_ma_period: int = 20  # Volume MA period for analysis
+    support_resistance_lookback: int = 20  # Support/resistance lookback period
 
     # AI configuration
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-chat"
     deepseek_temperature: float = 0.3  # Increased for debate diversity
     deepseek_max_retries: int = 2
+    deepseek_retry_delay: float = 1.0  # Retry delay in seconds
+    deepseek_signal_history_count: int = 30  # Signal history size
     debate_rounds: int = 2  # Bull/Bear debate rounds (1-3)
+    multi_agent_retry_delay: float = 1.0  # Multi-agent retry delay
+    multi_agent_json_parse_max_retries: int = 2  # JSON parse max retries
 
     # Sentiment
     sentiment_enabled: bool = True
@@ -253,6 +259,8 @@ class DeepSeekAIStrategy(Strategy):
             macd_slow=config.macd_slow,
             bb_period=config.bb_period,
             bb_std=config.bb_std,
+            volume_ma_period=config.volume_ma_period,
+            support_resistance_lookback=config.support_resistance_lookback,
         )
 
         # DeepSeek AI analyzer
@@ -265,6 +273,8 @@ class DeepSeekAIStrategy(Strategy):
             model=config.deepseek_model,
             temperature=config.deepseek_temperature,
             max_retries=config.deepseek_max_retries,
+            signal_history_count=config.deepseek_signal_history_count,
+            retry_delay=config.deepseek_retry_delay,
         )
 
         # Multi-Agent AI analyzer (Bull/Bear Debate) - for parallel comparison
@@ -273,6 +283,8 @@ class DeepSeekAIStrategy(Strategy):
             model=config.deepseek_model,
             temperature=config.deepseek_temperature,
             debate_rounds=config.debate_rounds,
+            retry_delay=config.multi_agent_retry_delay,
+            json_parse_max_retries=config.multi_agent_json_parse_max_retries,
         )
         self.log.info(f"✅ Multi-Agent analyzer initialized (debate_rounds={config.debate_rounds})")
 

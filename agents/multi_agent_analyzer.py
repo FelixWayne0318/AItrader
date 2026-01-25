@@ -47,6 +47,8 @@ class MultiAgentAnalyzer:
         temperature: float = 0.3,
         base_url: str = "https://api.deepseek.com",
         debate_rounds: int = 2,
+        retry_delay: float = 1.0,  # Configurable retry delay
+        json_parse_max_retries: int = 2,  # Configurable JSON parse retries
     ):
         """
         Initialize the multi-agent analyzer.
@@ -63,11 +65,17 @@ class MultiAgentAnalyzer:
             API base URL
         debate_rounds : int
             Number of debate rounds between Bull and Bear
+        retry_delay : float
+            Delay in seconds between retry attempts (default: 1.0)
+        json_parse_max_retries : int
+            Maximum retries for JSON parsing failures (default: 2)
         """
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
         self.temperature = temperature
         self.debate_rounds = debate_rounds
+        self.retry_delay = retry_delay
+        self.json_parse_max_retries = json_parse_max_retries
 
         # Setup logger
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
