@@ -297,7 +297,12 @@ class BinanceBarFetcher:
     This is the simplest approach - no storage needed!
     """
 
-    def __init__(self, api_type: str = "futures"):
+    def __init__(
+        self,
+        api_type: str = "futures",
+        max_limit: int = 1500,
+        timeout: float = 10.0,
+    ):
         """
         Initialize Binance bar fetcher.
 
@@ -305,12 +310,18 @@ class BinanceBarFetcher:
         ----------
         api_type : str
             Either 'spot' or 'futures'
+        max_limit : int, optional
+            Maximum klines to fetch per request, default: 1500
+        timeout : float, optional
+            Request timeout (seconds), default: 10.0
         """
         self.api_type = api_type
         self.base_url = (
             "https://fapi.binance.com" if api_type == "futures"
             else "https://api.binance.com"
         )
+        self.max_limit = max_limit
+        self.timeout = timeout
 
     def fetch_bars(
         self,
@@ -343,10 +354,10 @@ class BinanceBarFetcher:
             params = {
                 'symbol': symbol,
                 'interval': interval,
-                'limit': min(limit, 1500),  # Binance max
+                'limit': min(limit, self.max_limit),  # Binance max
             }
 
-            response = requests.get(endpoint, params=params, timeout=10)
+            response = requests.get(endpoint, params=params, timeout=self.timeout)
             response.raise_for_status()
 
             klines = response.json()

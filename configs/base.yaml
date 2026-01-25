@@ -1,0 +1,278 @@
+# configs/base.yaml
+# AItrader 配置文件 - 所有参数的完整定义
+# 此文件包含所有配置项的默认值，是配置的唯一来源
+# 版本: 2.0
+
+# =============================================================================
+# 交易配置
+# =============================================================================
+trading:
+  # 交易对配置
+  instrument_id: "BTCUSDT-PERP.BINANCE"
+  bar_type: "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL"
+
+  # 数据获取
+  historical_bars_limit: 200      # 启动时获取的历史K线数量
+
+# =============================================================================
+# 交易逻辑常量 (来自 strategy/trading_logic.py)
+# =============================================================================
+trading_logic:
+  # Binance 交易限制
+  min_notional_usdt: 100.0        # Binance 最低名义价值 (不建议修改)
+  min_notional_safety_margin: 1.01  # 安全边际 1%
+
+  # 止损止盈默认值
+  min_sl_distance_pct: 0.01       # 最小止损距离 1%
+  min_tp_distance_pct: 0.005      # 最小止盈距离 0.5%
+  default_sl_pct: 0.02            # 默认止损 2%
+  default_tp_pct: 0.03            # 默认止盈 3%
+
+  # 按信心级别的止盈配置
+  tp_pct_by_confidence:
+    high: 0.03                    # 高信心: 3%
+    medium: 0.02                  # 中等信心: 2%
+    low: 0.01                     # 低信心: 1%
+
+  # 仓位精度调整
+  quantity_adjustment_step: 0.001 # BTC 仓位调整步长
+
+# =============================================================================
+# 资金配置
+# =============================================================================
+capital:
+  equity: 1000                    # 备用资金值 (当无法获取真实余额时使用)
+  leverage: 5                     # 杠杆倍数 (建议 3-10)
+  use_real_balance_as_equity: true  # 自动从 Binance 获取真实余额
+
+# =============================================================================
+# 仓位管理
+# =============================================================================
+position:
+  base_usdt_amount: 100           # 基础仓位 USDT (Binance 最低 $100)
+  high_confidence_multiplier: 1.5   # 高信心仓位乘数
+  medium_confidence_multiplier: 1.0 # 中等信心仓位乘数
+  low_confidence_multiplier: 0.5    # 低信心仓位乘数
+  max_position_ratio: 0.30        # 最大仓位比例 (占 equity 的比例)
+  trend_strength_multiplier: 1.2  # 趋势强度乘数
+  min_trade_amount: 0.001         # 最小交易量 (BTC)
+  adjustment_threshold: 0.001     # 仓位调整阈值 (BTC)
+
+# =============================================================================
+# 技术指标
+# =============================================================================
+indicators:
+  # SMA 配置
+  sma_periods: [5, 20, 50]
+
+  # EMA 配置
+  ema_periods: [12, 26]
+
+  # RSI 配置
+  rsi_period: 14
+
+  # MACD 配置
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+
+  # 布林带配置
+  bb_period: 20
+  bb_std: 2.0
+
+  # 其他
+  volume_ma_period: 20
+  support_resistance_lookback: 20
+
+# =============================================================================
+# AI 配置
+# =============================================================================
+ai:
+  # DeepSeek 配置
+  deepseek:
+    api_key: ""                   # 从 .env 读取 (DEEPSEEK_API_KEY)
+    model: "deepseek-chat"
+    temperature: 0.3              # 注意: main_live.py 曾硬编码为 0.1
+    max_retries: 2
+    retry_delay: 1.0              # API 重试延迟
+    base_url: "https://api.deepseek.com"
+
+  # 多代理辩论配置
+  multi_agent:
+    debate_rounds: 2              # 辩论轮数 (1-3)
+    retry_delay: 1.0              # 重试延迟 (秒)
+    json_parse_max_retries: 2     # JSON 解析重试
+
+  # 信号处理
+  signal:
+    history_count: 30             # 信号历史队列大小 (原 maxlen=30)
+    skip_on_divergence: true      # [LEGACY] AI 分歧时跳过交易
+    use_confidence_fusion: true   # [LEGACY] 不再使用
+
+# =============================================================================
+# 情绪数据
+# =============================================================================
+sentiment:
+  enabled: true
+  provider: "binance"             # binance / cryptooracle (已弃用)
+  lookback_hours: 4
+  timeframe: "15m"
+  weight: 0.30                    # 决策权重
+  timeout: 10                     # 请求超时 (秒)
+  update_interval_minutes: 15     # 更新间隔 (分钟)
+
+# =============================================================================
+# 风险管理
+# =============================================================================
+risk:
+  # 信心阈值
+  min_confidence_to_trade: "MEDIUM"  # LOW / MEDIUM / HIGH
+  allow_reversals: true
+  require_high_confidence_for_reversal: false
+  max_consecutive_same_signal: 5
+
+  # RSI 阈值 - 注意: main_live.py 曾硬编码为 75/25
+  rsi_extreme_threshold_upper: 70.0  # RSI 超买阈值
+  rsi_extreme_threshold_lower: 30.0  # RSI 超卖阈值
+  rsi_extreme_multiplier: 0.7
+
+  # 止损止盈
+  stop_loss:
+    enabled: true
+    use_support_resistance: true
+    buffer_pct: 0.001             # 缓冲 0.1%
+
+  take_profit:
+    high_confidence_pct: 0.03     # 高信心: 3%
+    medium_confidence_pct: 0.02   # 中等信心: 2%
+    low_confidence_pct: 0.01      # 低信心: 1%
+
+  # 移动止损
+  trailing_stop:
+    enabled: true
+    activation_pct: 0.01          # 盈利 1% 后启动
+    distance_pct: 0.005           # 跟踪距离 0.5%
+    update_threshold_pct: 0.002   # 更新阈值 0.2%
+
+  # OCO 订单
+  oco:
+    enabled: true                 # 控制孤儿订单清理
+
+  # Partial Take Profit (部分止盈) - 功能未实现
+  partial_tp:
+    enabled: false  # 未实现 - 请保持 false
+    levels:  # 止盈级别配置 (保留用于未来实现)
+      - {profit_pct: 0.02, position_pct: 0.5}  # 盈利2%时平50%仓位
+      - {profit_pct: 0.04, position_pct: 0.5}  # 盈利4%时平剩余50%仓位
+
+# =============================================================================
+# 网络配置
+# =============================================================================
+network:
+  # 合约发现重试
+  instrument_discovery:
+    max_retries: 60               # 最大重试次数
+    retry_interval: 1.0           # 重试间隔 (秒)
+
+  # Binance API
+  binance:
+    recv_window: 5000             # 接收窗口 (ms)
+    balance_cache_ttl: 5.0        # 余额缓存时间 (秒)
+
+  # K线数据持久化
+  bar_persistence:
+    max_limit: 1500               # Binance K线最大获取数量
+    timeout: 10                   # 请求超时 (秒)
+
+  # OCO 订单管理 (Redis)
+  oco_manager:
+    socket_timeout: 5             # Redis socket 超时 (秒)
+    socket_connect_timeout: 5     # Redis 连接超时 (秒)
+
+  # Telegram
+  telegram:
+    startup_delay: 5              # 启动延迟 (秒)
+    polling_max_retries: 3        # 轮询最大重试次数
+    polling_base_delay: 10        # 轮询重试基础延迟 (秒)
+    message_timeout: 30           # 消息发送超时 (秒)
+
+# =============================================================================
+# Telegram 通知
+# =============================================================================
+telegram:
+  enabled: true
+  # bot_token 和 chat_id 从 .env 读取 (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+  bot_token: ""
+  chat_id: ""
+
+  # 通知类型
+  notify:
+    signals: true
+    fills: true
+    positions: true
+    errors: true
+
+# =============================================================================
+# 执行配置
+# =============================================================================
+execution:
+  order_type: "MARKET"
+  time_in_force: "GTC"
+  reduce_only_for_closes: true
+  position_adjustment_threshold: 0.001  # Min 0.001 BTC difference to adjust
+
+# =============================================================================
+# 定时器配置
+# =============================================================================
+timing:
+  timer_interval_sec: 900         # 分析间隔 (秒)，15分钟
+
+# =============================================================================
+# 日志配置
+# =============================================================================
+logging:
+  level: "INFO"
+  to_file: true
+  file: "logs/deepseek_strategy.log"
+  log_signals: true
+  log_positions: true
+  log_ai_responses: true
+
+# =============================================================================
+# 诊断工具阈值 (diagnose_realtime.py 使用)
+# =============================================================================
+diagnostics:
+  # 布林带阈值
+  bb_overbought_threshold: 80       # BB% 超买阈值
+  bb_oversold_threshold: 20         # BB% 超卖阈值
+
+  # 多空比阈值
+  ls_ratio_extreme_bullish: 2.0     # 极度看多阈值
+  ls_ratio_bullish: 1.5             # 看多阈值
+  ls_ratio_extreme_bearish: 0.5     # 极度看空阈值
+  ls_ratio_bearish: 0.7             # 看空阈值
+
+  # MACD 阈值
+  macd_strong_signal_threshold: 50  # 强信号阈值
+
+  # 成交量阈值
+  volume_spike_multiplier: 2.0      # 成交量突增倍数
+
+# =============================================================================
+# 运行时控制 (从环境变量读取)
+# =============================================================================
+runtime:
+  test_mode: false      # 测试模式 (从 TEST_MODE 环境变量读取)
+  auto_confirm: false   # 自动确认 (从 AUTO_CONFIRM 环境变量读取)
+
+# =============================================================================
+# Binance API 配置 (敏感信息从 .env 读取)
+# =============================================================================
+binance:
+  # api_key 和 api_secret 从 .env 读取 (BINANCE_API_KEY, BINANCE_API_SECRET)
+  # testnet_api_key 和 testnet_api_secret 从 .env 读取 (可选)
+  # 注意: 以下字段会被 ConfigManager 从环境变量动态填充
+  api_key: ""
+  api_secret: ""
+  testnet_api_key: ""
+  testnet_api_secret: ""

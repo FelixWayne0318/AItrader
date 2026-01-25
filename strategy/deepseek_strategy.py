@@ -74,13 +74,19 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     macd_slow: int = 26
     bb_period: int = 20
     bb_std: float = 2.0
+    volume_ma_period: int = 20  # Volume MA period for analysis
+    support_resistance_lookback: int = 20  # Support/resistance lookback period
 
     # AI configuration
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-chat"
     deepseek_temperature: float = 0.3  # Increased for debate diversity
     deepseek_max_retries: int = 2
+    deepseek_retry_delay: float = 1.0  # Retry delay in seconds
+    deepseek_signal_history_count: int = 30  # Signal history size
     debate_rounds: int = 2  # Bull/Bear debate rounds (1-3)
+    multi_agent_retry_delay: float = 1.0  # Multi-agent retry delay
+    multi_agent_json_parse_max_retries: int = 2  # JSON parse max retries
 
     # Sentiment
     sentiment_enabled: bool = True
@@ -91,8 +97,8 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     min_confidence_to_trade: str = "MEDIUM"
     allow_reversals: bool = True
     require_high_confidence_for_reversal: bool = False
-    rsi_extreme_threshold_upper: float = 75.0
-    rsi_extreme_threshold_lower: float = 25.0
+    rsi_extreme_threshold_upper: float = 70.0  # 与 strategy_config.yaml 一致
+    rsi_extreme_threshold_lower: float = 30.0  # 与 strategy_config.yaml 一致
     rsi_extreme_multiplier: float = 0.7
 
     # [LEGACY - 不再使用] Multi-Agent Divergence Handling
@@ -141,6 +147,18 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
 
     # Timing
     timer_interval_sec: int = 900
+
+    # Network configuration
+    network_telegram_startup_delay: float = 5.0
+    network_telegram_polling_max_retries: int = 3
+    network_telegram_polling_base_delay: float = 10.0
+    network_binance_recv_window: int = 5000
+    network_binance_balance_cache_ttl: float = 5.0
+    network_bar_persistence_max_limit: int = 1500
+    network_bar_persistence_timeout: float = 10.0
+    network_oco_manager_socket_timeout: float = 5.0
+    network_oco_manager_socket_connect_timeout: float = 5.0
+    sentiment_timeout: float = 10.0
 
 
 class DeepSeekAIStrategy(Strategy):
@@ -227,7 +245,11 @@ class DeepSeekAIStrategy(Strategy):
         self._cached_current_price: float = 0.0
 
         # Real-time Binance account fetcher for accurate balance info
-        self.binance_account = BinanceAccountFetcher(logger=self.log)
+        self.binance_account = BinanceAccountFetcher(
+            logger=self.log,
+            cache_ttl=config.network_binance_balance_cache_ttl,
+            recv_window=config.network_binance_recv_window,
+        )
         self._real_balance: Dict[str, float] = {}  # Cached real balance from Binance
 
         # Track trailing stop state for each position
@@ -253,6 +275,8 @@ class DeepSeekAIStrategy(Strategy):
             macd_slow=config.macd_slow,
             bb_period=config.bb_period,
             bb_std=config.bb_std,
+            volume_ma_period=config.volume_ma_period,
+            support_resistance_lookback=config.support_resistance_lookback,
         )
 
         # DeepSeek AI analyzer
@@ -265,6 +289,8 @@ class DeepSeekAIStrategy(Strategy):
             model=config.deepseek_model,
             temperature=config.deepseek_temperature,
             max_retries=config.deepseek_max_retries,
+            signal_history_count=config.deepseek_signal_history_count,
+            retry_delay=config.deepseek_retry_delay,
         )
 
         # Multi-Agent AI analyzer (Bull/Bear Debate) - for parallel comparison
@@ -273,6 +299,8 @@ class DeepSeekAIStrategy(Strategy):
             model=config.deepseek_model,
             temperature=config.deepseek_temperature,
             debate_rounds=config.debate_rounds,
+            retry_delay=config.multi_agent_retry_delay,
+            json_parse_max_retries=config.multi_agent_json_parse_max_retries,
         )
         self.log.info(f"✅ Multi-Agent analyzer initialized (debate_rounds={config.debate_rounds})")
 
@@ -319,7 +347,10 @@ class DeepSeekAIStrategy(Strategy):
                             token=bot_token,
                             allowed_chat_ids=allowed_chat_ids,
                             strategy_callback=command_callback,
-                            logger=self.log
+                            logger=self.log,
+                            startup_delay=config.network_telegram_startup_delay,
+                            polling_max_retries=config.network_telegram_polling_max_retries,
+                            polling_base_delay=config.network_telegram_polling_base_delay,
                         )
 
                         # Start command handler in background thread with isolated event loop
@@ -401,6 +432,7 @@ class DeepSeekAIStrategy(Strategy):
             self.sentiment_fetcher = SentimentDataFetcher(
                 lookback_hours=config.sentiment_lookback_hours,
                 timeframe=sentiment_tf,
+                timeout=config.sentiment_timeout,
             )
             self.log.info(f"Sentiment fetcher initialized with timeframe: {sentiment_tf}")
         else:

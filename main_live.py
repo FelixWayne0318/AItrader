@@ -6,6 +6,7 @@ Runs the DeepSeek AI strategy on Binance Futures (BTCUSDT-PERP) with live market
 
 import os
 import sys
+import argparse
 import yaml
 from decimal import Decimal
 from pathlib import Path
@@ -24,6 +25,8 @@ apply_all_patches()
 # =============================================================================
 
 from dotenv import load_dotenv
+
+from utils.config_manager import ConfigManager
 
 from nautilus_trader.adapters.binance.common.enums import BinanceAccountType
 from nautilus_trader.adapters.binance.config import BinanceDataClientConfig, BinanceExecClientConfig
@@ -126,31 +129,33 @@ def get_env_int(key: str, default: str) -> int:
     return int(value)
 
 
-def get_strategy_config() -> DeepSeekAIStrategyConfig:
+def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConfig:
     """
-    Build strategy configuration from environment variables.
+    Build strategy configuration from ConfigManager.
+
+    Parameters
+    ----------
+    config_manager : ConfigManager
+        Configuration manager instance
 
     Returns
     -------
     DeepSeekAIStrategyConfig
         Strategy configuration
     """
-    # Get API keys
+    # Get API keys from environment
     deepseek_api_key = get_env_str('DEEPSEEK_API_KEY', '')
     if not deepseek_api_key:
         raise ValueError("DEEPSEEK_API_KEY not found in environment variables")
 
-    # Load YAML config
-    yaml_config = load_yaml_config()
-    strategy_yaml = yaml_config.get('strategy', {})
-    
-    # Get strategy parameters from env or YAML or use defaults
-    position_config = strategy_yaml.get('position_management', {})
-    equity = get_env_float('EQUITY', str(strategy_yaml.get('equity', '1000')))
-    leverage = get_env_float('LEVERAGE', str(strategy_yaml.get('leverage', '5')))
-    base_position = get_env_float('BASE_POSITION_USDT', str(position_config.get('base_usdt_amount', '100')))
-    timeframe = get_env_str('TIMEFRAME', '15m')  # Production: 15-minute timeframe
-    
+    # Get configuration values via ConfigManager
+    equity = get_env_float('EQUITY', str(config_manager.get('capital', 'equity', default=1000)))
+    leverage = get_env_float('LEVERAGE', str(config_manager.get('capital', 'leverage', default=5)))
+    base_position = get_env_float('BASE_POSITION_USDT', str(config_manager.get('position', 'base_usdt_amount', default=100)))
+
+    # Get timeframe from environment or config (production: 15m)
+    timeframe = get_env_str('TIMEFRAME', config_manager.get('trading', 'timeframe', default='15m'))
+
     # Debug output
     print(f"[CONFIG] Equity: {equity}")
     print(f"[CONFIG] Base Position: {base_position}")
@@ -166,74 +171,98 @@ def get_strategy_config() -> DeepSeekAIStrategyConfig:
         '1d': '1-DAY-LAST',
     }
     bar_spec = timeframe_to_bar_spec.get(timeframe, '15-MINUTE-LAST')
-    final_bar_type = f"BTCUSDT-PERP.BINANCE-{bar_spec}-EXTERNAL"
+
+    # Get instrument from config
+    instrument_id = config_manager.get('trading', 'instrument_id', default='BTCUSDT-PERP.BINANCE')
+    symbol = instrument_id.split('.')[0]  # Extract symbol from instrument_id
+    final_bar_type = f"{symbol}.BINANCE-{bar_spec}-EXTERNAL"
 
     return DeepSeekAIStrategyConfig(
-        instrument_id="BTCUSDT-PERP.BINANCE",
+        instrument_id=instrument_id,
         bar_type=final_bar_type,
 
         # Capital
         equity=equity,
         leverage=leverage,
-        use_real_balance_as_equity=strategy_yaml.get('use_real_balance_as_equity', True),  # 自动获取真实余额
+        use_real_balance_as_equity=config_manager.get('capital', 'use_real_balance_as_equity', default=True),
 
         # Position sizing
         base_usdt_amount=base_position,
-        high_confidence_multiplier=get_env_float('HIGH_CONFIDENCE_MULTIPLIER', str(position_config.get('high_confidence_multiplier', '1.5'))),
-        medium_confidence_multiplier=get_env_float('MEDIUM_CONFIDENCE_MULTIPLIER', str(position_config.get('medium_confidence_multiplier', '1.0'))),
-        low_confidence_multiplier=get_env_float('LOW_CONFIDENCE_MULTIPLIER', str(position_config.get('low_confidence_multiplier', '0.5'))),
-        max_position_ratio=get_env_float('MAX_POSITION_RATIO', str(position_config.get('max_position_ratio', '0.30'))),
-        trend_strength_multiplier=get_env_float('TREND_STRENGTH_MULTIPLIER', str(position_config.get('trend_strength_multiplier', '1.2'))),
-        min_trade_amount=0.001,  # Binance minimum
+        high_confidence_multiplier=get_env_float('HIGH_CONFIDENCE_MULTIPLIER', str(config_manager.get('position', 'high_confidence_multiplier', default=1.5))),
+        medium_confidence_multiplier=get_env_float('MEDIUM_CONFIDENCE_MULTIPLIER', str(config_manager.get('position', 'medium_confidence_multiplier', default=1.0))),
+        low_confidence_multiplier=get_env_float('LOW_CONFIDENCE_MULTIPLIER', str(config_manager.get('position', 'low_confidence_multiplier', default=0.5))),
+        max_position_ratio=get_env_float('MAX_POSITION_RATIO', str(config_manager.get('position', 'max_position_ratio', default=0.30))),
+        trend_strength_multiplier=get_env_float('TREND_STRENGTH_MULTIPLIER', str(config_manager.get('position', 'trend_strength_multiplier', default=1.2))),
+        min_trade_amount=config_manager.get('position', 'min_trade_amount', default=0.001),
 
         # Technical indicators - Production mode (standard periods)
         # Use reduced periods only for 1m bars (for testing)
-        sma_periods=[3, 7, 15] if timeframe == '1m' else [5, 20, 50],
-        rsi_period=7 if timeframe == '1m' else 14,
-        macd_fast=5 if timeframe == '1m' else 12,
-        macd_slow=10 if timeframe == '1m' else 26,
-        bb_period=10 if timeframe == '1m' else 20,
-        bb_std=2.0,
+        sma_periods=[3, 7, 15] if timeframe == '1m' else config_manager.get('indicators', 'sma_periods', default=[5, 20, 50]),
+        rsi_period=7 if timeframe == '1m' else config_manager.get('indicators', 'rsi_period', default=14),
+        macd_fast=5 if timeframe == '1m' else config_manager.get('indicators', 'macd_fast', default=12),
+        macd_slow=10 if timeframe == '1m' else config_manager.get('indicators', 'macd_slow', default=26),
+        bb_period=10 if timeframe == '1m' else config_manager.get('indicators', 'bb_period', default=20),
+        bb_std=config_manager.get('indicators', 'bb_std', default=2.0),
+        volume_ma_period=config_manager.get('indicators', 'volume_ma_period', default=20),
+        support_resistance_lookback=config_manager.get('indicators', 'support_resistance_lookback', default=20),
 
         # AI
         deepseek_api_key=deepseek_api_key,
-        deepseek_model="deepseek-chat",
-        deepseek_temperature=0.1,
-        deepseek_max_retries=2,
+        deepseek_model=config_manager.get('ai', 'deepseek', 'model', default='deepseek-chat'),
+        deepseek_temperature=config_manager.get('ai', 'deepseek', 'temperature', default=0.3),
+        deepseek_max_retries=config_manager.get('ai', 'deepseek', 'max_retries', default=2),
+        deepseek_retry_delay=config_manager.get('ai', 'deepseek', 'retry_delay', default=1.0),
+        deepseek_signal_history_count=config_manager.get('ai', 'signal', 'history_count', default=30),
+        debate_rounds=config_manager.get('ai', 'multi_agent', 'debate_rounds', default=2),
+        multi_agent_retry_delay=config_manager.get('ai', 'multi_agent', 'retry_delay', default=1.0),
+        multi_agent_json_parse_max_retries=config_manager.get('ai', 'multi_agent', 'json_parse_max_retries', default=2),
 
         # Sentiment
-        sentiment_enabled=True,
-        sentiment_lookback_hours=4,
+        sentiment_enabled=config_manager.get('sentiment', 'enabled', default=True),
+        sentiment_lookback_hours=config_manager.get('sentiment', 'lookback_hours', default=4),
         # Set sentiment timeframe based on bar timeframe (default to 15m)
-        sentiment_timeframe="1m" if timeframe == "1m" else ("5m" if timeframe == "5m" else "15m"),
+        sentiment_timeframe="1m" if timeframe == "1m" else ("5m" if timeframe == "5m" else config_manager.get('sentiment', 'timeframe', default='15m')),
 
         # Risk
-        min_confidence_to_trade=get_env_str('MIN_CONFIDENCE_TO_TRADE', 'MEDIUM'),
-        allow_reversals=True,
-        require_high_confidence_for_reversal=False,
-        rsi_extreme_threshold_upper=75.0,
-        rsi_extreme_threshold_lower=25.0,
-        rsi_extreme_multiplier=0.7,
+        min_confidence_to_trade=get_env_str('MIN_CONFIDENCE_TO_TRADE', config_manager.get('risk', 'min_confidence_to_trade', default='MEDIUM')),
+        allow_reversals=config_manager.get('risk', 'allow_reversals', default=True),
+        require_high_confidence_for_reversal=config_manager.get('risk', 'require_high_confidence_for_reversal', default=False),
+        rsi_extreme_threshold_upper=config_manager.get('risk', 'rsi_extreme_threshold_upper', default=70.0),
+        rsi_extreme_threshold_lower=config_manager.get('risk', 'rsi_extreme_threshold_lower', default=30.0),
+        rsi_extreme_multiplier=config_manager.get('risk', 'rsi_extreme_multiplier', default=0.7),
 
         # [LEGACY - 不再使用] Multi-Agent Divergence Handling
         # 保留用于向后兼容，但不再生效
-        skip_on_divergence=strategy_yaml.get('risk', {}).get('skip_on_divergence', True),
-        use_confidence_fusion=strategy_yaml.get('risk', {}).get('use_confidence_fusion', True),
+        # Support both old (strategy.risk.*) and new (ai.signal.*) paths via PATH_ALIASES
+        skip_on_divergence=config_manager.get('ai', 'signal', 'skip_on_divergence', default=True),
+        use_confidence_fusion=config_manager.get('ai', 'signal', 'use_confidence_fusion', default=True),
 
         # Execution
-        position_adjustment_threshold=0.001,
+        position_adjustment_threshold=config_manager.get('execution', 'position_adjustment_threshold', default=0.001),
 
-        # Timing - Load from YAML config (default: 900 seconds = 15 minutes)
-        timer_interval_sec=get_env_int('TIMER_INTERVAL_SEC', str(strategy_yaml.get('timer_interval_sec', 900))),
-        
+        # Timing
+        timer_interval_sec=get_env_int('TIMER_INTERVAL_SEC', str(config_manager.get('timing', 'timer_interval_sec', default=900))),
+
         # Telegram Notifications
-        enable_telegram=strategy_yaml.get('telegram', {}).get('enabled', False),
+        enable_telegram=config_manager.get('telegram', 'enabled', default=False),
         telegram_bot_token=get_env_str('TELEGRAM_BOT_TOKEN', ''),
         telegram_chat_id=get_env_str('TELEGRAM_CHAT_ID', ''),
-        telegram_notify_signals=strategy_yaml.get('telegram', {}).get('notify_signals', True),
-        telegram_notify_fills=strategy_yaml.get('telegram', {}).get('notify_fills', True),
-        telegram_notify_positions=strategy_yaml.get('telegram', {}).get('notify_positions', True),
-        telegram_notify_errors=strategy_yaml.get('telegram', {}).get('notify_errors', True),
+        telegram_notify_signals=config_manager.get('telegram', 'notify_signals', default=True),
+        telegram_notify_fills=config_manager.get('telegram', 'notify_fills', default=True),
+        telegram_notify_positions=config_manager.get('telegram', 'notify_positions', default=True),
+        telegram_notify_errors=config_manager.get('telegram', 'notify_errors', default=True),
+
+        # Network configuration
+        network_telegram_startup_delay=config_manager.get('network', 'telegram', 'startup_delay', default=5.0),
+        network_telegram_polling_max_retries=config_manager.get('network', 'telegram', 'polling_max_retries', default=3),
+        network_telegram_polling_base_delay=config_manager.get('network', 'telegram', 'polling_base_delay', default=10.0),
+        network_binance_recv_window=config_manager.get('network', 'binance', 'recv_window', default=5000),
+        network_binance_balance_cache_ttl=config_manager.get('network', 'binance', 'balance_cache_ttl', default=5.0),
+        network_bar_persistence_max_limit=config_manager.get('network', 'bar_persistence', 'max_limit', default=1500),
+        network_bar_persistence_timeout=config_manager.get('network', 'bar_persistence', 'timeout', default=10.0),
+        network_oco_manager_socket_timeout=config_manager.get('network', 'oco_manager', 'socket_timeout', default=5.0),
+        network_oco_manager_socket_connect_timeout=config_manager.get('network', 'oco_manager', 'socket_connect_timeout', default=5.0),
+        sentiment_timeout=config_manager.get('sentiment', 'timeout', default=10.0),
     )
 
 
@@ -282,9 +311,14 @@ def get_binance_config() -> tuple:
     return data_config, exec_config
 
 
-def setup_trading_node() -> TradingNodeConfig:
+def setup_trading_node(config_manager: ConfigManager) -> TradingNodeConfig:
     """
     Configure the NautilusTrader trading node.
+
+    Parameters
+    ----------
+    config_manager : ConfigManager
+        Configuration manager instance
 
     Returns
     -------
@@ -292,7 +326,7 @@ def setup_trading_node() -> TradingNodeConfig:
         Trading node configuration
     """
     # Get configurations
-    strategy_config = get_strategy_config()
+    strategy_config = get_strategy_config(config_manager)
     data_config, exec_config = get_binance_config()
 
     # Wrap strategy config in ImportableStrategyConfig
@@ -339,22 +373,71 @@ def setup_trading_node() -> TradingNodeConfig:
     return config
 
 
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description='AItrader - NautilusTrader DeepSeek Bot')
+    parser.add_argument(
+        '--env',
+        type=str,
+        default='production',
+        choices=['production', 'development', 'backtest'],
+        help='Trading environment (default: production)'
+    )
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Dry run mode (load config but don\'t start trading)'
+    )
+    return parser.parse_args()
+
+
 def main():
     """
     Main entry point for live trading.
     """
+    # Parse command-line arguments
+    args = parse_args()
+
     print("=" * 70)
     print("DeepSeek AI Trading Strategy - Live Trading Mode")
     print("=" * 70)
+    print(f"Environment: {args.env}")
     print(f"Exchange: Binance Futures (USDT-M)")
-    print(f"Instrument: BTCUSDT-PERP")
     print(f"Strategy: AI-powered with DeepSeek")
     print("=" * 70)
+
+    # Initialize ConfigManager
+    print("\n📋 Loading configuration...")
+    config_manager = ConfigManager(env=args.env)
+    config_dict = config_manager.load()
+
+    # Validate configuration
+    if not config_manager.validate():
+        print("\n❌ Configuration validation failed:")
+        errors = config_manager.get_errors()
+        for error in errors:
+            print(f"  - {error.field}: {error.message}")
+        sys.exit(1)
+
+    print(f"✅ Configuration loaded and validated ({args.env} environment)")
+
+    # Dry run mode - print config summary and exit
+    if args.dry_run:
+        print("\n" + "=" * 70)
+        print("DRY RUN MODE - Configuration Summary")
+        print("=" * 70)
+        config_manager.print_summary()
+        print("\n✅ Dry run complete. Configuration is valid. Exiting.")
+        return
+
+    # Get instrument from config
+    instrument_id = config_manager.get('trading', 'instrument_id', default='BTCUSDT-PERP.BINANCE')
+    print(f"Instrument: {instrument_id}")
 
     # Safety check
     test_mode = os.getenv('TEST_MODE', 'false').strip().lower() == 'true'
     auto_confirm = os.getenv('AUTO_CONFIRM', 'false').strip().lower() == 'true'
-    
+
     if test_mode:
         print("⚠️  TEST_MODE=true - This is a simulation, no real orders will be placed")
     else:
@@ -368,8 +451,8 @@ def main():
                 return
 
     # Build configuration
-    print("\n📋 Building configuration...")
-    config = setup_trading_node()
+    print("\n📋 Building trading node configuration...")
+    config = setup_trading_node(config_manager)
 
     print(f"✅ Trader ID: {config.trader_id}")
     print(f"✅ Strategy configured with DeepSeek AI")

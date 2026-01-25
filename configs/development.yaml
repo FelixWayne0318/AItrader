@@ -1,0 +1,22 @@
+# configs/development.yaml
+# 开发/测试环境配置覆盖
+
+trading:
+  bar_type: "BTCUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL"
+
+capital:
+  leverage: 3                     # 测试用低杠杆
+
+# 1分钟模式特殊指标参数
+indicators:
+  sma_periods: [3, 7, 15]
+  rsi_period: 7
+  macd_fast: 5
+  macd_slow: 10
+  bb_period: 10
+
+timing:
+  timer_interval_sec: 60          # 1分钟
+
+logging:
+  level: "DEBUG"

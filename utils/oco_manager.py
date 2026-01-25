@@ -46,10 +46,12 @@ class OCOManager:
         key_prefix: str = "nautilus:oco",
         group_ttl_hours: int = 24,
         logger: Optional[logging.Logger] = None,
+        socket_timeout: float = 5.0,
+        socket_connect_timeout: float = 5.0,
     ):
         """
         Initialize OCO Manager.
-        
+
         Parameters
         ----------
         redis_host : str
@@ -66,18 +68,22 @@ class OCOManager:
             Time-to-live for OCO groups in hours
         logger : Logger, optional
             Logger instance
+        socket_timeout : float, optional
+            Redis socket timeout (seconds), default: 5.0
+        socket_connect_timeout : float, optional
+            Redis connection timeout (seconds), default: 5.0
         """
         self.logger = logger or logging.getLogger(__name__)
         self.key_prefix = key_prefix
         self.group_ttl_seconds = group_ttl_hours * 3600
-        
+
         # In-memory storage (always used)
         self.oco_groups: Dict[str, Dict[str, Any]] = {}
-        
+
         # Redis connection
         self.redis_client: Optional[redis.Redis] = None
         self.redis_enabled = False
-        
+
         if REDIS_AVAILABLE:
             try:
                 self.redis_client = redis.Redis(
@@ -86,8 +92,8 @@ class OCOManager:
                     db=redis_db,
                     password=redis_password,
                     decode_responses=True,
-                    socket_timeout=5,
-                    socket_connect_timeout=5,
+                    socket_timeout=socket_timeout,
+                    socket_connect_timeout=socket_connect_timeout,
                 )
                 # Test connection
                 self.redis_client.ping()

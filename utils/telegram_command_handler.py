@@ -50,11 +50,14 @@ class TelegramCommandHandler:
         token: str,
         allowed_chat_ids: list,
         strategy_callback: Callable,
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        startup_delay: float = 5.0,
+        polling_max_retries: int = 3,
+        polling_base_delay: float = 10.0,
     ):
         """
         Initialize command handler.
-        
+
         Parameters
         ----------
         token : str
@@ -66,15 +69,26 @@ class TelegramCommandHandler:
             Signature: callback(command: str, args: dict) -> dict
         logger : logging.Logger, optional
             Logger instance
+        startup_delay : float, optional
+            Delay after webhook deletion (seconds), default: 5.0
+        polling_max_retries : int, optional
+            Maximum polling retry attempts, default: 3
+        polling_base_delay : float, optional
+            Base delay for exponential backoff (seconds), default: 10.0
         """
         if not TELEGRAM_AVAILABLE:
             raise ImportError("python-telegram-bot not installed")
-        
+
         self.token = token
         self.allowed_chat_ids = [str(cid) for cid in allowed_chat_ids]
         self.strategy_callback = strategy_callback
         self.logger = logger or logging.getLogger(__name__)
-        
+
+        # Network configuration
+        self.startup_delay = startup_delay
+        self.polling_max_retries = polling_max_retries
+        self.polling_base_delay = polling_base_delay
+
         self.application = None
         self.is_running = False
         self.start_time = datetime.utcnow()
@@ -473,15 +487,12 @@ class TelegramCommandHandler:
         await self._delete_webhook_standalone()
 
         # Short delay after webhook deletion to let Telegram servers sync
-        startup_delay = 5
-        self.logger.info(f"⏳ Waiting {startup_delay}s for Telegram servers to sync...")
-        await asyncio.sleep(startup_delay)
+        self.logger.info(f"⏳ Waiting {self.startup_delay}s for Telegram servers to sync...")
+        await asyncio.sleep(self.startup_delay)
 
-        max_retries = 3
         retry_count = 0
-        base_delay = 10  # Reduced since we already deleted webhook
 
-        while retry_count < max_retries:
+        while retry_count < self.polling_max_retries:
             try:
                 # Create application
                 self.application = Application.builder().token(self.token).build()
@@ -531,12 +542,12 @@ class TelegramCommandHandler:
 
             except TelegramConflict as e:
                 retry_count += 1
-                delay = base_delay * (2 ** (retry_count - 1))  # Exponential backoff
+                delay = self.polling_base_delay * (2 ** (retry_count - 1))  # Exponential backoff
 
-                if retry_count < max_retries:
+                if retry_count < self.polling_max_retries:
                     self.logger.warning(
                         f"⚠️ Telegram Conflict error. "
-                        f"Retry {retry_count}/{max_retries} in {delay}s: {e}"
+                        f"Retry {retry_count}/{self.polling_max_retries} in {delay}s: {e}"
                     )
                     # Clean up current application before retry
                     if self.application:
@@ -553,7 +564,7 @@ class TelegramCommandHandler:
                     await asyncio.sleep(delay)
                 else:
                     self.logger.error(
-                        f"❌ Telegram Conflict error persists after {max_retries} retries. "
+                        f"❌ Telegram Conflict error persists after {self.polling_max_retries} retries. "
                         f"Command handler disabled. Possible causes:\n"
                         f"  1. Another bot instance using the same token\n"
                         f"  2. External service setting webhooks\n"

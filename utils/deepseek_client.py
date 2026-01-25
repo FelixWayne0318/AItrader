@@ -29,6 +29,8 @@ class DeepSeekAnalyzer:
         temperature: float = 0.3,  # Balanced: not too conservative, not too risky
         base_url: str = "https://api.deepseek.com",
         max_retries: int = 2,
+        signal_history_count: int = 30,  # Configurable history size
+        retry_delay: float = 1.0,  # Configurable retry delay
     ):
         """
         Initialize DeepSeek analyzer.
@@ -45,17 +47,22 @@ class DeepSeekAnalyzer:
             API base URL
         max_retries : int
             Maximum retry attempts on failure
+        signal_history_count : int
+            Maximum number of signals to keep in history (default: 30)
+        retry_delay : float
+            Delay in seconds between retry attempts (default: 1.0)
         """
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
         self.temperature = temperature
         self.max_retries = max_retries
+        self.retry_delay = retry_delay
 
         # Setup logger
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
         # Track signal history (use deque for efficient O(1) operations)
-        self.signal_history = deque(maxlen=30)
+        self.signal_history = deque(maxlen=signal_history_count)
 
     def analyze(
         self,

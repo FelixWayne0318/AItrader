@@ -31,7 +31,9 @@ class BinanceAccountFetcher:
         self,
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        cache_ttl: float = 5.0,
+        recv_window: int = 5000,
     ):
         """
         Initialize Binance account fetcher.
@@ -44,6 +46,10 @@ class BinanceAccountFetcher:
             Binance API secret (defaults to BINANCE_API_SECRET env var)
         logger : logging.Logger, optional
             Logger instance
+        cache_ttl : float, optional
+            Cache time-to-live (seconds), default: 5.0
+        recv_window : int, optional
+            Binance API receive window (ms), default: 5000
         """
         self.api_key = api_key or os.getenv('BINANCE_API_KEY', '')
         self.api_secret = api_secret or os.getenv('BINANCE_API_SECRET', '')
@@ -52,7 +58,10 @@ class BinanceAccountFetcher:
         # Cache for rate limiting
         self._cache: Dict[str, Any] = {}
         self._cache_time: float = 0
-        self._cache_ttl: float = 5.0  # Cache TTL in seconds
+        self._cache_ttl: float = cache_ttl
+
+        # Binance API configuration
+        self._recv_window: int = recv_window
 
     def _sign_request(self, params: Dict[str, Any]) -> str:
         """Create HMAC SHA256 signature for request."""
@@ -75,7 +84,7 @@ class BinanceAccountFetcher:
             if params is None:
                 params = {}
             params['timestamp'] = int(time.time() * 1000)
-            params['recvWindow'] = 5000
+            params['recvWindow'] = self._recv_window
 
             # Sign request
             signature = self._sign_request(params)
