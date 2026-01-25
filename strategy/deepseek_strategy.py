@@ -91,8 +91,8 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     min_confidence_to_trade: str = "MEDIUM"
     allow_reversals: bool = True
     require_high_confidence_for_reversal: bool = False
-    rsi_extreme_threshold_upper: float = 75.0
-    rsi_extreme_threshold_lower: float = 25.0
+    rsi_extreme_threshold_upper: float = 70.0  # 与 strategy_config.yaml 一致
+    rsi_extreme_threshold_lower: float = 30.0  # 与 strategy_config.yaml 一致
     rsi_extreme_multiplier: float = 0.7
 
     # [LEGACY - 不再使用] Multi-Agent Divergence Handling
