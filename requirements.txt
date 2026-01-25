@@ -2,7 +2,7 @@
 # Python >= 3.11 required
 
 # Core framework - 1.221.0 includes complete non-ASCII symbol fix (Issue #3053, #3105)
-nautilus_trader==1.221.0
+nautilus_trader==1.222.0
 
 # AI and API clients
 openai>=1.0.0
