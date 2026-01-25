@@ -182,6 +182,7 @@ min_trade_amount = config.get('trading_logic', 'min_notional_usdt', default=100)
 - 循环导入检测: `scripts/check_circular_imports.sh`
 - 全面诊断脚本: `scripts/comprehensive_diagnosis.py`
 - **提交修复验证**: `validate_commit_fixes.py` (检查所有历史修复是否正确应用)
+- **Git 历史分析**: `analyze_git_changes.py` (全自动从 git log/diff 推断修复并检测回归)
 
 ## ⚠️ 关键信息
 
@@ -260,6 +261,12 @@ python3 validate_commit_fixes.py           # 完整检查所有历史修复
 python3 validate_commit_fixes.py --quick   # 快速检查 (跳过连锁反应)
 python3 validate_commit_fixes.py --json    # 输出 JSON 格式
 python3 validate_commit_fixes.py --category threading  # 只检查特定类别
+
+# Git 历史自动分析 (全自动从 git log/diff 推断)
+python3 analyze_git_changes.py             # 分析最近 50 个提交
+python3 analyze_git_changes.py --check     # 运行回归检测
+python3 analyze_git_changes.py --fix-only  # 只显示修复提交
+python3 analyze_git_changes.py --commits 100 --check  # 分析更多提交
 
 # 服务器操作
 sudo systemctl restart nautilus-trader
