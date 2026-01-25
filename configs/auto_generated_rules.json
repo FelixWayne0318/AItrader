@@ -3,7 +3,7 @@
     {
       "id": "4febf586c627",
       "commit": "d6d0f48",
-      "file": "validate_commit_fixes.py",
+      "file": "scripts/validate_commit_fixes.py",
       "message": "fix: suppress print output in JSON mode for validate_commit_fixes.py",
       "pattern": "check_chain_reactions",
       "pattern_type": "function_exists",
@@ -13,7 +13,7 @@
     {
       "id": "fca1d0224651",
       "commit": "3c33048",
-      "file": "analyze_commits_ai.py",
+      "file": "scripts/analyze_commits_ai.py",
       "message": "feat: add analyze_commits_ai.py - AI-enhanced commit analysis",
       "pattern": "import os",
       "pattern_type": "import",
@@ -23,7 +23,7 @@
     {
       "id": "ceb4383fd994",
       "commit": "41882a2",
-      "file": "analyze_git_changes.py",
+      "file": "scripts/analyze_git_changes.py",
       "message": "feat: add analyze_git_changes.py - automatic git history analyzer",
       "pattern": "import os",
       "pattern_type": "import",
@@ -33,7 +33,7 @@
     {
       "id": "fe19777a6416",
       "commit": "d10b646",
-      "file": "validate_commit_fixes.py",
+      "file": "scripts/validate_commit_fixes.py",
       "message": "feat: add validate_commit_fixes.py - commit regression checker",
       "pattern": "import os",
       "pattern_type": "import",
@@ -123,7 +123,7 @@
     {
       "id": "3774db8fba72",
       "commit": "52291cf",
-      "file": "diagnose_no_signal.py",
+      "file": "scripts/diagnose_no_signal.py",
       "message": "fix: 进一步优化诊断逻辑避免误报",
       "pattern": "check_bar_data",
       "pattern_type": "function_exists",
@@ -133,7 +133,7 @@
     {
       "id": "21ca68c485b0",
       "commit": "9c22ab3",
-      "file": "diagnose_no_signal.py",
+      "file": "scripts/diagnose_no_signal.py",
       "message": "feat: 完善 diagnose_no_signal.py 诊断逻辑",
       "pattern": "if 'running periodic analysis' in line_lower or \\",
       "pattern_type": "contains",
@@ -163,7 +163,7 @@
     {
       "id": "320af7b012b0",
       "commit": "2d83460",
-      "file": "diagnose_no_signal.py",
+      "file": "scripts/diagnose_no_signal.py",
       "message": "fix: 修正指标导入路径与原始仓库一致",
       "pattern": "uses_cython = \"from nautilus_trader.indicators import\" in import_text or \\",
       "pattern_type": "contains",
@@ -183,7 +183,7 @@
     {
       "id": "bd61a43e395d",
       "commit": "9a157e8",
-      "file": "diagnose_no_signal.py",
+      "file": "scripts/diagnose_no_signal.py",
       "message": "fix: 修复诊断脚本误将注释识别为导入语句",
       "pattern": "if line.strip().startswith('from ') or line.strip().startswith('import ')]",
       "pattern_type": "contains",
@@ -193,7 +193,7 @@
     {
       "id": "82cd80c3a511",
       "commit": "b866b66",
-      "file": "diagnose_no_signal.py",
+      "file": "scripts/diagnose_no_signal.py",
       "message": "chore: 更新 diagnose_no_signal.py 添加最新修复检查",
       "pattern": "if tech_manager.exists():",
       "pattern_type": "contains",
@@ -273,7 +273,7 @@
     {
       "id": "f74c611b810c",
       "commit": "262a3ee",
-      "file": "diagnose_no_signal.py",
+      "file": "scripts/diagnose_no_signal.py",
       "message": "feat: 完善诊断脚本 - 覆盖所有提交历史中的已知问题",
       "pattern": "import re",
       "pattern_type": "import",
@@ -283,7 +283,7 @@
     {
       "id": "86fe07d75ed2",
       "commit": "29907b2",
-      "file": "diagnose_no_signal.py",
+      "file": "scripts/diagnose_no_signal.py",
       "message": "feat: 增强诊断脚本 - 检查所有提交历史中的已知问题",
       "pattern": "import re",
       "pattern_type": "import",
@@ -293,7 +293,7 @@
     {
       "id": "a15111c2e586",
       "commit": "9aeabb8",
-      "file": "diagnose_realtime.py",
+      "file": "scripts/diagnose_realtime.py",
       "message": "fix: 修复 diagnose_realtime.py 多行导入检测逻辑",
       "pattern": "if not (has_trading_logic_import and has_min_sl_constant):",
       "pattern_type": "contains",
@@ -313,7 +313,7 @@
     {
       "id": "a01b52785774",
       "commit": "a9a3655",
-      "file": "diagnose_realtime.py",
+      "file": "scripts/diagnose_realtime.py",
       "message": "fix: 统一 MIN_SL_DISTANCE_PCT 常量为 1%",
       "pattern": "if trading_logic_path.exists():",
       "pattern_type": "contains",
@@ -333,7 +333,7 @@
     {
       "id": "3868168abce3",
       "commit": "e4a52c2",
-      "file": "diagnose_realtime.py",
+      "file": "scripts/diagnose_realtime.py",
       "message": "refactor: 将 SL/TP 验证函数移至共享模块",
       "pattern": "validate_multiagent_sltp,",
       "pattern_type": "contains",
@@ -413,7 +413,7 @@
     {
       "id": "08ee8e890fc7",
       "commit": "5e0f8ce",
-      "file": "diagnose_realtime.py",
+      "file": "scripts/diagnose_realtime.py",
       "message": "fix: 统一架构命名，消除方案A/B混淆",
       "pattern": "3. 使用 TradingAgents 层级决策架构，与 deepseek_strategy.py 100% 一致",
       "pattern_type": "contains",
@@ -523,7 +523,7 @@
     {
       "id": "85a8fd92eafa",
       "commit": "890d154",
-      "file": "diagnose_realtime.py",
+      "file": "scripts/diagnose_realtime.py",
       "message": "fix: 移除 diagnose_realtime.py 中的旧变量引用",
       "pattern": "judge_decision = signal_data.get('judge_decision', {})",
       "pattern_type": "contains",
@@ -533,7 +533,7 @@
     {
       "id": "7db1e6b628dc",
       "commit": "5c08838",
-      "file": "diagnose_realtime.py",
+      "file": "scripts/diagnose_realtime.py",
       "message": "fix: 修复 diagnose_realtime.py 变量名错误",
       "pattern": "signal_data=signal_data,  # 方案B: 使用 Judge 的决策数据",
       "pattern_type": "contains",
@@ -573,7 +573,7 @@
     {
       "id": "6fdcbe4d53b7",
       "commit": "79e168a",
-      "file": "diagnose_realtime.py",
+      "file": "scripts/diagnose_realtime.py",
       "message": "fix: 诊断脚本显示正确的 SL/TP (来自最终信号)",
       "pattern": "final_sl = final_signal_data.get('stop_loss')",
       "pattern_type": "contains",
@@ -583,7 +583,7 @@
     {
       "id": "df2e136b58a5",
       "commit": "a1fb405",
-      "file": "diagnose_realtime.py",
+      "file": "scripts/diagnose_realtime.py",
       "message": "fix: 同步 diagnose_realtime.py 与最新策略逻辑",
       "pattern": "if opposing_signals or hold_vs_action:",
       "pattern_type": "contains",
@@ -643,7 +643,7 @@
     {
       "id": "f26b180c7071",
       "commit": "922f973",
-      "file": "diagnose_realtime.py",
+      "file": "scripts/diagnose_realtime.py",
       "message": "fix: 修复代码审查发现的问题",
       "pattern": "resolve_divergence_by_confidence",
       "pattern_type": "function_exists",
@@ -733,7 +733,7 @@
     {
       "id": "60a58d4e84cf",
       "commit": "eb43034",
-      "file": "diagnose_realtime.py",
+      "file": "scripts/diagnose_realtime.py",
       "message": "fix: 修正 bar_type 时间周期解析顺序",
       "pattern": "if \"15-MINUTE\" in bar_type_str:",
       "pattern_type": "contains",
@@ -743,7 +743,7 @@
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-01-25T11:38:03.415776",
+    "updated": "2026-01-25T12:25:08.612214",
     "count": 74
   }
 }
