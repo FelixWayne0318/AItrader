@@ -12,7 +12,8 @@ import python
 
 from ImportMember imp
 where
-  imp.getModule().getName() = "nautilus_trader.core.nautilus_pyo3"
+  // Check the module expression as a string (e.g., "nautilus_trader.core.nautilus_pyo3")
+  imp.getModule().toString() = "nautilus_trader.core.nautilus_pyo3"
   and
   // Common indicator names that are not thread-safe
   imp.getName().regexpMatch("(?i).*(RSI|MACD|SMA|EMA|BollingerBands|ATR|ADX).*")
