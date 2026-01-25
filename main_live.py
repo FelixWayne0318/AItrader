@@ -232,6 +232,23 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         rsi_extreme_threshold_lower=config_manager.get('risk', 'rsi_extreme_threshold_lower', default=30.0),
         rsi_extreme_multiplier=config_manager.get('risk', 'rsi_extreme_multiplier', default=0.7),
 
+        # Stop Loss & Take Profit (from ConfigManager)
+        enable_auto_sl_tp=config_manager.get('risk', 'stop_loss', 'enabled', default=True),
+        sl_use_support_resistance=config_manager.get('risk', 'stop_loss', 'use_support_resistance', default=True),
+        sl_buffer_pct=config_manager.get('risk', 'stop_loss', 'buffer_pct', default=0.001),
+        tp_high_confidence_pct=config_manager.get('risk', 'take_profit', 'high_confidence_pct', default=0.03),
+        tp_medium_confidence_pct=config_manager.get('risk', 'take_profit', 'medium_confidence_pct', default=0.02),
+        tp_low_confidence_pct=config_manager.get('risk', 'take_profit', 'low_confidence_pct', default=0.01),
+
+        # Trailing Stop (from ConfigManager)
+        enable_trailing_stop=config_manager.get('risk', 'trailing_stop', 'enabled', default=True),
+        trailing_activation_pct=config_manager.get('risk', 'trailing_stop', 'activation_pct', default=0.01),
+        trailing_distance_pct=config_manager.get('risk', 'trailing_stop', 'distance_pct', default=0.005),
+        trailing_update_threshold_pct=config_manager.get('risk', 'trailing_stop', 'update_threshold_pct', default=0.002),
+
+        # OCO (from ConfigManager)
+        enable_oco=config_manager.get('risk', 'oco', 'enabled', default=True),
+
         # [LEGACY - 不再使用] Multi-Agent Divergence Handling
         # 保留用于向后兼容，但不再生效
         # Support both old (strategy.risk.*) and new (ai.signal.*) paths via PATH_ALIASES
