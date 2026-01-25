@@ -23,12 +23,12 @@ from datetime import datetime
 
 from openai import OpenAI
 
-# Import shared constants for consistency
+# Import shared constants for consistency (Phase 3: migrated to functions)
 from strategy.trading_logic import (
-    MIN_SL_DISTANCE_PCT,
-    DEFAULT_SL_PCT,
-    DEFAULT_TP_PCT_BUY,
-    DEFAULT_TP_PCT_SELL,
+    get_min_sl_distance_pct,
+    get_default_sl_pct,
+    get_default_tp_pct_buy,
+    get_default_tp_pct_sell,
 )
 
 
@@ -658,22 +658,25 @@ JSON response only:"""
         sl = decision.get("stop_loss", 0) or 0  # Handle None
         tp = decision.get("take_profit", 0) or 0  # Handle None
 
-        # MIN_SL_DISTANCE_PCT is imported from strategy.trading_logic
-        # to ensure consistency with validate_multiagent_sltp()
+        # Get configuration values (Phase 3: migrated to ConfigManager)
+        min_sl_distance = get_min_sl_distance_pct()
+        default_sl = get_default_sl_pct()
+        default_tp_buy = get_default_tp_pct_buy()
+        default_tp_sell = get_default_tp_pct_sell()
 
         if signal == "BUY":
             # For LONG: SL should be below entry, TP above
             sl_distance = (current_price - sl) / current_price if sl > 0 else 0
 
             if sl >= current_price:
-                decision["stop_loss"] = current_price * (1 - DEFAULT_SL_PCT)
+                decision["stop_loss"] = current_price * (1 - default_sl)
                 self.logger.warning(f"Fixed BUY stop loss (wrong side): {sl} -> {decision['stop_loss']}")
-            elif sl_distance < MIN_SL_DISTANCE_PCT:
-                decision["stop_loss"] = current_price * (1 - DEFAULT_SL_PCT)
+            elif sl_distance < min_sl_distance:
+                decision["stop_loss"] = current_price * (1 - default_sl)
                 self.logger.warning(f"Fixed BUY stop loss (too close {sl_distance*100:.2f}%): {sl} -> {decision['stop_loss']}")
 
             if tp <= current_price:
-                decision["take_profit"] = current_price * (1 + DEFAULT_TP_PCT_BUY)
+                decision["take_profit"] = current_price * (1 + default_tp_buy)
                 self.logger.warning(f"Fixed BUY take profit: {tp} -> {decision['take_profit']}")
 
         elif signal == "SELL":
@@ -681,14 +684,14 @@ JSON response only:"""
             sl_distance = (sl - current_price) / current_price if sl > 0 else 0
 
             if sl <= current_price:
-                decision["stop_loss"] = current_price * (1 + DEFAULT_SL_PCT)
+                decision["stop_loss"] = current_price * (1 + default_sl)
                 self.logger.warning(f"Fixed SELL stop loss (wrong side): {sl} -> {decision['stop_loss']}")
-            elif sl_distance < MIN_SL_DISTANCE_PCT:
-                decision["stop_loss"] = current_price * (1 + DEFAULT_SL_PCT)
+            elif sl_distance < min_sl_distance:
+                decision["stop_loss"] = current_price * (1 + default_sl)
                 self.logger.warning(f"Fixed SELL stop loss (too close {sl_distance*100:.2f}%): {sl} -> {decision['stop_loss']}")
 
             if tp >= current_price:
-                decision["take_profit"] = current_price * (1 - DEFAULT_TP_PCT_SELL)
+                decision["take_profit"] = current_price * (1 - default_tp_sell)
                 self.logger.warning(f"Fixed SELL take profit: {tp} -> {decision['take_profit']}")
 
         return decision
@@ -823,14 +826,15 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
     def _create_fallback_signal(self, price_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create conservative fallback signal when analysis fails."""
         price = price_data.get('price', 0) if price_data else 0
+        default_sl = get_default_sl_pct()
 
         return {
             "signal": "HOLD",
             "confidence": "LOW",
             "risk_level": "HIGH",
             "position_size_pct": 0,
-            "stop_loss": price * (1 - DEFAULT_SL_PCT) if price else 0,
-            "take_profit": price * (1 + DEFAULT_SL_PCT) if price else 0,  # Use SL_PCT for HOLD
+            "stop_loss": price * (1 - default_sl) if price else 0,
+            "take_profit": price * (1 + default_sl) if price else 0,  # Use SL_PCT for HOLD
             "reason": "Multi-agent analysis failed - defaulting to HOLD",
             "debate_summary": "Analysis error occurred",
             "is_fallback": True,

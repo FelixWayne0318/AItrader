@@ -25,6 +25,98 @@ from typing import Dict, Any, Optional, Tuple
 import logging
 
 
+# =============================================================================
+# CONFIGURATION LOADING (Phase 3: ConfigManager Integration)
+# =============================================================================
+
+# Module-level configuration cache (lazy-loaded to avoid circular imports)
+_TRADING_LOGIC_CONFIG = None
+
+
+def _get_trading_logic_config() -> Dict[str, Any]:
+    """
+    从 ConfigManager 加载交易逻辑配置 (lazy-loaded)
+
+    Returns
+    -------
+    Dict[str, Any]
+        交易逻辑配置字典，包含所有 SL/TP 参数
+
+    Notes
+    -----
+    使用延迟导入避免循环依赖:
+    - config_manager → strategy → utils (正常)
+    - 不触发: trading_logic (模块级) → config_manager (循环)
+    """
+    global _TRADING_LOGIC_CONFIG
+    if _TRADING_LOGIC_CONFIG is None:
+        # Lazy import to avoid circular dependency
+        from utils.config_manager import get_config
+        config = get_config()
+
+        _TRADING_LOGIC_CONFIG = {
+            'min_sl_distance_pct': config.get('trading_logic', 'min_sl_distance_pct', default=0.01),
+            'min_tp_distance_pct': config.get('trading_logic', 'min_tp_distance_pct', default=0.005),
+            'default_sl_pct': config.get('trading_logic', 'default_sl_pct', default=0.02),
+            'default_tp_pct': config.get('trading_logic', 'default_tp_pct', default=0.03),
+            'tp_pct_by_confidence': config.get('trading_logic', 'tp_pct_by_confidence', default={
+                'high': 0.03,
+                'medium': 0.02,
+                'low': 0.01,
+            }),
+        }
+
+    return _TRADING_LOGIC_CONFIG
+
+
+# Public accessor functions (used by agents/multi_agent_analyzer.py)
+def get_min_sl_distance_pct() -> float:
+    """获取最小止损距离百分比"""
+    return _get_trading_logic_config()['min_sl_distance_pct']
+
+
+def get_min_tp_distance_pct() -> float:
+    """获取最小止盈距离百分比"""
+    return _get_trading_logic_config()['min_tp_distance_pct']
+
+
+def get_default_sl_pct() -> float:
+    """获取默认止损百分比"""
+    return _get_trading_logic_config()['default_sl_pct']
+
+
+def get_default_tp_pct_buy() -> float:
+    """获取买入默认止盈百分比"""
+    return _get_trading_logic_config()['default_tp_pct']
+
+
+def get_default_tp_pct_sell() -> float:
+    """获取卖出默认止盈百分比"""
+    return _get_trading_logic_config()['default_tp_pct']
+
+
+def get_tp_pct_by_confidence(confidence: str) -> float:
+    """
+    根据信心级别获取止盈百分比
+
+    Parameters
+    ----------
+    confidence : str
+        信心级别 ('HIGH', 'MEDIUM', 'LOW')
+
+    Returns
+    -------
+    float
+        对应的止盈百分比
+    """
+    tp_config = _get_trading_logic_config()['tp_pct_by_confidence']
+    return tp_config.get(confidence.lower(), tp_config['medium'])
+
+
+# =============================================================================
+# LOGIC CONSTANTS (不可配置 - 这些是业务逻辑规则)
+# =============================================================================
+
 # Confidence weight mapping (used across all functions)
 CONFIDENCE_WEIGHT = {
     'HIGH': 3,
@@ -365,22 +457,34 @@ def calculate_position_size(
 # Used by both deepseek_strategy.py and diagnose_realtime.py
 # =============================================================================
 
-# SL/TP validation constants
-# NOTE: Must match multi_agent_analyzer.py MIN_SL_DISTANCE_PCT
-MIN_SL_DISTANCE_PCT = 0.01   # 1% minimum SL distance (avoid too tight stops)
-MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum TP distance
+# =============================================================================
+# SL/TP CONFIGURATION (Phase 3: Migrated to ConfigManager)
+# =============================================================================
+# 这些值已迁移到 configs/base.yaml 的 trading_logic 节
+#
+# BREAKING CHANGE (Phase 3):
+# - 旧代码使用: MIN_SL_DISTANCE_PCT (常量)
+# - 新代码使用: get_min_sl_distance_pct() (函数)
+#
+# 为了避免循环导入，这些值不能在模块级别初始化
+# 必须使用函数形式访问
+# =============================================================================
 
-# Default SL/TP fallback percentages (used when AI returns invalid values)
-DEFAULT_SL_PCT = 0.02        # 2% default stop loss distance
-DEFAULT_TP_PCT_BUY = 0.03    # 3% take profit for BUY (above entry)
-DEFAULT_TP_PCT_SELL = 0.03   # 3% take profit for SELL (below entry)
+# NOTE: 这些注释保留用于文档目的，实际值从配置加载
+# MIN_SL_DISTANCE_PCT = 0.01   # 1% minimum SL distance (avoid too tight stops)
+# MIN_TP_DISTANCE_PCT = 0.005  # 0.5% minimum TP distance
+# DEFAULT_SL_PCT = 0.02        # 2% default stop loss distance
+# DEFAULT_TP_PCT_BUY = 0.03    # 3% take profit for BUY (above entry)
+# DEFAULT_TP_PCT_SELL = 0.03   # 3% take profit for SELL (below entry)
+# TP_PCT_CONFIG = {'HIGH': 0.03, 'MEDIUM': 0.02, 'LOW': 0.01}
 
-# TP percentage configuration by confidence level
-TP_PCT_CONFIG = {
-    'HIGH': 0.03,    # 3%
-    'MEDIUM': 0.02,  # 2%
-    'LOW': 0.01,     # 1%
-}
+# 实际值通过以下函数访问:
+# - get_min_sl_distance_pct()
+# - get_min_tp_distance_pct()
+# - get_default_sl_pct()
+# - get_default_tp_pct_buy()
+# - get_default_tp_pct_sell()
+# - get_tp_pct_by_confidence(confidence)
 
 
 def validate_multiagent_sltp(
@@ -427,10 +531,12 @@ def validate_multiagent_sltp(
             return False, None, None, f"BUY TP (${multi_tp:,.2f}) must be > entry (${entry_price:,.2f})"
 
         # Check minimum distances
-        if sl_distance < MIN_SL_DISTANCE_PCT:
-            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%)"
-        if tp_distance < MIN_TP_DISTANCE_PCT:
-            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%)"
+        min_sl = get_min_sl_distance_pct()
+        min_tp = get_min_tp_distance_pct()
+        if sl_distance < min_sl:
+            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {min_sl*100}%)"
+        if tp_distance < min_tp:
+            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {min_tp*100}%)"
 
         return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
 
@@ -442,10 +548,12 @@ def validate_multiagent_sltp(
             return False, None, None, f"SELL TP (${multi_tp:,.2f}) must be < entry (${entry_price:,.2f})"
 
         # Check minimum distances
-        if sl_distance < MIN_SL_DISTANCE_PCT:
-            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {MIN_SL_DISTANCE_PCT*100}%)"
-        if tp_distance < MIN_TP_DISTANCE_PCT:
-            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {MIN_TP_DISTANCE_PCT*100}%)"
+        min_sl = get_min_sl_distance_pct()
+        min_tp = get_min_tp_distance_pct()
+        if sl_distance < min_sl:
+            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {min_sl*100}%)"
+        if tp_distance < min_tp:
+            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {min_tp*100}%)"
 
         return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
 
@@ -507,7 +615,7 @@ def calculate_technical_sltp(
             method = "Default 2% SL"
 
         # TP
-        tp_pct = TP_PCT_CONFIG.get(confidence, 0.02)
+        tp_pct = get_tp_pct_by_confidence(confidence)
         take_profit_price = entry_price * (1 + tp_pct)
 
     else:  # SELL
@@ -527,7 +635,7 @@ def calculate_technical_sltp(
             method = "Default 2% SL"
 
         # TP
-        tp_pct = TP_PCT_CONFIG.get(confidence, 0.02)
+        tp_pct = get_tp_pct_by_confidence(confidence)
         take_profit_price = entry_price * (1 - tp_pct)
 
     return stop_loss_price, take_profit_price, method

@@ -1,9 +1,26 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.7.0
+> 版本: 2.8.0
 > 日期: 2026-01-25
-> 状态: **Phase 0-2-4-5 已完成，Phase 6 部分完成，Phase 3 待实施**
+> 状态: **Phase 0-6 已完成** ✅
 > 审查: CONFIG_PROPOSAL_AUDIT_REPORT.md (v2.5.4) + 规范修复 (v2.5.5)
+
+**v2.8.0 更新说明** (Phase 3 实施完成 - 全部 Phase 已完成):
+- ✅ **Phase 3 完成**: trading_logic.py 常量迁移到 ConfigManager
+  - 添加配置加载函数: `_get_trading_logic_config()` (延迟加载避免循环导入)
+  - 添加公共访问函数: `get_min_sl_distance_pct()`, `get_default_sl_pct()` 等
+  - 移除模块级常量: MIN_SL_DISTANCE_PCT, DEFAULT_SL_PCT, DEFAULT_TP_PCT_BUY/SELL, TP_PCT_CONFIG
+  - 更新 agents/multi_agent_analyzer.py 导入: 从常量改为函数调用
+  - diagnose_realtime.py 无需修改 (仅使用 CONFIDENCE_LEVELS 逻辑常量)
+  - 语法检查通过，无循环导入风险
+- 🎉 **配置管理方案完整实施**: Phase 0-6 全部完成
+  - Phase 0: RSI 阈值修复
+  - Phase 1: ConfigManager 基础设施
+  - Phase 2: main_live.py ConfigManager 集成
+  - Phase 3: trading_logic.py 常量迁移
+  - Phase 4: utils/*.py 硬编码迁移
+  - Phase 5: CLI 环境切换
+  - Phase 6: 文档同步
 
 **v2.7.0 更新说明** (Phase 2, 4, 5 实施完成):
 - ✅ **Phase 2 完成**: main_live.py ConfigManager 集成
@@ -22,8 +39,8 @@
   - 添加 argparse 支持 --env (production/development/backtest)
   - 添加 --dry-run 模式 (配置验证但不启动交易)
   - 环境特定配置自动加载
-- ⚠️ **Phase 3 待实施**: trading_logic.py 常量迁移 (循环导入风险，需谨慎处理)
-- ✅ **Phase 6 部分完成**: 文档同步
+- ✅ **Phase 3 完成**: trading_logic.py 常量迁移 (延迟导入避免循环依赖)
+- ✅ **Phase 6 完成**: 文档同步
   - CLAUDE.md 添加 ConfigManager 使用说明
   - README.md 添加环境切换指南
   - CONFIG_MANAGEMENT_PROPOSAL.md 更新实施状态
