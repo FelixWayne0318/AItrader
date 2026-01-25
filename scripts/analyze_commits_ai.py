@@ -109,7 +109,7 @@ class GitHelper:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return result.stdout
-        except:
+        except Exception:
             return ""
 
     def get_commits(self, limit: int = 10) -> List[Dict[str, str]]:

@@ -729,7 +729,7 @@ def check_chain_reactions(project_root: Path = None, verbose: bool = True) -> Li
                 match = re.search(rf'{const}\s*=\s*([\d.]+)', content)
                 if match:
                     values_found[str(py_file.relative_to(project_root))] = match.group(1)
-            except:
+            except Exception:
                 pass
 
         if len(set(values_found.values())) > 1:
