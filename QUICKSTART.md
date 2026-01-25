@@ -7,7 +7,7 @@
 ## Prerequisites Check
 
 ```bash
-✅ Python 3.10+
+✅ Python 3.11+
 ✅ Binance Futures account with API key
 ✅ DeepSeek API key
 ✅ $500+ USDT in Futures wallet
@@ -26,7 +26,7 @@ git clone <repo-url> nautilus_deepseek
 cd nautilus_deepseek
 
 # Create venv
-python3.10 -m venv venv
+python3.11 -m venv venv
 source venv/bin/activate
 
 # Install dependencies
@@ -78,7 +78,7 @@ chmod 600 .env
 
 ```bash
 # Check main config
-cat configs/strategy_config.yaml | grep -A2 -E "equity|leverage|timer_interval"
+cat configs/base.yaml | grep -A2 -E "equity|leverage|timer_interval"
 
 # Should see:
 #   equity: 400
@@ -103,7 +103,14 @@ cat configs/strategy_config.yaml | grep -A2 -E "equity|leverage|timer_interval"
 ### Option 1: Foreground (Testing)
 
 ```bash
-python main_live.py
+# Development environment (1-minute bars, DEBUG logging)
+python main_live.py --env development
+
+# Production environment (15-minute bars, INFO logging)
+python main_live.py --env production
+
+# Validate config without starting (dry-run)
+python main_live.py --env development --dry-run
 ```
 
 **Expected Output:**
@@ -216,7 +223,7 @@ grep "🤖 Signal:" logs/trader.log | grep -oE "Signal: \w+" | sort | uniq -c
 
 #### Conservative
 ```yaml
-# configs/strategy_config.yaml
+# configs/base.yaml
 risk:
   min_confidence_to_trade: "HIGH"
   require_high_confidence_for_reversal: true
@@ -305,7 +312,7 @@ grep "Running periodic analysis" logs/trader.log | tail -5
 **Fix**:
 ```bash
 # Verify config
-grep timer_interval_sec configs/strategy_config.yaml
+grep timer_interval_sec configs/base.yaml
 
 # Should be: 900
 
@@ -342,7 +349,7 @@ top -p $(pgrep -f main_live.py)
 **Optimize**:
 ```bash
 # Increase timer interval
-# Edit configs/strategy_config.yaml:
+# Edit configs/base.yaml:
 timer_interval_sec: 1800  # 30 minutes
 
 # Restart
@@ -533,7 +540,7 @@ timer_interval_sec: 60  # 1 minute
 ### Adjust AI Temperature
 
 ```python
-# In main_live.py or configs/strategy_config.yaml
+# In main_live.py or configs/base.yaml
 deepseek:
   temperature: 0.1  # Default (consistent)
   temperature: 0.3  # More creative/varied (⚠️ less predictable)
@@ -703,7 +710,7 @@ free -h                                       # Memory
 1. Check logs first: `logs/trader_error.log`
 2. Review troubleshooting section above
 3. Check GitHub issues (if applicable)
-4. Verify configuration: `configs/strategy_config.yaml`
+4. Verify configuration: `configs/base.yaml`
 
 ---
 
@@ -715,7 +722,7 @@ Before going live:
 ✅ Environment configured (.env with valid API keys)
 ✅ Binance account setup (cross-margin, 10x leverage)
 ✅ USDT balance adequate (≥$500 recommended)
-✅ Config reviewed (configs/strategy_config.yaml)
+✅ Config reviewed (configs/base.yaml)
 ✅ Test run successful (indicators initialized)
 ✅ Monitoring setup (logs, alerts)
 ✅ Emergency procedures understood
@@ -728,7 +735,7 @@ Before going live:
 
 ```bash
 # 1. Install (2 min)
-python3.10 -m venv venv && source venv/bin/activate
+python3.11 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
 # 2. Configure (1 min)

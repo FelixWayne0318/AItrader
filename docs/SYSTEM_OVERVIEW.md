@@ -269,7 +269,7 @@ AUTO_CONFIRM=true  # 跳过确认提示
 TIMEFRAME=15m
 ```
 
-### 5.2 策略配置 (`configs/strategy_config.yaml`)
+### 5.2 策略配置 (`configs/base.yaml`)
 
 关键配置项：
 
@@ -417,8 +417,10 @@ python3 diagnose_realtime.py
 │   ├── binance_enums.py      # 枚举补丁
 │   └── binance_positions.py  # 持仓补丁
 ├── configs/
-│   ├── strategy_config.yaml  # 策略配置
-│   └── telegram_config.yaml  # Telegram 配置
+│   ├── base.yaml             # 基础配置 (所有参数)
+│   ├── production.yaml       # 生产环境覆盖
+│   ├── development.yaml      # 开发环境覆盖
+│   └── backtest.yaml         # 回测环境覆盖
 ├── diagnose.py               # 诊断工具
 ├── diagnose_realtime.py      # 实时诊断
 ├── setup.sh                  # 安装脚本
