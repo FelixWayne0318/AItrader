@@ -188,10 +188,33 @@ min_trade_amount = config.get('trading_logic', 'min_notional_usdt', default=100)
 |------|------|----------|
 | **smart_commit_analyzer.py** | 智能回归检测 (规则自动从 git 生成) | `python3 scripts/smart_commit_analyzer.py` |
 | **analyze_commits_ai.py** | AI 深度语义分析 (需要 DEEPSEEK_API_KEY) | `python3 scripts/analyze_commits_ai.py` |
+| **analyze_dependencies.py** | Python AST 依赖分析 (循环依赖/缺失模块) | `python3 scripts/analyze_dependencies.py` |
 | **analyze_git_changes.py** | Git 历史分析 (提交类型统计) | `python3 scripts/analyze_git_changes.py` |
 | **validate_commit_fixes.py** | 旧版手动规则检查 (已被 smart 替代) | `python3 scripts/validate_commit_fixes.py` |
 
 **GitHub Actions 自动运行**: 每次 push/PR 自动触发 `.github/workflows/commit-analysis.yml`
+
+### CodeQL 代码分析
+
+CodeQL 提供更深入的语义分析，包括安全漏洞检测和数据流分析。
+
+```bash
+# GitHub Actions 自动运行 (每周一 + 每次 push 到 main)
+# 配置文件: .github/workflows/codeql-analysis.yml
+
+# 自定义查询 (检测特定模式)
+.github/codeql/custom-queries/find-imports.ql      # 追踪所有 import 语句
+.github/codeql/custom-queries/hardcoded-paths.ql   # 检测硬编码文件路径
+```
+
+**CodeQL vs analyze_dependencies.py**:
+| 特性 | CodeQL | analyze_dependencies.py |
+|------|--------|------------------------|
+| 运行速度 | 较慢 (需构建数据库) | 快速 (直接 AST 解析) |
+| 分析深度 | 完整数据流/污点分析 | import 依赖关系 |
+| 安全检测 | SQL注入、命令注入等 | 无 |
+| 自定义查询 | QL 语言 | Python 代码 |
+| 本地运行 | 需安装 CodeQL CLI | 无需额外安装 |
 
 ## ⚠️ 关键信息
 
@@ -471,9 +494,16 @@ Environment=AUTO_CONFIRM=true
 ├── requirements.txt          # Python 依赖
 ├── nautilus-trader.service   # systemd 服务文件
 │
-├── .github/workflows/        # GitHub Actions
-│   ├── commit-analysis.yml   # 智能提交分析 (每次 push/PR 自动运行)
-│   └── claude.yml            # Claude Code Action
+├── .github/                  # GitHub 配置
+│   ├── workflows/            # GitHub Actions
+│   │   ├── commit-analysis.yml   # 智能提交分析 (每次 push/PR 自动运行)
+│   │   ├── codeql-analysis.yml   # CodeQL 安全分析 (每周 + push 到 main)
+│   │   └── claude.yml            # Claude Code Action
+│   └── codeql/               # CodeQL 自定义查询
+│       └── custom-queries/   # 项目专用查询
+│           ├── qlpack.yml        # 查询包配置
+│           ├── find-imports.ql   # 追踪所有 import
+│           └── hardcoded-paths.ql # 检测硬编码路径
 │
 ├── .claude/                  # Claude Code 配置
 │   ├── settings.json         # 权限配置
@@ -523,6 +553,7 @@ Environment=AUTO_CONFIRM=true
 │   ├── # === 提交分析工具 (GitHub Actions 自动运行) ===
 │   ├── smart_commit_analyzer.py  # 智能回归检测 (规则自动从 git 生成)
 │   ├── analyze_commits_ai.py     # AI 深度语义分析 (DeepSeek)
+│   ├── analyze_dependencies.py   # Python AST 依赖分析 (循环依赖检测)
 │   ├── analyze_git_changes.py    # Git 历史分析
 │   ├── validate_commit_fixes.py  # 旧版手动规则检查
 │   │
@@ -767,7 +798,8 @@ sudo systemctl restart nautilus-trader
 
 | 工作流 | 文件 | 功能 |
 |--------|------|------|
-| **Commit Analysis** | `.github/workflows/commit-analysis.yml` | 智能回归检测 + AI 分析 |
+| **Commit Analysis** | `.github/workflows/commit-analysis.yml` | 智能回归检测 + AI 分析 + 依赖分析 |
+| **CodeQL Analysis** | `.github/workflows/codeql-analysis.yml` | 安全漏洞 + 代码质量 (每周一 + push) |
 | **Claude Code** | `.github/workflows/claude.yml` | Claude Code Action |
 
 ### Commit Analysis 工作流
@@ -781,6 +813,20 @@ Jobs:
   2. AI Deep Analysis            # analyze_commits_ai.py (需要 DEEPSEEK_API_KEY)
      - DeepSeek 语义分析
      - 自动跳过 (如果没有 API key)
+  3. Dependency Analysis         # analyze_dependencies.py
+     - Python AST 依赖分析
+     - 检测循环依赖和缺失模块
+```
+
+### CodeQL Analysis 工作流
+
+```yaml
+触发: push/PR 到 main + 每周一凌晨
+功能:
+  - 安全漏洞检测 (SQL注入、命令注入等)
+  - 数据流分析 (追踪变量传递)
+  - 代码质量检查
+  - 自定义查询 (硬编码路径检测等)
 ```
 
 ### 设置 Secrets

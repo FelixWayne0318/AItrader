@@ -1,0 +1,4 @@
+name: aitrader-queries
+version: 1.0.0
+libraryPathDependencies:
+  - codeql/python-all
