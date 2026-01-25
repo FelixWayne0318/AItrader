@@ -1,9 +1,18 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.5.2
+> 版本: 2.5.3
 > 日期: 2026-01-25
-> 状态: **Phase 0 已完成，RSI 默认值已修复，文档同步清单已添加，可实施 Phase 1-6**
+> 状态: **Phase 0 已完成，关联影响审查完成，补充 7 处遗漏，可实施 Phase 1-6**
 > 审查: CONFIG_PROPOSAL_REVIEW.md
+
+**v2.5.3 更新说明** (关联影响完整性审查):
+- 🔴 **Phase 3 补充**: 添加 `agents/multi_agent_analyzer.py` 到修改列表 (导入语句需更新)
+- 🔴 **Phase 4 补充**: 添加 `utils/deepseek_client.py` 到修改列表 (信号历史队列)
+- 🔴 **Section 5.4.3 补充**: multi_agent_analyzer.py 导入失败诊断命令
+- 🟡 **Section 5.4.7 新增**: 跨 Phase 综合诊断 (Phase 1-4 完成后验证)
+- 🟡 **Section 5.6.3 扩展**: 补充嵌套 `.get()` 路径映射 (main_live.py:222-238)
+- 🟡 **Section 3.5.5 新增**: 完整路径映射表 (旧路径 → 新路径，含特殊处理)
+- ✅ 依赖链分析完成，7 处遗漏已全部修复
 
 **v2.5.2 更新说明**:
 - 🔴 **新增 Phase 6 文档更新清单**: 明确 CLAUDE.md 和 README.md 中 RSI 阈值更新要求 (75/25 → 70/30)
@@ -687,6 +696,56 @@ print('✅ 兼容层验证通过')
 "
 ```
 
+#### 3.5.5 完整路径映射表 🟡
+
+**旧路径 → 新路径映射**:
+
+| 旧路径 (strategy_config.yaml) | 新路径 (base.yaml) | 兼容方式 | 备注 |
+|------------------------------|-------------------|---------|------|
+| `strategy.instrument_id` | `trading.instrument_id` | 别名映射 | ✅ |
+| `strategy.bar_type` | `trading.bar_type` | 别名映射 | ✅ |
+| `strategy.equity` | `capital.equity` | 别名映射 | ✅ |
+| `strategy.leverage` | `capital.leverage` | 别名映射 | ✅ |
+| `strategy.use_real_balance_as_equity` | `capital.use_real_balance_as_equity` | 别名映射 | ✅ |
+| `strategy.position_management.*` | `position.*` | 别名映射 | ✅ |
+| `strategy.indicators.*` | `indicators.*` | 别名映射 | ✅ |
+| `strategy.deepseek.*` | `ai.deepseek.*` | 别名映射 | ✅ |
+| `strategy.risk.rsi_extreme_threshold_*` | `risk.rsi_extreme_threshold_*` | 别名映射 | ✅ |
+| `strategy.risk.skip_on_divergence` | `ai.signal.skip_on_divergence` | ⚠️ 路径变化 | 特殊处理 |
+| `strategy.risk.use_confidence_fusion` | `ai.signal.use_confidence_fusion` | ⚠️ 路径变化 | 特殊处理 |
+| `strategy.telegram.*` | `telegram.*` | 别名映射 | ✅ |
+| `strategy.timer_interval_sec` | `timing.timer_interval_sec` | 别名映射 | ✅ |
+| `logging.*` | `logging.*` | 无变化 | ✅ |
+
+**特殊处理**: `skip_on_divergence` 和 `use_confidence_fusion` 从 `strategy.risk.*` 移到 `ai.signal.*`
+
+兼容层需要同时检查两个路径：
+
+```python
+# ConfigManager.get() 特殊处理
+def get(self, *path, default=None) -> Any:
+    # ... 标准逻辑 ...
+
+    # 特殊处理: skip_on_divergence 和 use_confidence_fusion
+    if path == ('ai', 'signal', 'skip_on_divergence'):
+        value = (
+            self._get_nested(self._config, ('ai', 'signal', 'skip_on_divergence'))
+            or self._get_nested(self._config, ('strategy', 'risk', 'skip_on_divergence'))
+        )
+        if value is not None:
+            return value
+
+    if path == ('ai', 'signal', 'use_confidence_fusion'):
+        value = (
+            self._get_nested(self._config, ('ai', 'signal', 'use_confidence_fusion'))
+            or self._get_nested(self._config, ('strategy', 'risk', 'use_confidence_fusion'))
+        )
+        if value is not None:
+            return value
+
+    return default
+```
+
 ---
 
 ## 4. ConfigManager 类设计
@@ -1149,8 +1208,8 @@ class ConfigManager:
 | **Phase 0** | 🔴 **修复配置冲突** | main_live.py | **高** | **紧急** |
 | **Phase 1** | 创建 ConfigManager 和 base.yaml | 新增 2 文件 | 低 | 高 |
 | **Phase 2** | 修改 main_live.py 使用 ConfigManager | 修改 1 文件 | 中 | 高 |
-| **Phase 3** | 迁移 trading_logic.py 常量 | 修改 2 文件 | 中 | 中 |
-| **Phase 4** | 迁移 utils 中的硬编码 | 修改 5 文件 | 低 | 中 |
+| **Phase 3** | 迁移 trading_logic.py 常量 | 修改 3 文件 | 中 | 中 |
+| **Phase 4** | 迁移 utils 中的硬编码 | 修改 6 文件 | 低 | 中 |
 | **Phase 5** | 添加环境切换和 CLI 参数 | 修改 1 文件 | 低 | 低 |
 | **Phase 6** | 测试和文档更新 | 多文件 | 低 | 低 |
 
@@ -1180,8 +1239,13 @@ min_trade_amount=position_config.get('min_trade_amount', 0.001),
 
 ### 5.3 Phase 3: 迁移 trading_logic.py 常量
 
+**修改文件列表**:
+1. `strategy/trading_logic.py` - 常量改为函数
+2. `agents/multi_agent_analyzer.py` - 修改导入语句 (常量 → 函数)
+3. `diagnose_realtime.py` - 检查是否需要修改 (如果导入常量)
+
 ```python
-# strategy/trading_logic.py 修改
+# 1. strategy/trading_logic.py 修改
 
 # BEFORE (硬编码):
 MIN_NOTIONAL_USDT = 100.0
@@ -1215,11 +1279,43 @@ def _get_config():
         _TRADING_LOGIC_CONFIG = get_trading_logic_config()
     return _TRADING_LOGIC_CONFIG
 
-# 提供常量访问接口
-MIN_NOTIONAL_USDT = property(lambda self: _get_config()['min_notional_usdt'])
-# ... 或使用函数:
+# 提供常量访问接口 (函数形式)
 def get_min_notional_usdt():
     return _get_config()['min_notional_usdt']
+
+def get_min_sl_distance_pct():
+    return _get_config()['min_sl_distance_pct']
+
+def get_default_sl_pct():
+    return _get_config()['default_sl_pct']
+
+def get_default_tp_pct_buy():
+    return _get_config()['default_tp_pct']
+
+def get_default_tp_pct_sell():
+    return _get_config()['default_tp_pct']
+
+# 2. agents/multi_agent_analyzer.py 修改导入
+
+# BEFORE (导入常量):
+from strategy.trading_logic import (
+    MIN_SL_DISTANCE_PCT,
+    DEFAULT_SL_PCT,
+    DEFAULT_TP_PCT_BUY,
+    DEFAULT_TP_PCT_SELL,
+)
+
+# AFTER (导入函数):
+from strategy.trading_logic import (
+    get_min_sl_distance_pct,
+    get_default_sl_pct,
+    get_default_tp_pct_buy,
+    get_default_tp_pct_sell,
+)
+
+# 使用时也需要修改 (常量 → 函数调用)
+# BEFORE: sl_pct = DEFAULT_SL_PCT
+# AFTER:  sl_pct = get_default_sl_pct()
 ```
 
 ### 5.4 按 Phase 回滚诊断 🔴
@@ -1367,9 +1463,11 @@ sudo systemctl restart nautilus-trader
 
 ---
 
-#### 5.4.3 Phase 3 回滚 (循环导入错误)
+#### 5.4.3 Phase 3 回滚 (循环导入错误 / multi_agent_analyzer 导入失败)
 
-**症状**: 启动失败，报错 `ImportError: cannot import name ... from partially initialized module`
+**症状 1**: 启动失败，报错 `ImportError: cannot import name ... from partially initialized module`
+
+**症状 2**: 启动失败，报错 `ImportError: cannot import name 'MIN_SL_DISTANCE_PCT' from 'strategy.trading_logic'`
 
 **诊断命令**:
 
@@ -1377,7 +1475,7 @@ sudo systemctl restart nautilus-trader
 cd /home/linuxuser/nautilus_AItrader
 source venv/bin/activate
 
-# 1. 检查是否有循环导入
+# 1. 检查 trading_logic 是否有循环导入
 python3 -c "
 try:
     import strategy.trading_logic
@@ -1386,7 +1484,17 @@ except ImportError as e:
     print(f'❌ 循环导入错误: {e}')
 "
 
-# 2. 检查模块导入顺序
+# 2. 检查 multi_agent_analyzer 是否能正常导入 (新增)
+python3 -c "
+try:
+    from agents.multi_agent_analyzer import MultiAgentAnalyzer
+    print('✅ MultiAgentAnalyzer 导入成功')
+except ImportError as e:
+    print(f'❌ multi_agent_analyzer.py 导入失败: {e}')
+    print('  原因: trading_logic.py 常量改为函数，但 multi_agent_analyzer.py 未同步修改')
+"
+
+# 3. 检查模块导入顺序
 python3 -c "
 import sys
 sys.settrace(lambda *args: print(args[0].f_code.co_filename) if 'trading_logic' in str(args) else None)
@@ -1397,8 +1505,8 @@ import strategy.trading_logic
 **回滚命令**:
 
 ```bash
-# 恢复 trading_logic.py 常量硬编码
-git checkout HEAD~1 -- strategy/trading_logic.py
+# 恢复 trading_logic.py 和 multi_agent_analyzer.py 到 Phase 2 状态
+git checkout HEAD~1 -- strategy/trading_logic.py agents/multi_agent_analyzer.py
 sudo systemctl restart nautilus-trader
 ```
 
@@ -1479,6 +1587,72 @@ git checkout HEAD~1 -- main_live.py
 
 # 或删除环境配置文件，只保留 base.yaml
 rm -f configs/development.yaml configs/backtest.yaml
+sudo systemctl restart nautilus-trader
+```
+
+---
+
+#### 5.4.7 跨 Phase 综合诊断 🟡
+
+> **场景**: Phase 1-4 全部完成后，验证完整数据流和配置加载
+
+**诊断命令**:
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+
+# 1. 运行实时诊断 (真实 API 调用)
+python3 diagnose_realtime.py
+# 预期: 输出完整信号，无 ImportError/KeyError/AttributeError
+
+# 2. 检查配置加载次数 (验证单例模式)
+sudo journalctl -u nautilus-trader --since "5 min ago" | grep -c "Configuration Summary"
+# 预期: ≤ 1 (单例模式生效，配置只加载一次)
+
+# 3. 验证所有配置路径可访问
+python3 -c "
+from utils.config_manager import get_config
+config = get_config()
+
+# 测试关键配置路径
+test_paths = [
+    ('ai', 'deepseek', 'temperature'),
+    ('risk', 'rsi_extreme_threshold_upper'),
+    ('trading_logic', 'min_notional_usdt'),
+    ('network', 'binance', 'recv_window'),
+    ('ai', 'signal', 'history_count'),
+    ('telegram', 'enabled'),
+]
+
+print('配置路径验证:')
+for path in test_paths:
+    val = config.get(*path)
+    status = '✅' if val is not None else '❌'
+    path_str = '.'.join(path)
+    print(f'{status} {path_str}: {val}')
+"
+
+# 4. 检查是否有配置加载错误
+sudo journalctl -u nautilus-trader --since "10 min ago" | grep -i "error\|warning" | grep -i "config"
+# 预期: 无配置相关错误/警告
+```
+
+**性能检测**:
+
+```bash
+# 检查 API 响应时间 (确保配置加载未导致性能退化)
+sudo journalctl -u nautilus-trader --since "5 min ago" | grep -i "timeout\|slow"
+# 预期: 无超时警告
+```
+
+**回滚命令**:
+
+如果综合诊断失败，回滚到 Phase 0 (稳定状态):
+
+```bash
+git log --oneline -10  # 找到 Phase 0 完成后的 commit
+git reset --hard <phase0-commit>
 sudo systemctl restart nautilus-trader
 ```
 
@@ -1615,12 +1789,26 @@ def _mask_sensitive(self, key: str, value: Any) -> str:
 
 Phase 0 修复了 main_live.py 的硬编码问题，Phase 2 将完全迁移到 ConfigManager。必须验证配置路径一致性：
 
+**核心参数路径映射**:
+
 | 参数 | Phase 0 路径 | Phase 2 路径 | 验证 |
 |------|-------------|-------------|------|
 | `deepseek_temperature` | `deepseek_config.get('temperature')` | `config.get('ai', 'deepseek', 'temperature')` | ✅ 一致 |
 | `rsi_extreme_threshold_upper` | `risk_config.get('rsi_extreme_threshold_upper')` | `config.get('risk', 'rsi_extreme_threshold_upper')` | ✅ 一致 |
 | `rsi_extreme_threshold_lower` | `risk_config.get('rsi_extreme_threshold_lower')` | `config.get('risk', 'rsi_extreme_threshold_lower')` | ✅ 一致 |
 | `min_trade_amount` | `position_config.get('min_trade_amount')` | `config.get('position', 'min_trade_amount')` | ✅ 一致 |
+
+**嵌套 .get() 路径映射** (main_live.py:222-238):
+
+| 参数 | Phase 0 路径 | Phase 2 路径 | 位置 |
+|------|-------------|-------------|------|
+| `skip_on_divergence` | `strategy_yaml.get('risk', {}).get('skip_on_divergence', True)` | `config.get('ai', 'signal', 'skip_on_divergence', default=True)` | :222 |
+| `use_confidence_fusion` | `strategy_yaml.get('risk', {}).get('use_confidence_fusion', True)` | `config.get('ai', 'signal', 'use_confidence_fusion', default=True)` | :223 |
+| `enable_telegram` | `strategy_yaml.get('telegram', {}).get('enabled', False)` | `config.get('telegram', 'enabled', default=False)` | :232 |
+| `telegram_notify_signals` | `strategy_yaml.get('telegram', {}).get('notify_signals', True)` | `config.get('telegram', 'notify_signals', default=True)` | :235 |
+| `telegram_notify_fills` | `strategy_yaml.get('telegram', {}).get('notify_fills', True)` | `config.get('telegram', 'notify_fills', default=True)` | :236 |
+| `telegram_notify_positions` | `strategy_yaml.get('telegram', {}).get('notify_positions', True)` | `config.get('telegram', 'notify_positions', default=True)` | :237 |
+| `telegram_notify_errors` | `strategy_yaml.get('telegram', {}).get('notify_errors', True)` | `config.get('telegram', 'notify_errors', default=True)` | :238 |
 
 **验证脚本**:
 
@@ -1683,13 +1871,31 @@ def get_min_notional_usdt():
 
 #### 5.6.5 Phase 4 依赖关系
 
-| 文件 | 依赖配置 | 来源 Phase | 影响说明 |
-|------|---------|-----------|---------|
-| `bar_persistence.py` | `retry_delay`, `max_retries` | Phase 1 | 文件操作重试 |
-| `oco_manager.py` | `socket_timeout` | Phase 1 | WebSocket 连接 |
-| `telegram_command_handler.py` | `startup_delay`, `max_retries` | Phase 1 | Telegram 轮询 |
-| `binance_account.py` | `api_timeout` | Phase 1 | API 请求超时 |
-| `deepseek_client.py` | `retry_delay`, `max_retries` | Phase 1 | AI API 重试 |
+**修改文件列表** (6 个):
+
+| 文件 | 行号 | 硬编码值 | 配置路径 | 影响说明 |
+|------|------|---------|---------|---------|
+| `bar_persistence.py` | 346, 349 | `max_limit=1500`, `timeout=10` | `network.bar_persistence.*` | K线数据获取 |
+| `oco_manager.py` | 89-90 | `socket_timeout=5` | `network.oco_manager.*` | Redis连接 |
+| `telegram_command_handler.py` | 476-482 | `startup_delay=5` | `telegram.startup_delay` | Telegram轮询 |
+| `binance_account.py` | 55, 78 | `_cache_ttl=5.0` | `network.binance.balance_cache_ttl` | 余额缓存 |
+| `sentiment_client.py` | 89 | `timeout=10` | `sentiment.timeout` | 情绪数据 |
+| `deepseek_client.py` | 58 | `maxlen=30` | `ai.signal.history_count` | 信号历史队列 |
+
+**Phase 4 新增**: `deepseek_client.py:58` 信号历史队列大小
+
+```python
+# utils/deepseek_client.py 修改
+
+# BEFORE (硬编码):
+self.signal_history = deque(maxlen=30)
+
+# AFTER (从配置加载):
+from utils.config_manager import get_config
+config = get_config()
+history_count = config.get('ai', 'signal', 'history_count', default=30)
+self.signal_history = deque(maxlen=history_count)
+```
 
 **Phase 4 部分回滚方案**:
 
