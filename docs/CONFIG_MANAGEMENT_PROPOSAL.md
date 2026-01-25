@@ -1,9 +1,14 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.5.1
+> 版本: 2.5.2
 > 日期: 2026-01-25
-> 状态: **Phase 0 已完成，RSI 默认值已修复，回滚方案完整，可实施 Phase 1-6**
+> 状态: **Phase 0 已完成，RSI 默认值已修复，文档同步清单已添加，可实施 Phase 1-6**
 > 审查: CONFIG_PROPOSAL_REVIEW.md
+
+**v2.5.2 更新说明**:
+- 🔴 **新增 Phase 6 文档更新清单**: 明确 CLAUDE.md 和 README.md 中 RSI 阈值更新要求 (75/25 → 70/30)
+- ✅ 符合 CLAUDE.md 代码修改规范
+- ✅ 符合 .claude/skills/code-review 审查标准
 
 **v2.5.1 更新说明**:
 - 🔴 **新增 Section 5.4.2.5**: Phase 2 回滚诊断 (main_live.py 配置加载失败)
@@ -1724,7 +1729,34 @@ git checkout HEAD~1 -- utils/oco_manager.py
 **Phase 5-6 实施前**:
 - [ ] 全量功能测试通过
 - [ ] 运行 `python3 diagnose.py` 全部检查通过
-- [ ] 更新 CLAUDE.md 和 README.md
+- [ ] 更新 CLAUDE.md 和 README.md (详见下方)
+
+**Phase 6 文档更新清单** 🔴:
+
+> ⚠️ **发现的文档不一致**：CLAUDE.md 和 README.md 中的 RSI 阈值仍为旧值 (75/25)，需更新为当前值 (70/30)
+
+| 文件 | 行号 | 当前值 | 应更新为 |
+|------|------|--------|---------|
+| `CLAUDE.md` | 369-370 | 75/25 | 70/30 |
+| `README.md` | 527-528 | 75/25 | 70/30 |
+| `README.md` | 1164-1165 | 75/25 | 70/30 |
+
+**更新命令**:
+```bash
+# 更新 CLAUDE.md
+sed -i 's/rsi_extreme_threshold_upper.*75/rsi_extreme_threshold_upper | 70/g' CLAUDE.md
+sed -i 's/rsi_extreme_threshold_lower.*25/rsi_extreme_threshold_lower | 30/g' CLAUDE.md
+
+# 更新 README.md
+sed -i 's/rsi_extreme_threshold_upper: 75/rsi_extreme_threshold_upper: 70/g' README.md
+sed -i 's/rsi_extreme_threshold_lower: 25/rsi_extreme_threshold_lower: 30/g' README.md
+```
+
+**验证命令**:
+```bash
+grep -n "rsi_extreme_threshold" CLAUDE.md README.md | grep -E "75|25"
+# 应该没有输出，表示已全部更新
+```
 
 ### 5.7 配置迁移脚本设计 🟡
 
