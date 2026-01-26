@@ -22,6 +22,34 @@
 | v3.2.1 | 2026-01-26 | **Coinalyze API 验证 + 完整配置**，修正 API Key 要求、Symbol 格式、完整 base.yaml 配置 |
 | v3.2.2 | 2026-01-26 | **数据格式转换**，添加 Coinalyze → 统一格式转换逻辑，含字段映射表 |
 | v3.2.3 | 2026-01-26 | **API 格式实测修正**，根据实际 API 响应修正字段名 (`value` vs `openInterestUsd`) |
+| v3.2.4 | 2026-01-26 | **时间戳格式修正**，Coinalyze API 使用 UNIX 秒 (非毫秒)，添加完整 interval 值列表 |
+
+### v3.2.4 主要更新 (时间戳格式修正)
+
+1. **⚠️ 严重 Bug 修复: 时间戳单位错误**
+   - Coinalyze API 使用 **UNIX 秒**，不是毫秒!
+   - 旧代码: `int(time.time() * 1000)` ❌
+   - 新代码: `int(time.time())` ✅
+   - 影响: 清算历史、OI 历史等所有 history 端点
+
+2. **完整的 interval 参数值列表** (官方文档确认)
+   ```
+   1min, 5min, 15min, 30min, 1hour, 2hour, 4hour, 6hour, 12hour, daily
+   ```
+   - ⚠️ 必须使用完整拼写 (`1hour` 而非 `1h`)
+
+3. **API 响应时间戳**
+   - 响应中的 `t` 字段也是 UNIX 秒
+   - 例: `"t": 1622548800` (非毫秒)
+
+4. **历史数据保留策略**
+   - 日内周期 (1min ~ 12hour): 保留 1500-2000 条，每日删除旧数据
+   - 日线周期 (daily): 永久保留
+
+5. **速率限制细节**
+   - 40 次/分钟/API Key
+   - 超限返回 HTTP 429
+   - `Retry-After` header 指示等待秒数
 
 ### v3.2.3 主要更新 (API 格式实测修正)
 
@@ -2461,13 +2489,14 @@ class CoinalyzeClient:
                 url = f"{self.BASE_URL}/liquidation-history"
                 # 获取最近1小时的清算数据
                 import time
-                end_time = int(time.time() * 1000)
-                start_time = end_time - 3600000  # 1小时前
+                # ⚠️ 重要: Coinalyze API 使用 UNIX 秒，不是毫秒!
+                end_time = int(time.time())           # 秒
+                start_time = end_time - 3600          # 1小时前 (3600秒)
                 params = {
                     "symbols": symbol,
                     "interval": "1hour",  # ⚠️ 必须是 "1hour" 不是 "1h"
-                    "from": start_time,
-                    "to": end_time
+                    "from": start_time,   # UNIX 秒
+                    "to": end_time        # UNIX 秒
                 }
                 headers = self._get_headers()
                 async with session.get(url, params=params, headers=headers,
@@ -2679,22 +2708,45 @@ class AIDataAssembler:
         return round((new_close - old_close) / old_close * 100, 2) if old_close > 0 else 0.0
 ```
 
-#### 9.6.4 Coinalyze 数据格式参考 (2026-01-26 实测验证)
+#### 9.6.4 Coinalyze 数据格式参考 (2026-01-26 实测验证 + API 文档确认)
+
+**⚠️ 关键发现汇总**:
+
+| 项目 | 错误假设 | 实际值 | 来源 |
+|------|---------|--------|------|
+| **时间戳格式** | 毫秒 | **UNIX 秒** | 官方文档 |
+| **OI 字段名** | `openInterestUsd` | `value` | 实测 |
+| **OI 单位** | USD | **BTC 数量** | 实测 |
+| **Funding 字段名** | `fundingRate` | `value` | 实测 |
+| **Liquidation interval** | `1h` | `1hour` | 官方文档 |
+
+**完整的 interval 参数值** (官方文档确认):
+```
+1min, 5min, 15min, 30min, 1hour, 2hour, 4hour, 6hour, 12hour, daily
+```
 
 **API 原始响应 vs 统一格式对照表**:
 
 | 端点 | Coinalyze 原始字段 | 转换后字段 | 说明 |
 |------|-------------------|-----------|------|
 | `/open-interest` | `value` ⚠️ | `total_usd` | 值为 BTC 数量，需乘以价格转 USD |
-| `/open-interest` | `update` | (参考时间戳) | 毫秒时间戳 |
+| `/open-interest` | `update` | (参考时间戳) | **UNIX 秒** (非毫秒) |
 | `/open-interest` | (无) | `change_24h_pct` | 需自己计算 (缓存对比) |
 | `/funding-rate` | `value` ⚠️ | `current` | 直接使用 (0.002847 = 0.28%) |
 | `/funding-rate` | (无) | `predicted` | API 不提供，设为 0 |
 | `/liquidation-history` | `l` | `long_usd` | 做多清算 USD |
 | `/liquidation-history` | `s` | `short_usd` | 做空清算 USD |
-| `/liquidation-history` | `t` | (参考时间戳) | 毫秒时间戳 |
+| `/liquidation-history` | `t` | (参考时间戳) | **UNIX 秒** (非毫秒) |
 
-**⚠️ 重要发现**: Coinalyze API 使用通用字段名 `value` 而非语义化字段名！
+**请求参数格式** (所有 history 端点):
+```python
+params = {
+    "symbols": "BTCUSDT_PERP.A",
+    "interval": "1hour",              # 必须完整拼写
+    "from": int(time.time()) - 3600,  # UNIX 秒 ⚠️
+    "to": int(time.time())            # UNIX 秒 ⚠️
+}
+```
 
 **Coinalyze API 响应示例** (实测):
 
@@ -2703,33 +2755,42 @@ class AIDataAssembler:
 [{
     "symbol": "BTCUSDT_PERP.A",
     "value": 102199.59,               // ⚠️ BTC 数量，不是 USD!
-    "update": 1769417410150           // ⚠️ 字段名是 update，不是 timestamp
+    "update": 1769417410              // ⚠️ UNIX 秒
 }]
 
 // GET /v1/funding-rate?symbols=BTCUSDT_PERP.A
 [{
     "symbol": "BTCUSDT_PERP.A",
     "value": 0.002847,                // ⚠️ 0.2847%，字段名是 value
-    "update": 1769417407648
+    "update": 1769417407              // UNIX 秒
 }]
 
-// GET /v1/liquidation-history?symbols=BTCUSDT_PERP.A&interval=1hour
-// ⚠️ interval 必须是 "1hour" 不是 "1h"!
+// GET /v1/liquidation-history?symbols=BTCUSDT_PERP.A&interval=1hour&from=1769413807&to=1769417407
+// ⚠️ interval 必须是 "1hour", from/to 是 UNIX 秒!
 [{
-    "t": 1706270400000,               // timestamp
+    "t": 1706270400,                  // UNIX 秒
     "l": 2500000,                     // long liquidation USD ⭐
     "s": 1800000                      // short liquidation USD ⭐
 }]
 ```
 
 **注意事项**:
-1. ⚠️ OI 的 `value` 是 **BTC 数量**，需要乘以当前价格才能得到 USD 值
-2. ⚠️ Funding Rate 的 `value` 是小数形式 (0.002847 = 0.2847%)
-3. ⚠️ 时间戳字段名是 `update`，不是 `timestamp`
+1. ⚠️ **时间戳单位是秒**: `from`/`to` 参数和响应中的 `t`/`update` 都是 UNIX 秒
+2. ⚠️ OI 的 `value` 是 **BTC 数量**，需要乘以当前价格才能得到 USD 值
+3. ⚠️ Funding Rate 的 `value` 是小数形式 (0.002847 = 0.2847%)
 4. ⚠️ 清算端点的 interval 必须是 `1hour`，不是 `1h`
 5. `change_24h_pct` 需要自己计算 (Coinalyze 不提供)
 6. 首次运行时 OI 变化率为 0 (无历史数据对比)
 7. `predicted` funding rate API 不提供，代码中设为 0
+
+**历史数据保留策略**:
+- 日内周期 (1min ~ 12hour): 保留 1500-2000 条，每日删除旧数据
+- 日线周期 (daily): 永久保留
+
+**速率限制**:
+- 40 次/分钟/API Key
+- 超限返回 HTTP 429
+- `Retry-After` header 指示等待秒数
 
 ### 9.7 配置项扩展
 

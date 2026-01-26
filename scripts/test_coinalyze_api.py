@@ -140,14 +140,15 @@ def test_liquidation_history():
     print("=" * 60)
 
     # 最近 1 小时
-    end_time = int(time.time() * 1000)
-    start_time = end_time - 3600000
+    # ⚠️ 重要: Coinalyze API 使用 UNIX 秒，不是毫秒!
+    end_time = int(time.time())        # 秒
+    start_time = end_time - 3600       # 1小时前 (3600秒)
 
     result = make_request('liquidation-history', {
         'symbols': SYMBOL,
         'interval': '1hour',  # ⚠️ 必须是 "1hour" 不是 "1h"
-        'from': start_time,
-        'to': end_time
+        'from': start_time,   # UNIX 秒
+        'to': end_time        # UNIX 秒
     })
 
     if 'error' in result:
@@ -180,14 +181,15 @@ def test_oi_history():
     print("=" * 60)
 
     # 最近 24 小时
-    end_time = int(time.time() * 1000)
-    start_time = end_time - 86400000  # 24h
+    # ⚠️ 重要: Coinalyze API 使用 UNIX 秒，不是毫秒!
+    end_time = int(time.time())        # 秒
+    start_time = end_time - 86400      # 24h (86400秒)
 
     result = make_request('open-interest-history', {
         'symbols': SYMBOL,
-        'interval': '1h',
-        'from': start_time,
-        'to': end_time
+        'interval': '1hour',  # ⚠️ 必须是 "1hour" 不是 "1h"
+        'from': start_time,   # UNIX 秒
+        'to': end_time        # UNIX 秒
     })
 
     if 'error' in result:
