@@ -478,7 +478,7 @@ if not SUMMARY_MODE and mtf_enabled:
         from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState, DecisionState
 
         # 检查 MTF 管理器的关键方法
-        mtf_methods = ['on_bar', 'on_request_bars', 'get_trend_state', 'get_decision_state']
+        mtf_methods = ['route_bar', 'is_initialized', 'get_risk_state', 'get_decision_state', 'evaluate_risk_state']
         missing_methods = []
         for method in mtf_methods:
             if not hasattr(MultiTimeframeManager, method):
@@ -1408,8 +1408,17 @@ if not SUMMARY_MODE:
             print()
             print("  📊 测试 Liquidations API...")
             try:
+                import time as time_module
                 liq_url = f"{base_url}/liquidation-history"
-                params_liq = {"symbols": coinalyze_symbol, "interval": "1h"}
+                end_time = int(time_module.time())
+                start_time = end_time - 3600  # 1 小时前
+                # 注意: interval 必须是 "1hour" 而不是 "1h"
+                params_liq = {
+                    "symbols": coinalyze_symbol,
+                    "interval": "1hour",
+                    "from": start_time,
+                    "to": end_time
+                }
                 resp = requests.get(liq_url, headers=headers, params=params_liq, timeout=timeout)
 
                 if resp.status_code == 200:
@@ -1417,10 +1426,19 @@ if not SUMMARY_MODE:
                     if data:
                         print(f"     ✅ Liquidations API 成功")
                         print(f"        数据点数: {len(data) if isinstance(data, list) else 1}")
+                        # 显示最新一条数据
+                        if isinstance(data, list) and len(data) > 0:
+                            latest = data[-1]
+                            long_liq = latest.get('l', latest.get('longLiquidationUsd', 0))
+                            short_liq = latest.get('s', latest.get('shortLiquidationUsd', 0))
+                            print(f"        Long Liquidations: ${long_liq:,.0f}")
+                            print(f"        Short Liquidations: ${short_liq:,.0f}")
                     else:
-                        print(f"     ⚠️ API 返回空数据")
+                        print(f"     ⚠️ API 返回空数据 (可能近 1 小时无清算)")
                 else:
                     print(f"     ❌ API 错误: {resp.status_code}")
+                    if resp.status_code == 400:
+                        print(f"        → 检查参数格式: interval='1hour', from/to=UNIX秒")
 
             except Exception as e:
                 print(f"     ❌ Liquidations 测试失败: {e}")
@@ -1466,12 +1484,18 @@ if not SUMMARY_MODE:
             if telegram_bot_path.exists():
                 print("     ✅ utils/telegram_bot.py 存在")
 
-                # 检查 send_message_sync 函数
+                # 检查 TelegramBot 类和 send_message_sync 方法
                 try:
-                    from utils.telegram_bot import send_message_sync
-                    print("     ✅ send_message_sync 函数可导入")
+                    from utils.telegram_bot import TelegramBot
+                    print("     ✅ TelegramBot 类可导入")
 
-                    # 测试发送消息 (可选，需要用户确认)
+                    # 检查 send_message_sync 是否是类方法
+                    if hasattr(TelegramBot, 'send_message_sync'):
+                        print("     ✅ TelegramBot.send_message_sync 方法存在")
+                    else:
+                        print("     ⚠️ TelegramBot.send_message_sync 方法缺失")
+
+                    # 测试 Telegram API 连通性
                     print()
                     print("  📤 Telegram API 连通性测试:")
                     import requests
@@ -1493,7 +1517,7 @@ if not SUMMARY_MODE:
                         print(f"     ❌ API 错误: {resp.status_code}")
 
                 except ImportError as e:
-                    print(f"     ❌ 无法导入 send_message_sync: {e}")
+                    print(f"     ❌ 无法导入 TelegramBot: {e}")
             else:
                 print("     ❌ utils/telegram_bot.py 不存在")
 
@@ -1505,8 +1529,8 @@ if not SUMMARY_MODE:
                     from utils.telegram_command_handler import TelegramCommandHandler
                     print("     ✅ TelegramCommandHandler 类可导入")
 
-                    # 检查命令处理方法
-                    commands = ['_cmd_status', '_cmd_position', '_cmd_pause', '_cmd_resume', '_cmd_close']
+                    # 检查命令处理方法 (注意：方法名没有下划线前缀)
+                    commands = ['cmd_status', 'cmd_position', 'cmd_pause', 'cmd_resume', 'cmd_close', 'cmd_orders', 'cmd_history']
                     for cmd in commands:
                         if hasattr(TelegramCommandHandler, cmd):
                             print(f"        ✅ {cmd} 方法存在")
