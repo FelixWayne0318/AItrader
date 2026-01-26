@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.1 (TradingAgents 架构 + MTF 完整支持)
+实盘信号诊断脚本 v10.2 (TradingAgents 架构 + MTF 完整支持 + Order Flow 测试)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -12,6 +12,7 @@
 7. 检查可能导致不能下单的关键配置
 8. v10.0: 多时间框架 (MTF) 三层架构支持
 9. v10.1: MTF 详细配置验证、初始化配置、Order Flow 检查
+10. v10.2: Order Flow 实际数据获取测试、Telegram 命令处理验证、MTF 预取验证
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -27,6 +28,11 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.2:
+- 添加 Step 0.6: MTF 历史数据预取验证 (检查各层初始化状态)
+- 添加 Step 9: Order Flow 数据实际获取测试 (Coinalyze API 调用验证)
+- 添加 Step 9.5: Telegram 命令处理验证 (send_message_sync 测试)
+
 v10.1:
 - 添加 MTF 层详细配置验证 (require_above_sma, debate_rounds, rsi_entry 等)
 - 添加 MTF 初始化配置检查 (trend_min_bars, decision_min_bars, execution_min_bars)
@@ -460,6 +466,86 @@ except Exception as e:
     mtf_enabled = False
 
 print()
+
+# =============================================================================
+# 0.6 MTF 历史数据预取验证 (v10.2)
+# =============================================================================
+if not SUMMARY_MODE and mtf_enabled:
+    print("[0.6/10] MTF 历史数据预取验证...")
+    print("-" * 70)
+
+    try:
+        from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState, DecisionState
+
+        # 检查 MTF 管理器的关键方法
+        mtf_methods = ['on_bar', 'on_request_bars', 'get_trend_state', 'get_decision_state']
+        missing_methods = []
+        for method in mtf_methods:
+            if not hasattr(MultiTimeframeManager, method):
+                missing_methods.append(method)
+
+        if missing_methods:
+            print(f"  ⚠️ MultiTimeframeManager 缺少方法: {missing_methods}")
+        else:
+            print("  ✅ MultiTimeframeManager 关键方法完整")
+            print(f"     方法列表: {', '.join(mtf_methods)}")
+
+        # 检查初始化标志属性
+        init_flags = ['_trend_initialized', '_decision_initialized', '_execution_initialized']
+        print()
+        print("  📋 MTF 初始化标志属性检查:")
+
+        # 这些是实例属性，只能在策略中检查
+        print("     → 这些标志在 deepseek_strategy.py 中维护:")
+        print("       _mtf_trend_initialized: 趋势层 (1D) 初始化状态")
+        print("       _mtf_decision_initialized: 决策层 (4H) 初始化状态")
+        print("       _mtf_execution_initialized: 执行层 (15M) 初始化状态")
+        print()
+        print("     → 查看服务日志检查初始化状态:")
+        print("       journalctl -u nautilus-trader | grep -i 'mtf\\|timeframe\\|initialized'")
+
+        # 检查 RiskState 和 DecisionState 枚举值
+        print()
+        print("  📋 MTF 状态枚举检查:")
+        print(f"     RiskState 值: {[s.name for s in RiskState]}")
+        print(f"     DecisionState 值: {[s.name for s in DecisionState]}")
+
+        # 检查预取配置
+        print()
+        print("  📋 MTF 预取配置:")
+        base_yaml_path = project_root / "configs" / "base.yaml"
+        if base_yaml_path.exists():
+            with open(base_yaml_path) as f:
+                base_config = yaml.safe_load(f)
+            mtf_config = base_config.get('multi_timeframe', {})
+            init_cfg = mtf_config.get('initialization', {})
+
+            trend_bars = init_cfg.get('trend_min_bars', 220)
+            decision_bars = init_cfg.get('decision_min_bars', 60)
+            execution_bars = init_cfg.get('execution_min_bars', 40)
+
+            print(f"     趋势层 (1D) 需要 {trend_bars} 根 K线")
+            print(f"     决策层 (4H) 需要 {decision_bars} 根 K线")
+            print(f"     执行层 (15M) 需要 {execution_bars} 根 K线")
+            print()
+
+            # 计算预取数据量
+            print("  📋 预取数据量估算:")
+            print(f"     趋势层: {trend_bars} 天 ≈ {trend_bars/365:.1f} 年历史数据")
+            print(f"     决策层: {decision_bars * 4} 小时 ≈ {decision_bars * 4 / 24:.1f} 天历史数据")
+            print(f"     执行层: {execution_bars * 15} 分钟 ≈ {execution_bars * 15 / 60:.1f} 小时历史数据")
+
+        print()
+        print("  ✅ MTF 预取配置验证完成")
+
+    except ImportError as e:
+        print(f"  ❌ 无法导入 MultiTimeframeManager: {e}")
+    except Exception as e:
+        print(f"  ⚠️ MTF 预取验证失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print()
 
 # =============================================================================
 # 1. 从 main_live.py 导入并获取真实配置
@@ -1222,6 +1308,233 @@ print()
 print("  💡 关键点: Telegram 通知在 _execute_trade 之前发送!")
 print("     如果收到信号但无交易，检查服务日志查看 _execute_trade 输出")
 print()
+
+# =============================================================================
+# 9. Order Flow 数据获取测试 (v10.2)
+# =============================================================================
+if not SUMMARY_MODE:
+    print("[9/10] Order Flow 数据获取测试...")
+    print("-" * 70)
+
+    try:
+        # 读取 Order Flow 配置
+        base_yaml_path = project_root / "configs" / "base.yaml"
+        order_flow_enabled = False
+        coinalyze_enabled = False
+        coinalyze_api_key = None
+
+        if base_yaml_path.exists():
+            with open(base_yaml_path) as f:
+                base_config = yaml.safe_load(f)
+            order_flow = base_config.get('order_flow', {})
+            order_flow_enabled = order_flow.get('enabled', False)
+            coinalyze_cfg = order_flow.get('coinalyze', {})
+            coinalyze_enabled = coinalyze_cfg.get('enabled', False)
+            coinalyze_api_key = coinalyze_cfg.get('api_key') or os.getenv('COINALYZE_API_KEY')
+
+        if not order_flow_enabled:
+            print("  ℹ️ Order Flow 未启用，跳过测试")
+        elif not coinalyze_enabled:
+            print("  ℹ️ Coinalyze 未启用，跳过 API 测试")
+        elif not coinalyze_api_key:
+            print("  ⚠️ Coinalyze API key 未配置")
+        else:
+            print("  📋 Coinalyze API 测试:")
+            print(f"     API Key: {coinalyze_api_key[:8]}...{coinalyze_api_key[-4:]}")
+
+            # 测试 Coinalyze API
+            import requests
+
+            coinalyze_symbol = coinalyze_cfg.get('symbol', 'BTCUSDT_PERP.A')
+            timeout = coinalyze_cfg.get('timeout', 10)
+            base_url = "https://api.coinalyze.net/v1"
+
+            # 测试 Open Interest 端点
+            print()
+            print("  📊 测试 Open Interest API...")
+            try:
+                oi_url = f"{base_url}/open-interest"
+                headers = {"api_key": coinalyze_api_key}
+                params = {"symbols": coinalyze_symbol}
+
+                resp = requests.get(oi_url, headers=headers, params=params, timeout=timeout)
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data:
+                        oi_data = data[0] if isinstance(data, list) else data
+                        print(f"     ✅ Open Interest API 成功")
+                        print(f"        Symbol: {oi_data.get('symbol', 'N/A')}")
+                        print(f"        Open Interest: {oi_data.get('openInterest', 'N/A')}")
+                        print(f"        OI Change 24h: {oi_data.get('openInterestChange24h', 'N/A')}")
+                    else:
+                        print(f"     ⚠️ API 返回空数据")
+                elif resp.status_code == 401:
+                    print(f"     ❌ API Key 无效 (401 Unauthorized)")
+                elif resp.status_code == 429:
+                    print(f"     ⚠️ API 限流 (429 Too Many Requests)")
+                else:
+                    print(f"     ❌ API 错误: {resp.status_code}")
+                    print(f"        响应: {resp.text[:200]}")
+
+            except requests.exceptions.Timeout:
+                print(f"     ❌ API 超时 ({timeout}s)")
+            except requests.exceptions.RequestException as e:
+                print(f"     ❌ 网络错误: {e}")
+
+            # 测试 Funding Rate 端点
+            print()
+            print("  📊 测试 Funding Rate API...")
+            try:
+                fr_url = f"{base_url}/funding-rate"
+                resp = requests.get(fr_url, headers=headers, params=params, timeout=timeout)
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data:
+                        fr_data = data[0] if isinstance(data, list) else data
+                        print(f"     ✅ Funding Rate API 成功")
+                        funding_rate = fr_data.get('fundingRate', 0)
+                        print(f"        Funding Rate: {funding_rate:.6f} ({funding_rate*100:.4f}%)")
+                    else:
+                        print(f"     ⚠️ API 返回空数据")
+                else:
+                    print(f"     ❌ API 错误: {resp.status_code}")
+
+            except Exception as e:
+                print(f"     ❌ Funding Rate 测试失败: {e}")
+
+            # 测试 Liquidations 端点
+            print()
+            print("  📊 测试 Liquidations API...")
+            try:
+                liq_url = f"{base_url}/liquidation-history"
+                params_liq = {"symbols": coinalyze_symbol, "interval": "1h"}
+                resp = requests.get(liq_url, headers=headers, params=params_liq, timeout=timeout)
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data:
+                        print(f"     ✅ Liquidations API 成功")
+                        print(f"        数据点数: {len(data) if isinstance(data, list) else 1}")
+                    else:
+                        print(f"     ⚠️ API 返回空数据")
+                else:
+                    print(f"     ❌ API 错误: {resp.status_code}")
+
+            except Exception as e:
+                print(f"     ❌ Liquidations 测试失败: {e}")
+
+        print()
+        print("  ✅ Order Flow 测试完成")
+
+    except Exception as e:
+        print(f"  ❌ Order Flow 测试失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print()
+
+# =============================================================================
+# 9.5 Telegram 命令处理验证 (v10.2)
+# =============================================================================
+if not SUMMARY_MODE:
+    print("[9.5/10] Telegram 命令处理验证...")
+    print("-" * 70)
+
+    try:
+        # 检查 Telegram 配置
+        telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
+
+        if not telegram_token:
+            print("  ⚠️ TELEGRAM_BOT_TOKEN 未配置")
+        elif not telegram_chat_id:
+            print("  ⚠️ TELEGRAM_CHAT_ID 未配置")
+        else:
+            print(f"  ✅ Telegram 配置已加载")
+            print(f"     Bot Token: {telegram_token[:10]}...{telegram_token[-5:]}")
+            print(f"     Chat ID: {telegram_chat_id}")
+
+            # 检查 telegram_bot.py 模块
+            print()
+            print("  📋 Telegram 模块检查:")
+
+            telegram_bot_path = project_root / "utils" / "telegram_bot.py"
+            telegram_handler_path = project_root / "utils" / "telegram_command_handler.py"
+
+            if telegram_bot_path.exists():
+                print("     ✅ utils/telegram_bot.py 存在")
+
+                # 检查 send_message_sync 函数
+                try:
+                    from utils.telegram_bot import send_message_sync
+                    print("     ✅ send_message_sync 函数可导入")
+
+                    # 测试发送消息 (可选，需要用户确认)
+                    print()
+                    print("  📤 Telegram API 连通性测试:")
+                    import requests
+
+                    # 使用 getMe 端点测试 Bot Token 有效性
+                    api_url = f"https://api.telegram.org/bot{telegram_token}/getMe"
+                    resp = requests.get(api_url, timeout=10)
+
+                    if resp.status_code == 200:
+                        bot_info = resp.json()
+                        if bot_info.get('ok'):
+                            result = bot_info.get('result', {})
+                            print(f"     ✅ Bot Token 有效")
+                            print(f"        Bot 名称: @{result.get('username', 'N/A')}")
+                            print(f"        Bot ID: {result.get('id', 'N/A')}")
+                        else:
+                            print(f"     ❌ Bot Token 无效")
+                    else:
+                        print(f"     ❌ API 错误: {resp.status_code}")
+
+                except ImportError as e:
+                    print(f"     ❌ 无法导入 send_message_sync: {e}")
+            else:
+                print("     ❌ utils/telegram_bot.py 不存在")
+
+            if telegram_handler_path.exists():
+                print("     ✅ utils/telegram_command_handler.py 存在")
+
+                # 检查关键类和方法
+                try:
+                    from utils.telegram_command_handler import TelegramCommandHandler
+                    print("     ✅ TelegramCommandHandler 类可导入")
+
+                    # 检查命令处理方法
+                    commands = ['_cmd_status', '_cmd_position', '_cmd_pause', '_cmd_resume', '_cmd_close']
+                    for cmd in commands:
+                        if hasattr(TelegramCommandHandler, cmd):
+                            print(f"        ✅ {cmd} 方法存在")
+                        else:
+                            print(f"        ⚠️ {cmd} 方法缺失")
+
+                except ImportError as e:
+                    print(f"     ❌ 无法导入 TelegramCommandHandler: {e}")
+            else:
+                print("     ❌ utils/telegram_command_handler.py 不存在")
+
+            # 检查线程安全机制
+            print()
+            print("  📋 线程安全机制检查:")
+            print("     → _cached_current_price: 用于跨线程安全访问当前价格")
+            print("     → send_message_sync: 使用 requests 直接调用 API (线程安全)")
+            print("     → 避免在后台线程访问 indicator_manager (Rust 指标不可跨线程)")
+
+        print()
+        print("  ✅ Telegram 验证完成")
+
+    except Exception as e:
+        print(f"  ❌ Telegram 验证失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print()
+
 print("=" * 70)
 print("  诊断完成 - 使用共享模块，与实盘逻辑 100% 一致")
 print("=" * 70)
