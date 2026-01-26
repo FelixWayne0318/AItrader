@@ -1,14 +1,14 @@
-# 多时间框架实施方案 v3.2.2
+# 多时间框架实施方案 v3.2.9
 
 ## 文档信息
 
 | 项目 | 值 |
 |------|-----|
-| 版本 | 3.2.2 |
+| 版本 | 3.2.9 |
 | 创建日期 | 2026-01-26 |
 | 更新日期 | 2026-01-26 |
 | 基于 | TradingAgents 架构 + AItrader 现有系统 |
-| 状态 | **数据格式转换** (v3.2.2 - Coinalyze 格式 → 统一格式转换) |
+| 状态 | **✅ 实际代码已实现** (v3.2.9 - 核心模块已创建并集成) |
 
 ## 版本历史
 
@@ -24,12 +24,129 @@
 | v3.2.3 | 2026-01-26 | **API 格式实测修正**，根据实际 API 响应修正字段名 (`value` vs `openInterestUsd`) |
 | v3.2.4 | 2026-01-26 | **时间戳格式修正**，Coinalyze API 使用 UNIX 秒 (非毫秒)，添加完整 interval 值列表 |
 | v3.2.5 | 2026-01-26 | **文档一致性修复**，同步 Section 9.6.2 CoinalyzeClient 的 docstring 与实际 API 格式 |
+| v3.2.6 | 2026-01-26 | **服务器实测修正**，时间戳单位不一致 (当前端点毫秒/历史端点秒)，Liquidation 嵌套结构 |
+| v3.2.7 | 2026-01-26 | **P0 阻塞项修复**，BarType构建、_prefetch_multi_timeframe_bars()、SMA_200初始化、时间戳标准化 |
+| v3.2.8 | 2026-01-26 | **NautilusTrader API 合规性修复**，request_bars 签名修正 (start/end datetime)、新增 MultiTimeframeManager 完整定义 |
+| v3.2.9 | 2026-01-26 | **✅ 实际代码实现完成**，创建核心模块文件、集成 main_live.py、添加 Config 字段 |
+
+### v3.2.9 主要更新 (✅ 实际代码实现完成)
+
+**本版本将设计文档转化为实际可运行代码，所有核心模块已创建并集成。**
+
+1. **✅ 创建 `indicators/multi_timeframe_manager.py` (~400 行)**
+   - `RiskState` 枚举: RISK_ON / RISK_OFF
+   - `DecisionState` 枚举: ALLOW_LONG / ALLOW_SHORT / WAIT
+   - `MultiTimeframeManager` 类完整实现
+   - 方法: `route_bar()`, `evaluate_risk_state()`, `check_execution_confirmation()`, `is_initialized()`, `get_summary()`
+
+2. **✅ 更新 `configs/base.yaml` MTF 配置**
+   - `multi_timeframe.enabled`: 默认 false
+   - `multi_timeframe.trend_layer`: SMA_200, MACD 条件
+   - `multi_timeframe.decision_layer`: debate_rounds, indicators
+   - `multi_timeframe.execution_layer`: RSI 入场范围 (35-65)
+   - `multi_timeframe.initialization`: min_bars, timeout, retry
+
+3. **✅ 更新 `strategy/deepseek_strategy.py`**
+   - 添加 `DeepSeekAIStrategyConfig` MTF 字段 (7 个)
+   - `__init__`: MTF 初始化 + BarType 构建
+   - `on_start()`: MTF bars 订阅
+   - `on_bar()`: MTF 路由逻辑
+   - `on_historical_data()`: 异步回调处理
+   - `_prefetch_multi_timeframe_bars()`: 历史数据预取
+   - `_verify_mtf_initialization()`: 初始化验证
+
+4. **✅ 更新 `main_live.py`**
+   - `get_strategy_config()` 添加 MTF 参数加载
+   - 从 ConfigManager 读取所有 MTF 配置
+
+**实现文件清单:**
+
+| 文件 | 状态 | 说明 |
+|------|------|------|
+| `indicators/multi_timeframe_manager.py` | ✅ 已创建 | ~400 行核心类 |
+| `configs/base.yaml` | ✅ 已更新 | MTF + initialization 配置 |
+| `strategy/deepseek_strategy.py` | ✅ 已更新 | +180 行 MTF 集成代码 |
+| `main_live.py` | ✅ 已更新 | +8 行配置加载 |
+
+### v3.2.8 主要更新 (NautilusTrader API 合规性修复)
+
+1. **P0-NEW-1: `request_bars()` API 签名修正 (严重)**
+   - ❌ 错误: `request_bars(bar_type, count=220)` - NautilusTrader 无此参数
+   - ✅ 正确: `request_bars(bar_type, start, end, limit)` - 使用 datetime + limit
+   - 返回值是 `UUID4`，bars 通过 `on_historical_data()` 回调异步传递
+   - 参考: [NautilusTrader Actor.request_bars](https://github.com/nautechsystems/nautilus_trader/blob/develop/nautilus_trader/common/actor.pyx)
+
+2. **P0-NEW-2: `MultiTimeframeManager` 模块定义**
+   - 新增 Section 3.3.3 完整类定义 (~200 行)
+   - 包含三层 TechnicalIndicatorManager 实例
+   - 实现 `route_bar()`, `get_risk_state()`, `set_decision_state()` 方法
+   - 文件路径: `indicators/multi_timeframe_manager.py`
+
+3. **P0-NEW-3: `recent_bars` 属性验证** ✅ 已确认
+   - `TechnicalIndicatorManager` 已有 `recent_bars: List[Bar]` (line 93)
+   - 已有 `is_initialized()` 方法 (line 278-303)
+   - 无需修改，仅文档确认
+
+### v3.2.7 主要更新 (P0 阻塞项修复)
+
+1. **P0-1: BarType 构建方式修正**
+   - 修正 `BarType.from_str()` 格式字符串
+   - 添加备选构造方法注释
+   - 格式: `{instrument_id}-{step}-{aggregation}-{price_type}-{aggregation_source}`
+
+2. **P0-2: `_prefetch_multi_timeframe_bars()` 完整实现**
+   - 新增完整的历史数据预取方法 (~90 行)
+   - 趋势层: 220 根 1D bars (SMA_200 需要)
+   - 决策层: 60 根 4H bars (SMA_50 需要)
+   - 执行层: 40 根 15M bars (RSI/EMA 需要)
+   - 新增 `_verify_mtf_initialization()` 验证方法
+
+3. **P0-3: SMA_200 初始化修正**
+   - `_init_managers()` 添加完整参数列表
+   - 新增 `is_initialized()` 方法检查各层状态
+   - 所有层都传递完整的 `macd_signal`, `bb_std` 等参数
+
+4. **P0-4: 时间戳单位标准化**
+   - 新增 `_normalize_timestamp()` 静态方法
+   - 处理 Coinalyze 当前端点 (毫秒) vs 历史端点 (秒) 差异
+   - 自动检测 10位/13位时间戳
+   - `_convert_derivatives()` 统一输出 `timestamp_ms` 字段
+
+5. **数据验证增强**
+   - 新增 `_validate_data()` 方法
+   - OI 范围检查 (负值、超大值)
+   - 价格合理性检查
+   - 清算数据验证
+
+### v3.2.6 主要更新 (服务器实测修正)
+
+1. **⚠️ 时间戳单位不一致 (重要发现)**
+   - 当前端点 (`/open-interest`, `/funding-rate`): `update` 是**毫秒** (13位)
+   - 历史端点参数 (`from`/`to`): **秒** (10位)
+   - 历史端点响应 (`t`): **秒** (10位)
+
+2. **⚠️ Liquidation 响应是嵌套结构**
+   ```json
+   // 实际格式 (嵌套)
+   [{"symbol": "...", "history": [{"t": ..., "l": ..., "s": ...}]}]
+
+   // 之前假设 (扁平) - 错误
+   [{"t": ..., "l": ..., "s": ...}]
+   ```
+
+3. **OI History 返回 OHLC 数据**
+   - 包含 `o` (open), `h` (high), `l` (low), `c` (close)
+   - 使用 `c` (close) 字段获取 OI 值
+
+4. **代码更新**
+   - `get_liquidations()`: 处理嵌套 `history` 数组
+   - `_convert_derivatives()`: 正确提取嵌套数据
 
 ### v3.2.5 主要更新 (文档一致性修复)
 
 1. **Section 9.6.2 docstring 更新**
-   - `get_open_interest()`: 更正返回格式为 `value` (BTC 数量) + `update` (秒)
-   - `get_funding_rate()`: 更正返回格式为 `value` + 移除不存在的 `predictedFundingRate`
+   - `get_open_interest()`: 更正返回格式为 `value` (BTC 数量) + `update` (毫秒)
+   - `get_funding_rate()`: 更正返回格式为 `value` + `update` (毫秒)
    - `get_liquidations()`: 添加返回格式说明 (`t`, `l`, `s`)
 
 2. **全面审查结论**
@@ -366,11 +483,11 @@ def get_final_action(risk_state, decision_state, execution_confirmed):
 │  │      subscribe_bars(BTCUSDT.BINANCE-4-HOUR-LAST-EXTERNAL)     ├──▶ NautilusTrader       │
 │  │      subscribe_bars(BTCUSDT.BINANCE-15-MINUTE-LAST-EXTERNAL) ─┘         DataEngine      │
 │  │                                                                          │                │
-│  │      # 2. 预取历史数据填充指标                                            │                │
+│  │      # 2. 预取历史数据填充指标 (v3.2.8 修正: 异步 API)                    │                │
 │  │      _prefetch_multi_timeframe_bars()                                   │                │
-│  │          ├── request_bars(1D, count=200)  # SMA_200 需要 200 根          │                │
-│  │          ├── request_bars(4H, count=50)   # 决策层指标                   │                │
-│  │          └── request_bars(15M, count=30)  # 执行层指标                   │                │
+│  │          ├── request_bars(1D, start=220天前, limit=220) → on_historical_data │            │
+│  │          ├── request_bars(4H, start=10天前, limit=60)   → on_historical_data │            │
+│  │          └── request_bars(15M, start=10小时前, limit=40) → on_historical_data│            │
 │  │                                                                          │                │
 │  └─────────────────────────────────────────────────────────────────────────┘                │
 │                                                                                              │
@@ -1101,7 +1218,7 @@ from enum import Enum
 from datetime import datetime
 import logging
 
-from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.data import Bar, BarType, GenericData
 from indicators.technical_manager import TechnicalIndicatorManager
 
 
@@ -1189,40 +1306,117 @@ class MultiTimeframeManager:
         self.logger.info("MultiTimeframeManager: initialized with 3 layers")
 
     def _init_managers(self):
-        """初始化各层技术指标管理器"""
+        """
+        初始化各层技术指标管理器
+
+        ⚠️ v3.2.7 修正: 必须传递所有必需参数，确保指标正确初始化
+        TechnicalIndicatorManager 参数参考 indicators/technical_manager.py:29-40
+        """
         trend_config = self.config.get('trend_layer', {})
         decision_config = self.config.get('decision_layer', {})
         exec_config = self.config.get('execution_layer', {})
 
-        # 趋势层 (1D) - 需要 SMA_200
+        # ========================================
+        # 趋势层 (1D) - 需要 SMA_200 用于趋势判断
+        # ⚠️ 关键: SMA_200 需要至少 200 根 bar 才能计算
+        # ========================================
         sma_period = trend_config.get('sma_period', 200)
         self.trend_manager = TechnicalIndicatorManager(
-            sma_periods=[sma_period],  # SMA_200 用于趋势判断
+            sma_periods=[sma_period],      # SMA_200 用于趋势判断
+            ema_periods=[12, 26],          # MACD 需要的 EMA
             rsi_period=14,
             macd_fast=12,
             macd_slow=26,
+            macd_signal=9,                 # ⚠️ v3.2.7: 必须指定 signal 周期
+            bb_period=20,                  # BB 用于波动率参考
+            bb_std=2.0,
+            volume_ma_period=20,
+            support_resistance_lookback=20,
         )
         self.logger.debug(f"趋势层管理器初始化: SMA_{sma_period}")
 
-        # 决策层 (4H)
+        # ========================================
+        # 决策层 (4H) - Bull/Bear 辩论使用的指标
+        # ========================================
         self.decision_manager = TechnicalIndicatorManager(
-            sma_periods=[20, 50],
+            sma_periods=[20, 50],          # SMA_20, SMA_50
+            ema_periods=[12, 26],
             rsi_period=14,
             macd_fast=12,
             macd_slow=26,
+            macd_signal=9,
             bb_period=20,
             bb_std=2.0,
+            volume_ma_period=20,
+            support_resistance_lookback=20,
         )
         self.logger.debug("决策层管理器初始化")
 
-        # 执行层 (5M/15M)
+        # ========================================
+        # 执行层 (5M/15M) - 入场确认指标
+        # ========================================
         self.execution_manager = TechnicalIndicatorManager(
             sma_periods=[5, 20],
-            ema_periods=[10],
+            ema_periods=[10, 20],          # 短周期 EMA
             rsi_period=14,
+            macd_fast=12,
+            macd_slow=26,
+            macd_signal=9,
+            bb_period=20,
+            bb_std=2.0,
+            volume_ma_period=20,
             support_resistance_lookback=20,
         )
         self.logger.debug("执行层管理器初始化")
+
+    def is_initialized(self, layer: str = None) -> bool:
+        """
+        ⚠️ v3.2.7 新增: 检查指标管理器是否已初始化
+
+        Parameters
+        ----------
+        layer : str, optional
+            指定层级 ("trend"/"decision"/"execution")，None 检查全部
+
+        Returns
+        -------
+        bool
+            是否所有指定层级都已初始化 (有足够的 bar 数据)
+        """
+        if not self.enabled:
+            return False
+
+        min_bars = {
+            'trend': 200,      # SMA_200 需要 200 根
+            'decision': 50,    # SMA_50 需要 50 根
+            'execution': 20,   # RSI_14 + EMA_10 需要 ~20 根
+        }
+
+        managers = {
+            'trend': self.trend_manager,
+            'decision': self.decision_manager,
+            'execution': self.execution_manager,
+        }
+
+        if layer:
+            if layer not in managers:
+                return False
+            mgr = managers[layer]
+            # TechnicalIndicatorManager 始终有 recent_bars 属性
+            bars_count = len(mgr.recent_bars)
+            return bars_count >= min_bars.get(layer, 0)
+
+        # 检查全部
+        for name, mgr in managers.items():
+            if mgr is None:
+                return False
+            # TechnicalIndicatorManager 始终有 recent_bars 属性
+            bars_count = len(mgr.recent_bars)
+            if bars_count < min_bars.get(name, 0):
+                self.logger.debug(f"{name} 层未初始化: {bars_count}/{min_bars[name]} bars")
+                return False
+
+        return True
 
     def route_bar(self, bar: Bar) -> str:
         """
@@ -1237,24 +1431,29 @@ class MultiTimeframeManager:
         -------
         str
             路由目标: "trend" / "decision" / "execution" / "unknown" / "disabled"
+
+        Notes
+        -----
+        使用 bar_type.id 进行哈希比较，而非对象相等性比较，
+        以避免 NautilusTrader 创建新 BarType 实例时的匹配失败。
         """
         if not self.enabled:
             return "disabled"
 
-        # 使用精确的 BarType 匹配
-        if self.trend_bar_type and bar.bar_type == self.trend_bar_type:
+        # 使用 BarType.id 哈希比较 (更可靠)
+        if self.trend_bar_type and bar.bar_type.id == self.trend_bar_type.id:
             self.trend_manager.update(bar)
             self._last_trend_price = float(bar.close)
             self.logger.debug(f"[1D] 趋势层 bar 更新: close={bar.close}")
             return "trend"
 
-        elif self.decision_bar_type and bar.bar_type == self.decision_bar_type:
+        elif self.decision_bar_type and bar.bar_type.id == self.decision_bar_type.id:
             self.decision_manager.update(bar)
             self._last_decision_price = float(bar.close)
             self.logger.debug(f"[4H] 决策层 bar 更新: close={bar.close}")
             return "decision"
 
-        elif self.execution_bar_type and bar.bar_type == self.execution_bar_type:
+        elif self.execution_bar_type and bar.bar_type.id == self.execution_bar_type.id:
             self.execution_manager.update(bar)
             self._last_execution_price = float(bar.close)
             self.logger.debug(f"[15M] 执行层 bar 更新: close={bar.close}")
@@ -1533,19 +1732,41 @@ def __init__(self, config: DeepSeekAIStrategyConfig):
     self.mtf_enabled = config.multi_timeframe_enabled
     self.mtf_manager = None
 
+    # ⚠️ v3.2.8 新增: 异步请求跟踪 (request_bars 是异步的)
+    self._pending_requests: Dict[str, UUID4] = {}  # layer -> request_id
+    self._mtf_trend_initialized = False
+    self._mtf_decision_initialized = False
+    self._mtf_execution_initialized = False
+
     if self.mtf_enabled:
         # 构建 BarType 对象
-        symbol = str(config.instrument_id).split('.')[0]
+        # ⚠️ v3.2.7 修正: BarType.from_str() 格式必须严格遵循 NautilusTrader 规范
+        # 格式: {symbol}-{step}-{aggregation}-{price_type}-{aggregation_source}
+        # 示例: BTCUSDT-PERP.BINANCE-1-DAY-LAST-EXTERNAL
+        #
+        # 注意: 使用现有的 instrument_id 保持一致性
+        instrument_str = str(config.instrument_id)  # e.g., "BTCUSDT-PERP.BINANCE"
 
+        # 方法1: 使用完整的 from_str (推荐)
+        # 格式参考: https://nautilustrader.io/docs/latest/api_reference/model/data.html
         self.trend_bar_type = BarType.from_str(
-            f"{symbol}.BINANCE-1-DAY-LAST-EXTERNAL"
+            f"{instrument_str}-1-DAY-LAST-EXTERNAL"
         )
         self.decision_bar_type = BarType.from_str(
-            f"{symbol}.BINANCE-4-HOUR-LAST-EXTERNAL"
+            f"{instrument_str}-4-HOUR-LAST-EXTERNAL"
         )
         self.execution_bar_type = BarType.from_str(
-            f"{symbol}.BINANCE-15-MINUTE-LAST-EXTERNAL"
+            f"{instrument_str}-15-MINUTE-LAST-EXTERNAL"
         )
+
+        # 方法2: 备选 - 如果 from_str 失败，使用显式构造
+        # from nautilus_trader.model.data import BarSpecification, BarAggregation, PriceType
+        # from nautilus_trader.model.identifiers import InstrumentId
+        #
+        # trend_spec = BarSpecification(1, BarAggregation.DAY, PriceType.LAST)
+        # self.trend_bar_type = BarType(self.instrument_id, trend_spec, AggregationSource.EXTERNAL)
+
+        self.log.info(f"MTF BarTypes: trend={self.trend_bar_type}, decision={self.decision_bar_type}, exec={self.execution_bar_type}")
 
         # 构建 MTF 配置字典
         mtf_config = {
@@ -1598,6 +1819,157 @@ def on_start(self):
     else:
         # 现有单时间框架逻辑
         self.subscribe_bars(self.bar_type)
+
+def _prefetch_multi_timeframe_bars(self):
+    """
+    ⚠️ v3.2.8 修正: 预取各层历史数据，填充指标计算所需的 bar
+
+    NautilusTrader API 签名 (v1.221.0+):
+    ```
+    request_bars(
+        bar_type: BarType,
+        start: datetime,        # 必需: 起始时间
+        end: datetime = None,   # 可选: 结束时间 (默认当前)
+        limit: int = 0,         # 可选: 数量限制
+        client_id: ClientId = None,
+        callback: Callable = None,  # 可选: 异步回调
+    ) -> UUID4
+    ```
+
+    ⚠️ 重要: request_bars 是异步的！
+    - 返回 UUID4 请求 ID，不直接返回 bars
+    - bars 通过 on_historical_data() 回调传递
+    - 需要在 on_historical_data() 中处理数据
+
+    预取数量说明:
+    - 趋势层 (1D): 需要 220+ 根用于 SMA_200
+    - 决策层 (4H): 需要 60+ 根用于 SMA_50, MACD
+    - 执行层 (15M): 需要 40+ 根用于 RSI, EMA
+    """
+    if not self.mtf_enabled:
+        return
+
+    self.log.info("MTF: 开始预取历史数据 (异步)...")
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+
+    try:
+        # === 趋势层 (1D) - SMA_200 需要至少 200 根 ===
+        # 220 天前开始，limit=220
+        trend_start = now - timedelta(days=220)
+        self.log.debug(f"MTF: 预取 1D bars (start={trend_start.date()}, limit=220)...")
+        self._pending_requests['trend'] = self.request_bars(
+            bar_type=self.trend_bar_type,
+            start=trend_start,
+            end=None,  # 到当前
+            limit=220,
+        )
+
+        # === 决策层 (4H) - SMA_50, MACD 需要约 50 根 ===
+        # 60 * 4 = 240 小时 = 10 天
+        decision_start = now - timedelta(hours=60 * 4)
+        self.log.debug(f"MTF: 预取 4H bars (start={decision_start}, limit=60)...")
+        self._pending_requests['decision'] = self.request_bars(
+            bar_type=self.decision_bar_type,
+            start=decision_start,
+            end=None,
+            limit=60,
+        )
+
+        # === 执行层 (15M) - RSI, EMA 需要约 30 根 ===
+        # 40 * 15 = 600 分钟 = 10 小时
+        execution_start = now - timedelta(minutes=40 * 15)
+        self.log.debug(f"MTF: 预取 15M bars (start={execution_start}, limit=40)...")
+        self._pending_requests['execution'] = self.request_bars(
+            bar_type=self.execution_bar_type,
+            start=execution_start,
+            end=None,
+            limit=40,
+        )
+
+        self.log.info("MTF: 历史数据请求已发送，等待 on_historical_data() 回调")
+
+    except Exception as e:
+        self.log.error(f"MTF: 预取历史数据请求失败: {e}")
+        # 不抛出异常，允许策略继续运行 (降级模式)
+
+def on_historical_data(self, data: GenericData):
+    """
+    ⚠️ v3.2.8 新增: 处理 request_bars 的异步回调
+
+    NautilusTrader 在历史数据到达时调用此方法。
+
+    Parameters
+    ----------
+    data : GenericData
+        历史数据对象，包含 bars 和 bar_type 属性
+    """
+    if not hasattr(data, 'bars') or not data.bars:
+        return
+
+    bars = data.bars
+    bar_type = data.bar_type
+
+    # 根据 bar_type 路由到对应的层 (使用 .id 哈希比较)
+    if self.mtf_enabled and self.mtf_manager:
+        if bar_type.id == self.trend_bar_type.id:
+            for bar in bars:
+                self.mtf_manager.trend_manager.update(bar)
+            self.log.info(f"MTF: 趋势层预取完成 ({len(bars)} bars)")
+            self._mtf_trend_initialized = True
+
+        elif bar_type.id == self.decision_bar_type.id:
+            for bar in bars:
+                self.mtf_manager.decision_manager.update(bar)
+            self.log.info(f"MTF: 决策层预取完成 ({len(bars)} bars)")
+            self._mtf_decision_initialized = True
+
+        elif bar_type.id == self.execution_bar_type.id:
+            for bar in bars:
+                self.mtf_manager.execution_manager.update(bar)
+            self.log.info(f"MTF: 执行层预取完成 ({len(bars)} bars)")
+            self._mtf_execution_initialized = True
+
+        # 检查是否所有层都已初始化
+        if getattr(self, '_mtf_trend_initialized', False) and \
+           getattr(self, '_mtf_decision_initialized', False) and \
+           getattr(self, '_mtf_execution_initialized', False):
+            self._verify_mtf_initialization()
+
+def _verify_mtf_initialization(self):
+    """验证各层指标管理器是否已正确初始化
+
+    Notes
+    -----
+    TechnicalIndicatorManager 始终有 recent_bars 属性 (line 93),
+    因此直接访问而不需要 hasattr() 检查。
+    """
+    issues = []
+
+    # 趋势层: 需要至少 200 根 bar 用于 SMA_200
+    trend_bars_count = len(self.mtf_manager.trend_manager.recent_bars)
+    if trend_bars_count < 200:
+        issues.append(f"趋势层 bars 不足: {trend_bars_count}/200")
+
+    # 决策层: 需要至少 50 根
+    decision_bars_count = len(self.mtf_manager.decision_manager.recent_bars)
+    if decision_bars_count < 50:
+        issues.append(f"决策层 bars 不足: {decision_bars_count}/50")
+
+    # 执行层: 需要至少 20 根
+    execution_bars_count = len(self.mtf_manager.execution_manager.recent_bars)
+    if execution_bars_count < 20:
+        issues.append(f"执行层 bars 不足: {execution_bars_count}/20")
+
+    if issues:
+        self.log.warning(f"MTF 初始化警告: {', '.join(issues)}")
+        if self.telegram_bot and self.enable_telegram:
+            self.telegram_bot.send_message_sync(
+                f"⚠️ MTF 初始化警告:\n" + "\n".join(f"• {i}" for i in issues)
+            )
+    else:
+        self.log.info("MTF: 所有层指标管理器初始化完成 ✓")
 ```
 
 #### 3.4.3 on_bar 修改 (精确匹配)
@@ -2457,15 +2829,17 @@ class CoinalyzeClient:
         """
         获取聚合持仓量
 
-        ⚠️ 实际 API 响应格式 (2026-01-26 验证):
+        ⚠️ v3.2.6 实际 API 响应格式 (服务器实测):
         Returns:
             {
                 "symbol": "BTCUSDT_PERP.A",
-                "value": 102199.59,      # ⚠️ BTC 数量，不是 USD!
-                "update": 1769417410     # ⚠️ UNIX 秒，不是毫秒!
+                "value": 102726.971,       # ⚠️ BTC 数量，不是 USD!
+                "update": 1769420176882    # ⚠️ 毫秒 (13位)!
             }
 
-        注意: value 是 BTC 数量，需要乘以当前价格才能得到 USD 值
+        注意:
+        - value 是 BTC 数量，需要乘以当前价格才能得到 USD 值
+        - update 是毫秒时间戳 (与历史端点不同!)
         """
         if not self._enabled:
             return None
@@ -2494,15 +2868,25 @@ class CoinalyzeClient:
         """
         获取清算数据 (历史数据，最近1小时)
 
-        ⚠️ 实际 API 响应格式 (2026-01-26 验证):
+        ⚠️ v3.2.6 实际 API 响应格式 (服务器实测):
+        原始响应 (嵌套结构):
+            [{
+                "symbol": "BTCUSDT_PERP.A",
+                "history": [
+                    {"t": 1769418000, "l": 0.832, "s": 0}
+                ]
+            }]
+
         Returns:
+            提取后的最新一条:
             {
-                "t": 1769410800,  # ⚠️ UNIX 秒
-                "l": 2500000,     # 多头清算 USD
-                "s": 1800000      # 空头清算 USD
+                "t": 1769418000,  # ⚠️ UNIX 秒 (10位)
+                "l": 0.832,       # 多头清算
+                "s": 0            # 空头清算
             }
 
         注意:
+        - ⚠️ 响应是嵌套结构，需要从 history 数组提取
         - Binance 从 2021-04 起只提供每秒1条清算数据
         - interval 必须是 "1hour" 不是 "1h"
         - from/to 参数是 UNIX 秒
@@ -2516,7 +2900,7 @@ class CoinalyzeClient:
                 url = f"{self.BASE_URL}/liquidation-history"
                 # 获取最近1小时的清算数据
                 import time
-                # ⚠️ 重要: Coinalyze API 使用 UNIX 秒，不是毫秒!
+                # ⚠️ 重要: from/to 参数使用 UNIX 秒
                 end_time = int(time.time())           # 秒
                 start_time = end_time - 3600          # 1小时前 (3600秒)
                 params = {
@@ -2530,10 +2914,13 @@ class CoinalyzeClient:
                                        timeout=self.timeout) as resp:
                     if resp.status == 200:
                         data = await resp.json()
+                        # ⚠️ v3.2.6: 处理嵌套结构
                         if data and len(data) > 0:
-                            # 返回最新一条
-                            latest = data[-1] if isinstance(data, list) else data
-                            return latest
+                            symbol_data = data[0]
+                            history = symbol_data.get('history', [])
+                            if history and len(history) > 0:
+                                # 返回最新一条
+                                return history[-1]
                     elif resp.status == 429:
                         print(f"⚠️ Coinalyze rate limit reached")
         except Exception as e:
@@ -2544,15 +2931,17 @@ class CoinalyzeClient:
         """
         获取当前资金费率
 
-        ⚠️ 实际 API 响应格式 (2026-01-26 验证):
+        ⚠️ v3.2.6 实际 API 响应格式 (服务器实测):
         Returns:
             {
                 "symbol": "BTCUSDT_PERP.A",
-                "value": 0.002847,    # ⚠️ 字段名是 value，0.2847%
-                "update": 1769417407  # ⚠️ UNIX 秒
+                "value": 0.002847,       # 0.2847%
+                "update": 1769420174380  # ⚠️ 毫秒 (13位)!
             }
 
-        注意: API 不提供 predictedFundingRate，代码中设为 0
+        注意:
+        - API 不提供 predictedFundingRate，代码中设为 0
+        - update 是毫秒时间戳 (与历史端点不同!)
         """
         if not self._enabled:
             return None
@@ -2600,6 +2989,92 @@ class AIDataAssembler:
         self.sentiment = sentiment_client
         # 缓存上一次 OI 值用于计算变化率
         self._last_oi_usd: float = 0.0
+        self._last_oi_timestamp: int = 0
+
+    # ========================================
+    # ⚠️ v3.2.7 新增: 时间戳标准化函数
+    # ========================================
+    @staticmethod
+    def _normalize_timestamp(ts: int, source: str) -> int:
+        """
+        标准化时间戳为毫秒格式
+
+        ⚠️ Coinalyze API 时间戳单位不一致:
+        - 当前端点 (`update`): 毫秒 (13位)
+        - 历史端点 (`t`): 秒 (10位)
+        - 历史参数 (`from`/`to`): 秒 (10位)
+
+        Args:
+            ts: 原始时间戳
+            source: 数据来源
+                - 'coinalyze_current': 当前端点 (已是毫秒)
+                - 'coinalyze_history': 历史端点 (秒→毫秒)
+                - 'binance': Binance K线 (已是毫秒)
+
+        Returns:
+            标准化为毫秒的时间戳 (13位)
+
+        Examples:
+            >>> _normalize_timestamp(1769420176882, 'coinalyze_current')
+            1769420176882  # 不变，已是毫秒
+
+            >>> _normalize_timestamp(1769418000, 'coinalyze_history')
+            1769418000000  # 秒 → 毫秒
+        """
+        if ts is None or ts == 0:
+            return 0
+
+        # 判断时间戳单位 (10位=秒, 13位=毫秒)
+        if source == 'coinalyze_history':
+            # 历史端点始终是秒
+            return ts * 1000 if ts < 10_000_000_000 else ts
+        elif source == 'coinalyze_current':
+            # 当前端点始终是毫秒
+            return ts
+        elif source == 'binance':
+            # Binance 始终是毫秒
+            return ts
+        else:
+            # 自动检测: 10位视为秒, 13位视为毫秒
+            return ts * 1000 if ts < 10_000_000_000 else ts
+
+    @staticmethod
+    def _validate_data(oi_usd: float, current_price: float, liq_data: dict = None) -> dict:
+        """
+        ⚠️ v3.2.7 新增: 数据合理性验证
+
+        Returns:
+            {
+                'valid': bool,
+                'warnings': List[str]
+            }
+        """
+        warnings = []
+
+        # OI 检查
+        if oi_usd is not None:
+            if oi_usd < 0:
+                warnings.append(f"OI 为负值: {oi_usd}")
+            if oi_usd > 1e12:  # 超过 1 万亿 USD
+                warnings.append(f"OI 异常高: {oi_usd:.2e}")
+
+        # 价格检查
+        if current_price <= 0:
+            warnings.append(f"价格无效: {current_price}")
+        elif current_price < 100 or current_price > 1_000_000:
+            warnings.append(f"价格可能异常: {current_price}")
+
+        # 清算数据检查
+        if liq_data:
+            long_usd = liq_data.get('long_usd', 0)
+            short_usd = liq_data.get('short_usd', 0)
+            if long_usd < 0 or short_usd < 0:
+                warnings.append(f"清算数据为负: L={long_usd}, S={short_usd}")
+
+        return {
+            'valid': len(warnings) == 0,
+            'warnings': warnings
+        }
 
     async def assemble(self, klines: list, technical: dict, position: dict) -> dict:
         """
@@ -2689,42 +3164,98 @@ class AIDataAssembler:
         # === Open Interest 转换 ===
         # ⚠️ 重要: Coinalyze 返回的是 BTC 数量，需要乘以当前价格转 USD
         if oi_raw and not isinstance(oi_raw, Exception):
-            # API 返回数组，取第一个元素
-            item = oi_raw[0] if isinstance(oi_raw, list) else oi_raw
-            oi_btc = item.get('value', 0)  # ⚠️ 这是 BTC 数量!
+            try:
+                # API 返回数组，取第一个元素
+                item = oi_raw[0] if isinstance(oi_raw, list) else oi_raw
+                oi_btc = float(item.get('value', 0))  # ⚠️ 这是 BTC 数量!
 
-            # BTC → USD 转换
-            oi_usd = oi_btc * current_price if current_price > 0 else oi_btc
+                # ⚠️ v3.2.7: 标准化时间戳 (当前端点是毫秒)
+                oi_timestamp = self._normalize_timestamp(
+                    item.get('update', 0), 'coinalyze_current'
+                )
 
-            # 计算 24h 变化率 (使用缓存值)
-            change_pct = 0.0
-            if self._last_oi_usd > 0 and oi_usd > 0:
-                change_pct = round((oi_usd - self._last_oi_usd) / self._last_oi_usd * 100, 2)
-            self._last_oi_usd = oi_usd
+                # BTC → USD 转换 (含验证)
+                if current_price > 0:
+                    oi_usd = oi_btc * current_price
+                else:
+                    oi_usd = 0
+                    print("⚠️ OI 转换警告: current_price 为 0")
 
-            result["open_interest"] = {
-                "total_usd": oi_usd,  # 已转换为 USD
-                "change_24h_pct": change_pct,
-            }
+                # 计算变化率 (使用缓存值)
+                # ⚠️ v3.2.7: 首次运行时返回 None 而非 0
+                change_pct = None
+                if self._last_oi_usd > 0 and oi_usd > 0:
+                    change_pct = round((oi_usd - self._last_oi_usd) / self._last_oi_usd * 100, 2)
+
+                    # 异常变化检测 (> 50%)
+                    if abs(change_pct) > 50:
+                        print(f"⚠️ OI 异常变化: {change_pct}%")
+
+                self._last_oi_usd = oi_usd
+                self._last_oi_timestamp = oi_timestamp
+
+                result["open_interest"] = {
+                    "total_usd": oi_usd,           # 已转换为 USD
+                    "total_btc": oi_btc,           # v3.2.7: 保留原始 BTC 值
+                    "change_24h_pct": change_pct,  # v3.2.7: 首次为 None
+                    "timestamp_ms": oi_timestamp,  # v3.2.7: 标准化时间戳
+                }
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"⚠️ OI parse error: {e}")
 
         # === Funding Rate 转换 ===
         if funding_raw and not isinstance(funding_raw, Exception):
-            item = funding_raw[0] if isinstance(funding_raw, list) else funding_raw
-            result["funding_rate"] = {
-                "current": item.get('value', 0),  # ⚠️ 实际字段是 'value' 不是 'fundingRate'
-                "predicted": 0,  # Coinalyze 当前端点不返回预测值
-            }
+            try:
+                item = funding_raw[0] if isinstance(funding_raw, list) else funding_raw
+
+                # ⚠️ v3.2.7: 标准化时间戳 (当前端点是毫秒)
+                funding_timestamp = self._normalize_timestamp(
+                    item.get('update', 0), 'coinalyze_current'
+                )
+
+                result["funding_rate"] = {
+                    "current": float(item.get('value', 0)),  # ⚠️ 实际字段是 'value'
+                    "predicted": 0,  # Coinalyze 当前端点不返回预测值
+                    "timestamp_ms": funding_timestamp,       # v3.2.7: 标准化时间戳
+                }
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"⚠️ Funding parse error: {e}")
 
         # === Liquidation 转换 ===
+        # ⚠️ v3.2.6 修正: 实际响应是嵌套结构
+        # [{"symbol": "...", "history": [{"t": ..., "l": ..., "s": ...}]}]
         if liq_raw and not isinstance(liq_raw, Exception):
-            # API 返回数组: [{"t": timestamp, "l": long_usd, "s": short_usd}]
-            if isinstance(liq_raw, list) and len(liq_raw) > 0:
-                # 取最新一条 (最后一个)
-                item = liq_raw[-1]
-                result["liquidations_1h"] = {
-                    "long_usd": item.get('l', 0),   # ⚠️ 字段是 'l' 不是 'longLiquidationUsd'
-                    "short_usd": item.get('s', 0),  # ⚠️ 字段是 's' 不是 'shortLiquidationUsd'
-                }
+            try:
+                # 提取嵌套的 history 数组
+                if isinstance(liq_raw, list) and len(liq_raw) > 0:
+                    symbol_data = liq_raw[0]
+                    history = symbol_data.get('history', [])
+                    if history and len(history) > 0:
+                        # 取最新一条 (最后一个)
+                        item = history[-1]
+
+                        # ⚠️ v3.2.7: 标准化时间戳 (历史端点是秒)
+                        liq_timestamp = self._normalize_timestamp(
+                            item.get('t', 0), 'coinalyze_history'
+                        )
+
+                        result["liquidations_1h"] = {
+                            "long_usd": float(item.get('l', 0)),   # ⚠️ 字段是 'l'
+                            "short_usd": float(item.get('s', 0)),  # ⚠️ 字段是 's'
+                            "timestamp_ms": liq_timestamp,          # v3.2.7: 标准化时间戳
+                        }
+            except (KeyError, IndexError, TypeError, ValueError) as e:
+                print(f"⚠️ Liquidation parse error: {e}")
+
+        # ⚠️ v3.2.7: 数据验证
+        validation = self._validate_data(
+            oi_usd=result.get("open_interest", {}).get("total_usd") if result.get("open_interest") else None,
+            current_price=current_price,
+            liq_data=result.get("liquidations_1h")
+        )
+        if not validation['valid']:
+            for warn in validation['warnings']:
+                print(f"⚠️ 数据验证警告: {warn}")
 
         return result
 
@@ -2737,19 +3268,31 @@ class AIDataAssembler:
         return round((new_close - old_close) / old_close * 100, 2) if old_close > 0 else 0.0
 ```
 
-#### 9.6.4 Coinalyze 数据格式参考 (2026-01-26 实测验证 + API 文档确认)
+#### 9.6.4 Coinalyze 数据格式参考 (2026-01-26 服务器实测验证 v3.2.6)
 
-**⚠️ 关键发现汇总**:
+**⚠️ 关键发现汇总 (服务器实测)**:
 
-| 项目 | 错误假设 | 实际值 | 来源 |
+| 项目 | 之前假设 | 实际值 | 来源 |
 |------|---------|--------|------|
-| **时间戳格式** | 毫秒 | **UNIX 秒** | 官方文档 |
-| **OI 字段名** | `openInterestUsd` | `value` | 实测 |
-| **OI 单位** | USD | **BTC 数量** | 实测 |
-| **Funding 字段名** | `fundingRate` | `value` | 实测 |
-| **Liquidation interval** | `1h` | `1hour` | 官方文档 |
+| **当前端点时间戳** (`update`) | 秒 | **毫秒** (13位) | 服务器实测 |
+| **历史端点时间戳** (`t`) | 秒 | **秒** (10位) | 服务器实测 |
+| **历史端点参数** (`from`/`to`) | 秒 | **秒** | 服务器实测 |
+| **OI 字段名** | `openInterestUsd` | `value` (BTC 数量) | 服务器实测 |
+| **Funding 字段名** | `fundingRate` | `value` | 服务器实测 |
+| **Liquidation 响应结构** | 扁平数组 | **嵌套 `history` 数组** | 服务器实测 |
+| **OI History 响应** | 单值 | **OHLC 数据** (o,h,l,c) | 服务器实测 |
 
-**完整的 interval 参数值** (官方文档确认):
+**⚠️ 时间戳单位不一致 (重要)**:
+
+| 端点类型 | 字段 | 单位 | 示例 |
+|---------|------|------|------|
+| 当前数据 `/open-interest` | `update` | **毫秒** | `1769420176882` (13位) |
+| 当前数据 `/funding-rate` | `update` | **毫秒** | `1769420174380` (13位) |
+| 历史参数 `from`/`to` | - | **秒** | `1769416578` (10位) |
+| 历史响应 `/liquidation-history` | `t` | **秒** | `1769418000` (10位) |
+| 历史响应 `/open-interest-history` | `t` | **秒** | `1769335200` (10位) |
+
+**完整的 interval 参数值**:
 ```
 1min, 5min, 15min, 30min, 1hour, 2hour, 4hour, 6hour, 12hour, daily
 ```
@@ -2758,16 +3301,16 @@ class AIDataAssembler:
 
 | 端点 | Coinalyze 原始字段 | 转换后字段 | 说明 |
 |------|-------------------|-----------|------|
-| `/open-interest` | `value` ⚠️ | `total_usd` | 值为 BTC 数量，需乘以价格转 USD |
-| `/open-interest` | `update` | (参考时间戳) | **UNIX 秒** (非毫秒) |
-| `/open-interest` | (无) | `change_24h_pct` | 需自己计算 (缓存对比) |
-| `/funding-rate` | `value` ⚠️ | `current` | 直接使用 (0.002847 = 0.28%) |
-| `/funding-rate` | (无) | `predicted` | API 不提供，设为 0 |
-| `/liquidation-history` | `l` | `long_usd` | 做多清算 USD |
-| `/liquidation-history` | `s` | `short_usd` | 做空清算 USD |
-| `/liquidation-history` | `t` | (参考时间戳) | **UNIX 秒** (非毫秒) |
+| `/open-interest` | `value` | `total_usd` | BTC 数量，需乘价格转 USD |
+| `/open-interest` | `update` | - | **毫秒** (13位) |
+| `/funding-rate` | `value` | `current` | 0.002847 = 0.2847% |
+| `/funding-rate` | `update` | - | **毫秒** (13位) |
+| `/liquidation-history` | `history[].l` | `long_usd` | ⚠️ 嵌套在 history 内 |
+| `/liquidation-history` | `history[].s` | `short_usd` | ⚠️ 嵌套在 history 内 |
+| `/liquidation-history` | `history[].t` | - | **秒** (10位) |
+| `/open-interest-history` | `history[].c` | - | OI 收盘值 (OHLC) |
 
-**请求参数格式** (所有 history 端点):
+**请求参数格式** (history 端点):
 ```python
 params = {
     "symbols": "BTCUSDT_PERP.A",
@@ -2777,39 +3320,60 @@ params = {
 }
 ```
 
-**Coinalyze API 响应示例** (实测):
+**Coinalyze API 响应示例** (2026-01-26 服务器实测):
 
 ```json
 // GET /v1/open-interest?symbols=BTCUSDT_PERP.A
 [{
     "symbol": "BTCUSDT_PERP.A",
-    "value": 102199.59,               // ⚠️ BTC 数量，不是 USD!
-    "update": 1769417410              // ⚠️ UNIX 秒
+    "value": 102726.971,              // ⚠️ BTC 数量，不是 USD!
+    "update": 1769420176882           // ⚠️ 毫秒 (13位)!
 }]
 
 // GET /v1/funding-rate?symbols=BTCUSDT_PERP.A
 [{
     "symbol": "BTCUSDT_PERP.A",
-    "value": 0.002847,                // ⚠️ 0.2847%，字段名是 value
-    "update": 1769417407              // UNIX 秒
+    "value": 0.002847,                // 0.2847%
+    "update": 1769420174380           // ⚠️ 毫秒 (13位)!
 }]
 
-// GET /v1/liquidation-history?symbols=BTCUSDT_PERP.A&interval=1hour&from=1769413807&to=1769417407
-// ⚠️ interval 必须是 "1hour", from/to 是 UNIX 秒!
+// GET /v1/liquidation-history?symbols=BTCUSDT_PERP.A&interval=1hour&from=1769416578&to=1769420178
+// ⚠️ 响应是嵌套结构，不是扁平数组!
 [{
-    "t": 1706270400,                  // UNIX 秒
-    "l": 2500000,                     // long liquidation USD ⭐
-    "s": 1800000                      // short liquidation USD ⭐
+    "symbol": "BTCUSDT_PERP.A",
+    "history": [                      // ⚠️ 嵌套在 history 数组内!
+        {
+            "t": 1769418000,          // 秒 (10位)
+            "l": 0.832,               // long liquidation (单位待确认)
+            "s": 0                    // short liquidation
+        }
+    ]
+}]
+
+// GET /v1/open-interest-history?symbols=BTCUSDT_PERP.A&interval=1hour&from=...&to=...
+// ⚠️ 返回 OHLC 数据!
+[{
+    "symbol": "BTCUSDT_PERP.A",
+    "history": [
+        {
+            "t": 1769335200,          // 秒 (10位)
+            "o": 100145.378,          // open (BTC)
+            "h": 100333.515,          // high (BTC)
+            "l": 100143.96,           // low (BTC)
+            "c": 100284.726           // close (BTC) ⭐ 使用这个
+        },
+        // ... 更多 OHLC 数据
+    ]
 }]
 ```
 
 **注意事项**:
-1. ⚠️ **时间戳单位是秒**: `from`/`to` 参数和响应中的 `t`/`update` 都是 UNIX 秒
-2. ⚠️ OI 的 `value` 是 **BTC 数量**，需要乘以当前价格才能得到 USD 值
-3. ⚠️ Funding Rate 的 `value` 是小数形式 (0.002847 = 0.2847%)
-4. ⚠️ 清算端点的 interval 必须是 `1hour`，不是 `1h`
-5. `change_24h_pct` 需要自己计算 (Coinalyze 不提供)
-6. 首次运行时 OI 变化率为 0 (无历史数据对比)
+1. ⚠️ **时间戳单位不一致**: 当前端点用毫秒，历史端点用秒
+2. ⚠️ **Liquidation 是嵌套结构**: 需要从 `response[0].history` 提取
+3. ⚠️ **OI History 是 OHLC**: 使用 `c` (close) 字段获取 OI 值
+4. ⚠️ OI 的 `value` 是 **BTC 数量**，需要乘以当前价格才能得到 USD 值
+5. ⚠️ Funding Rate 的 `value` 是小数形式 (0.002847 = 0.2847%)
+6. `change_24h_pct` 需要从 OI History 计算 (对比 24h 前的 `c` 值)
 7. `predicted` funding rate API 不提供，代码中设为 0
 
 **历史数据保留策略**:

@@ -160,6 +160,15 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     network_oco_manager_socket_connect_timeout: float = 5.0
     sentiment_timeout: float = 10.0
 
+    # Multi-Timeframe Configuration (v3.2.9)
+    multi_timeframe_enabled: bool = False  # Default disabled for backward compatibility
+    mtf_trend_sma_period: int = 200        # SMA period for trend layer (1D)
+    mtf_trend_require_above_sma: bool = True
+    mtf_trend_require_macd_positive: bool = True
+    mtf_decision_debate_rounds: int = 2    # Debate rounds for decision layer (4H)
+    mtf_execution_rsi_entry_min: int = 35  # RSI entry range for execution layer (15M)
+    mtf_execution_rsi_entry_max: int = 65
+
 
 class DeepSeekAIStrategy(Strategy):
     """
@@ -278,6 +287,61 @@ class DeepSeekAIStrategy(Strategy):
             volume_ma_period=config.volume_ma_period,
             support_resistance_lookback=config.support_resistance_lookback,
         )
+
+        # Multi-Timeframe Manager (v3.2.8)
+        self.mtf_enabled = getattr(config, 'multi_timeframe_enabled', False)
+        self.mtf_manager = None
+        self.trend_bar_type = None
+        self.decision_bar_type = None
+        self.execution_bar_type = None
+
+        # Async request tracking for request_bars (v3.2.8)
+        self._pending_requests: Dict[str, Any] = {}  # layer -> request_id
+        self._mtf_trend_initialized = False
+        self._mtf_decision_initialized = False
+        self._mtf_execution_initialized = False
+
+        if self.mtf_enabled:
+            try:
+                from indicators.multi_timeframe_manager import MultiTimeframeManager
+
+                # Build BarType objects for each layer
+                instrument_str = str(self.instrument_id)
+                self.trend_bar_type = BarType.from_str(f"{instrument_str}-1-DAY-LAST-EXTERNAL")
+                self.decision_bar_type = BarType.from_str(f"{instrument_str}-4-HOUR-LAST-EXTERNAL")
+                self.execution_bar_type = BarType.from_str(f"{instrument_str}-15-MINUTE-LAST-EXTERNAL")
+
+                # Build MTF config from strategy config
+                mtf_config = {
+                    'enabled': True,
+                    'trend_layer': {
+                        'timeframe': '1d',
+                        'sma_period': getattr(config, 'mtf_trend_sma_period', 200),
+                        'require_above_sma': getattr(config, 'mtf_trend_require_above_sma', True),
+                        'require_macd_positive': getattr(config, 'mtf_trend_require_macd_positive', True),
+                    },
+                    'decision_layer': {
+                        'timeframe': '4h',
+                        'debate_rounds': getattr(config, 'mtf_decision_debate_rounds', 2),
+                    },
+                    'execution_layer': {
+                        'timeframe': '15m',
+                        'rsi_entry_min': getattr(config, 'mtf_execution_rsi_entry_min', 35),
+                        'rsi_entry_max': getattr(config, 'mtf_execution_rsi_entry_max', 65),
+                    }
+                }
+
+                self.mtf_manager = MultiTimeframeManager(
+                    config=mtf_config,
+                    trend_bar_type=self.trend_bar_type,
+                    decision_bar_type=self.decision_bar_type,
+                    execution_bar_type=self.execution_bar_type,
+                    logger=self.log,
+                )
+                self.log.info(f"✅ MTF Manager initialized: trend={self.trend_bar_type}, decision={self.decision_bar_type}, exec={self.execution_bar_type}")
+            except Exception as e:
+                self.log.error(f"❌ Failed to initialize MTF Manager: {e}")
+                self.mtf_enabled = False
 
         # DeepSeek AI analyzer
         api_key = config.deepseek_api_key or os.getenv('DEEPSEEK_API_KEY')
@@ -508,6 +572,21 @@ class DeepSeekAIStrategy(Strategy):
         self.subscribe_bars(self.bar_type)
         self.log.info(f"Subscribed to {self.bar_type}")
 
+        # Multi-Timeframe subscriptions (v3.2.9)
+        if self.mtf_enabled and self.mtf_manager:
+            try:
+                # Subscribe to all three timeframes
+                self.subscribe_bars(self.trend_bar_type)
+                self.subscribe_bars(self.decision_bar_type)
+                self.subscribe_bars(self.execution_bar_type)
+                self.log.info(f"MTF: Subscribed to 1D, 4H, 15M bars")
+
+                # Prefetch historical data for each layer (async)
+                self._prefetch_multi_timeframe_bars()
+            except Exception as e:
+                self.log.error(f"MTF: Failed to subscribe/prefetch: {e}")
+                # Continue without MTF - graceful degradation
+
         # Set up timer for periodic analysis (clock-aligned to 00/15/30/45 minutes)
         interval_minutes = self.config.timer_interval_sec // 60  # 默认 15 分钟
         next_aligned_time = self._calculate_next_aligned_time(interval_minutes)
@@ -696,7 +775,7 @@ class DeepSeekAIStrategy(Strategy):
                 'limit': min(limit, 1500),  # Binance max
             }
 
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=self.config.network_bar_persistence_timeout)
             response.raise_for_status()
             klines = response.json()
 
@@ -750,7 +829,23 @@ class DeepSeekAIStrategy(Strategy):
         """
         self.bars_received += 1
 
-        # Update technical indicators
+        # Multi-Timeframe routing (v3.2.8)
+        if self.mtf_enabled and self.mtf_manager:
+            layer = self.mtf_manager.route_bar(bar)
+            if layer in ["trend", "decision"]:
+                # Non-execution bars only update indicators, no trading
+                self.log.debug(f"MTF: {layer} bar routed")
+                return
+            elif layer == "execution":
+                # Update cached price for execution layer
+                with self._state_lock:
+                    self._cached_current_price = float(bar.close)
+                # Continue to normal bar processing
+            elif layer == "unknown":
+                self.log.warning(f"MTF: Unknown bar type, falling back to single-timeframe")
+                # Fall through to single-timeframe processing
+
+        # Update technical indicators (single-timeframe mode)
         self.indicator_manager.update(bar)
 
         # Update cached price (thread-safe for Telegram commands)
@@ -764,6 +859,163 @@ class DeepSeekAIStrategy(Strategy):
                 f"Bar #{self.bars_received}: "
                 f"O:{bar.open} H:{bar.high} L:{bar.low} C:{bar.close} V:{bar.volume}"
             )
+
+    def on_historical_data(self, data):
+        """
+        Handle historical data from request_bars() (v3.2.8).
+
+        NautilusTrader calls this method when historical bars arrive
+        from an asynchronous request_bars() call.
+
+        Parameters
+        ----------
+        data : BarDataResponse
+            Historical bar data response containing bars and bar_type
+        """
+        if not hasattr(data, 'bars') or not data.bars:
+            self.log.warning("on_historical_data: Received empty or invalid data")
+            return
+
+        bars = data.bars
+        bar_type = data.bar_type if hasattr(data, 'bar_type') else None
+
+        if not self.mtf_enabled or not self.mtf_manager:
+            # Single-timeframe mode: update indicator_manager
+            for bar in bars:
+                self.indicator_manager.update(bar)
+            self.log.info(f"Historical data loaded: {len(bars)} bars")
+            return
+
+        # Multi-Timeframe mode: route to appropriate layer
+        if bar_type == self.trend_bar_type:
+            for bar in bars:
+                self.mtf_manager.trend_manager.update(bar)
+            self._mtf_trend_initialized = True
+            self.log.info(f"MTF: 趋势层预取完成 ({len(bars)} bars)")
+
+        elif bar_type == self.decision_bar_type:
+            for bar in bars:
+                self.mtf_manager.decision_manager.update(bar)
+            self._mtf_decision_initialized = True
+            self.log.info(f"MTF: 决策层预取完成 ({len(bars)} bars)")
+
+        elif bar_type == self.execution_bar_type:
+            for bar in bars:
+                self.mtf_manager.execution_manager.update(bar)
+            self._mtf_execution_initialized = True
+            self.log.info(f"MTF: 执行层预取完成 ({len(bars)} bars)")
+
+        else:
+            # Unknown bar_type, update single-timeframe indicator
+            for bar in bars:
+                self.indicator_manager.update(bar)
+            self.log.info(f"Historical data loaded (unknown type): {len(bars)} bars")
+
+        # Check if all MTF layers are initialized
+        if (self._mtf_trend_initialized and
+            self._mtf_decision_initialized and
+            self._mtf_execution_initialized):
+            self._verify_mtf_initialization()
+
+    def _verify_mtf_initialization(self):
+        """Verify all MTF layers have sufficient data (v3.2.8)."""
+        if not self.mtf_manager:
+            return
+
+        issues = []
+
+        # Check trend layer (needs 200 bars for SMA_200)
+        if self.mtf_manager.trend_manager:
+            trend_bars = len(self.mtf_manager.trend_manager.recent_bars) if hasattr(self.mtf_manager.trend_manager, 'recent_bars') else 0
+            if trend_bars < 200:
+                issues.append(f"趋势层 bars 不足: {trend_bars}/200")
+
+        # Check decision layer (needs 50 bars for SMA_50)
+        if self.mtf_manager.decision_manager:
+            decision_bars = len(self.mtf_manager.decision_manager.recent_bars) if hasattr(self.mtf_manager.decision_manager, 'recent_bars') else 0
+            if decision_bars < 50:
+                issues.append(f"决策层 bars 不足: {decision_bars}/50")
+
+        # Check execution layer (needs 20 bars)
+        if self.mtf_manager.execution_manager:
+            exec_bars = len(self.mtf_manager.execution_manager.recent_bars) if hasattr(self.mtf_manager.execution_manager, 'recent_bars') else 0
+            if exec_bars < 20:
+                issues.append(f"执行层 bars 不足: {exec_bars}/20")
+
+        if issues:
+            self.log.warning(f"MTF 初始化警告: {', '.join(issues)}")
+            if self.telegram_bot and self.enable_telegram:
+                self.telegram_bot.send_message_sync(
+                    f"⚠️ MTF 初始化警告:\n" + "\n".join(f"• {i}" for i in issues)
+                )
+        else:
+            self.log.info("MTF: 所有层指标管理器初始化完成 ✓")
+
+    def _prefetch_multi_timeframe_bars(self):
+        """
+        Prefetch historical bars for all MTF layers (v3.2.8).
+
+        NautilusTrader API signature (v1.221.0+):
+        ```
+        request_bars(
+            bar_type: BarType,
+            start: datetime,        # Required: start time
+            end: datetime = None,   # Optional: end time (default: now)
+            limit: int = 0,         # Optional: bar count limit
+        ) -> UUID4
+        ```
+
+        IMPORTANT: request_bars is async!
+        - Returns UUID4 request ID, not bars directly
+        - Bars delivered via on_historical_data() callback
+        """
+        if not self.mtf_enabled or not self.mtf_manager:
+            return
+
+        self.log.info("MTF: 开始预取历史数据 (异步)...")
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+
+        try:
+            # === Trend Layer (1D) - SMA_200 needs 200+ bars ===
+            # 220 days back, limit=220
+            trend_start = now - timedelta(days=220)
+            self.log.debug(f"MTF: 预取 1D bars (start={trend_start.date()}, limit=220)...")
+            self._pending_requests['trend'] = self.request_bars(
+                bar_type=self.trend_bar_type,
+                start=trend_start,
+                end=None,
+                limit=220,
+            )
+
+            # === Decision Layer (4H) - SMA_50, MACD need ~50 bars ===
+            # 60 * 4 = 240 hours = 10 days
+            decision_start = now - timedelta(hours=60 * 4)
+            self.log.debug(f"MTF: 预取 4H bars (start={decision_start}, limit=60)...")
+            self._pending_requests['decision'] = self.request_bars(
+                bar_type=self.decision_bar_type,
+                start=decision_start,
+                end=None,
+                limit=60,
+            )
+
+            # === Execution Layer (15M) - RSI, EMA need ~30 bars ===
+            # 40 * 15 = 600 minutes = 10 hours
+            execution_start = now - timedelta(minutes=40 * 15)
+            self.log.debug(f"MTF: 预取 15M bars (start={execution_start}, limit=40)...")
+            self._pending_requests['execution'] = self.request_bars(
+                bar_type=self.execution_bar_type,
+                start=execution_start,
+                end=None,
+                limit=40,
+            )
+
+            self.log.info("MTF: 历史数据请求已发送，等待 on_historical_data() 回调")
+
+        except Exception as e:
+            self.log.error(f"MTF: 预取历史数据请求失败: {e}")
+            # Don't raise - allow strategy to continue in degraded mode
 
     def on_timer(self, event):
         """

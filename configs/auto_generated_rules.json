@@ -599,12 +599,502 @@
       "pattern_type": "contains",
       "created": "2026-01-25T11:38:03.415466",
       "auto_generated": true
+    },
+    {
+      "id": "7897329d0e5a",
+      "commit": "7eca92d",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: apply v3.2.8 expert review fixes",
+      "pattern": "from datetime import datetime, timedelta, timezone",
+      "pattern_type": "import",
+      "created": "2026-01-26T11:34:51.227471",
+      "auto_generated": true
+    },
+    {
+      "id": "fdea3a93c0d4",
+      "commit": "50e5015",
+      "file": "scripts/test_coinalyze_api.py",
+      "message": "docs: fix Coinalyze API timestamp format (seconds not ms) v3.2.4",
+      "pattern": "start_time = end_time - 3600       # 1小时前 (3600秒)",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.398650",
+      "auto_generated": true
+    },
+    {
+      "id": "8222eb44394d",
+      "commit": "1d7dba0",
+      "file": "scripts/test_coinalyze_api.py",
+      "message": "docs: fix Coinalyze API format based on actual testing v3.2.3",
+      "pattern": "'interval': '1hour',  # ⚠️ 必须是 \"1hour\" 不是 \"1h\"",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.450845",
+      "auto_generated": true
+    },
+    {
+      "id": "49c5cc18d9f5",
+      "commit": "7c3b2ff",
+      "file": "scripts/smart_commit_analyzer.py",
+      "message": "fix: clean up obsolete rules and add deprecation support",
+      "pattern": "deprecate_rules",
+      "pattern_type": "function_exists",
+      "created": "2026-01-26T11:34:51.556922",
+      "auto_generated": true
+    },
+    {
+      "id": "c2639de536dc",
+      "commit": "f28a4b4",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: pass ConfigManager to get_strategy_config() in diagnose_realtime.py",
+      "pattern": "from utils.config_manager import ConfigManager",
+      "pattern_type": "import",
+      "created": "2026-01-26T11:34:51.608477",
+      "auto_generated": true
+    },
+    {
+      "id": "82ca1b72348d",
+      "commit": "098b231",
+      "file": "tests/test_binance_patch.py",
+      "message": "fix: correct path references in test files to use parent.parent",
+      "pattern": "project_root = Path(__file__).parent.parent",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.661233",
+      "auto_generated": true
+    },
+    {
+      "id": "00eb4b92e259",
+      "commit": "098b231",
+      "file": "tests/test_command_listener.py",
+      "message": "fix: correct path references in test files to use parent.parent",
+      "pattern": "sys.path.insert(0, str(Path(__file__).parent.parent))",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.690786",
+      "auto_generated": true
+    },
+    {
+      "id": "d7e1a923fd92",
+      "commit": "098b231",
+      "file": "tests/test_telegram.py",
+      "message": "fix: correct path references in test files to use parent.parent",
+      "pattern": "project_root = Path(__file__).parent.parent",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.716257",
+      "auto_generated": true
+    },
+    {
+      "id": "653bc22f4b45",
+      "commit": "ac0bf0d",
+      "file": "scripts/analyze_commits_ai.py",
+      "message": "fix: correct path references in all scripts to use parent.parent",
+      "pattern": "self.repo_path = repo_path or Path(__file__).parent.parent",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.764702",
+      "auto_generated": true
+    },
+    {
+      "id": "2ca03547f4b1",
+      "commit": "ac0bf0d",
+      "file": "scripts/analyze_git_changes.py",
+      "message": "fix: correct path references in all scripts to use parent.parent",
+      "pattern": "self.repo_path = repo_path or Path(__file__).parent.parent",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.790417",
+      "auto_generated": true
+    },
+    {
+      "id": "e275fa07eda6",
+      "commit": "ac0bf0d",
+      "file": "scripts/diagnose.py",
+      "message": "fix: correct path references in all scripts to use parent.parent",
+      "pattern": "project_dir = Path(__file__).parent.parent.absolute()",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.815713",
+      "auto_generated": true
+    },
+    {
+      "id": "cd38894e9f28",
+      "commit": "ac0bf0d",
+      "file": "scripts/diagnose_no_signal.py",
+      "message": "fix: correct path references in all scripts to use parent.parent",
+      "pattern": "config_path = Path(__file__).parent.parent / \"configs\" / \"strategy_config.yaml\"",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.844706",
+      "auto_generated": true
+    },
+    {
+      "id": "afa8178cbfae",
+      "commit": "ac0bf0d",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: correct path references in all scripts to use parent.parent",
+      "pattern": "project_root = Path(__file__).parent.parent",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.870440",
+      "auto_generated": true
+    },
+    {
+      "id": "5e918bc65cbe",
+      "commit": "ac0bf0d",
+      "file": "scripts/diagnose_telegram.py",
+      "message": "fix: correct path references in all scripts to use parent.parent",
+      "pattern": "sys.path.insert(0, str(Path(__file__).parent.parent))",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.901046",
+      "auto_generated": true
+    },
+    {
+      "id": "d28304f33d86",
+      "commit": "ac0bf0d",
+      "file": "scripts/quick_test_main.py",
+      "message": "fix: correct path references in all scripts to use parent.parent",
+      "pattern": "os.chdir(Path(__file__).parent.parent)",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.925316",
+      "auto_generated": true
+    },
+    {
+      "id": "408b581457f2",
+      "commit": "ac0bf0d",
+      "file": "scripts/run_quick_test.py",
+      "message": "fix: correct path references in all scripts to use parent.parent",
+      "pattern": "sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.949566",
+      "auto_generated": true
+    },
+    {
+      "id": "45f96d58afe0",
+      "commit": "ac0bf0d",
+      "file": "scripts/validate_commit_fixes.py",
+      "message": "fix: correct path references in all scripts to use parent.parent",
+      "pattern": "self.project_root = project_root or Path(__file__).parent.parent",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:51.978098",
+      "auto_generated": true
+    },
+    {
+      "id": "27e55ef14c02",
+      "commit": "8813074",
+      "file": "scripts/diagnose_no_signal.py",
+      "message": "fix: address CodeQL code scanning alerts",
+      "pattern": "except Exception:",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:52.204651",
+      "auto_generated": true
+    },
+    {
+      "id": "ccd2d39cc937",
+      "commit": "8813074",
+      "file": "web/backend/core/config.py",
+      "message": "fix: address CodeQL code scanning alerts",
+      "pattern": "aitrader_config_path",
+      "pattern_type": "function_exists",
+      "created": "2026-01-26T11:34:52.227300",
+      "auto_generated": true
+    },
+    {
+      "id": "e1fcbbafc3c3",
+      "commit": "8813074",
+      "file": "web/backend/services/config_service.py",
+      "message": "fix: address CodeQL code scanning alerts",
+      "pattern": "self.config_path = settings.aitrader_config_path",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:52.248959",
+      "auto_generated": true
+    },
+    {
+      "id": "caa4dae44f50",
+      "commit": "36b78fe",
+      "file": "scripts/analyze_commits_ai.py",
+      "message": "fix: address CodeQL code scanning alerts",
+      "pattern": "except Exception:",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:52.293402",
+      "auto_generated": true
+    },
+    {
+      "id": "2ada2c8c1c53",
+      "commit": "36b78fe",
+      "file": "scripts/analyze_git_changes.py",
+      "message": "fix: address CodeQL code scanning alerts",
+      "pattern": "except Exception:",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:52.316532",
+      "auto_generated": true
+    },
+    {
+      "id": "277632ce5e55",
+      "commit": "36b78fe",
+      "file": "scripts/validate_commit_fixes.py",
+      "message": "fix: address CodeQL code scanning alerts",
+      "pattern": "except Exception:",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:52.341172",
+      "auto_generated": true
+    },
+    {
+      "id": "3f8953ca33d0",
+      "commit": "36b78fe",
+      "file": "web/backend/core/config.py",
+      "message": "fix: address CodeQL code scanning alerts",
+      "pattern": "# AItrader paths (configurable via environment variables)",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:52.365224",
+      "auto_generated": true
+    },
+    {
+      "id": "dfaf93be13c9",
+      "commit": "614bddd",
+      "file": "scripts/smart_commit_analyzer.py",
+      "message": "feat: enhance smart_commit_analyzer with file move detection",
+      "pattern": "find_file",
+      "pattern_type": "function_exists",
+      "created": "2026-01-26T11:34:52.408420",
+      "auto_generated": true
+    },
+    {
+      "id": "72f482ec9f00",
+      "commit": "ab06b7b",
+      "file": "smart_commit_analyzer.py",
+      "message": "feat: replace manual rules with smart auto-evolving analyzer",
+      "pattern": "import subprocess",
+      "pattern_type": "import",
+      "created": "2026-01-26T11:34:52.479100",
+      "auto_generated": true
+    },
+    {
+      "id": "c7beafebd874",
+      "commit": "cd036b4",
+      "file": "indicators/technical_manager.py",
+      "message": "fix: 改用 Cython 指标避免 Rust 线程安全 panic",
+      "pattern": "from nautilus_trader.indicators.average.sma import SimpleMovingAverage",
+      "pattern_type": "import",
+      "created": "2026-01-26T11:34:53.739222",
+      "auto_generated": true
+    },
+    {
+      "id": "1499132a781a",
+      "commit": "11bab54",
+      "file": "utils/telegram_bot.py",
+      "message": "fix: 修复 Telegram TCPTransport closed 错误",
+      "pattern": "return loop.run_until_complete(",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:53.877587",
+      "auto_generated": true
+    },
+    {
+      "id": "b182fbf6fc63",
+      "commit": "a9a3655",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 统一 MIN_SL_DISTANCE_PCT 常量为 1%",
+      "pattern": "from strategy.trading_logic import MIN_SL_DISTANCE_PCT",
+      "pattern_type": "import",
+      "created": "2026-01-26T11:34:54.297227",
+      "auto_generated": true
+    },
+    {
+      "id": "a01b52785774",
+      "commit": "a9a3655",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 统一 MIN_SL_DISTANCE_PCT 常量为 1%",
+      "pattern": "if trading_logic_path.exists():",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:54.323475",
+      "auto_generated": true
+    },
+    {
+      "id": "e78fe09729aa",
+      "commit": "a9a3655",
+      "file": "strategy/trading_logic.py",
+      "message": "fix: 统一 MIN_SL_DISTANCE_PCT 常量为 1%",
+      "pattern": "MIN_SL_DISTANCE_PCT = 0.01   # 1% minimum SL distance (avoid too tight stops)",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:54.349272",
+      "auto_generated": true
+    },
+    {
+      "id": "bb6202aa83e2",
+      "commit": "aac0af5",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 实现混合决策架构，移除Judge AI层，使用确定性量化逻辑",
+      "pattern": "_count_technical_confirmations",
+      "pattern_type": "function_exists",
+      "created": "2026-01-26T11:34:54.828779",
+      "auto_generated": true
+    },
+    {
+      "id": "3f213e7457b8",
+      "commit": "4b2e597",
+      "file": "diagnose_realtime.py",
+      "message": "refactor: 改进 diagnose_realtime.py 代码质量",
+      "pattern": "from typing import Optional",
+      "pattern_type": "import",
+      "created": "2026-01-26T11:34:55.028993",
+      "auto_generated": true
+    },
+    {
+      "id": "f43dfcb73ac8",
+      "commit": "accba28",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复代码审查发现的安全和质量问题",
+      "pattern": "# Additional validation: check minimum distance",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:55.069629",
+      "auto_generated": true
+    },
+    {
+      "id": "7db1e6b628dc",
+      "commit": "5c08838",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 修复 diagnose_realtime.py 变量名错误",
+      "pattern": "signal_data=signal_data,  # 方案B: 使用 Judge 的决策数据",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:55.288653",
+      "auto_generated": true
+    },
+    {
+      "id": "8e83151c4baf",
+      "commit": "24c616f",
+      "file": "diagnose_realtime.py",
+      "message": "refactor: 完成方案B全面修复 - 诊断脚本和配置文件",
+      "pattern": "print(f\"     Signal: {signal_data.get('signal', 'N/A')}\")",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:55.442601",
+      "auto_generated": true
+    },
+    {
+      "id": "391a5ebf6327",
+      "commit": "24c616f",
+      "file": "strategy/trading_logic.py",
+      "message": "refactor: 完成方案B全面修复 - 诊断脚本和配置文件",
+      "pattern": "- check_confidence_threshold() - 仍在使用",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:55.527250",
+      "auto_generated": true
+    },
+    {
+      "id": "6fdcbe4d53b7",
+      "commit": "79e168a",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 诊断脚本显示正确的 SL/TP (来自最终信号)",
+      "pattern": "final_sl = final_signal_data.get('stop_loss')",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:55.570095",
+      "auto_generated": true
+    },
+    {
+      "id": "df2e136b58a5",
+      "commit": "a1fb405",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 同步 diagnose_realtime.py 与最新策略逻辑",
+      "pattern": "if opposing_signals or hold_vs_action:",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:55.624958",
+      "auto_generated": true
+    },
+    {
+      "id": "449c5bfc32bf",
+      "commit": "24bc34b",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: HOLD vs BUY/SELL 分歧也应用信心融合",
+      "pattern": "if opposing_signals or hold_vs_action:",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:55.740981",
+      "auto_generated": true
+    },
+    {
+      "id": "f26b180c7071",
+      "commit": "922f973",
+      "file": "diagnose_realtime.py",
+      "message": "fix: 修复代码审查发现的问题",
+      "pattern": "resolve_divergence_by_confidence",
+      "pattern_type": "function_exists",
+      "created": "2026-01-26T11:34:56.058393",
+      "auto_generated": true
+    },
+    {
+      "id": "0f207da88bfc",
+      "commit": "922f973",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复代码审查发现的问题",
+      "pattern": "_create_hold_signal",
+      "pattern_type": "function_exists",
+      "created": "2026-01-26T11:34:56.087334",
+      "auto_generated": true
+    },
+    {
+      "id": "7e885fd6b2dd",
+      "commit": "8cecd6e",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复 Rust RSI 线程安全崩溃 (Telegram 命令处理)",
+      "pattern": "# Fallback to entry price if no price cached yet",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:56.386255",
+      "auto_generated": true
+    },
+    {
+      "id": "981c8a9179ce",
+      "commit": "e1b845f",
+      "file": "debug_signal.py",
+      "message": "fix: 修正 TechnicalIndicatorManager 类名和参数",
+      "pattern": "from indicators.technical_manager import TechnicalIndicatorManager",
+      "pattern_type": "import",
+      "created": "2026-01-26T11:34:56.540841",
+      "auto_generated": true
+    },
+    {
+      "id": "17c223dbadc6",
+      "commit": "a51a83a",
+      "file": "debug_telegram_config.py",
+      "message": "fix: 修复代码审查发现的问题",
+      "pattern": "print(f\"  TELEGRAM_BOT_TOKEN: {'✅ Set (' + str(len(bot_token)) + ' chars)' if bot_token else '❌ NOT SET'}\")",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:56.578945",
+      "auto_generated": true
+    },
+    {
+      "id": "8d84fd939792",
+      "commit": "a51a83a",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: 修复代码审查发现的问题",
+      "pattern": "# The config is preserved for future implementation.",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:56.609746",
+      "auto_generated": true
+    },
+    {
+      "id": "86afea33e75a",
+      "commit": "a51a83a",
+      "file": "utils/sentiment_client.py",
+      "message": "fix: 修复代码审查发现的问题",
+      "pattern": "from datetime import datetime, timezone",
+      "pattern_type": "import",
+      "created": "2026-01-26T11:34:56.639657",
+      "auto_generated": true
+    },
+    {
+      "id": "a3dce20d78c6",
+      "commit": "5ad8295",
+      "file": "diagnose.py",
+      "message": "fix: Address code review issues in diagnose.py",
+      "pattern": "elif min_version and version == \"unknown\":",
+      "pattern_type": "contains",
+      "created": "2026-01-26T11:34:56.689308",
+      "auto_generated": true
+    },
+    {
+      "id": "1c9f3b485753",
+      "commit": "b822a82",
+      "file": "main_live.py",
+      "message": "fix: Address code review issues",
+      "pattern": "_strip_env_comment",
+      "pattern_type": "function_exists",
+      "created": "2026-01-26T11:34:56.744940",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-01-26T02:22:11.286676",
-    "count": 60,
+    "updated": "2026-01-26T11:34:56.745225",
+    "count": 109,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
