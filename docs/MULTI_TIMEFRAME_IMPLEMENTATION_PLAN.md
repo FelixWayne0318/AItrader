@@ -1,14 +1,14 @@
-# 多时间框架实施方案 v3.2.2
+# 多时间框架实施方案 v3.2.8
 
 ## 文档信息
 
 | 项目 | 值 |
 |------|-----|
-| 版本 | 3.2.2 |
+| 版本 | 3.2.8 |
 | 创建日期 | 2026-01-26 |
 | 更新日期 | 2026-01-26 |
 | 基于 | TradingAgents 架构 + AItrader 现有系统 |
-| 状态 | **数据格式转换** (v3.2.2 - Coinalyze 格式 → 统一格式转换) |
+| 状态 | **API 合规性修复** (v3.2.8 - request_bars 签名修正 + MultiTimeframeManager 定义) |
 
 ## 版本历史
 
@@ -26,6 +26,26 @@
 | v3.2.5 | 2026-01-26 | **文档一致性修复**，同步 Section 9.6.2 CoinalyzeClient 的 docstring 与实际 API 格式 |
 | v3.2.6 | 2026-01-26 | **服务器实测修正**，时间戳单位不一致 (当前端点毫秒/历史端点秒)，Liquidation 嵌套结构 |
 | v3.2.7 | 2026-01-26 | **P0 阻塞项修复**，BarType构建、_prefetch_multi_timeframe_bars()、SMA_200初始化、时间戳标准化 |
+| v3.2.8 | 2026-01-26 | **NautilusTrader API 合规性修复**，request_bars 签名修正 (start/end datetime)、新增 MultiTimeframeManager 完整定义 |
+
+### v3.2.8 主要更新 (NautilusTrader API 合规性修复)
+
+1. **P0-NEW-1: `request_bars()` API 签名修正 (严重)**
+   - ❌ 错误: `request_bars(bar_type, count=220)` - NautilusTrader 无此参数
+   - ✅ 正确: `request_bars(bar_type, start, end, limit)` - 使用 datetime + limit
+   - 返回值是 `UUID4`，bars 通过 `on_historical_data()` 回调异步传递
+   - 参考: [NautilusTrader Actor.request_bars](https://github.com/nautechsystems/nautilus_trader/blob/develop/nautilus_trader/common/actor.pyx)
+
+2. **P0-NEW-2: `MultiTimeframeManager` 模块定义**
+   - 新增 Section 3.3.3 完整类定义 (~200 行)
+   - 包含三层 TechnicalIndicatorManager 实例
+   - 实现 `route_bar()`, `get_risk_state()`, `set_decision_state()` 方法
+   - 文件路径: `indicators/multi_timeframe_manager.py`
+
+3. **P0-NEW-3: `recent_bars` 属性验证** ✅ 已确认
+   - `TechnicalIndicatorManager` 已有 `recent_bars: List[Bar]` (line 93)
+   - 已有 `is_initialized()` 方法 (line 278-303)
+   - 无需修改，仅文档确认
 
 ### v3.2.7 主要更新 (P0 阻塞项修复)
 
@@ -423,11 +443,11 @@ def get_final_action(risk_state, decision_state, execution_confirmed):
 │  │      subscribe_bars(BTCUSDT.BINANCE-4-HOUR-LAST-EXTERNAL)     ├──▶ NautilusTrader       │
 │  │      subscribe_bars(BTCUSDT.BINANCE-15-MINUTE-LAST-EXTERNAL) ─┘         DataEngine      │
 │  │                                                                          │                │
-│  │      # 2. 预取历史数据填充指标                                            │                │
+│  │      # 2. 预取历史数据填充指标 (v3.2.8 修正: 异步 API)                    │                │
 │  │      _prefetch_multi_timeframe_bars()                                   │                │
-│  │          ├── request_bars(1D, count=200)  # SMA_200 需要 200 根          │                │
-│  │          ├── request_bars(4H, count=50)   # 决策层指标                   │                │
-│  │          └── request_bars(15M, count=30)  # 执行层指标                   │                │
+│  │          ├── request_bars(1D, start=220天前, limit=220) → on_historical_data │            │
+│  │          ├── request_bars(4H, start=10天前, limit=60)   → on_historical_data │            │
+│  │          └── request_bars(15M, start=10小时前, limit=40) → on_historical_data│            │
 │  │                                                                          │                │
 │  └─────────────────────────────────────────────────────────────────────────┘                │
 │                                                                                              │
@@ -1665,6 +1685,12 @@ def __init__(self, config: DeepSeekAIStrategyConfig):
     self.mtf_enabled = config.multi_timeframe_enabled
     self.mtf_manager = None
 
+    # ⚠️ v3.2.8 新增: 异步请求跟踪 (request_bars 是异步的)
+    self._pending_requests: Dict[str, UUID4] = {}  # layer -> request_id
+    self._mtf_trend_initialized = False
+    self._mtf_decision_initialized = False
+    self._mtf_execution_initialized = False
+
     if self.mtf_enabled:
         # 构建 BarType 对象
         # ⚠️ v3.2.7 修正: BarType.from_str() 格式必须严格遵循 NautilusTrader 规范
@@ -1749,67 +1775,115 @@ def on_start(self):
 
 def _prefetch_multi_timeframe_bars(self):
     """
-    ⚠️ v3.2.7 新增: 预取各层历史数据，填充指标计算所需的 bar
+    ⚠️ v3.2.8 修正: 预取各层历史数据，填充指标计算所需的 bar
 
-    必须在 subscribe_bars() 之后调用，确保指标在首次分析时已初始化。
+    NautilusTrader API 签名 (v1.221.0+):
+    ```
+    request_bars(
+        bar_type: BarType,
+        start: datetime,        # 必需: 起始时间
+        end: datetime = None,   # 可选: 结束时间 (默认当前)
+        limit: int = 0,         # 可选: 数量限制
+        client_id: ClientId = None,
+        callback: Callable = None,  # 可选: 异步回调
+    ) -> UUID4
+    ```
+
+    ⚠️ 重要: request_bars 是异步的！
+    - 返回 UUID4 请求 ID，不直接返回 bars
+    - bars 通过 on_historical_data() 回调传递
+    - 需要在 on_historical_data() 中处理数据
 
     预取数量说明:
-    - 趋势层 (1D): 需要 200+ 根用于 SMA_200
-    - 决策层 (4H): 需要 50+ 根用于 SMA_50, MACD
-    - 执行层 (15M): 需要 30+ 根用于 RSI, EMA
+    - 趋势层 (1D): 需要 220+ 根用于 SMA_200
+    - 决策层 (4H): 需要 60+ 根用于 SMA_50, MACD
+    - 执行层 (15M): 需要 40+ 根用于 RSI, EMA
     """
     if not self.mtf_enabled:
         return
 
-    self.log.info("MTF: 开始预取历史数据...")
+    self.log.info("MTF: 开始预取历史数据 (异步)...")
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
 
     try:
         # === 趋势层 (1D) - SMA_200 需要至少 200 根 ===
-        # 请求 220 根以确保有足够数据 (含缓冲)
-        self.log.debug("MTF: 预取 1D bars (220 根)...")
-        trend_bars = self.request_bars(
+        # 220 天前开始，limit=220
+        trend_start = now - timedelta(days=220)
+        self.log.debug(f"MTF: 预取 1D bars (start={trend_start.date()}, limit=220)...")
+        self._pending_requests['trend'] = self.request_bars(
             bar_type=self.trend_bar_type,
-            count=220,  # SMA_200 + 20 缓冲
+            start=trend_start,
+            end=None,  # 到当前
+            limit=220,
         )
-        if trend_bars:
-            for bar in trend_bars:
-                self.mtf_manager.trend_manager.update(bar)
-            self.log.info(f"MTF: 趋势层预取完成 ({len(trend_bars)} bars)")
-        else:
-            self.log.warning("MTF: 趋势层预取失败，SMA_200 可能不准确")
 
         # === 决策层 (4H) - SMA_50, MACD 需要约 50 根 ===
-        self.log.debug("MTF: 预取 4H bars (60 根)...")
-        decision_bars = self.request_bars(
+        # 60 * 4 = 240 小时 = 10 天
+        decision_start = now - timedelta(hours=60 * 4)
+        self.log.debug(f"MTF: 预取 4H bars (start={decision_start}, limit=60)...")
+        self._pending_requests['decision'] = self.request_bars(
             bar_type=self.decision_bar_type,
-            count=60,  # SMA_50 + 10 缓冲
+            start=decision_start,
+            end=None,
+            limit=60,
         )
-        if decision_bars:
-            for bar in decision_bars:
-                self.mtf_manager.decision_manager.update(bar)
-            self.log.info(f"MTF: 决策层预取完成 ({len(decision_bars)} bars)")
-        else:
-            self.log.warning("MTF: 决策层预取失败")
 
         # === 执行层 (15M) - RSI, EMA 需要约 30 根 ===
-        self.log.debug("MTF: 预取 15M bars (40 根)...")
-        execution_bars = self.request_bars(
+        # 40 * 15 = 600 分钟 = 10 小时
+        execution_start = now - timedelta(minutes=40 * 15)
+        self.log.debug(f"MTF: 预取 15M bars (start={execution_start}, limit=40)...")
+        self._pending_requests['execution'] = self.request_bars(
             bar_type=self.execution_bar_type,
-            count=40,  # RSI_14 + EMA + 缓冲
+            start=execution_start,
+            end=None,
+            limit=40,
         )
-        if execution_bars:
-            for bar in execution_bars:
-                self.mtf_manager.execution_manager.update(bar)
-            self.log.info(f"MTF: 执行层预取完成 ({len(execution_bars)} bars)")
-        else:
-            self.log.warning("MTF: 执行层预取失败")
 
-        # 验证初始化状态
-        self._verify_mtf_initialization()
+        self.log.info("MTF: 历史数据请求已发送，等待 on_historical_data() 回调")
 
     except Exception as e:
-        self.log.error(f"MTF: 预取历史数据失败: {e}")
+        self.log.error(f"MTF: 预取历史数据请求失败: {e}")
         # 不抛出异常，允许策略继续运行 (降级模式)
+
+def on_historical_data(self, data):
+    """
+    ⚠️ v3.2.8 新增: 处理 request_bars 的异步回调
+
+    NautilusTrader 在历史数据到达时调用此方法。
+    """
+    if not hasattr(data, 'bars') or not data.bars:
+        return
+
+    bars = data.bars
+    bar_type = data.bar_type
+
+    # 根据 bar_type 路由到对应的层
+    if self.mtf_enabled and self.mtf_manager:
+        if bar_type == self.trend_bar_type:
+            for bar in bars:
+                self.mtf_manager.trend_manager.update(bar)
+            self.log.info(f"MTF: 趋势层预取完成 ({len(bars)} bars)")
+            self._mtf_trend_initialized = True
+
+        elif bar_type == self.decision_bar_type:
+            for bar in bars:
+                self.mtf_manager.decision_manager.update(bar)
+            self.log.info(f"MTF: 决策层预取完成 ({len(bars)} bars)")
+            self._mtf_decision_initialized = True
+
+        elif bar_type == self.execution_bar_type:
+            for bar in bars:
+                self.mtf_manager.execution_manager.update(bar)
+            self.log.info(f"MTF: 执行层预取完成 ({len(bars)} bars)")
+            self._mtf_execution_initialized = True
+
+        # 检查是否所有层都已初始化
+        if getattr(self, '_mtf_trend_initialized', False) and \
+           getattr(self, '_mtf_decision_initialized', False) and \
+           getattr(self, '_mtf_execution_initialized', False):
+            self._verify_mtf_initialization()
 
 def _verify_mtf_initialization(self):
     """验证各层指标管理器是否已正确初始化"""
