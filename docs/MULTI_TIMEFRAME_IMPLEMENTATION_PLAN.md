@@ -3008,39 +3008,205 @@ coinalyze_client = CoinalyzeClient(
 )
 ```
 
-### 9.8 实施计划
+### 9.8 实施计划 (v3.2.5 更新)
 
-| 阶段 | 内容 | 工作量 | 风险 |
-|------|------|--------|------|
-| **Phase 1** | 添加 OrderFlowProcessor | ~50 行 | 低 |
-| **Phase 2** | 添加 CoinalyzeClient | ~80 行 | 低 |
-| **Phase 3** | 修改 AIDataAssembler | ~30 行 | 低 |
-| **Phase 4** | 更新 DeepSeek Prompt | ~20 行 | 低 |
-| **Phase 5** | 添加配置项 | ~15 行 | 低 |
+#### 9.8.1 全面审查结论
 
-**总工作量**: ~100-150 行代码，约 1-2 小时
+| 维度 | 得分 | 状态 |
+|------|------|------|
+| 当前系统匹配度 | 8.5/10 | ✅ 高度兼容 |
+| NautilusTrader 标准 | 89% | ✅ 符合 |
+| TradingAgents 设计理念 | 87% | ✅ 符合 |
+| 数据格式一致性 | 100% | ✅ 已同步 |
 
-**风险评估**:
-- 不修改现有交易逻辑，只增加数据输入
-- 外部 API 失败时使用默认值，不影响核心功能
-- 可通过配置项随时关闭
+#### 9.8.2 实施前准备清单
+
+**环境准备** (必须先完成):
+
+```bash
+# 1. 添加 Coinalyze API Key 到服务器
+ssh linuxuser@139.180.157.152
+echo 'COINALYZE_API_KEY=8be2c53d-480f-4347-b7cf-d9f2b06576fa' >> ~/.env.aitrader
+
+# 2. 验证配置
+cat ~/.env.aitrader | grep COINALYZE
+
+# 3. 验证 API 连通性 (在本地开发环境)
+cd /home/user/AItrader
+python3 scripts/test_coinalyze_api.py
+```
+
+#### 9.8.3 详细执行顺序
+
+```
+================================================================================
+                        多时间框架实施执行计划
+================================================================================
+
+阶段 0: 环境准备 [预计 30 分钟]
+├── [0.1] 添加 COINALYZE_API_KEY 到 ~/.env.aitrader
+├── [0.2] 运行 test_coinalyze_api.py 验证 API 连通性
+└── [0.3] 确认所有 API 端点返回正确格式
+
+阶段 1: 配置扩展 [预计 1 小时]
+├── [1.1] configs/base.yaml
+│   ├── 添加 multi_timeframe 配置节 (~50 行)
+│   └── 添加 order_flow 配置节 (~30 行)
+├── [1.2] CLAUDE.md
+│   └── 添加 COINALYZE_API_KEY 说明
+└── [1.3] 验证配置加载
+    └── python3 main_live.py --env development --dry-run
+
+阶段 2: 核心模块创建 [预计 6-8 小时]
+├── [2.1] indicators/multi_timeframe_manager.py [~300 行]
+│   ├── RiskState 枚举 (RISK_ON, RISK_OFF)
+│   ├── DecisionState 枚举 (ALLOW_LONG, ALLOW_SHORT, WAIT)
+│   ├── MultiTimeframeManager 类
+│   │   ├── route_bar(bar_type) → str
+│   │   ├── evaluate_trend_layer(tech_data_1d) → RiskState
+│   │   ├── evaluate_decision_layer(tech_data_4h, sentiment) → DecisionState
+│   │   ├── check_execution_confirmation(tech_data_15m) → bool
+│   │   └── get_final_action() → str
+│   └── 单元测试: tests/test_multi_timeframe_manager.py
+│
+├── [2.2] utils/coinalyze_client.py [~150 行]
+│   ├── CoinalyzeClient 类 (从方案 Section 9.6.2 复制)
+│   ├── get_open_interest() - 返回 value (BTC) + update (秒)
+│   ├── get_funding_rate() - 返回 value
+│   ├── get_liquidations() - 返回 t, l, s
+│   └── 单元测试: tests/test_coinalyze_client.py
+│
+├── [2.3] utils/order_flow_processor.py [~80 行]
+│   ├── OrderFlowProcessor 类 (从方案 Section 9.6.1 复制)
+│   ├── process_klines(klines) → order_flow 数据
+│   └── 单元测试: tests/test_order_flow.py
+│
+└── [2.4] utils/ai_data_assembler.py [~150 行]
+    ├── AIDataAssembler 类 (从方案 Section 9.6.3 复制)
+    ├── assemble(klines, technical, position) → ai_input_data
+    ├── _convert_derivatives(oi, liq, funding, price) → 统一格式
+    └── 单元测试: tests/test_ai_data_assembler.py
+
+阶段 3: 策略集成 [预计 4-6 小时]
+├── [3.1] strategy/deepseek_strategy.py - 配置扩展
+│   ├── DeepSeekAIStrategyConfig 添加 multi_timeframe 字段
+│   └── __init__() 初始化 MultiTimeframeManager
+│
+├── [3.2] strategy/deepseek_strategy.py - 订阅修改
+│   └── on_start() 订阅 3 个 bar_type (1D, 4H, 15M)
+│
+├── [3.3] strategy/deepseek_strategy.py - 路由逻辑
+│   ├── on_bar() 添加 route_bar() 路由
+│   ├── _handle_1d_bar() - 趋势层处理
+│   ├── _handle_4h_bar() - 决策层处理
+│   └── _handle_15m_bar() - 执行层处理
+│
+└── [3.4] main_live.py - 配置读取
+    └── get_strategy_config() 添加 multi_timeframe 配置读取
+
+阶段 4: 测试验证 [预计 3-4 小时]
+├── [4.1] 单元测试
+│   ├── pytest tests/test_multi_timeframe_manager.py -v
+│   ├── pytest tests/test_coinalyze_client.py -v
+│   ├── pytest tests/test_order_flow.py -v
+│   └── pytest tests/test_ai_data_assembler.py -v
+│
+├── [4.2] 集成测试
+│   ├── python3 scripts/test_coinalyze_api.py
+│   ├── python3 scripts/diagnose_realtime.py --include-mtf
+│   └── python3 main_live.py --env development --dry-run
+│
+├── [4.3] 回归测试
+│   └── python3 scripts/smart_commit_analyzer.py
+│
+└── [4.4] 生产验证
+    ├── 开发环境 dry-run 24 小时
+    └── 检查日志无异常后启用生产
+
+================================================================================
+```
+
+#### 9.8.4 工作量估算
+
+| 阶段 | 内容 | 代码行数 | 预计时间 |
+|------|------|---------|---------|
+| **阶段 0** | 环境准备 | 0 | 30 分钟 |
+| **阶段 1** | 配置扩展 | ~85 行 | 1 小时 |
+| **阶段 2** | 核心模块 | ~680 行 | 6-8 小时 |
+| **阶段 3** | 策略集成 | ~200 行 | 4-6 小时 |
+| **阶段 4** | 测试验证 | ~300 行 | 3-4 小时 |
+| **总计** | | ~1265 行 | **15-20 小时** |
+
+#### 9.8.5 风险评估
+
+| 风险 | 等级 | 缓解措施 |
+|------|------|---------|
+| 循环依赖 | 🟡 中 | 使用组合模式，避免导入策略类 |
+| 线程安全 | 🟡 中 | 使用现有 _state_lock 保护 MTF 状态 |
+| 指标初始化 | 🟡 中 | on_start() 预取历史数据 |
+| API 失败 | 🟢 低 | Coinalyze 失败时使用默认值 (0) |
+| 向后兼容 | 🟢 低 | `multi_timeframe.enabled: false` 禁用新功能 |
+
+#### 9.8.6 回滚方案
+
+```yaml
+# 如需回滚，只需在 configs/base.yaml 设置:
+multi_timeframe:
+  enabled: false  # 禁用多时间框架，恢复单一 15M 模式
+
+order_flow:
+  enabled: false  # 禁用订单流数据
+```
 
 ### 9.9 验证方法
 
 ```bash
-# 1. 单元测试订单流处理
+# 1. 环境验证
+cat ~/.env.aitrader | grep COINALYZE
+python3 scripts/test_coinalyze_api.py
+
+# 2. 单元测试
+python3 -m pytest tests/test_multi_timeframe_manager.py -v
+python3 -m pytest tests/test_coinalyze_client.py -v
 python3 -m pytest tests/test_order_flow.py -v
 
-# 2. 验证 Coinalyze API 连通性
-python3 scripts/diagnose_coinalyze.py
+# 3. 集成测试
+python3 scripts/diagnose_realtime.py --include-mtf
 
-# 3. 完整数据流测试
-python3 scripts/diagnose_realtime.py --include-order-flow
+# 4. 回归检测
+python3 scripts/smart_commit_analyzer.py
 
-# 4. Prompt token 计数
-python3 scripts/count_prompt_tokens.py
+# 5. 配置验证
+python3 main_live.py --env development --dry-run
+
+# 6. 生产前验证
+python3 main_live.py --env production --dry-run
 ```
+
+### 9.10 文件创建清单
+
+**需要新建的文件**:
+
+| 文件路径 | 来源 | 优先级 |
+|---------|------|--------|
+| `indicators/multi_timeframe_manager.py` | 新建 | 🔴 高 |
+| `utils/coinalyze_client.py` | Section 9.6.2 | 🔴 高 |
+| `utils/order_flow_processor.py` | Section 9.6.1 | 🔴 高 |
+| `utils/ai_data_assembler.py` | Section 9.6.3 | 🔴 高 |
+| `tests/test_multi_timeframe_manager.py` | Section 5.1 | 🟡 中 |
+| `tests/test_coinalyze_client.py` | 新建 | 🟡 中 |
+| `tests/test_order_flow.py` | 新建 | 🟡 中 |
+| `scripts/diagnose_coinalyze.py` | Section 4.1 | 🟡 中 |
+
+**需要修改的文件**:
+
+| 文件路径 | 修改内容 | 优先级 |
+|---------|---------|--------|
+| `configs/base.yaml` | 添加 multi_timeframe + order_flow 配置 | 🔴 高 |
+| `strategy/deepseek_strategy.py` | 集成 MTF Manager | 🔴 高 |
+| `main_live.py` | 读取新配置 | 🔴 高 |
+| `CLAUDE.md` | 添加 COINALYZE_API_KEY 说明 | 🟢 低 |
 
 ---
 
-*文档更新于 2026-01-26 v3.2.2 - Coinalyze 数据格式转换 + 字段映射表*
+*文档更新于 2026-01-26 v3.2.5 - 全面审查 + 详细执行计划*
