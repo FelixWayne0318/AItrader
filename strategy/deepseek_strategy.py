@@ -775,7 +775,7 @@ class DeepSeekAIStrategy(Strategy):
                 'limit': min(limit, 1500),  # Binance max
             }
 
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=self.config.network_bar_persistence_timeout)
             response.raise_for_status()
             klines = response.json()
 
