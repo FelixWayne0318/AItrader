@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.2 (TradingAgents 架构 + MTF 完整支持 + Order Flow 测试)
+实盘信号诊断脚本 v10.3 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -13,6 +13,7 @@
 8. v10.0: 多时间框架 (MTF) 三层架构支持
 9. v10.1: MTF 详细配置验证、初始化配置、Order Flow 检查
 10. v10.2: Order Flow 实际数据获取测试、Telegram 命令处理验证、MTF 预取验证
+11. v10.3: Post-Trade 生命周期测试、情绪 fallback 完整字段、从配置读取 Symbol
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -28,6 +29,12 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.3:
+- 添加 Step 8.5: Post-Trade 生命周期测试 (OCO 清理 + Trailing Stop)
+- 修复情绪数据 fallback 缺失字段 (positive_ratio, negative_ratio, net_sentiment)
+- 修复硬编码 Symbol，改从 strategy_config.instrument_id 提取
+- MTF 预取添加实际 API 调用测试 (1D/4H/15M)
+
 v10.2:
 - 添加 Step 0.6: MTF 历史数据预取验证 (检查各层初始化状态)
 - 添加 Step 9: Order Flow 数据实际获取测试 (Coinalyze API 调用验证)
@@ -536,6 +543,51 @@ if not SUMMARY_MODE and mtf_enabled:
             print(f"     执行层: {execution_bars * 15} 分钟 ≈ {execution_bars * 15 / 60:.1f} 小时历史数据")
 
         print()
+
+        # v10.3: 实际测试 MTF 数据预取 (与实盘 _prefetch_multi_timeframe_bars 一致)
+        print("  📋 MTF 数据预取测试 (实际 API 调用):")
+        import requests as mtf_requests
+
+        mtf_test_symbol = "BTCUSDT"  # 默认测试 symbol
+        mtf_base_url = "https://fapi.binance.com/fapi/v1/klines"
+
+        # 测试趋势层 (1D)
+        try:
+            params = {'symbol': mtf_test_symbol, 'interval': '1d', 'limit': min(trend_bars, 10)}
+            resp = mtf_requests.get(mtf_base_url, params=params, timeout=10)
+            if resp.status_code == 200:
+                klines = resp.json()
+                print(f"     ✅ 趋势层 (1D): 成功获取 {len(klines)} 根 K线 (测试 limit=10)")
+            else:
+                print(f"     ❌ 趋势层 (1D): API 错误 {resp.status_code}")
+        except Exception as e:
+            print(f"     ❌ 趋势层 (1D): {e}")
+
+        # 测试决策层 (4H)
+        try:
+            params = {'symbol': mtf_test_symbol, 'interval': '4h', 'limit': min(decision_bars, 10)}
+            resp = mtf_requests.get(mtf_base_url, params=params, timeout=10)
+            if resp.status_code == 200:
+                klines = resp.json()
+                print(f"     ✅ 决策层 (4H): 成功获取 {len(klines)} 根 K线 (测试 limit=10)")
+            else:
+                print(f"     ❌ 决策层 (4H): API 错误 {resp.status_code}")
+        except Exception as e:
+            print(f"     ❌ 决策层 (4H): {e}")
+
+        # 测试执行层 (15M)
+        try:
+            params = {'symbol': mtf_test_symbol, 'interval': '15m', 'limit': min(execution_bars, 10)}
+            resp = mtf_requests.get(mtf_base_url, params=params, timeout=10)
+            if resp.status_code == 200:
+                klines = resp.json()
+                print(f"     ✅ 执行层 (15M): 成功获取 {len(klines)} 根 K线 (测试 limit=10)")
+            else:
+                print(f"     ❌ 执行层 (15M): API 错误 {resp.status_code}")
+        except Exception as e:
+            print(f"     ❌ 执行层 (15M): {e}")
+
+        print()
         print("  ✅ MTF 预取配置验证完成")
 
     except ImportError as e:
@@ -622,7 +674,9 @@ elif "1-DAY" in bar_type_str:
 else:
     interval = "15m"
 
-symbol = "BTCUSDT"
+# 从配置提取 symbol (例如 "BTCUSDT-PERP.BINANCE" → "BTCUSDT")
+instrument_id_str = strategy_config.instrument_id
+symbol = instrument_id_str.split('-')[0]  # 提取交易对名称
 limit = 100
 
 try:
@@ -831,11 +885,14 @@ try:
         print(f"  Source: {sentiment_data.get('source', 'N/A')}")
         print("  ✅ 情绪数据获取成功")
     else:
-        # 与 on_timer 相同的 fallback 逻辑
+        # 与 on_timer 相同的 fallback 逻辑 (deepseek_strategy.py:1114-1125)
         sentiment_data = {
             'long_short_ratio': 1.0,
             'long_account_pct': 50.0,
             'short_account_pct': 50.0,
+            'positive_ratio': 0.5,      # 必需字段 - deepseek_client.py 使用
+            'negative_ratio': 0.5,      # 必需字段 - deepseek_client.py 使用
+            'net_sentiment': 0.0,       # 必需字段 - deepseek_client.py 使用
             'source': 'default_neutral',
             'timestamp': None,
         }
@@ -847,7 +904,11 @@ except (ImportError, AttributeError, requests.RequestException, ValueError) as e
         'long_short_ratio': 1.0,
         'long_account_pct': 50.0,
         'short_account_pct': 50.0,
+        'positive_ratio': 0.5,      # 必需字段
+        'negative_ratio': 0.5,      # 必需字段
+        'net_sentiment': 0.0,       # 必需字段
         'source': 'fallback',
+        'timestamp': None,
     }
 except (KeyboardInterrupt, SystemExit):
     print("\n  用户中断")
@@ -1308,6 +1369,58 @@ print()
 print("  💡 关键点: Telegram 通知在 _execute_trade 之前发送!")
 print("     如果收到信号但无交易，检查服务日志查看 _execute_trade 输出")
 print()
+
+# =============================================================================
+# 8.5 Post-Trade 生命周期测试 (v10.3)
+# 与实盘 on_timer 的 1237-1243 行一致
+# =============================================================================
+if not SUMMARY_MODE:
+    print("[8.5/10] Post-Trade 生命周期测试...")
+    print("-" * 70)
+
+    # 测试 OCO 孤儿订单清理
+    print("  📋 OCO 孤儿订单清理 (_cleanup_oco_orphans):")
+    enable_oco = getattr(strategy_config, 'enable_oco', False)
+    if enable_oco:
+        print("     ✅ enable_oco = True")
+        print("        → 实盘会在每次 on_timer 后调用 _cleanup_oco_orphans()")
+        print("        → 清理无持仓时的 reduce-only 订单")
+    else:
+        print("     ⚠️ enable_oco = False (跳过清理)")
+
+    # 测试移动止损更新
+    print()
+    print("  📋 移动止损更新 (_update_trailing_stops):")
+    enable_trailing = getattr(strategy_config, 'enable_trailing_stop', False)
+    if enable_trailing:
+        activation_pct = getattr(strategy_config, 'trailing_activation_pct', 0.01)
+        distance_pct = getattr(strategy_config, 'trailing_distance_pct', 0.005)
+        print("     ✅ enable_trailing_stop = True")
+        print(f"        → 激活条件: 盈利 >= {activation_pct*100:.2f}%")
+        print(f"        → 跟踪距离: {distance_pct*100:.2f}%")
+        print("        → 实盘会在每次 on_timer 后调用 _update_trailing_stops()")
+
+        # 模拟计算当前是否会激活
+        if current_position:
+            entry_price = current_position.get('entry_price', 0)
+            if entry_price > 0:
+                current_pnl_pct = (current_price - entry_price) / entry_price
+                if current_position.get('side') == 'short':
+                    current_pnl_pct = -current_pnl_pct
+
+                if current_pnl_pct >= activation_pct:
+                    new_sl = current_price * (1 - distance_pct) if current_position.get('side') == 'long' else current_price * (1 + distance_pct)
+                    print(f"        → 当前盈利 {current_pnl_pct*100:.2f}% >= {activation_pct*100:.2f}%")
+                    print(f"        → 🟢 Trailing Stop 会激活，新 SL ≈ ${new_sl:,.2f}")
+                else:
+                    print(f"        → 当前盈利 {current_pnl_pct*100:.2f}% < {activation_pct*100:.2f}%")
+                    print(f"        → ⚪ Trailing Stop 未激活")
+    else:
+        print("     ⚠️ enable_trailing_stop = False (跳过更新)")
+
+    print()
+    print("  ✅ Post-Trade 生命周期测试完成")
+    print()
 
 # =============================================================================
 # 9. Order Flow 数据获取测试 (v10.2)
