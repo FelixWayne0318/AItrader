@@ -145,7 +145,7 @@ def test_liquidation_history():
 
     result = make_request('liquidation-history', {
         'symbols': SYMBOL,
-        'interval': '1h',
+        'interval': '1hour',  # ⚠️ 必须是 "1hour" 不是 "1h"
         'from': start_time,
         'to': end_time
     })

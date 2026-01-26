@@ -21,14 +21,37 @@
 | v3.2 | 2026-01-26 | **订单流数据增强** (Section 9)，整合 Binance + Coinalyze 数据，含完整 Prompt 设计 |
 | v3.2.1 | 2026-01-26 | **Coinalyze API 验证 + 完整配置**，修正 API Key 要求、Symbol 格式、完整 base.yaml 配置 |
 | v3.2.2 | 2026-01-26 | **数据格式转换**，添加 Coinalyze → 统一格式转换逻辑，含字段映射表 |
+| v3.2.3 | 2026-01-26 | **API 格式实测修正**，根据实际 API 响应修正字段名 (`value` vs `openInterestUsd`) |
+
+### v3.2.3 主要更新 (API 格式实测修正)
+
+1. **⚠️ 重大发现: 字段名与文档不符**
+   - OI 使用 `value` 字段 (非 `openInterestUsd`)
+   - Funding Rate 使用 `value` 字段 (非 `fundingRate`)
+   - 时间戳使用 `update` 字段 (非 `timestamp`)
+   - 清算 interval 必须是 `1hour` (非 `1h`)
+
+2. **OI 单位发现**
+   - ⚠️ `value` 字段是 **BTC 数量**，不是 USD!
+   - 需要乘以当前价格才能得到 USD 值
+   - 已更新 `_convert_derivatives()` 方法处理此转换
+
+3. **更新的代码** (Section 9.6.3)
+   - `_convert_derivatives(oi_raw, liq_raw, funding_raw, current_price)` 新增 `current_price` 参数
+   - OI: `oi_btc * current_price → total_usd`
+   - Funding: `value` → `current` (无 predicted)
+   - Liquidation: `interval=1hour` (非 `1h`)
+
+4. **字段映射表更新** (Section 9.6.4)
+   - 添加实测验证标记
+   - 完整的原始响应示例
 
 ### v3.2.2 主要更新 (数据格式转换)
 
 1. **格式转换逻辑** (Section 9.6.3)
    - 新增 `_convert_derivatives()` 方法
-   - Coinalyze `openInterestUsd` → 统一格式 `total_usd`
-   - Coinalyze `fundingRate` → 统一格式 `current`
-   - Coinalyze `l/s` → 统一格式 `long_usd/short_usd`
+   - Coinalyze → 统一格式转换
+   - 支持 API 异常时返回 None (降级处理)
 
 2. **OI 变化率计算**
    - Coinalyze 不提供 `change_24h_pct`
@@ -2442,7 +2465,7 @@ class CoinalyzeClient:
                 start_time = end_time - 3600000  # 1小时前
                 params = {
                     "symbols": symbol,
-                    "interval": "1h",
+                    "interval": "1hour",  # ⚠️ 必须是 "1hour" 不是 "1h"
                     "from": start_time,
                     "to": end_time
                 }
@@ -2547,8 +2570,11 @@ class AIDataAssembler:
         # 处理订单流
         order_flow_data = self.order_flow.process_klines(klines)
 
+        # 获取当前价格 (用于 OI BTC→USD 转换)
+        current_price = float(klines[-1][4]) if klines else 0
+
         # ⭐ 格式转换: Coinalyze → 统一格式
-        derivatives = self._convert_derivatives(oi_raw, liq_raw, funding_raw)
+        derivatives = self._convert_derivatives(oi_raw, liq_raw, funding_raw, current_price)
 
         # 组装数据
         return {
@@ -2563,18 +2589,37 @@ class AIDataAssembler:
             "current_position": position,
         }
 
-    def _convert_derivatives(self, oi_raw, liq_raw, funding_raw) -> dict:
+    def _convert_derivatives(self, oi_raw, liq_raw, funding_raw, current_price: float = 0) -> dict:
         """
         ⭐ 格式转换: Coinalyze API → 统一格式
 
-        Coinalyze 返回格式:
-        - OI: {"openInterestUsd": 18500000000, "timestamp": ...}
-        - Funding: {"fundingRate": 0.0008, "predictedFundingRate": ...}
-        - Liquidation: {"longLiquidationUsd": ..., "shortLiquidationUsd": ...}
+        Args:
+            oi_raw: Open Interest API 响应
+            liq_raw: Liquidation API 响应
+            funding_raw: Funding Rate API 响应
+            current_price: 当前 BTC 价格 (用于 OI BTC→USD 转换)
 
-        统一格式:
+        ===== 实际 API 响应格式 (2026-01-26 验证) =====
+
+        Open Interest:
+        [{"symbol":"BTCUSDT_PERP.A","value":102199.59,"update":1769417410150}]
+        - value: OI 值 (BTC 数量，非 USD!)
+        - update: 时间戳 (毫秒)
+
+        Funding Rate:
+        [{"symbol":"BTCUSDT_PERP.A","value":0.002847,"update":1769417407648}]
+        - value: 资金费率 (0.002847 = 0.2847%)
+        - update: 时间戳 (毫秒)
+
+        Liquidation History:
+        [{"t":1769410800000,"l":123456.78,"s":98765.43}]
+        - t: 时间戳
+        - l: 多头清算 (USD)
+        - s: 空头清算 (USD)
+
+        ===== 统一输出格式 =====
         - open_interest: {"total_usd": 18500000000, "change_24h_pct": 3.5}
-        - funding_rate: {"current": 0.0008, "predicted": 0.0007}
+        - funding_rate: {"current": 0.0008, "predicted": 0}
         - liquidations_1h: {"long_usd": 2500000, "short_usd": 1800000}
         """
         result = {
@@ -2584,37 +2629,44 @@ class AIDataAssembler:
         }
 
         # === Open Interest 转换 ===
+        # ⚠️ 重要: Coinalyze 返回的是 BTC 数量，需要乘以当前价格转 USD
         if oi_raw and not isinstance(oi_raw, Exception):
-            current_oi = oi_raw.get('openInterestUsd', 0)
+            # API 返回数组，取第一个元素
+            item = oi_raw[0] if isinstance(oi_raw, list) else oi_raw
+            oi_btc = item.get('value', 0)  # ⚠️ 这是 BTC 数量!
+
+            # BTC → USD 转换
+            oi_usd = oi_btc * current_price if current_price > 0 else oi_btc
+
             # 计算 24h 变化率 (使用缓存值)
             change_pct = 0.0
-            if self._last_oi_usd > 0 and current_oi > 0:
-                change_pct = round((current_oi - self._last_oi_usd) / self._last_oi_usd * 100, 2)
-            self._last_oi_usd = current_oi
+            if self._last_oi_usd > 0 and oi_usd > 0:
+                change_pct = round((oi_usd - self._last_oi_usd) / self._last_oi_usd * 100, 2)
+            self._last_oi_usd = oi_usd
 
             result["open_interest"] = {
-                "total_usd": current_oi,
-                "change_24h_pct": change_pct,  # 注意: 首次运行时为 0
+                "total_usd": oi_usd,  # 已转换为 USD
+                "change_24h_pct": change_pct,
             }
 
         # === Funding Rate 转换 ===
         if funding_raw and not isinstance(funding_raw, Exception):
+            item = funding_raw[0] if isinstance(funding_raw, list) else funding_raw
             result["funding_rate"] = {
-                "current": funding_raw.get('fundingRate', 0),
-                "predicted": funding_raw.get('predictedFundingRate', 0),
+                "current": item.get('value', 0),  # ⚠️ 实际字段是 'value' 不是 'fundingRate'
+                "predicted": 0,  # Coinalyze 当前端点不返回预测值
             }
 
         # === Liquidation 转换 ===
         if liq_raw and not isinstance(liq_raw, Exception):
-            # Coinalyze liquidation 格式可能是:
-            # {"longLiquidationUsd": ..., "shortLiquidationUsd": ...}
-            # 或者 history 格式: {"t": timestamp, "l": long, "s": short}
-            result["liquidations_1h"] = {
-                "long_usd": liq_raw.get('longLiquidationUsd',
-                           liq_raw.get('l', 0)),
-                "short_usd": liq_raw.get('shortLiquidationUsd',
-                            liq_raw.get('s', 0)),
-            }
+            # API 返回数组: [{"t": timestamp, "l": long_usd, "s": short_usd}]
+            if isinstance(liq_raw, list) and len(liq_raw) > 0:
+                # 取最新一条 (最后一个)
+                item = liq_raw[-1]
+                result["liquidations_1h"] = {
+                    "long_usd": item.get('l', 0),   # ⚠️ 字段是 'l' 不是 'longLiquidationUsd'
+                    "short_usd": item.get('s', 0),  # ⚠️ 字段是 's' 不是 'shortLiquidationUsd'
+                }
 
         return result
 
@@ -2627,39 +2679,42 @@ class AIDataAssembler:
         return round((new_close - old_close) / old_close * 100, 2) if old_close > 0 else 0.0
 ```
 
-#### 9.6.4 Coinalyze 数据格式参考
+#### 9.6.4 Coinalyze 数据格式参考 (2026-01-26 实测验证)
 
 **API 原始响应 vs 统一格式对照表**:
 
 | 端点 | Coinalyze 原始字段 | 转换后字段 | 说明 |
 |------|-------------------|-----------|------|
-| `/open-interest` | `openInterestUsd` | `total_usd` | 直接映射 |
+| `/open-interest` | `value` ⚠️ | `total_usd` | 值为 BTC 数量，需乘以价格转 USD |
+| `/open-interest` | `update` | (参考时间戳) | 毫秒时间戳 |
 | `/open-interest` | (无) | `change_24h_pct` | 需自己计算 (缓存对比) |
-| `/funding-rate` | `fundingRate` | `current` | 直接映射 |
-| `/funding-rate` | `predictedFundingRate` | `predicted` | 直接映射 |
-| `/liquidation-history` | `longLiquidationUsd` 或 `l` | `long_usd` | 兼容两种格式 |
-| `/liquidation-history` | `shortLiquidationUsd` 或 `s` | `short_usd` | 兼容两种格式 |
+| `/funding-rate` | `value` ⚠️ | `current` | 直接使用 (0.002847 = 0.28%) |
+| `/funding-rate` | (无) | `predicted` | API 不提供，设为 0 |
+| `/liquidation-history` | `l` | `long_usd` | 做多清算 USD |
+| `/liquidation-history` | `s` | `short_usd` | 做空清算 USD |
+| `/liquidation-history` | `t` | (参考时间戳) | 毫秒时间戳 |
 
-**Coinalyze API 响应示例**:
+**⚠️ 重要发现**: Coinalyze API 使用通用字段名 `value` 而非语义化字段名！
+
+**Coinalyze API 响应示例** (实测):
 
 ```json
 // GET /v1/open-interest?symbols=BTCUSDT_PERP.A
 [{
     "symbol": "BTCUSDT_PERP.A",
-    "openInterest": 185000,           // 合约数量
-    "openInterestUsd": 18500000000,   // USD 价值 ⭐ 使用这个
-    "timestamp": 1706270400000
+    "value": 102199.59,               // ⚠️ BTC 数量，不是 USD!
+    "update": 1769417410150           // ⚠️ 字段名是 update，不是 timestamp
 }]
 
 // GET /v1/funding-rate?symbols=BTCUSDT_PERP.A
 [{
     "symbol": "BTCUSDT_PERP.A",
-    "fundingRate": 0.0008,            // 当前费率 ⭐
-    "predictedFundingRate": 0.0007,   // 预测费率 ⭐
-    "timestamp": 1706270400000
+    "value": 0.002847,                // ⚠️ 0.2847%，字段名是 value
+    "update": 1769417407648
 }]
 
-// GET /v1/liquidation-history?symbols=BTCUSDT_PERP.A&interval=1h
+// GET /v1/liquidation-history?symbols=BTCUSDT_PERP.A&interval=1hour
+// ⚠️ interval 必须是 "1hour" 不是 "1h"!
 [{
     "t": 1706270400000,               // timestamp
     "l": 2500000,                     // long liquidation USD ⭐
@@ -2668,9 +2723,13 @@ class AIDataAssembler:
 ```
 
 **注意事项**:
-1. `change_24h_pct` 需要自己计算 (Coinalyze 不提供)
-2. 清算数据有两种格式，代码需兼容
-3. 首次运行时 OI 变化率为 0 (无历史数据对比)
+1. ⚠️ OI 的 `value` 是 **BTC 数量**，需要乘以当前价格才能得到 USD 值
+2. ⚠️ Funding Rate 的 `value` 是小数形式 (0.002847 = 0.2847%)
+3. ⚠️ 时间戳字段名是 `update`，不是 `timestamp`
+4. ⚠️ 清算端点的 interval 必须是 `1hour`，不是 `1h`
+5. `change_24h_pct` 需要自己计算 (Coinalyze 不提供)
+6. 首次运行时 OI 变化率为 0 (无历史数据对比)
+7. `predicted` funding rate API 不提供，代码中设为 0
 
 ### 9.7 配置项扩展
 
