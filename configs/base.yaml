@@ -223,39 +223,6 @@ execution:
   position_adjustment_threshold: 0.001  # Min 0.001 BTC difference to adjust
 
 # =============================================================================
-# 多时间框架配置 (v3.2.8 新增)
-# =============================================================================
-multi_timeframe:
-  enabled: false                  # 默认禁用，启用后使用三层时间框架分析
-
-  # 趋势层 (1D) - Risk-On/Risk-Off 判断
-  trend_layer:
-    timeframe: "1d"               # 时间周期
-    sma_period: 200               # SMA 周期 (用于判断长期趋势)
-    require_above_sma: true       # 要求价格在 SMA 上方才允许交易
-    require_macd_positive: true   # 要求 MACD > 0 才允许交易
-
-  # 决策层 (4H) - Bull/Bear 辩论决策
-  decision_layer:
-    timeframe: "4h"               # 时间周期
-    debate_rounds: 2              # 辩论轮数 (1-3)
-    sma_periods: [20, 50]         # 决策层 SMA 周期
-
-  # 执行层 (15M) - 入场确认
-  execution_layer:
-    timeframe: "15m"              # 默认执行周期
-    rsi_entry_min: 35             # RSI 入场最小值
-    rsi_entry_max: 65             # RSI 入场最大值
-
-  # 初始化配置
-  initialization:
-    trend_min_bars: 200           # 趋势层最少 bar 数量
-    decision_min_bars: 50         # 决策层最少 bar 数量
-    execution_min_bars: 20        # 执行层最少 bar 数量
-    request_timeout_sec: 300      # 请求超时 (秒)
-    max_retry_attempts: 3         # 最大重试次数
-
-# =============================================================================
 # 定时器配置
 # =============================================================================
 timing:
@@ -355,6 +322,16 @@ multi_timeframe:
       ema_periods: [10]
       rsi_period: 14
       support_resistance_lookback: 20
+
+  # ---------------------------------------------------------------------------
+  # 初始化配置 (request_bars 预取)
+  # ---------------------------------------------------------------------------
+  initialization:
+    trend_min_bars: 220               # 趋势层最少 bar 数量 (SMA_200 + 缓冲)
+    decision_min_bars: 60             # 决策层最少 bar 数量 (SMA_50 + 缓冲)
+    execution_min_bars: 40            # 执行层最少 bar 数量
+    request_timeout_sec: 300          # 请求超时 (秒)
+    max_retry_attempts: 3             # 最大重试次数
 
 # =============================================================================
 # 订单流数据配置 (Order Flow) v3.2

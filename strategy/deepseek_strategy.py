@@ -160,6 +160,15 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     network_oco_manager_socket_connect_timeout: float = 5.0
     sentiment_timeout: float = 10.0
 
+    # Multi-Timeframe Configuration (v3.2.9)
+    multi_timeframe_enabled: bool = False  # Default disabled for backward compatibility
+    mtf_trend_sma_period: int = 200        # SMA period for trend layer (1D)
+    mtf_trend_require_above_sma: bool = True
+    mtf_trend_require_macd_positive: bool = True
+    mtf_decision_debate_rounds: int = 2    # Debate rounds for decision layer (4H)
+    mtf_execution_rsi_entry_min: int = 35  # RSI entry range for execution layer (15M)
+    mtf_execution_rsi_entry_max: int = 65
+
 
 class DeepSeekAIStrategy(Strategy):
     """
@@ -563,6 +572,21 @@ class DeepSeekAIStrategy(Strategy):
         self.subscribe_bars(self.bar_type)
         self.log.info(f"Subscribed to {self.bar_type}")
 
+        # Multi-Timeframe subscriptions (v3.2.9)
+        if self.mtf_enabled and self.mtf_manager:
+            try:
+                # Subscribe to all three timeframes
+                self.subscribe_bars(self.trend_bar_type)
+                self.subscribe_bars(self.decision_bar_type)
+                self.subscribe_bars(self.execution_bar_type)
+                self.log.info(f"MTF: Subscribed to 1D, 4H, 15M bars")
+
+                # Prefetch historical data for each layer (async)
+                self._prefetch_multi_timeframe_bars()
+            except Exception as e:
+                self.log.error(f"MTF: Failed to subscribe/prefetch: {e}")
+                # Continue without MTF - graceful degradation
+
         # Set up timer for periodic analysis (clock-aligned to 00/15/30/45 minutes)
         interval_minutes = self.config.timer_interval_sec // 60  # 默认 15 分钟
         next_aligned_time = self._calculate_next_aligned_time(interval_minutes)
@@ -926,6 +950,72 @@ class DeepSeekAIStrategy(Strategy):
                 )
         else:
             self.log.info("MTF: 所有层指标管理器初始化完成 ✓")
+
+    def _prefetch_multi_timeframe_bars(self):
+        """
+        Prefetch historical bars for all MTF layers (v3.2.8).
+
+        NautilusTrader API signature (v1.221.0+):
+        ```
+        request_bars(
+            bar_type: BarType,
+            start: datetime,        # Required: start time
+            end: datetime = None,   # Optional: end time (default: now)
+            limit: int = 0,         # Optional: bar count limit
+        ) -> UUID4
+        ```
+
+        IMPORTANT: request_bars is async!
+        - Returns UUID4 request ID, not bars directly
+        - Bars delivered via on_historical_data() callback
+        """
+        if not self.mtf_enabled or not self.mtf_manager:
+            return
+
+        self.log.info("MTF: 开始预取历史数据 (异步)...")
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+
+        try:
+            # === Trend Layer (1D) - SMA_200 needs 200+ bars ===
+            # 220 days back, limit=220
+            trend_start = now - timedelta(days=220)
+            self.log.debug(f"MTF: 预取 1D bars (start={trend_start.date()}, limit=220)...")
+            self._pending_requests['trend'] = self.request_bars(
+                bar_type=self.trend_bar_type,
+                start=trend_start,
+                end=None,
+                limit=220,
+            )
+
+            # === Decision Layer (4H) - SMA_50, MACD need ~50 bars ===
+            # 60 * 4 = 240 hours = 10 days
+            decision_start = now - timedelta(hours=60 * 4)
+            self.log.debug(f"MTF: 预取 4H bars (start={decision_start}, limit=60)...")
+            self._pending_requests['decision'] = self.request_bars(
+                bar_type=self.decision_bar_type,
+                start=decision_start,
+                end=None,
+                limit=60,
+            )
+
+            # === Execution Layer (15M) - RSI, EMA need ~30 bars ===
+            # 40 * 15 = 600 minutes = 10 hours
+            execution_start = now - timedelta(minutes=40 * 15)
+            self.log.debug(f"MTF: 预取 15M bars (start={execution_start}, limit=40)...")
+            self._pending_requests['execution'] = self.request_bars(
+                bar_type=self.execution_bar_type,
+                start=execution_start,
+                end=None,
+                limit=40,
+            )
+
+            self.log.info("MTF: 历史数据请求已发送，等待 on_historical_data() 回调")
+
+        except Exception as e:
+            self.log.error(f"MTF: 预取历史数据请求失败: {e}")
+            # Don't raise - allow strategy to continue in degraded mode
 
     def on_timer(self, event):
         """
