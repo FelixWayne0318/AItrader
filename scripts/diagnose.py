@@ -32,7 +32,7 @@ from pathlib import Path
 # ============================================================
 def ensure_venv():
     """确保在 venv 中运行，否则自动切换"""
-    project_dir = Path(__file__).parent.absolute()
+    project_dir = Path(__file__).parent.parent.absolute()
     venv_python = project_dir / "venv" / "bin" / "python"
 
     # 检查是否已在 venv 中
@@ -55,7 +55,7 @@ ensure_venv()
 # ============================================================
 VERSION = "2.0"
 BRANCH = "main"
-PROJECT_DIR = Path(__file__).parent.absolute()
+PROJECT_DIR = Path(__file__).parent.parent.absolute()
 SERVICE_NAME = "nautilus-trader"
 
 # 颜色输出

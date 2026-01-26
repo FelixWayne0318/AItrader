@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 
 # 添加项目路径
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # =============================================================================
 # 颜色输出
@@ -243,7 +243,7 @@ def test_api_connections() -> Dict[str, Any]:
     from dotenv import load_dotenv
     env_paths = [
         Path.home() / ".env.aitrader",
-        Path(__file__).parent / ".env",
+        Path(__file__).parent.parent / ".env",
     ]
     for env_path in env_paths:
         if env_path.exists():
@@ -337,7 +337,7 @@ def compare_signal_sources() -> Dict[str, Any]:
     from dotenv import load_dotenv
     env_paths = [
         Path.home() / ".env.aitrader",
-        Path(__file__).parent / ".env",
+        Path(__file__).parent.parent / ".env",
     ]
     for env_path in env_paths:
         if env_path.exists():
@@ -498,7 +498,7 @@ def check_configuration() -> Dict[str, Any]:
     }
 
     # 检查 main_live.py
-    main_live_path = Path(__file__).parent / "main_live.py"
+    main_live_path = Path(__file__).parent.parent / "main_live.py"
     if main_live_path.exists():
         content = main_live_path.read_text()
 
@@ -515,7 +515,7 @@ def check_configuration() -> Dict[str, Any]:
             print_ok("load_all=True (加载所有工具)")
 
     # 检查 strategy_config.yaml
-    config_path = Path(__file__).parent / "configs" / "strategy_config.yaml"
+    config_path = Path(__file__).parent.parent / "configs" / "strategy_config.yaml"
     if config_path.exists():
         import yaml
         with open(config_path) as f:
@@ -541,7 +541,7 @@ def check_configuration() -> Dict[str, Any]:
             result['warnings'].append("enable_auto_sl_tp=False (止损止盈未启用)")
 
     # 检查 deepseek_strategy.py 中的 MultiAgent 使用
-    strategy_path = Path(__file__).parent / "strategy" / "deepseek_strategy.py"
+    strategy_path = Path(__file__).parent.parent / "strategy" / "deepseek_strategy.py"
     if strategy_path.exists():
         content = strategy_path.read_text()
 
@@ -595,7 +595,7 @@ def check_known_issues_from_commits() -> Dict[str, Any]:
         "fixes_verified": [],
     }
 
-    project_root = Path(__file__).parent
+    project_root = Path(__file__).parent.parent
 
     # =========================================================================
     # 检查 1: main_live.py - reconciliation 和 load_all
@@ -1202,7 +1202,7 @@ def check_timer_trigger() -> Dict[str, Any]:
     print_info(f"下次触发: {result['next_trigger']} (约 {result['minutes_until']} 分钟后)")
 
     # 检查 strategy 中的 timer 设置
-    strategy_path = Path(__file__).parent / "strategy" / "deepseek_strategy.py"
+    strategy_path = Path(__file__).parent.parent / "strategy" / "deepseek_strategy.py"
     if strategy_path.exists():
         content = strategy_path.read_text()
 
@@ -1309,7 +1309,7 @@ def simulate_execution() -> Dict[str, Any]:
     from dotenv import load_dotenv
     env_paths = [
         Path.home() / ".env.aitrader",
-        Path(__file__).parent / ".env",
+        Path(__file__).parent.parent / ".env",
     ]
     for env_path in env_paths:
         if env_path.exists():

@@ -20,7 +20,7 @@ import asyncio
 from pathlib import Path
 
 # Add project directory to path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def load_env():
     """Load environment variables from .env"""
