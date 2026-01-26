@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: python
           # 使用扩展查询包 + 自定义查询
@@ -42,10 +42,10 @@ jobs:
 
       # CodeQL 自动构建 Python 项目 (无需手动构建)
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:python"
           # 输出 SARIF 格式结果
