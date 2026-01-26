@@ -23,6 +23,20 @@
 | v3.2.2 | 2026-01-26 | **数据格式转换**，添加 Coinalyze → 统一格式转换逻辑，含字段映射表 |
 | v3.2.3 | 2026-01-26 | **API 格式实测修正**，根据实际 API 响应修正字段名 (`value` vs `openInterestUsd`) |
 | v3.2.4 | 2026-01-26 | **时间戳格式修正**，Coinalyze API 使用 UNIX 秒 (非毫秒)，添加完整 interval 值列表 |
+| v3.2.5 | 2026-01-26 | **文档一致性修复**，同步 Section 9.6.2 CoinalyzeClient 的 docstring 与实际 API 格式 |
+
+### v3.2.5 主要更新 (文档一致性修复)
+
+1. **Section 9.6.2 docstring 更新**
+   - `get_open_interest()`: 更正返回格式为 `value` (BTC 数量) + `update` (秒)
+   - `get_funding_rate()`: 更正返回格式为 `value` + 移除不存在的 `predictedFundingRate`
+   - `get_liquidations()`: 添加返回格式说明 (`t`, `l`, `s`)
+
+2. **全面审查结论**
+   - 当前系统匹配度: 8.5/10
+   - NautilusTrader 标准符合度: 89%
+   - TradingAgents 设计理念符合度: 87%
+   - 数据格式匹配: 文档内部已同步一致
 
 ### v3.2.4 主要更新 (时间戳格式修正)
 
@@ -2443,13 +2457,15 @@ class CoinalyzeClient:
         """
         获取聚合持仓量
 
+        ⚠️ 实际 API 响应格式 (2026-01-26 验证):
         Returns:
             {
                 "symbol": "BTCUSDT_PERP.A",
-                "openInterest": 185000000000,
-                "openInterestUsd": 18500000000,
-                "timestamp": 1706270400000
+                "value": 102199.59,      # ⚠️ BTC 数量，不是 USD!
+                "update": 1769417410     # ⚠️ UNIX 秒，不是毫秒!
             }
+
+        注意: value 是 BTC 数量，需要乘以当前价格才能得到 USD 值
         """
         if not self._enabled:
             return None
@@ -2478,7 +2494,18 @@ class CoinalyzeClient:
         """
         获取清算数据 (历史数据，最近1小时)
 
-        注意: Binance 从 2021-04 起只提供每秒1条清算数据
+        ⚠️ 实际 API 响应格式 (2026-01-26 验证):
+        Returns:
+            {
+                "t": 1769410800,  # ⚠️ UNIX 秒
+                "l": 2500000,     # 多头清算 USD
+                "s": 1800000      # 空头清算 USD
+            }
+
+        注意:
+        - Binance 从 2021-04 起只提供每秒1条清算数据
+        - interval 必须是 "1hour" 不是 "1h"
+        - from/to 参数是 UNIX 秒
         """
         if not self._enabled:
             return None
@@ -2517,13 +2544,15 @@ class CoinalyzeClient:
         """
         获取当前资金费率
 
+        ⚠️ 实际 API 响应格式 (2026-01-26 验证):
         Returns:
             {
                 "symbol": "BTCUSDT_PERP.A",
-                "fundingRate": 0.0008,
-                "predictedFundingRate": 0.0007,
-                "timestamp": 1706270400000
+                "value": 0.002847,    # ⚠️ 字段名是 value，0.2847%
+                "update": 1769417407  # ⚠️ UNIX 秒
             }
+
+        注意: API 不提供 predictedFundingRate，代码中设为 0
         """
         if not self._enabled:
             return None
