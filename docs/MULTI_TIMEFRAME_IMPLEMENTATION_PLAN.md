@@ -25,6 +25,38 @@
 | v3.2.4 | 2026-01-26 | **时间戳格式修正**，Coinalyze API 使用 UNIX 秒 (非毫秒)，添加完整 interval 值列表 |
 | v3.2.5 | 2026-01-26 | **文档一致性修复**，同步 Section 9.6.2 CoinalyzeClient 的 docstring 与实际 API 格式 |
 | v3.2.6 | 2026-01-26 | **服务器实测修正**，时间戳单位不一致 (当前端点毫秒/历史端点秒)，Liquidation 嵌套结构 |
+| v3.2.7 | 2026-01-26 | **P0 阻塞项修复**，BarType构建、_prefetch_multi_timeframe_bars()、SMA_200初始化、时间戳标准化 |
+
+### v3.2.7 主要更新 (P0 阻塞项修复)
+
+1. **P0-1: BarType 构建方式修正**
+   - 修正 `BarType.from_str()` 格式字符串
+   - 添加备选构造方法注释
+   - 格式: `{instrument_id}-{step}-{aggregation}-{price_type}-{aggregation_source}`
+
+2. **P0-2: `_prefetch_multi_timeframe_bars()` 完整实现**
+   - 新增完整的历史数据预取方法 (~90 行)
+   - 趋势层: 220 根 1D bars (SMA_200 需要)
+   - 决策层: 60 根 4H bars (SMA_50 需要)
+   - 执行层: 40 根 15M bars (RSI/EMA 需要)
+   - 新增 `_verify_mtf_initialization()` 验证方法
+
+3. **P0-3: SMA_200 初始化修正**
+   - `_init_managers()` 添加完整参数列表
+   - 新增 `is_initialized()` 方法检查各层状态
+   - 所有层都传递完整的 `macd_signal`, `bb_std` 等参数
+
+4. **P0-4: 时间戳单位标准化**
+   - 新增 `_normalize_timestamp()` 静态方法
+   - 处理 Coinalyze 当前端点 (毫秒) vs 历史端点 (秒) 差异
+   - 自动检测 10位/13位时间戳
+   - `_convert_derivatives()` 统一输出 `timestamp_ms` 字段
+
+5. **数据验证增强**
+   - 新增 `_validate_data()` 方法
+   - OI 范围检查 (负值、超大值)
+   - 价格合理性检查
+   - 清算数据验证
 
 ### v3.2.6 主要更新 (服务器实测修正)
 
@@ -1214,40 +1246,115 @@ class MultiTimeframeManager:
         self.logger.info("MultiTimeframeManager: initialized with 3 layers")
 
     def _init_managers(self):
-        """初始化各层技术指标管理器"""
+        """
+        初始化各层技术指标管理器
+
+        ⚠️ v3.2.7 修正: 必须传递所有必需参数，确保指标正确初始化
+        TechnicalIndicatorManager 参数参考 indicators/technical_manager.py:29-40
+        """
         trend_config = self.config.get('trend_layer', {})
         decision_config = self.config.get('decision_layer', {})
         exec_config = self.config.get('execution_layer', {})
 
-        # 趋势层 (1D) - 需要 SMA_200
+        # ========================================
+        # 趋势层 (1D) - 需要 SMA_200 用于趋势判断
+        # ⚠️ 关键: SMA_200 需要至少 200 根 bar 才能计算
+        # ========================================
         sma_period = trend_config.get('sma_period', 200)
         self.trend_manager = TechnicalIndicatorManager(
-            sma_periods=[sma_period],  # SMA_200 用于趋势判断
+            sma_periods=[sma_period],      # SMA_200 用于趋势判断
+            ema_periods=[12, 26],          # MACD 需要的 EMA
             rsi_period=14,
             macd_fast=12,
             macd_slow=26,
+            macd_signal=9,                 # ⚠️ v3.2.7: 必须指定 signal 周期
+            bb_period=20,                  # BB 用于波动率参考
+            bb_std=2.0,
+            volume_ma_period=20,
+            support_resistance_lookback=20,
         )
         self.logger.debug(f"趋势层管理器初始化: SMA_{sma_period}")
 
-        # 决策层 (4H)
+        # ========================================
+        # 决策层 (4H) - Bull/Bear 辩论使用的指标
+        # ========================================
         self.decision_manager = TechnicalIndicatorManager(
-            sma_periods=[20, 50],
+            sma_periods=[20, 50],          # SMA_20, SMA_50
+            ema_periods=[12, 26],
             rsi_period=14,
             macd_fast=12,
             macd_slow=26,
+            macd_signal=9,
             bb_period=20,
             bb_std=2.0,
+            volume_ma_period=20,
+            support_resistance_lookback=20,
         )
         self.logger.debug("决策层管理器初始化")
 
-        # 执行层 (5M/15M)
+        # ========================================
+        # 执行层 (5M/15M) - 入场确认指标
+        # ========================================
         self.execution_manager = TechnicalIndicatorManager(
             sma_periods=[5, 20],
-            ema_periods=[10],
+            ema_periods=[10, 20],          # 短周期 EMA
             rsi_period=14,
+            macd_fast=12,
+            macd_slow=26,
+            macd_signal=9,
+            bb_period=20,
+            bb_std=2.0,
+            volume_ma_period=20,
             support_resistance_lookback=20,
         )
         self.logger.debug("执行层管理器初始化")
+
+    def is_initialized(self, layer: str = None) -> bool:
+        """
+        ⚠️ v3.2.7 新增: 检查指标管理器是否已初始化
+
+        Parameters
+        ----------
+        layer : str, optional
+            指定层级 ("trend"/"decision"/"execution")，None 检查全部
+
+        Returns
+        -------
+        bool
+            是否所有指定层级都已初始化 (有足够的 bar 数据)
+        """
+        if not self.enabled:
+            return False
+
+        min_bars = {
+            'trend': 200,      # SMA_200 需要 200 根
+            'decision': 50,    # SMA_50 需要 50 根
+            'execution': 20,   # RSI_14 + EMA_10 需要 ~20 根
+        }
+
+        managers = {
+            'trend': self.trend_manager,
+            'decision': self.decision_manager,
+            'execution': self.execution_manager,
+        }
+
+        if layer:
+            if layer not in managers:
+                return False
+            mgr = managers[layer]
+            bars_count = len(mgr.recent_bars) if hasattr(mgr, 'recent_bars') else 0
+            return bars_count >= min_bars.get(layer, 0)
+
+        # 检查全部
+        for name, mgr in managers.items():
+            if mgr is None:
+                return False
+            bars_count = len(mgr.recent_bars) if hasattr(mgr, 'recent_bars') else 0
+            if bars_count < min_bars.get(name, 0):
+                self.logger.debug(f"{name} 层未初始化: {bars_count}/{min_bars[name]} bars")
+                return False
+
+        return True
 
     def route_bar(self, bar: Bar) -> str:
         """
@@ -1560,17 +1667,33 @@ def __init__(self, config: DeepSeekAIStrategyConfig):
 
     if self.mtf_enabled:
         # 构建 BarType 对象
-        symbol = str(config.instrument_id).split('.')[0]
+        # ⚠️ v3.2.7 修正: BarType.from_str() 格式必须严格遵循 NautilusTrader 规范
+        # 格式: {symbol}-{step}-{aggregation}-{price_type}-{aggregation_source}
+        # 示例: BTCUSDT-PERP.BINANCE-1-DAY-LAST-EXTERNAL
+        #
+        # 注意: 使用现有的 instrument_id 保持一致性
+        instrument_str = str(config.instrument_id)  # e.g., "BTCUSDT-PERP.BINANCE"
 
+        # 方法1: 使用完整的 from_str (推荐)
+        # 格式参考: https://nautilustrader.io/docs/latest/api_reference/model/data.html
         self.trend_bar_type = BarType.from_str(
-            f"{symbol}.BINANCE-1-DAY-LAST-EXTERNAL"
+            f"{instrument_str}-1-DAY-LAST-EXTERNAL"
         )
         self.decision_bar_type = BarType.from_str(
-            f"{symbol}.BINANCE-4-HOUR-LAST-EXTERNAL"
+            f"{instrument_str}-4-HOUR-LAST-EXTERNAL"
         )
         self.execution_bar_type = BarType.from_str(
-            f"{symbol}.BINANCE-15-MINUTE-LAST-EXTERNAL"
+            f"{instrument_str}-15-MINUTE-LAST-EXTERNAL"
         )
+
+        # 方法2: 备选 - 如果 from_str 失败，使用显式构造
+        # from nautilus_trader.model.data import BarSpecification, BarAggregation, PriceType
+        # from nautilus_trader.model.identifiers import InstrumentId
+        #
+        # trend_spec = BarSpecification(1, BarAggregation.DAY, PriceType.LAST)
+        # self.trend_bar_type = BarType(self.instrument_id, trend_spec, AggregationSource.EXTERNAL)
+
+        self.log.info(f"MTF BarTypes: trend={self.trend_bar_type}, decision={self.decision_bar_type}, exec={self.execution_bar_type}")
 
         # 构建 MTF 配置字典
         mtf_config = {
@@ -1623,6 +1746,98 @@ def on_start(self):
     else:
         # 现有单时间框架逻辑
         self.subscribe_bars(self.bar_type)
+
+def _prefetch_multi_timeframe_bars(self):
+    """
+    ⚠️ v3.2.7 新增: 预取各层历史数据，填充指标计算所需的 bar
+
+    必须在 subscribe_bars() 之后调用，确保指标在首次分析时已初始化。
+
+    预取数量说明:
+    - 趋势层 (1D): 需要 200+ 根用于 SMA_200
+    - 决策层 (4H): 需要 50+ 根用于 SMA_50, MACD
+    - 执行层 (15M): 需要 30+ 根用于 RSI, EMA
+    """
+    if not self.mtf_enabled:
+        return
+
+    self.log.info("MTF: 开始预取历史数据...")
+
+    try:
+        # === 趋势层 (1D) - SMA_200 需要至少 200 根 ===
+        # 请求 220 根以确保有足够数据 (含缓冲)
+        self.log.debug("MTF: 预取 1D bars (220 根)...")
+        trend_bars = self.request_bars(
+            bar_type=self.trend_bar_type,
+            count=220,  # SMA_200 + 20 缓冲
+        )
+        if trend_bars:
+            for bar in trend_bars:
+                self.mtf_manager.trend_manager.update(bar)
+            self.log.info(f"MTF: 趋势层预取完成 ({len(trend_bars)} bars)")
+        else:
+            self.log.warning("MTF: 趋势层预取失败，SMA_200 可能不准确")
+
+        # === 决策层 (4H) - SMA_50, MACD 需要约 50 根 ===
+        self.log.debug("MTF: 预取 4H bars (60 根)...")
+        decision_bars = self.request_bars(
+            bar_type=self.decision_bar_type,
+            count=60,  # SMA_50 + 10 缓冲
+        )
+        if decision_bars:
+            for bar in decision_bars:
+                self.mtf_manager.decision_manager.update(bar)
+            self.log.info(f"MTF: 决策层预取完成 ({len(decision_bars)} bars)")
+        else:
+            self.log.warning("MTF: 决策层预取失败")
+
+        # === 执行层 (15M) - RSI, EMA 需要约 30 根 ===
+        self.log.debug("MTF: 预取 15M bars (40 根)...")
+        execution_bars = self.request_bars(
+            bar_type=self.execution_bar_type,
+            count=40,  # RSI_14 + EMA + 缓冲
+        )
+        if execution_bars:
+            for bar in execution_bars:
+                self.mtf_manager.execution_manager.update(bar)
+            self.log.info(f"MTF: 执行层预取完成 ({len(execution_bars)} bars)")
+        else:
+            self.log.warning("MTF: 执行层预取失败")
+
+        # 验证初始化状态
+        self._verify_mtf_initialization()
+
+    except Exception as e:
+        self.log.error(f"MTF: 预取历史数据失败: {e}")
+        # 不抛出异常，允许策略继续运行 (降级模式)
+
+def _verify_mtf_initialization(self):
+    """验证各层指标管理器是否已正确初始化"""
+    issues = []
+
+    # 趋势层: 需要至少 200 根 bar 用于 SMA_200
+    trend_bars_count = len(self.mtf_manager.trend_manager.recent_bars) if hasattr(self.mtf_manager.trend_manager, 'recent_bars') else 0
+    if trend_bars_count < 200:
+        issues.append(f"趋势层 bars 不足: {trend_bars_count}/200")
+
+    # 决策层: 需要至少 50 根
+    decision_bars_count = len(self.mtf_manager.decision_manager.recent_bars) if hasattr(self.mtf_manager.decision_manager, 'recent_bars') else 0
+    if decision_bars_count < 50:
+        issues.append(f"决策层 bars 不足: {decision_bars_count}/50")
+
+    # 执行层: 需要至少 20 根
+    execution_bars_count = len(self.mtf_manager.execution_manager.recent_bars) if hasattr(self.mtf_manager.execution_manager, 'recent_bars') else 0
+    if execution_bars_count < 20:
+        issues.append(f"执行层 bars 不足: {execution_bars_count}/20")
+
+    if issues:
+        self.log.warning(f"MTF 初始化警告: {', '.join(issues)}")
+        if self.telegram_bot and self.enable_telegram:
+            self.telegram_bot.send_message_sync(
+                f"⚠️ MTF 初始化警告:\n" + "\n".join(f"• {i}" for i in issues)
+            )
+    else:
+        self.log.info("MTF: 所有层指标管理器初始化完成 ✓")
 ```
 
 #### 3.4.3 on_bar 修改 (精确匹配)
@@ -2642,6 +2857,92 @@ class AIDataAssembler:
         self.sentiment = sentiment_client
         # 缓存上一次 OI 值用于计算变化率
         self._last_oi_usd: float = 0.0
+        self._last_oi_timestamp: int = 0
+
+    # ========================================
+    # ⚠️ v3.2.7 新增: 时间戳标准化函数
+    # ========================================
+    @staticmethod
+    def _normalize_timestamp(ts: int, source: str) -> int:
+        """
+        标准化时间戳为毫秒格式
+
+        ⚠️ Coinalyze API 时间戳单位不一致:
+        - 当前端点 (`update`): 毫秒 (13位)
+        - 历史端点 (`t`): 秒 (10位)
+        - 历史参数 (`from`/`to`): 秒 (10位)
+
+        Args:
+            ts: 原始时间戳
+            source: 数据来源
+                - 'coinalyze_current': 当前端点 (已是毫秒)
+                - 'coinalyze_history': 历史端点 (秒→毫秒)
+                - 'binance': Binance K线 (已是毫秒)
+
+        Returns:
+            标准化为毫秒的时间戳 (13位)
+
+        Examples:
+            >>> _normalize_timestamp(1769420176882, 'coinalyze_current')
+            1769420176882  # 不变，已是毫秒
+
+            >>> _normalize_timestamp(1769418000, 'coinalyze_history')
+            1769418000000  # 秒 → 毫秒
+        """
+        if ts is None or ts == 0:
+            return 0
+
+        # 判断时间戳单位 (10位=秒, 13位=毫秒)
+        if source == 'coinalyze_history':
+            # 历史端点始终是秒
+            return ts * 1000 if ts < 10_000_000_000 else ts
+        elif source == 'coinalyze_current':
+            # 当前端点始终是毫秒
+            return ts
+        elif source == 'binance':
+            # Binance 始终是毫秒
+            return ts
+        else:
+            # 自动检测: 10位视为秒, 13位视为毫秒
+            return ts * 1000 if ts < 10_000_000_000 else ts
+
+    @staticmethod
+    def _validate_data(oi_usd: float, current_price: float, liq_data: dict = None) -> dict:
+        """
+        ⚠️ v3.2.7 新增: 数据合理性验证
+
+        Returns:
+            {
+                'valid': bool,
+                'warnings': List[str]
+            }
+        """
+        warnings = []
+
+        # OI 检查
+        if oi_usd is not None:
+            if oi_usd < 0:
+                warnings.append(f"OI 为负值: {oi_usd}")
+            if oi_usd > 1e12:  # 超过 1 万亿 USD
+                warnings.append(f"OI 异常高: {oi_usd:.2e}")
+
+        # 价格检查
+        if current_price <= 0:
+            warnings.append(f"价格无效: {current_price}")
+        elif current_price < 100 or current_price > 1_000_000:
+            warnings.append(f"价格可能异常: {current_price}")
+
+        # 清算数据检查
+        if liq_data:
+            long_usd = liq_data.get('long_usd', 0)
+            short_usd = liq_data.get('short_usd', 0)
+            if long_usd < 0 or short_usd < 0:
+                warnings.append(f"清算数据为负: L={long_usd}, S={short_usd}")
+
+        return {
+            'valid': len(warnings) == 0,
+            'warnings': warnings
+        }
 
     async def assemble(self, klines: list, technical: dict, position: dict) -> dict:
         """
@@ -2731,31 +3032,62 @@ class AIDataAssembler:
         # === Open Interest 转换 ===
         # ⚠️ 重要: Coinalyze 返回的是 BTC 数量，需要乘以当前价格转 USD
         if oi_raw and not isinstance(oi_raw, Exception):
-            # API 返回数组，取第一个元素
-            item = oi_raw[0] if isinstance(oi_raw, list) else oi_raw
-            oi_btc = item.get('value', 0)  # ⚠️ 这是 BTC 数量!
+            try:
+                # API 返回数组，取第一个元素
+                item = oi_raw[0] if isinstance(oi_raw, list) else oi_raw
+                oi_btc = float(item.get('value', 0))  # ⚠️ 这是 BTC 数量!
 
-            # BTC → USD 转换
-            oi_usd = oi_btc * current_price if current_price > 0 else oi_btc
+                # ⚠️ v3.2.7: 标准化时间戳 (当前端点是毫秒)
+                oi_timestamp = self._normalize_timestamp(
+                    item.get('update', 0), 'coinalyze_current'
+                )
 
-            # 计算 24h 变化率 (使用缓存值)
-            change_pct = 0.0
-            if self._last_oi_usd > 0 and oi_usd > 0:
-                change_pct = round((oi_usd - self._last_oi_usd) / self._last_oi_usd * 100, 2)
-            self._last_oi_usd = oi_usd
+                # BTC → USD 转换 (含验证)
+                if current_price > 0:
+                    oi_usd = oi_btc * current_price
+                else:
+                    oi_usd = 0
+                    print("⚠️ OI 转换警告: current_price 为 0")
 
-            result["open_interest"] = {
-                "total_usd": oi_usd,  # 已转换为 USD
-                "change_24h_pct": change_pct,
-            }
+                # 计算变化率 (使用缓存值)
+                # ⚠️ v3.2.7: 首次运行时返回 None 而非 0
+                change_pct = None
+                if self._last_oi_usd > 0 and oi_usd > 0:
+                    change_pct = round((oi_usd - self._last_oi_usd) / self._last_oi_usd * 100, 2)
+
+                    # 异常变化检测 (> 50%)
+                    if abs(change_pct) > 50:
+                        print(f"⚠️ OI 异常变化: {change_pct}%")
+
+                self._last_oi_usd = oi_usd
+                self._last_oi_timestamp = oi_timestamp
+
+                result["open_interest"] = {
+                    "total_usd": oi_usd,           # 已转换为 USD
+                    "total_btc": oi_btc,           # v3.2.7: 保留原始 BTC 值
+                    "change_24h_pct": change_pct,  # v3.2.7: 首次为 None
+                    "timestamp_ms": oi_timestamp,  # v3.2.7: 标准化时间戳
+                }
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"⚠️ OI parse error: {e}")
 
         # === Funding Rate 转换 ===
         if funding_raw and not isinstance(funding_raw, Exception):
-            item = funding_raw[0] if isinstance(funding_raw, list) else funding_raw
-            result["funding_rate"] = {
-                "current": item.get('value', 0),  # ⚠️ 实际字段是 'value' 不是 'fundingRate'
-                "predicted": 0,  # Coinalyze 当前端点不返回预测值
-            }
+            try:
+                item = funding_raw[0] if isinstance(funding_raw, list) else funding_raw
+
+                # ⚠️ v3.2.7: 标准化时间戳 (当前端点是毫秒)
+                funding_timestamp = self._normalize_timestamp(
+                    item.get('update', 0), 'coinalyze_current'
+                )
+
+                result["funding_rate"] = {
+                    "current": float(item.get('value', 0)),  # ⚠️ 实际字段是 'value'
+                    "predicted": 0,  # Coinalyze 当前端点不返回预测值
+                    "timestamp_ms": funding_timestamp,       # v3.2.7: 标准化时间戳
+                }
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"⚠️ Funding parse error: {e}")
 
         # === Liquidation 转换 ===
         # ⚠️ v3.2.6 修正: 实际响应是嵌套结构
@@ -2769,12 +3101,29 @@ class AIDataAssembler:
                     if history and len(history) > 0:
                         # 取最新一条 (最后一个)
                         item = history[-1]
+
+                        # ⚠️ v3.2.7: 标准化时间戳 (历史端点是秒)
+                        liq_timestamp = self._normalize_timestamp(
+                            item.get('t', 0), 'coinalyze_history'
+                        )
+
                         result["liquidations_1h"] = {
-                            "long_usd": item.get('l', 0),   # ⚠️ 字段是 'l'
-                            "short_usd": item.get('s', 0),  # ⚠️ 字段是 's'
+                            "long_usd": float(item.get('l', 0)),   # ⚠️ 字段是 'l'
+                            "short_usd": float(item.get('s', 0)),  # ⚠️ 字段是 's'
+                            "timestamp_ms": liq_timestamp,          # v3.2.7: 标准化时间戳
                         }
-            except (KeyError, IndexError, TypeError) as e:
+            except (KeyError, IndexError, TypeError, ValueError) as e:
                 print(f"⚠️ Liquidation parse error: {e}")
+
+        # ⚠️ v3.2.7: 数据验证
+        validation = self._validate_data(
+            oi_usd=result.get("open_interest", {}).get("total_usd") if result.get("open_interest") else None,
+            current_price=current_price,
+            liq_data=result.get("liquidations_1h")
+        )
+        if not validation['valid']:
+            for warn in validation['warnings']:
+                print(f"⚠️ 数据验证警告: {warn}")
 
         return result
 
