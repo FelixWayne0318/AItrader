@@ -100,7 +100,7 @@ jobs:
           " >> $GITHUB_STEP_SUMMARY
 
       - name: Upload analysis results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: smart-analysis-results
           path: |
@@ -200,7 +200,7 @@ jobs:
 
       - name: Upload AI results
         if: steps.check_key.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ai-analysis-results
           path: ai_analysis.json
@@ -295,7 +295,7 @@ jobs:
           " >> $GITHUB_STEP_SUMMARY
 
       - name: Upload dependency analysis
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dependency-analysis-results
           path: dependency_analysis.json
