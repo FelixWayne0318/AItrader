@@ -953,69 +953,118 @@ class DeepSeekAIStrategy(Strategy):
 
     def _prefetch_multi_timeframe_bars(self):
         """
-        Prefetch historical bars for all MTF layers (v3.2.8).
+        Prefetch historical bars for all MTF layers using direct Binance API.
 
-        NautilusTrader API signature (v1.221.0+):
-        ```
-        request_bars(
-            bar_type: BarType,
-            start: datetime,        # Required: start time
-            end: datetime = None,   # Optional: end time (default: now)
-            limit: int = 0,         # Optional: bar count limit
-        ) -> UUID4
-        ```
+        v3.2.10: Fixed to use direct Binance API calls instead of NautilusTrader
+        request_bars() which doesn't work with EXTERNAL data sources.
 
-        IMPORTANT: request_bars is async!
-        - Returns UUID4 request ID, not bars directly
-        - Bars delivered via on_historical_data() callback
+        Uses the same approach as _prefetch_historical_bars() for reliability.
         """
         if not self.mtf_enabled or not self.mtf_manager:
             return
 
-        self.log.info("MTF: 开始预取历史数据 (异步)...")
-        from datetime import datetime, timedelta, timezone
-
-        now = datetime.now(timezone.utc)
+        self.log.info("MTF: 开始预取历史数据 (直接 Binance API)...")
 
         try:
-            # === Trend Layer (1D) - SMA_200 needs 200+ bars ===
-            # 220 days back, limit=220
-            trend_start = now - timedelta(days=220)
-            self.log.debug(f"MTF: 预取 1D bars (start={trend_start.date()}, limit=220)...")
-            self._pending_requests['trend'] = self.request_bars(
-                bar_type=self.trend_bar_type,
-                start=trend_start,
-                end=None,
-                limit=220,
-            )
+            import requests
+            from nautilus_trader.core.datetime import millis_to_nanos
 
-            # === Decision Layer (4H) - SMA_50, MACD need ~50 bars ===
-            # 60 * 4 = 240 hours = 10 days
-            decision_start = now - timedelta(hours=60 * 4)
-            self.log.debug(f"MTF: 预取 4H bars (start={decision_start}, limit=60)...")
-            self._pending_requests['decision'] = self.request_bars(
-                bar_type=self.decision_bar_type,
-                start=decision_start,
-                end=None,
-                limit=60,
-            )
+            # Extract symbol from instrument_id (BTCUSDT-PERP.BINANCE -> BTCUSDT)
+            symbol_str = str(self.instrument_id)
+            symbol = symbol_str.split('-')[0]
 
-            # === Execution Layer (15M) - RSI, EMA need ~30 bars ===
-            # 40 * 15 = 600 minutes = 10 hours
-            execution_start = now - timedelta(minutes=40 * 15)
-            self.log.debug(f"MTF: 预取 15M bars (start={execution_start}, limit=40)...")
-            self._pending_requests['execution'] = self.request_bars(
-                bar_type=self.execution_bar_type,
-                start=execution_start,
-                end=None,
-                limit=40,
-            )
+            # Binance Futures API endpoint
+            url = "https://fapi.binance.com/fapi/v1/klines"
+            timeout = self.config.network_bar_persistence_timeout
 
-            self.log.info("MTF: 历史数据请求已发送，等待 on_historical_data() 回调")
+            # === Trend Layer (1D) - SMA_200 needs 220 bars ===
+            self.log.info(f"MTF: 预取趋势层 (1D, 220 bars)...")
+            trend_bars = self._fetch_binance_klines(
+                url, symbol, '1d', 220, timeout,
+                self.trend_bar_type, self.mtf_manager.trend_manager
+            )
+            if trend_bars > 0:
+                self._mtf_trend_initialized = True
+                self.log.info(f"✅ MTF 趋势层预取完成: {trend_bars} bars")
+
+            # === Decision Layer (4H) - SMA_50, MACD need 60 bars ===
+            self.log.info(f"MTF: 预取决策层 (4H, 60 bars)...")
+            decision_bars = self._fetch_binance_klines(
+                url, symbol, '4h', 60, timeout,
+                self.decision_bar_type, self.mtf_manager.decision_manager
+            )
+            if decision_bars > 0:
+                self._mtf_decision_initialized = True
+                self.log.info(f"✅ MTF 决策层预取完成: {decision_bars} bars")
+
+            # === Execution Layer (15M) - RSI, EMA need 40 bars ===
+            self.log.info(f"MTF: 预取执行层 (15M, 40 bars)...")
+            execution_bars = self._fetch_binance_klines(
+                url, symbol, '15m', 40, timeout,
+                self.execution_bar_type, self.mtf_manager.execution_manager
+            )
+            if execution_bars > 0:
+                self._mtf_execution_initialized = True
+                self.log.info(f"✅ MTF 执行层预取完成: {execution_bars} bars")
+
+            # Summary
+            self.log.info(
+                f"✅ MTF 历史数据预取完成: "
+                f"趋势={trend_bars}, 决策={decision_bars}, 执行={execution_bars}"
+            )
 
         except Exception as e:
-            self.log.error(f"MTF: 预取历史数据请求失败: {e}")
-            # Don't raise - allow strategy to continue in degraded mode
+            self.log.error(f"❌ MTF 预取历史数据失败: {e}")
+            self.log.warning("MTF 将使用实时数据初始化 (需要等待更长时间)")
+
+    def _fetch_binance_klines(self, url, symbol, interval, limit, timeout, bar_type, indicator_manager):
+        """
+        Fetch klines from Binance API and feed to indicator manager.
+
+        Returns number of bars successfully fed.
+        """
+        import requests
+        from nautilus_trader.core.datetime import millis_to_nanos
+
+        try:
+            params = {
+                'symbol': symbol,
+                'interval': interval,
+                'limit': min(limit, 1500),  # Binance max
+            }
+
+            response = requests.get(url, params=params, timeout=timeout)
+            response.raise_for_status()
+            klines = response.json()
+
+            if not klines:
+                self.log.warning(f"⚠️ Binance API 返回空数据 (interval={interval})")
+                return 0
+
+            bars_fed = 0
+            for kline in klines:
+                try:
+                    bar = Bar(
+                        bar_type=bar_type,
+                        open=self.instrument.make_price(float(kline[1])),
+                        high=self.instrument.make_price(float(kline[2])),
+                        low=self.instrument.make_price(float(kline[3])),
+                        close=self.instrument.make_price(float(kline[4])),
+                        volume=self.instrument.make_qty(float(kline[5])),
+                        ts_event=millis_to_nanos(kline[0]),
+                        ts_init=millis_to_nanos(kline[0]),
+                    )
+                    indicator_manager.update(bar)
+                    bars_fed += 1
+                except Exception as e:
+                    self.log.debug(f"转换 kline 失败: {e}")
+                    continue
+
+            return bars_fed
+
+        except Exception as e:
+            self.log.error(f"Binance API 请求失败 ({interval}): {e}")
+            return 0
 
     def on_timer(self, event):
         """
