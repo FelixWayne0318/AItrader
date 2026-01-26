@@ -24,12 +24,37 @@
 | v3.2.3 | 2026-01-26 | **API 格式实测修正**，根据实际 API 响应修正字段名 (`value` vs `openInterestUsd`) |
 | v3.2.4 | 2026-01-26 | **时间戳格式修正**，Coinalyze API 使用 UNIX 秒 (非毫秒)，添加完整 interval 值列表 |
 | v3.2.5 | 2026-01-26 | **文档一致性修复**，同步 Section 9.6.2 CoinalyzeClient 的 docstring 与实际 API 格式 |
+| v3.2.6 | 2026-01-26 | **服务器实测修正**，时间戳单位不一致 (当前端点毫秒/历史端点秒)，Liquidation 嵌套结构 |
+
+### v3.2.6 主要更新 (服务器实测修正)
+
+1. **⚠️ 时间戳单位不一致 (重要发现)**
+   - 当前端点 (`/open-interest`, `/funding-rate`): `update` 是**毫秒** (13位)
+   - 历史端点参数 (`from`/`to`): **秒** (10位)
+   - 历史端点响应 (`t`): **秒** (10位)
+
+2. **⚠️ Liquidation 响应是嵌套结构**
+   ```json
+   // 实际格式 (嵌套)
+   [{"symbol": "...", "history": [{"t": ..., "l": ..., "s": ...}]}]
+
+   // 之前假设 (扁平) - 错误
+   [{"t": ..., "l": ..., "s": ...}]
+   ```
+
+3. **OI History 返回 OHLC 数据**
+   - 包含 `o` (open), `h` (high), `l` (low), `c` (close)
+   - 使用 `c` (close) 字段获取 OI 值
+
+4. **代码更新**
+   - `get_liquidations()`: 处理嵌套 `history` 数组
+   - `_convert_derivatives()`: 正确提取嵌套数据
 
 ### v3.2.5 主要更新 (文档一致性修复)
 
 1. **Section 9.6.2 docstring 更新**
-   - `get_open_interest()`: 更正返回格式为 `value` (BTC 数量) + `update` (秒)
-   - `get_funding_rate()`: 更正返回格式为 `value` + 移除不存在的 `predictedFundingRate`
+   - `get_open_interest()`: 更正返回格式为 `value` (BTC 数量) + `update` (毫秒)
+   - `get_funding_rate()`: 更正返回格式为 `value` + `update` (毫秒)
    - `get_liquidations()`: 添加返回格式说明 (`t`, `l`, `s`)
 
 2. **全面审查结论**
@@ -2457,15 +2482,17 @@ class CoinalyzeClient:
         """
         获取聚合持仓量
 
-        ⚠️ 实际 API 响应格式 (2026-01-26 验证):
+        ⚠️ v3.2.6 实际 API 响应格式 (服务器实测):
         Returns:
             {
                 "symbol": "BTCUSDT_PERP.A",
-                "value": 102199.59,      # ⚠️ BTC 数量，不是 USD!
-                "update": 1769417410     # ⚠️ UNIX 秒，不是毫秒!
+                "value": 102726.971,       # ⚠️ BTC 数量，不是 USD!
+                "update": 1769420176882    # ⚠️ 毫秒 (13位)!
             }
 
-        注意: value 是 BTC 数量，需要乘以当前价格才能得到 USD 值
+        注意:
+        - value 是 BTC 数量，需要乘以当前价格才能得到 USD 值
+        - update 是毫秒时间戳 (与历史端点不同!)
         """
         if not self._enabled:
             return None
@@ -2494,15 +2521,25 @@ class CoinalyzeClient:
         """
         获取清算数据 (历史数据，最近1小时)
 
-        ⚠️ 实际 API 响应格式 (2026-01-26 验证):
+        ⚠️ v3.2.6 实际 API 响应格式 (服务器实测):
+        原始响应 (嵌套结构):
+            [{
+                "symbol": "BTCUSDT_PERP.A",
+                "history": [
+                    {"t": 1769418000, "l": 0.832, "s": 0}
+                ]
+            }]
+
         Returns:
+            提取后的最新一条:
             {
-                "t": 1769410800,  # ⚠️ UNIX 秒
-                "l": 2500000,     # 多头清算 USD
-                "s": 1800000      # 空头清算 USD
+                "t": 1769418000,  # ⚠️ UNIX 秒 (10位)
+                "l": 0.832,       # 多头清算
+                "s": 0            # 空头清算
             }
 
         注意:
+        - ⚠️ 响应是嵌套结构，需要从 history 数组提取
         - Binance 从 2021-04 起只提供每秒1条清算数据
         - interval 必须是 "1hour" 不是 "1h"
         - from/to 参数是 UNIX 秒
@@ -2516,7 +2553,7 @@ class CoinalyzeClient:
                 url = f"{self.BASE_URL}/liquidation-history"
                 # 获取最近1小时的清算数据
                 import time
-                # ⚠️ 重要: Coinalyze API 使用 UNIX 秒，不是毫秒!
+                # ⚠️ 重要: from/to 参数使用 UNIX 秒
                 end_time = int(time.time())           # 秒
                 start_time = end_time - 3600          # 1小时前 (3600秒)
                 params = {
@@ -2530,10 +2567,13 @@ class CoinalyzeClient:
                                        timeout=self.timeout) as resp:
                     if resp.status == 200:
                         data = await resp.json()
+                        # ⚠️ v3.2.6: 处理嵌套结构
                         if data and len(data) > 0:
-                            # 返回最新一条
-                            latest = data[-1] if isinstance(data, list) else data
-                            return latest
+                            symbol_data = data[0]
+                            history = symbol_data.get('history', [])
+                            if history and len(history) > 0:
+                                # 返回最新一条
+                                return history[-1]
                     elif resp.status == 429:
                         print(f"⚠️ Coinalyze rate limit reached")
         except Exception as e:
@@ -2544,15 +2584,17 @@ class CoinalyzeClient:
         """
         获取当前资金费率
 
-        ⚠️ 实际 API 响应格式 (2026-01-26 验证):
+        ⚠️ v3.2.6 实际 API 响应格式 (服务器实测):
         Returns:
             {
                 "symbol": "BTCUSDT_PERP.A",
-                "value": 0.002847,    # ⚠️ 字段名是 value，0.2847%
-                "update": 1769417407  # ⚠️ UNIX 秒
+                "value": 0.002847,       # 0.2847%
+                "update": 1769420174380  # ⚠️ 毫秒 (13位)!
             }
 
-        注意: API 不提供 predictedFundingRate，代码中设为 0
+        注意:
+        - API 不提供 predictedFundingRate，代码中设为 0
+        - update 是毫秒时间戳 (与历史端点不同!)
         """
         if not self._enabled:
             return None
@@ -2716,15 +2758,23 @@ class AIDataAssembler:
             }
 
         # === Liquidation 转换 ===
+        # ⚠️ v3.2.6 修正: 实际响应是嵌套结构
+        # [{"symbol": "...", "history": [{"t": ..., "l": ..., "s": ...}]}]
         if liq_raw and not isinstance(liq_raw, Exception):
-            # API 返回数组: [{"t": timestamp, "l": long_usd, "s": short_usd}]
-            if isinstance(liq_raw, list) and len(liq_raw) > 0:
-                # 取最新一条 (最后一个)
-                item = liq_raw[-1]
-                result["liquidations_1h"] = {
-                    "long_usd": item.get('l', 0),   # ⚠️ 字段是 'l' 不是 'longLiquidationUsd'
-                    "short_usd": item.get('s', 0),  # ⚠️ 字段是 's' 不是 'shortLiquidationUsd'
-                }
+            try:
+                # 提取嵌套的 history 数组
+                if isinstance(liq_raw, list) and len(liq_raw) > 0:
+                    symbol_data = liq_raw[0]
+                    history = symbol_data.get('history', [])
+                    if history and len(history) > 0:
+                        # 取最新一条 (最后一个)
+                        item = history[-1]
+                        result["liquidations_1h"] = {
+                            "long_usd": item.get('l', 0),   # ⚠️ 字段是 'l'
+                            "short_usd": item.get('s', 0),  # ⚠️ 字段是 's'
+                        }
+            except (KeyError, IndexError, TypeError) as e:
+                print(f"⚠️ Liquidation parse error: {e}")
 
         return result
 
@@ -2737,19 +2787,31 @@ class AIDataAssembler:
         return round((new_close - old_close) / old_close * 100, 2) if old_close > 0 else 0.0
 ```
 
-#### 9.6.4 Coinalyze 数据格式参考 (2026-01-26 实测验证 + API 文档确认)
+#### 9.6.4 Coinalyze 数据格式参考 (2026-01-26 服务器实测验证 v3.2.6)
 
-**⚠️ 关键发现汇总**:
+**⚠️ 关键发现汇总 (服务器实测)**:
 
-| 项目 | 错误假设 | 实际值 | 来源 |
+| 项目 | 之前假设 | 实际值 | 来源 |
 |------|---------|--------|------|
-| **时间戳格式** | 毫秒 | **UNIX 秒** | 官方文档 |
-| **OI 字段名** | `openInterestUsd` | `value` | 实测 |
-| **OI 单位** | USD | **BTC 数量** | 实测 |
-| **Funding 字段名** | `fundingRate` | `value` | 实测 |
-| **Liquidation interval** | `1h` | `1hour` | 官方文档 |
+| **当前端点时间戳** (`update`) | 秒 | **毫秒** (13位) | 服务器实测 |
+| **历史端点时间戳** (`t`) | 秒 | **秒** (10位) | 服务器实测 |
+| **历史端点参数** (`from`/`to`) | 秒 | **秒** | 服务器实测 |
+| **OI 字段名** | `openInterestUsd` | `value` (BTC 数量) | 服务器实测 |
+| **Funding 字段名** | `fundingRate` | `value` | 服务器实测 |
+| **Liquidation 响应结构** | 扁平数组 | **嵌套 `history` 数组** | 服务器实测 |
+| **OI History 响应** | 单值 | **OHLC 数据** (o,h,l,c) | 服务器实测 |
 
-**完整的 interval 参数值** (官方文档确认):
+**⚠️ 时间戳单位不一致 (重要)**:
+
+| 端点类型 | 字段 | 单位 | 示例 |
+|---------|------|------|------|
+| 当前数据 `/open-interest` | `update` | **毫秒** | `1769420176882` (13位) |
+| 当前数据 `/funding-rate` | `update` | **毫秒** | `1769420174380` (13位) |
+| 历史参数 `from`/`to` | - | **秒** | `1769416578` (10位) |
+| 历史响应 `/liquidation-history` | `t` | **秒** | `1769418000` (10位) |
+| 历史响应 `/open-interest-history` | `t` | **秒** | `1769335200` (10位) |
+
+**完整的 interval 参数值**:
 ```
 1min, 5min, 15min, 30min, 1hour, 2hour, 4hour, 6hour, 12hour, daily
 ```
@@ -2758,16 +2820,16 @@ class AIDataAssembler:
 
 | 端点 | Coinalyze 原始字段 | 转换后字段 | 说明 |
 |------|-------------------|-----------|------|
-| `/open-interest` | `value` ⚠️ | `total_usd` | 值为 BTC 数量，需乘以价格转 USD |
-| `/open-interest` | `update` | (参考时间戳) | **UNIX 秒** (非毫秒) |
-| `/open-interest` | (无) | `change_24h_pct` | 需自己计算 (缓存对比) |
-| `/funding-rate` | `value` ⚠️ | `current` | 直接使用 (0.002847 = 0.28%) |
-| `/funding-rate` | (无) | `predicted` | API 不提供，设为 0 |
-| `/liquidation-history` | `l` | `long_usd` | 做多清算 USD |
-| `/liquidation-history` | `s` | `short_usd` | 做空清算 USD |
-| `/liquidation-history` | `t` | (参考时间戳) | **UNIX 秒** (非毫秒) |
+| `/open-interest` | `value` | `total_usd` | BTC 数量，需乘价格转 USD |
+| `/open-interest` | `update` | - | **毫秒** (13位) |
+| `/funding-rate` | `value` | `current` | 0.002847 = 0.2847% |
+| `/funding-rate` | `update` | - | **毫秒** (13位) |
+| `/liquidation-history` | `history[].l` | `long_usd` | ⚠️ 嵌套在 history 内 |
+| `/liquidation-history` | `history[].s` | `short_usd` | ⚠️ 嵌套在 history 内 |
+| `/liquidation-history` | `history[].t` | - | **秒** (10位) |
+| `/open-interest-history` | `history[].c` | - | OI 收盘值 (OHLC) |
 
-**请求参数格式** (所有 history 端点):
+**请求参数格式** (history 端点):
 ```python
 params = {
     "symbols": "BTCUSDT_PERP.A",
@@ -2777,39 +2839,60 @@ params = {
 }
 ```
 
-**Coinalyze API 响应示例** (实测):
+**Coinalyze API 响应示例** (2026-01-26 服务器实测):
 
 ```json
 // GET /v1/open-interest?symbols=BTCUSDT_PERP.A
 [{
     "symbol": "BTCUSDT_PERP.A",
-    "value": 102199.59,               // ⚠️ BTC 数量，不是 USD!
-    "update": 1769417410              // ⚠️ UNIX 秒
+    "value": 102726.971,              // ⚠️ BTC 数量，不是 USD!
+    "update": 1769420176882           // ⚠️ 毫秒 (13位)!
 }]
 
 // GET /v1/funding-rate?symbols=BTCUSDT_PERP.A
 [{
     "symbol": "BTCUSDT_PERP.A",
-    "value": 0.002847,                // ⚠️ 0.2847%，字段名是 value
-    "update": 1769417407              // UNIX 秒
+    "value": 0.002847,                // 0.2847%
+    "update": 1769420174380           // ⚠️ 毫秒 (13位)!
 }]
 
-// GET /v1/liquidation-history?symbols=BTCUSDT_PERP.A&interval=1hour&from=1769413807&to=1769417407
-// ⚠️ interval 必须是 "1hour", from/to 是 UNIX 秒!
+// GET /v1/liquidation-history?symbols=BTCUSDT_PERP.A&interval=1hour&from=1769416578&to=1769420178
+// ⚠️ 响应是嵌套结构，不是扁平数组!
 [{
-    "t": 1706270400,                  // UNIX 秒
-    "l": 2500000,                     // long liquidation USD ⭐
-    "s": 1800000                      // short liquidation USD ⭐
+    "symbol": "BTCUSDT_PERP.A",
+    "history": [                      // ⚠️ 嵌套在 history 数组内!
+        {
+            "t": 1769418000,          // 秒 (10位)
+            "l": 0.832,               // long liquidation (单位待确认)
+            "s": 0                    // short liquidation
+        }
+    ]
+}]
+
+// GET /v1/open-interest-history?symbols=BTCUSDT_PERP.A&interval=1hour&from=...&to=...
+// ⚠️ 返回 OHLC 数据!
+[{
+    "symbol": "BTCUSDT_PERP.A",
+    "history": [
+        {
+            "t": 1769335200,          // 秒 (10位)
+            "o": 100145.378,          // open (BTC)
+            "h": 100333.515,          // high (BTC)
+            "l": 100143.96,           // low (BTC)
+            "c": 100284.726           // close (BTC) ⭐ 使用这个
+        },
+        // ... 更多 OHLC 数据
+    ]
 }]
 ```
 
 **注意事项**:
-1. ⚠️ **时间戳单位是秒**: `from`/`to` 参数和响应中的 `t`/`update` 都是 UNIX 秒
-2. ⚠️ OI 的 `value` 是 **BTC 数量**，需要乘以当前价格才能得到 USD 值
-3. ⚠️ Funding Rate 的 `value` 是小数形式 (0.002847 = 0.2847%)
-4. ⚠️ 清算端点的 interval 必须是 `1hour`，不是 `1h`
-5. `change_24h_pct` 需要自己计算 (Coinalyze 不提供)
-6. 首次运行时 OI 变化率为 0 (无历史数据对比)
+1. ⚠️ **时间戳单位不一致**: 当前端点用毫秒，历史端点用秒
+2. ⚠️ **Liquidation 是嵌套结构**: 需要从 `response[0].history` 提取
+3. ⚠️ **OI History 是 OHLC**: 使用 `c` (close) 字段获取 OI 值
+4. ⚠️ OI 的 `value` 是 **BTC 数量**，需要乘以当前价格才能得到 USD 值
+5. ⚠️ Funding Rate 的 `value` 是小数形式 (0.002847 = 0.2847%)
+6. `change_24h_pct` 需要从 OI History 计算 (对比 24h 前的 `c` 值)
 7. `predicted` funding rate API 不提供，代码中设为 0
 
 **历史数据保留策略**:
