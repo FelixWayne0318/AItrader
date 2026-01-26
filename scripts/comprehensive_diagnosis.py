@@ -946,8 +946,10 @@ class ConfigManagementDiagnostic:
                     issues.append('binance.symbol 未配置')
 
             if coinalyze.get('enabled'):
-                if not coinalyze.get('api_key'):
-                    issues.append('coinalyze.api_key 未配置')
+                # API key 可能在 YAML 或环境变量中
+                coinalyze_api_key = coinalyze.get('api_key') or os.getenv('COINALYZE_API_KEY')
+                if not coinalyze_api_key:
+                    issues.append('coinalyze.api_key 未配置 (YAML 和环境变量都没有)')
 
             if not issues:
                 details = []

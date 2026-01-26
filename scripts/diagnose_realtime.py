@@ -442,8 +442,12 @@ try:
             coinalyze = order_flow.get('coinalyze', {})
             print(f"     Binance enabled: {binance_of.get('enabled', False)}")
             print(f"     Coinalyze enabled: {coinalyze.get('enabled', False)}")
-            if coinalyze.get('enabled') and not coinalyze.get('api_key'):
-                print("     ⚠️ Coinalyze 已启用但缺少 API key")
+            # API key 可能在 YAML 或环境变量中
+            coinalyze_api_key = coinalyze.get('api_key') or os.getenv('COINALYZE_API_KEY')
+            if coinalyze.get('enabled') and not coinalyze_api_key:
+                print("     ⚠️ Coinalyze 已启用但缺少 API key (YAML 和环境变量都没有)")
+            elif coinalyze.get('enabled') and coinalyze_api_key:
+                print("     ✅ Coinalyze API key 已配置")
         else:
             print()
             print("  ℹ️ Order Flow: 未启用")

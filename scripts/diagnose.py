@@ -493,8 +493,12 @@ def check_nautilus_config():
             coinalyze = order_flow.get("coinalyze", {})
             info(f"    Binance enabled: {binance_of.get('enabled', False)}")
             info(f"    Coinalyze enabled: {coinalyze.get('enabled', False)}")
-            if coinalyze.get('enabled') and not coinalyze.get('api_key'):
-                warn("    Coinalyze 已启用但缺少 API key")
+            # API key 可能在 YAML 或环境变量中
+            coinalyze_api_key = coinalyze.get('api_key') or os.getenv('COINALYZE_API_KEY')
+            if coinalyze.get('enabled') and not coinalyze_api_key:
+                warn("    Coinalyze 已启用但缺少 API key (YAML 和环境变量都没有)")
+            elif coinalyze.get('enabled') and coinalyze_api_key:
+                ok("    Coinalyze API key 已配置")
         else:
             info("Order Flow: 未启用")
 
