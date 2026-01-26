@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 
 # 添加项目路径
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # =============================================================================
 # 颜色输出
@@ -133,7 +133,7 @@ class GitAnalyzer:
     """Git 分析器"""
 
     def __init__(self, repo_path: Path = None):
-        self.repo_path = repo_path or Path(__file__).parent
+        self.repo_path = repo_path or Path(__file__).parent.parent
 
     def run_git(self, *args) -> str:
         """运行 git 命令"""
@@ -550,7 +550,7 @@ class GitChangeAnalyzer:
     """Git 变更分析器 - 主类"""
 
     def __init__(self, repo_path: Path = None):
-        self.repo_path = repo_path or Path(__file__).parent
+        self.repo_path = repo_path or Path(__file__).parent.parent
         self.git = GitAnalyzer(self.repo_path)
         self.regression_detector = RegressionDetector(self.repo_path)
         self.chain_detector = ChainReactionDetector(self.repo_path)

@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Callable, Optional, Tuple
 
 # 添加项目路径
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # =============================================================================
 # 颜色输出
@@ -485,7 +485,7 @@ class CommitFixValidator:
     """提交修复验证器"""
 
     def __init__(self, project_root: Path = None):
-        self.project_root = project_root or Path(__file__).parent
+        self.project_root = project_root or Path(__file__).parent.parent
         self.results: Dict[str, Any] = {
             'passed': [],
             'failed': [],
@@ -630,7 +630,7 @@ def check_chain_reactions(project_root: Path = None, verbose: bool = True) -> Li
 
     这些是修改一个文件可能影响其他文件的场景
     """
-    project_root = project_root or Path(__file__).parent
+    project_root = project_root or Path(__file__).parent.parent
     issues = []
 
     if verbose:

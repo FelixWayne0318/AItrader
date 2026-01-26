@@ -97,7 +97,7 @@ def check_critical_config() -> Tuple[list, list]:
     issues = []  # 严重问题
     warnings = []  # 警告
 
-    project_root = Path(__file__).parent
+    project_root = Path(__file__).parent.parent
 
     # ==========================================================================
     # 检查 1: main_live.py 中的 load_all 配置
@@ -229,7 +229,7 @@ def check_critical_config() -> Tuple[list, list]:
 # =============================================================================
 
 # 设置项目路径 (与 main_live.py 相同)
-project_root = Path(__file__).parent
+project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 

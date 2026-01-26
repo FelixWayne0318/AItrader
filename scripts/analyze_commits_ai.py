@@ -29,7 +29,7 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field, asdict
 
 # 添加项目路径
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # =============================================================================
 # 颜色输出
@@ -102,7 +102,7 @@ class GitHelper:
     """Git 辅助类"""
 
     def __init__(self, repo_path: Path = None):
-        self.repo_path = repo_path or Path(__file__).parent
+        self.repo_path = repo_path or Path(__file__).parent.parent
 
     def run(self, *args) -> str:
         cmd = ['git', '-C', str(self.repo_path)] + list(args)
@@ -269,7 +269,7 @@ class AIRegressionChecker:
     """基于 AI 生成的规则进行回归检测"""
 
     def __init__(self, repo_path: Path = None):
-        self.repo_path = repo_path or Path(__file__).parent
+        self.repo_path = repo_path or Path(__file__).parent.parent
         self.git = GitHelper(repo_path)
 
     def check_rule(self, rule: Dict[str, str]) -> Dict[str, Any]:

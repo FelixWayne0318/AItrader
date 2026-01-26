@@ -22,7 +22,7 @@ print("=" * 60)
 print()
 
 # Import and run main
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from main_live import main
 import asyncio
 

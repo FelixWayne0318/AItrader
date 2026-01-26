@@ -8,7 +8,7 @@ import asyncio
 from pathlib import Path
 
 # Set working directory
-os.chdir(Path(__file__).parent)
+os.chdir(Path(__file__).parent.parent)
 
 # Force quick test parameters BEFORE any imports
 os.environ['TIMEFRAME'] = '1m'
