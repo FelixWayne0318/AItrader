@@ -307,9 +307,14 @@ if not SUMMARY_MODE:
 
 try:
     from main_live import get_strategy_config, load_yaml_config
+    from utils.config_manager import ConfigManager
+
+    # 初始化 ConfigManager (与 main_live.py 相同)
+    config_manager = ConfigManager(env='production')
+    config_manager.load()
 
     # 获取与实盘完全相同的配置
-    strategy_config = get_strategy_config()
+    strategy_config = get_strategy_config(config_manager)
     yaml_config = load_yaml_config()
 
     if not SUMMARY_MODE:
