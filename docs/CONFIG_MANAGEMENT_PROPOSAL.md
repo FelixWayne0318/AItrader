@@ -1,9 +1,28 @@
 # AItrader 配置统一管理方案
 
-> 版本: 2.9.1
-> 日期: 2026-01-25
-> 状态: **Phase 0-6 已完成** ✅ (配置管理方案完整实施验证通过)
-> 审查: CONFIG_PROPOSAL_AUDIT_REPORT.md (v2.5.4) + 规范修复 (v2.5.5) + 实施验证 (v2.9.1)
+> 版本: 3.0.0
+> 日期: 2026-01-26
+> 状态: **Phase 0-6 已完成** ✅ + **v3.2.9 MTF/OrderFlow 配置集成**
+> 审查: CONFIG_PROPOSAL_AUDIT_REPORT.md (v2.5.4) + 规范修复 (v2.5.5) + 实施验证 (v2.9.1) + MTF 集成 (v3.0.0)
+
+**v3.0.0 更新说明** (Multi-Timeframe + Order Flow 配置集成):
+- ✅ **新增 `multi_timeframe` 配置** (base.yaml lines 284-334):
+  - `trend_layer`: 1D 趋势层 (SMA_200 + MACD)
+  - `decision_layer`: 4H 决策层 (Bull/Bear 辩论)
+  - `execution_layer`: 15M 执行层 (RSI 入场确认)
+  - `initialization`: 历史数据预取配置
+- ✅ **新增 `order_flow` 配置** (base.yaml lines 339-386):
+  - `binance`: Taker 买卖量、Quote Volume、Trades Count
+  - `coinalyze`: OI、Liquidations、Funding Rate
+  - `buy_ratio`: 多空比阈值
+  - `prompt`: AI Prompt 权重配置
+- ✅ **main_live.py MTF 配置加载** (lines 286-292):
+  - 7 个 MTF 参数从 ConfigManager 加载
+- ✅ **DeepSeekAIStrategyConfig 新增字段**:
+  - `multi_timeframe_enabled`, `mtf_trend_sma_period`, `mtf_trend_require_above_sma`
+  - `mtf_trend_require_macd_positive`, `mtf_decision_debate_rounds`
+  - `mtf_execution_rsi_entry_min`, `mtf_execution_rsi_entry_max`
+- ✅ **Section 3.2 base.yaml 示例更新**: 添加完整的 multi_timeframe 和 order_flow 配置
 
 **v2.9.1 更新说明** (Phase 4 完整性验证):
 - ✅ **Phase 4 实施验证通过**: 经过完整代码审查，确认所有实际使用的网络参数已 100% 配置化
@@ -310,12 +329,16 @@ macd_fast = 5 if timeframe == '1m' else 12
 | P2 AI/分析参数 | 3 | ✅ **已完成** (Phase 4 完成) |
 | P3 测试模式参数 | 4 | ✅ 已正确处理 |
 | P4 诊断工具阈值 | 2 | 可选配置化 (diagnose_realtime.py) |
+| 🆕 MTF 配置参数 | 7 | ✅ **已完成** (v3.0 新增) |
+| 🆕 OrderFlow 配置 | 15 | ✅ **已完成** (v3.0 新增) |
 | ✅ 已配置化 | 15 | 无需处理 |
 | **总计待处理** | **2** | (仅 P4 诊断工具阈值可选) |
 
 **说明**:
 - **P4 诊断工具阈值** (新增类别): `diagnose_realtime.py` 中的 `BB_OVERBOUGHT_THRESHOLD` 等值仅用于诊断报告，不影响交易逻辑，可选配置化
 - ✅ **Phase 0-4 已完成**: 所有必须配置化的参数已全部迁移 (28/28)
+- 🆕 **v3.0 新增 MTF 配置** (7 参数): `multi_timeframe_enabled`, `mtf_trend_sma_period`, `mtf_trend_require_above_sma`, `mtf_trend_require_macd_positive`, `mtf_decision_debate_rounds`, `mtf_execution_rsi_entry_min`, `mtf_execution_rsi_entry_max`
+- 🆕 **v3.0 新增 OrderFlow 配置** (15 参数): Binance taker data, Coinalyze 衍生品数据, 买卖比阈值等
 - 剩余 2 处 P4 诊断工具阈值为可选项，不影响交易功能
 
 ### 1.4 当前加载优先级 (问题所在)
@@ -690,6 +713,113 @@ logging:
   log_signals: true
   log_positions: true
   log_ai_responses: true
+
+# =============================================================================
+# 多时间框架配置 (Multi-Timeframe Framework) 🆕 v3.0 新增
+# =============================================================================
+multi_timeframe:
+  enabled: false                      # 默认禁用,确保向后兼容
+
+  # ---------------------------------------------------------------------------
+  # 趋势层配置 (1D) - Risk-On/Risk-Off 判断
+  # ---------------------------------------------------------------------------
+  trend_layer:
+    timeframe: "1d"
+    sma_period: 200                   # SMA_200 判断长期趋势
+    require_above_sma: true           # 价格需在 SMA 上方才能交易
+    require_macd_positive: true       # MACD > 0 才能交易
+    cache_ttl_hours: 4                # 趋势状态缓存时间
+
+  # ---------------------------------------------------------------------------
+  # 决策层配置 (4H) - Bull/Bear 辩论决定方向
+  # ---------------------------------------------------------------------------
+  decision_layer:
+    timeframe: "4h"
+    debate_rounds: 2                  # TradingAgents 辩论轮数
+    include_trend_context: true       # 在辩论中包含趋势层信息
+    indicators:
+      sma_periods: [20, 50]
+      rsi_period: 14
+      macd_fast: 12
+      macd_slow: 26
+      bb_period: 20
+      bb_std: 2.0
+
+  # ---------------------------------------------------------------------------
+  # 执行层配置 (5M / 15M) - 精确入场时机
+  # ---------------------------------------------------------------------------
+  execution_layer:
+    default_timeframe: "15m"          # 默认执行周期
+    high_volatility_timeframe: "5m"   # 高波动时使用 5M
+    rsi_entry_min: 35                 # RSI 入场范围下限
+    rsi_entry_max: 65                 # RSI 入场范围上限
+    indicators:
+      sma_periods: [5, 20]
+      ema_periods: [10]
+      rsi_period: 14
+      support_resistance_lookback: 20
+
+  # ---------------------------------------------------------------------------
+  # 初始化配置 (request_bars 预取)
+  # ---------------------------------------------------------------------------
+  initialization:
+    trend_min_bars: 220               # 趋势层最少 bar 数量 (SMA_200 + 缓冲)
+    decision_min_bars: 60             # 决策层最少 bar 数量 (SMA_50 + 缓冲)
+    execution_min_bars: 40            # 执行层最少 bar 数量
+    request_timeout_sec: 300          # 请求超时 (秒)
+    max_retry_attempts: 3             # 最大重试次数
+
+# =============================================================================
+# 订单流数据配置 (Order Flow) 🆕 v3.0 新增
+# =============================================================================
+order_flow:
+  enabled: true                       # 启用订单流数据增强
+
+  # ---------------------------------------------------------------------------
+  # Binance K线完整字段
+  # ---------------------------------------------------------------------------
+  binance:
+    use_taker_data: true              # 使用 taker_buy_volume (列[9])
+    use_quote_volume: true            # 使用 quote_volume (列[7])
+    use_trades_count: true            # 使用 trades_count (列[8])
+    bars_for_analysis: 10             # 分析最近 N 根 K线
+
+  # ---------------------------------------------------------------------------
+  # Coinalyze 衍生品数据 (需要 API Key)
+  # ---------------------------------------------------------------------------
+  coinalyze:
+    enabled: true                     # 启用 Coinalyze 数据
+    api_key: ""                       # 从 ~/.env.aitrader 的 COINALYZE_API_KEY 读取
+    timeout: 10                       # API 请求超时 (秒)
+    symbol: "BTCUSDT_PERP.A"          # Coinalyze Symbol 格式 (A=Binance)
+    endpoints:
+      open_interest: true
+      liquidations: true
+      funding_rate: true
+    # 降级策略: API 失败时使用默认值
+    fallback_enabled: true
+    fallback_oi_usd: 0
+    fallback_funding_rate: 0
+
+  # ---------------------------------------------------------------------------
+  # 买卖比阈值
+  # ---------------------------------------------------------------------------
+  buy_ratio:
+    bullish_threshold: 0.55           # >55% 视为多头主导
+    bearish_threshold: 0.45           # <45% 视为空头主导
+    trend_threshold: 0.01             # 趋势判断阈值 (前5根 vs 后5根差值)
+
+  # ---------------------------------------------------------------------------
+  # Prompt 配置
+  # ---------------------------------------------------------------------------
+  prompt:
+    version: "optimized"              # "optimized" (~600 tokens) 或 "full" (~1800 tokens)
+    include_interpretation_guide: true # 在 Prompt 中包含解读指南
+    weights:                          # 各数据权重 (供 AI 参考)
+      order_flow: 0.30
+      technical: 0.25
+      derivatives: 0.25
+      sentiment: 0.20
 
 # =============================================================================
 # 诊断工具阈值 (diagnose_realtime.py 使用) 🟡 v2.5 新增
@@ -3092,7 +3222,8 @@ python scripts/migrate_config.py --from 2.1 --to 2.2 --config production.yaml
 | 2.8.0 | 2026-01-25 | Phase 3+6 实施:<br>- ✅ **Phase 3**: trading_logic.py 常量迁移 (延迟导入避免循环依赖)<br>- ✅ **Phase 6**: 文档同步 (CLAUDE.md, README.md 已更新)<br>- 🎉 **Phase 0-6 全部完成** |
 | 2.9.0 | 2026-01-25 | Phase 4 网络参数完整实施:<br>- ✅ utils/telegram_command_handler.py: startup_delay, polling_max_retries, polling_base_delay<br>- ✅ utils/binance_account.py: cache_ttl, recv_window<br>- ✅ utils/sentiment_client.py: timeout<br>- ✅ strategy/deepseek_strategy.py: 添加 11 个网络配置字段<br>- ✅ main_live.py: 从 ConfigManager 加载所有网络参数 |
 | 2.9.1 | 2026-01-25 | Phase 4 完整性验证:<br>- ✅ 经过完整代码审查，确认所有**生产环境使用**的网络参数 100% 配置化 (10/10)<br>- ℹ️ BinanceBarFetcher (仅在 examples/ 使用), OCOManager (已废弃) 虽支持配置但未在生产环境使用<br>- ✅ 配置传递链完整: ConfigManager → main_live.py → strategy dataclass → utils 实例化<br>- 🎉 **Phase 4 验证通过** - 无需进一步代码修改 |
+| 3.0.0 | 2026-01-26 | Multi-Timeframe + Order Flow 配置集成 (与代码 v3.2.9 同步):<br>- ✅ **新增 `multi_timeframe` 配置**: trend_layer (1D), decision_layer (4H), execution_layer (15M), initialization<br>- ✅ **新增 `order_flow` 配置**: Binance taker data, Coinalyze 衍生品, buy_ratio 阈值, prompt 权重<br>- ✅ **main_live.py MTF 加载**: 7 个 MTF 参数从 ConfigManager 加载 (lines 286-292)<br>- ✅ **DeepSeekAIStrategyConfig 新增字段**: multi_timeframe_enabled, mtf_* 系列参数<br>- ✅ **Section 3.2 base.yaml 示例更新**: 添加完整 multi_timeframe 和 order_flow 配置 |
 
 ---
 
-*方案 v2.9.1 完成 Phase 4 实施验证。配置管理方案 Phase 0-6 已 100% 完成并验证通过。*
+*方案 v3.0.0 完成 Multi-Timeframe 和 Order Flow 配置集成。配置管理方案 Phase 0-6 已 100% 完成，并与代码 v3.2.9 同步。*
