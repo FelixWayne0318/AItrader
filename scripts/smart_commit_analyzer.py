@@ -254,6 +254,12 @@ def validate_rule(rule: dict, auto_fix_paths: bool = False) -> dict:
         "path_updated": False
     }
 
+    # 跳过已废弃的规则
+    if rule.get("deprecated"):
+        result["status"] = "skipped"
+        result["message"] = f"Deprecated: {rule.get('deprecated_reason', 'No reason given')}"
+        return result
+
     # 检测文件是否被移动
     actual_path, was_moved = find_file(file_path)
 
@@ -436,6 +442,48 @@ def validate_all_rules(verbose: bool = True, auto_fix_paths: bool = False) -> di
     return results
 
 
+def deprecate_rules(rule_ids: list, reason: str, verbose: bool = True) -> dict:
+    """废弃指定的规则"""
+    rules_data = load_rules()
+    deprecated_count = 0
+
+    for rule in rules_data["rules"]:
+        if rule["id"] in rule_ids:
+            rule["deprecated"] = True
+            rule["deprecated_reason"] = reason
+            rule["deprecated_date"] = datetime.now().isoformat()
+            deprecated_count += 1
+
+    if deprecated_count > 0:
+        save_rules(rules_data)
+        if verbose:
+            print(f"✅ 已废弃 {deprecated_count} 条规则")
+    else:
+        if verbose:
+            print("⚠️  未找到匹配的规则")
+
+    return {"deprecated_count": deprecated_count}
+
+
+def remove_rules(rule_ids: list, verbose: bool = True) -> dict:
+    """移除指定的规则"""
+    rules_data = load_rules()
+    original_count = len(rules_data["rules"])
+
+    rules_data["rules"] = [r for r in rules_data["rules"] if r["id"] not in rule_ids]
+
+    removed_count = original_count - len(rules_data["rules"])
+    if removed_count > 0:
+        save_rules(rules_data)
+        if verbose:
+            print(f"✅ 已移除 {removed_count} 条规则")
+    else:
+        if verbose:
+            print("⚠️  未找到匹配的规则")
+
+    return {"removed_count": removed_count}
+
+
 def run_full_analysis(limit: int = 100, verbose: bool = True, json_output: bool = False, auto_fix_paths: bool = False) -> dict:
     """运行完整分析流程"""
 
@@ -497,8 +545,21 @@ def main():
     parser.add_argument("--json", action="store_true", help="JSON 输出")
     parser.add_argument("--show-rules", action="store_true", help="显示所有规则")
     parser.add_argument("--fix-paths", action="store_true", help="自动修复移动文件的路径")
+    parser.add_argument("--deprecate", nargs="+", metavar="RULE_ID", help="废弃指定规则 (空格分隔多个ID)")
+    parser.add_argument("--remove", nargs="+", metavar="RULE_ID", help="移除指定规则 (空格分隔多个ID)")
+    parser.add_argument("--reason", type=str, default="Obsolete", help="废弃原因 (与 --deprecate 配合)")
 
     args = parser.parse_args()
+
+    # 处理废弃规则
+    if args.deprecate:
+        deprecate_rules(args.deprecate, args.reason, not args.json)
+        return
+
+    # 处理移除规则
+    if args.remove:
+        remove_rules(args.remove, not args.json)
+        return
 
     if args.show_rules:
         rules_data = load_rules()

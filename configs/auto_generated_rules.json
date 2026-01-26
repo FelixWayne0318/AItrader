@@ -201,16 +201,6 @@
       "auto_generated": true
     },
     {
-      "id": "c7beafebd874",
-      "commit": "cd036b4",
-      "file": "indicators/technical_manager.py",
-      "message": "fix: 改用 Cython 指标避免 Rust 线程安全 panic",
-      "pattern": "from nautilus_trader.indicators.average.sma import SimpleMovingAverage",
-      "pattern_type": "import",
-      "created": "2026-01-25T11:38:01.505232",
-      "auto_generated": true
-    },
-    {
       "id": "426b3d634f26",
       "commit": "ee43d22",
       "file": "utils/telegram_bot.py",
@@ -218,16 +208,6 @@
       "pattern": "import requests",
       "pattern_type": "import",
       "created": "2026-01-25T11:38:01.554704",
-      "auto_generated": true
-    },
-    {
-      "id": "1499132a781a",
-      "commit": "11bab54",
-      "file": "utils/telegram_bot.py",
-      "message": "fix: 修复 Telegram TCPTransport closed 错误",
-      "pattern": "return loop.run_until_complete(",
-      "pattern_type": "contains",
-      "created": "2026-01-25T11:38:01.604581",
       "auto_generated": true
     },
     {
@@ -298,36 +278,6 @@
       "pattern": "if not (has_trading_logic_import and has_min_sl_constant):",
       "pattern_type": "contains",
       "created": "2026-01-25T11:38:01.809963",
-      "auto_generated": true
-    },
-    {
-      "id": "b182fbf6fc63",
-      "commit": "a9a3655",
-      "file": "agents/multi_agent_analyzer.py",
-      "message": "fix: 统一 MIN_SL_DISTANCE_PCT 常量为 1%",
-      "pattern": "from strategy.trading_logic import MIN_SL_DISTANCE_PCT",
-      "pattern_type": "import",
-      "created": "2026-01-25T11:38:01.842587",
-      "auto_generated": true
-    },
-    {
-      "id": "a01b52785774",
-      "commit": "a9a3655",
-      "file": "scripts/diagnose_realtime.py",
-      "message": "fix: 统一 MIN_SL_DISTANCE_PCT 常量为 1%",
-      "pattern": "if trading_logic_path.exists():",
-      "pattern_type": "contains",
-      "created": "2026-01-25T11:38:01.862080",
-      "auto_generated": true
-    },
-    {
-      "id": "e78fe09729aa",
-      "commit": "a9a3655",
-      "file": "strategy/trading_logic.py",
-      "message": "fix: 统一 MIN_SL_DISTANCE_PCT 常量为 1%",
-      "pattern": "MIN_SL_DISTANCE_PCT = 0.01   # 1% minimum SL distance (avoid too tight stops)",
-      "pattern_type": "contains",
-      "created": "2026-01-25T11:38:01.881175",
       "auto_generated": true
     },
     {
@@ -431,16 +381,6 @@
       "auto_generated": true
     },
     {
-      "id": "bb6202aa83e2",
-      "commit": "aac0af5",
-      "file": "agents/multi_agent_analyzer.py",
-      "message": "fix: 实现混合决策架构，移除Judge AI层，使用确定性量化逻辑",
-      "pattern": "_count_technical_confirmations",
-      "pattern_type": "function_exists",
-      "created": "2026-01-25T11:38:02.238251",
-      "auto_generated": true
-    },
-    {
       "id": "ec764134887f",
       "commit": "3db71ac",
       "file": "agents/multi_agent_analyzer.py",
@@ -468,16 +408,6 @@
       "pattern": "if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:",
       "pattern_type": "contains",
       "created": "2026-01-25T11:38:02.360850",
-      "auto_generated": true
-    },
-    {
-      "id": "f43dfcb73ac8",
-      "commit": "accba28",
-      "file": "strategy/deepseek_strategy.py",
-      "message": "fix: 修复代码审查发现的安全和质量问题",
-      "pattern": "# Additional validation: check minimum distance",
-      "pattern_type": "contains",
-      "created": "2026-01-25T11:38:02.416243",
       "auto_generated": true
     },
     {
@@ -531,16 +461,6 @@
       "auto_generated": true
     },
     {
-      "id": "7db1e6b628dc",
-      "commit": "5c08838",
-      "file": "scripts/diagnose_realtime.py",
-      "message": "fix: 修复 diagnose_realtime.py 变量名错误",
-      "pattern": "signal_data=signal_data,  # 方案B: 使用 Judge 的决策数据",
-      "pattern_type": "contains",
-      "created": "2026-01-25T11:38:02.573678",
-      "auto_generated": true
-    },
-    {
       "id": "02475762eacf",
       "commit": "70cc94a",
       "file": "agents/multi_agent_analyzer.py",
@@ -571,26 +491,6 @@
       "auto_generated": true
     },
     {
-      "id": "6fdcbe4d53b7",
-      "commit": "79e168a",
-      "file": "scripts/diagnose_realtime.py",
-      "message": "fix: 诊断脚本显示正确的 SL/TP (来自最终信号)",
-      "pattern": "final_sl = final_signal_data.get('stop_loss')",
-      "pattern_type": "contains",
-      "created": "2026-01-25T11:38:02.686914",
-      "auto_generated": true
-    },
-    {
-      "id": "df2e136b58a5",
-      "commit": "a1fb405",
-      "file": "scripts/diagnose_realtime.py",
-      "message": "fix: 同步 diagnose_realtime.py 与最新策略逻辑",
-      "pattern": "if opposing_signals or hold_vs_action:",
-      "pattern_type": "contains",
-      "created": "2026-01-25T11:38:02.732139",
-      "auto_generated": true
-    },
-    {
       "id": "e2045e56cca0",
       "commit": "e9f6dca",
       "file": "agents/multi_agent_analyzer.py",
@@ -611,16 +511,6 @@
       "auto_generated": true
     },
     {
-      "id": "449c5bfc32bf",
-      "commit": "24bc34b",
-      "file": "strategy/deepseek_strategy.py",
-      "message": "fix: HOLD vs BUY/SELL 分歧也应用信心融合",
-      "pattern": "if opposing_signals or hold_vs_action:",
-      "pattern_type": "contains",
-      "created": "2026-01-25T11:38:02.838102",
-      "auto_generated": true
-    },
-    {
       "id": "466727cfa94a",
       "commit": "76a6c14",
       "file": "web/backend/core/config.py",
@@ -638,26 +528,6 @@
       "pattern": "from telegram import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats",
       "pattern_type": "import",
       "created": "2026-01-25T11:38:03.030253",
-      "auto_generated": true
-    },
-    {
-      "id": "f26b180c7071",
-      "commit": "922f973",
-      "file": "scripts/diagnose_realtime.py",
-      "message": "fix: 修复代码审查发现的问题",
-      "pattern": "resolve_divergence_by_confidence",
-      "pattern_type": "function_exists",
-      "created": "2026-01-25T11:38:03.067523",
-      "auto_generated": true
-    },
-    {
-      "id": "0f207da88bfc",
-      "commit": "922f973",
-      "file": "strategy/deepseek_strategy.py",
-      "message": "fix: 修复代码审查发现的问题",
-      "pattern": "_create_hold_signal",
-      "pattern_type": "function_exists",
-      "created": "2026-01-25T11:38:03.090472",
       "auto_generated": true
     },
     {
@@ -711,16 +581,6 @@
       "auto_generated": true
     },
     {
-      "id": "7e885fd6b2dd",
-      "commit": "8cecd6e",
-      "file": "strategy/deepseek_strategy.py",
-      "message": "fix: 修复 Rust RSI 线程安全崩溃 (Telegram 命令处理)",
-      "pattern": "# Fallback to entry price if no price cached yet",
-      "pattern_type": "contains",
-      "created": "2026-01-25T11:38:03.329407",
-      "auto_generated": true
-    },
-    {
       "id": "99f7803a0a9f",
       "commit": "264896f",
       "file": "strategy/deepseek_strategy.py",
@@ -743,7 +603,8 @@
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-01-25T12:25:08.612214",
-    "count": 74
+    "updated": "2026-01-26T02:22:11.286676",
+    "count": 60,
+    "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
