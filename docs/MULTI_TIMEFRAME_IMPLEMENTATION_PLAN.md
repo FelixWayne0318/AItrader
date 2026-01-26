@@ -1,14 +1,14 @@
-# 多时间框架实施方案 v3.1
+# 多时间框架实施方案 v3.2
 
 ## 文档信息
 
 | 项目 | 值 |
 |------|-----|
-| 版本 | 3.1 |
+| 版本 | 3.2 |
 | 创建日期 | 2026-01-26 |
 | 更新日期 | 2026-01-26 |
 | 基于 | TradingAgents 架构 + AItrader 现有系统 |
-| 状态 | **完整数据流设计** (v3.1 - 含完整流程图) |
+| 状态 | **订单流数据增强** (v3.2 - 含完整 Prompt 设计) |
 
 ## 版本历史
 
@@ -18,6 +18,23 @@
 | v2.0 | 2026-01-26 | 根据审查报告修复 API 兼容性问题 |
 | v3.0 | 2026-01-26 | 全面仓库审查后修复，合并审查报告，删除冗余文件 |
 | v3.1 | 2026-01-26 | **新增完整数据流图** (Section 1.5)，详细描述从数据获取到信号执行的完整流程 |
+| v3.2 | 2026-01-26 | **订单流数据增强** (Section 9)，整合 Binance + Coinalyze 免费数据，含完整 Prompt 设计 |
+
+### v3.2 主要更新 (订单流数据增强)
+
+1. **新增 Section 9: 订单流数据整合** - 完整数据增强方案
+   - 9.1 数据源概览 (Binance + Coinalyze 免费 API)
+   - 9.2 Binance K线完整字段利用 (12 列 → 全部使用)
+   - 9.3 Coinalyze 免费数据整合 (OI, 清算, 资金费率)
+   - 9.4 数据处理原则 (简单计算，AI 处理复杂分析)
+   - 9.5 DeepSeek Prompt 设计 (优化版 ~600 tokens)
+   - 9.6 代码实现模板
+
+2. **核心设计原则**
+   - **简单计算**: 只做简单除法 (buy_ratio = taker_buy / volume)
+   - **AI 分析复杂模式**: 让 AI 判断 CVD 趋势、背离等
+   - **零成本数据**: 仅使用 Binance + Coinalyze 免费 API
+   - **结构化输出**: JSON 格式便于解析
 
 ### v3.1 主要更新
 
@@ -1948,4 +1965,486 @@ v3.0 删除了以下冗余文件 (内容已合并到本文档):
 
 ---
 
-*文档更新于 2026-01-26 v3.1 - 新增完整数据流图*
+## 9. 订单流数据整合 (v3.2 新增)
+
+本节描述如何利用 Binance K线完整数据 + Coinalyze 免费 API 增强交易信号质量。
+
+### 9.1 数据源概览
+
+#### 9.1.1 成本对比
+
+| 数据源 | 价格 | 数据内容 |
+|--------|------|----------|
+| **Binance API** | 免费 | K线12列、多空比、大户持仓 |
+| **Coinalyze API** | 免费 | 聚合OI、清算、资金费率 |
+| CoinGlass | $29-699/月 | 专业衍生品数据 |
+| CryptoQuant | $39-799/月 | 链上+衍生品数据 |
+
+**结论**: Binance + Coinalyze 免费组合已足够，无需付费服务。
+
+#### 9.1.2 Binance 免费数据
+
+| 端点 | 数据 | 用途 |
+|------|------|------|
+| `/fapi/v1/klines` | K线12列 (含 taker_buy) | 计算买卖比 |
+| `/futures/data/globalLongShortAccountRatio` | 多空账户比 | 市场情绪 |
+| `/futures/data/topLongShortPositionRatio` | 大户持仓比 | 主力动向 |
+| `/futures/data/takerlongshortRatio` | 主动买卖比 | 资金流向 |
+
+#### 9.1.3 Coinalyze 免费数据
+
+| 端点 | 数据 | 用途 |
+|------|------|------|
+| `/v1/open-interest` | 聚合持仓量 | 趋势强度 |
+| `/v1/open-interest-history` | OI 历史 | OI 变化趋势 |
+| `/v1/funding-rate` | 资金费率 | 情绪指标 |
+| `/v1/funding-rate-history` | 费率历史 | 费率趋势 |
+| `/v1/liquidation` | 清算数据 | 极端行情信号 |
+| `/v1/liquidation-history` | 清算历史 | 清算趋势 |
+| `/v1/long-short-ratio` | 多空比 | 市场偏向 |
+| `/v1/exchange-list` | 交易所列表 | 数据来源 |
+| `/v1/symbol-list` | 交易对列表 | 支持的资产 |
+
+### 9.2 Binance K线完整字段
+
+#### 9.2.1 K线 12 列详解
+
+```
+列索引  列名               类型     当前使用  本方案使用
+------  ----               ----     --------  ----------
+[0]     open_time          int      ✓         ✓
+[1]     open               float    ✓         ✓
+[2]     high               float    ✓         ✓
+[3]     low                float    ✓         ✓
+[4]     close              float    ✓         ✓
+[5]     volume             float    ✓         ✓ (用于计算 buy_ratio)
+[6]     close_time         int      ✗         ✗
+[7]     quote_volume       float    ✗         ✓ (USDT 成交额)
+[8]     trades_count       int      ✗         ✓ (成交笔数)
+[9]     taker_buy_volume   float    ✗         ✓ (主动买入量) ⭐ 核心
+[10]    taker_buy_quote    float    ✗         ✓ (主动买入额)
+[11]    ignore             -        ✗         ✗
+```
+
+#### 9.2.2 关键指标计算
+
+```python
+# 只做简单除法，不要自己计算复杂指标！
+
+# 买卖比 (核心指标)
+buy_ratio = taker_buy_volume / volume  # 范围 0-1, >0.5 多头主导
+
+# 平均单笔成交额 (判断大户活动)
+avg_trade_usdt = quote_volume / trades_count
+
+# 让 AI 分析的数据:
+# - buy_ratio 序列 → AI 判断趋势、背离
+# - 不要自己计算 CVD，让 AI 从 buy_ratio 序列中分析
+```
+
+### 9.3 数据处理原则
+
+#### 9.3.1 为什么不自己计算 CVD?
+
+| 自己计算 | 让 AI 分析 |
+|----------|------------|
+| ❌ 容易出错 (符号、累加) | ✓ AI 擅长模式识别 |
+| ❌ 需要维护状态 | ✓ 无状态，每次独立分析 |
+| ❌ 背离检测复杂 | ✓ AI 可描述背离特征 |
+| ❌ 增加代码复杂度 | ✓ 只传原始数据 |
+
+#### 9.3.2 处理原则
+
+1. **只做简单计算**: 除法 (buy_ratio, avg_trade)
+2. **传递原始序列**: 让 AI 看到 10 根 bar 的 buy_ratio 变化
+3. **AI 分析复杂模式**: 趋势判断、背离检测、异常识别
+4. **结构化输出**: JSON 格式便于程序解析
+
+### 9.4 AI 输入数据结构
+
+#### 9.4.1 完整数据结构
+
+```python
+ai_input_data = {
+    # === 价格数据 ===
+    "price": {
+        "current": 100250.5,
+        "change_24h_pct": 1.78,
+        "high_24h": 101500,
+        "low_24h": 98200,
+    },
+
+    # === 技术指标 (现有) ===
+    "technical": {
+        "rsi_14": 58.5,
+        "macd": {"value": 125, "signal": 98, "histogram": 27},
+        "sma_20": 99800,
+        "sma_50": 98500,
+        "bb": {"upper": 102000, "middle": 99500, "lower": 97000},
+    },
+
+    # === 订单流数据 (v3.2 新增) ⭐ ===
+    "order_flow": {
+        "current_bar": {
+            "buy_ratio": 0.548,       # 主动买入占比
+            "volume_usdt": 125312500, # USDT 成交额
+            "trades_count": 35680,    # 成交笔数
+            "avg_trade_usdt": 3513,   # 平均单笔
+        },
+        "recent_10_bars": [           # 最近 10 根 bar (让 AI 分析趋势)
+            {"close": 99500, "buy_ratio": 0.46, "volume_usdt": 85000000},
+            {"close": 99800, "buy_ratio": 0.51, "volume_usdt": 92000000},
+            {"close": 100100, "buy_ratio": 0.54, "volume_usdt": 110000000},
+            # ... 共 10 条
+        ],
+        "summary": {
+            "avg_buy_ratio_10": 0.532,
+            "buy_ratio_trend": "上升",  # 简单判断: 后5根均值 vs 前5根
+            "volume_trend": "放量",     # 后5根 vs 前5根
+        },
+    },
+
+    # === 衍生品数据 (Coinalyze) ===
+    "derivatives": {
+        "open_interest": {
+            "total_usd": 18500000000,  # $185 亿
+            "change_24h_pct": 3.5,
+        },
+        "liquidations_1h": {
+            "long_usd": 2500000,   # 多头清算 $250 万
+            "short_usd": 1800000,  # 空头清算 $180 万
+        },
+        "funding_rate": {
+            "current": 0.0008,     # 0.08% (正 = 多头付费)
+            "avg_8h": 0.0006,
+        },
+    },
+
+    # === 情绪数据 (Binance) ===
+    "sentiment": {
+        "long_short_ratio": 1.25,      # >1 多头多
+        "top_trader_long_ratio": 0.58, # 大户 58% 做多
+    },
+
+    # === 当前持仓 ===
+    "current_position": {
+        "side": "NONE",  # LONG / SHORT / NONE
+        "size_usdt": 0,
+        "unrealized_pnl_pct": 0,
+    },
+}
+```
+
+### 9.5 DeepSeek Prompt 设计
+
+#### 9.5.1 优化版 Prompt (~600 tokens)
+
+```
+# BTC/USDT 交易分析
+
+## 市场数据
+价格: ${price.current} (${price.change_24h_pct}% 24h) | RSI: ${technical.rsi_14} | MACD: ${macd_status}
+
+## 订单流 ⭐
+- 买卖比: ${order_flow.current_bar.buy_ratio * 100}% (10根均值: ${order_flow.summary.avg_buy_ratio_10 * 100}%, 趋势${order_flow.summary.buy_ratio_trend})
+- 平均单笔: $${order_flow.current_bar.avg_trade_usdt} | 成交额: $${format_millions(order_flow.current_bar.volume_usdt)}
+
+买卖比序列: ${format_buy_ratio_series(order_flow.recent_10_bars)}
+
+## 衍生品
+- OI: $${format_billions(derivatives.open_interest.total_usd)} (${derivatives.open_interest.change_24h_pct}% 24h)
+- 清算: 多$${format_millions(derivatives.liquidations_1h.long_usd)}/空$${format_millions(derivatives.liquidations_1h.short_usd)}
+- 费率: ${derivatives.funding_rate.current * 100}%
+
+## 情绪
+多空比: ${sentiment.long_short_ratio} | 大户做多: ${sentiment.top_trader_long_ratio * 100}%
+
+## 当前持仓
+${position_status}
+
+---
+
+**分析权重**: 订单流(30%) + 技术面(25%) + 衍生品(25%) + 情绪(20%)
+
+**订单流解读指南**:
+- 买卖比 >55% 且上升 → 多头主导
+- 买卖比 <45% 且下降 → 空头主导
+- 价格涨但买卖比降 → 潜在顶部背离
+- 价格跌但买卖比升 → 潜在底部背离
+- OI涨+价格涨 → 新多入场 (趋势延续)
+- OI涨+价格跌 → 新空入场 (趋势延续)
+- OI跌+价格涨 → 空头平仓 (反弹可能结束)
+- OI跌+价格跌 → 多头平仓 (下跌可能结束)
+
+请分析并返回 JSON:
+```json
+{
+  "signal": "BUY|SELL|HOLD",
+  "confidence": "HIGH|MEDIUM|LOW",
+  "analysis": "简要分析 (50字内)",
+  "key_signal": "最关键的信号来源",
+  "risk_warning": "主要风险",
+  "sl_pct": 0.02,
+  "tp_pct": 0.03
+}
+```
+```
+
+#### 9.5.2 Prompt 设计原则
+
+1. **结构清晰**: 分块展示，易于 AI 理解
+2. **关键标记**: ⭐ 标记核心数据 (订单流)
+3. **解读指南**: 内置订单流分析规则，提升准确性
+4. **权重分配**: 明确各数据的权重占比
+5. **JSON 输出**: 便于程序解析，减少后处理
+
+### 9.6 代码实现模板
+
+#### 9.6.1 订单流处理器
+
+```python
+# utils/order_flow_processor.py
+
+class OrderFlowProcessor:
+    """处理 Binance K线数据，提取订单流指标"""
+
+    def __init__(self):
+        self.buy_ratio_history = []
+
+    def process_klines(self, klines: list) -> dict:
+        """
+        处理 K线数据，只做简单计算
+
+        Args:
+            klines: Binance K线数据列表，每条包含 12 列
+
+        Returns:
+            订单流数据字典
+        """
+        results = []
+        for kline in klines[-10:]:  # 只处理最近 10 根
+            volume = float(kline[5])
+            taker_buy = float(kline[9])
+            quote_volume = float(kline[7])
+            trades = int(kline[8])
+
+            # 只做简单除法！
+            buy_ratio = taker_buy / volume if volume > 0 else 0.5
+            avg_trade = quote_volume / trades if trades > 0 else 0
+
+            results.append({
+                'close': float(kline[4]),
+                'buy_ratio': round(buy_ratio, 4),
+                'avg_trade_usdt': round(avg_trade, 2),
+                'volume_usdt': round(quote_volume, 0),
+                'trades_count': trades,
+            })
+
+        self.buy_ratio_history = [r['buy_ratio'] for r in results]
+
+        # 简单趋势判断
+        first_half = sum(self.buy_ratio_history[:5]) / 5
+        second_half = sum(self.buy_ratio_history[5:]) / 5
+        trend = "上升" if second_half > first_half + 0.01 else (
+            "下降" if second_half < first_half - 0.01 else "震荡"
+        )
+
+        return {
+            'current_bar': results[-1],
+            'recent_10_bars': results,
+            'summary': {
+                'avg_buy_ratio_10': round(sum(self.buy_ratio_history) / len(self.buy_ratio_history), 4),
+                'buy_ratio_trend': trend,
+            }
+        }
+```
+
+#### 9.6.2 Coinalyze 客户端
+
+```python
+# utils/coinalyze_client.py
+
+import aiohttp
+from typing import Optional
+
+class CoinalyzeClient:
+    """Coinalyze 免费 API 客户端"""
+
+    BASE_URL = "https://api.coinalyze.net/v1"
+
+    def __init__(self, timeout: int = 10):
+        self.timeout = timeout
+
+    async def get_open_interest(self, symbol: str = "BTCUSDT") -> Optional[dict]:
+        """获取聚合持仓量"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.BASE_URL}/open-interest"
+                params = {"symbols": symbol}
+                async with session.get(url, params=params, timeout=self.timeout) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data[0] if data else None
+        except Exception as e:
+            print(f"Coinalyze OI error: {e}")
+        return None
+
+    async def get_liquidations(self, symbol: str = "BTCUSDT") -> Optional[dict]:
+        """获取清算数据"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.BASE_URL}/liquidation"
+                params = {"symbols": symbol}
+                async with session.get(url, params=params, timeout=self.timeout) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data[0] if data else None
+        except Exception as e:
+            print(f"Coinalyze liquidation error: {e}")
+        return None
+
+    async def get_funding_rate(self, symbol: str = "BTCUSDT") -> Optional[dict]:
+        """获取资金费率"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.BASE_URL}/funding-rate"
+                params = {"symbols": symbol}
+                async with session.get(url, params=params, timeout=self.timeout) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data[0] if data else None
+        except Exception as e:
+            print(f"Coinalyze funding error: {e}")
+        return None
+```
+
+#### 9.6.3 数据组装器
+
+```python
+# utils/ai_data_assembler.py
+
+class AIDataAssembler:
+    """组装 AI 输入数据"""
+
+    def __init__(self, order_flow_processor, coinalyze_client, sentiment_client):
+        self.order_flow = order_flow_processor
+        self.coinalyze = coinalyze_client
+        self.sentiment = sentiment_client
+
+    async def assemble(self, klines: list, technical: dict, position: dict) -> dict:
+        """
+        组装完整的 AI 输入数据
+
+        Args:
+            klines: Binance K线数据
+            technical: 技术指标数据 (来自 TechnicalIndicatorManager)
+            position: 当前持仓信息
+
+        Returns:
+            完整的 AI 输入数据字典
+        """
+        # 并行获取外部数据
+        import asyncio
+        oi_task = self.coinalyze.get_open_interest()
+        liq_task = self.coinalyze.get_liquidations()
+        funding_task = self.coinalyze.get_funding_rate()
+        sentiment_task = self.sentiment.get_long_short_ratio()
+
+        oi, liq, funding, sentiment = await asyncio.gather(
+            oi_task, liq_task, funding_task, sentiment_task,
+            return_exceptions=True
+        )
+
+        # 处理订单流
+        order_flow_data = self.order_flow.process_klines(klines)
+
+        # 组装数据
+        return {
+            "price": {
+                "current": float(klines[-1][4]),
+                "change_24h_pct": self._calc_change(klines),
+            },
+            "technical": technical,
+            "order_flow": order_flow_data,
+            "derivatives": {
+                "open_interest": oi if not isinstance(oi, Exception) else None,
+                "liquidations_1h": liq if not isinstance(liq, Exception) else None,
+                "funding_rate": funding if not isinstance(funding, Exception) else None,
+            },
+            "sentiment": sentiment if not isinstance(sentiment, Exception) else {},
+            "current_position": position,
+        }
+
+    def _calc_change(self, klines: list) -> float:
+        """计算 24h 涨跌幅"""
+        if len(klines) < 2:
+            return 0.0
+        old_close = float(klines[0][4])
+        new_close = float(klines[-1][4])
+        return round((new_close - old_close) / old_close * 100, 2) if old_close > 0 else 0.0
+```
+
+### 9.7 配置项扩展
+
+在 `configs/base.yaml` 中添加:
+
+```yaml
+# 订单流数据配置 (v3.2 新增)
+order_flow:
+  enabled: true
+  # Binance K线完整字段
+  use_taker_data: true
+  # Coinalyze 数据
+  coinalyze:
+    enabled: true
+    timeout: 10
+    endpoints:
+      - open_interest
+      - liquidations
+      - funding_rate
+  # 买卖比阈值
+  buy_ratio:
+    bullish_threshold: 0.55  # >55% 视为多头主导
+    bearish_threshold: 0.45  # <45% 视为空头主导
+  # Prompt 配置
+  prompt:
+    version: "optimized"  # "optimized" (~600 tokens) 或 "full" (~1800 tokens)
+    include_interpretation_guide: true
+```
+
+### 9.8 实施计划
+
+| 阶段 | 内容 | 工作量 | 风险 |
+|------|------|--------|------|
+| **Phase 1** | 添加 OrderFlowProcessor | ~50 行 | 低 |
+| **Phase 2** | 添加 CoinalyzeClient | ~80 行 | 低 |
+| **Phase 3** | 修改 AIDataAssembler | ~30 行 | 低 |
+| **Phase 4** | 更新 DeepSeek Prompt | ~20 行 | 低 |
+| **Phase 5** | 添加配置项 | ~15 行 | 低 |
+
+**总工作量**: ~100-150 行代码，约 1-2 小时
+
+**风险评估**:
+- 不修改现有交易逻辑，只增加数据输入
+- 外部 API 失败时使用默认值，不影响核心功能
+- 可通过配置项随时关闭
+
+### 9.9 验证方法
+
+```bash
+# 1. 单元测试订单流处理
+python3 -m pytest tests/test_order_flow.py -v
+
+# 2. 验证 Coinalyze API 连通性
+python3 scripts/diagnose_coinalyze.py
+
+# 3. 完整数据流测试
+python3 scripts/diagnose_realtime.py --include-order-flow
+
+# 4. Prompt token 计数
+python3 scripts/count_prompt_tokens.py
+```
+
+---
+
+*文档更新于 2026-01-26 v3.2 - 订单流数据增强*
