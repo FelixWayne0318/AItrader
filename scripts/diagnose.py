@@ -53,7 +53,7 @@ ensure_venv()
 # ============================================================
 # 配置
 # ============================================================
-VERSION = "2.0"
+VERSION = "3.0"  # v3.0: MTF support, ConfigManager integration
 BRANCH = "main"
 PROJECT_DIR = Path(__file__).parent.parent.absolute()
 SERVICE_NAME = "nautilus-trader"
@@ -278,8 +278,13 @@ def check_files():
         ("strategy/deepseek_strategy.py", True),
         ("utils/deepseek_client.py", True),
         ("utils/sentiment_client.py", True),
+        ("utils/config_manager.py", True),  # v3.0: ConfigManager
         ("patches/binance_enums.py", True),
-        ("configs/strategy_config.yaml", True),
+        ("configs/base.yaml", True),         # v3.0: 新配置系统
+        ("configs/production.yaml", True),   # v3.0: 环境覆盖
+        ("indicators/technical_manager.py", True),  # 技术指标
+        ("indicators/multi_timeframe_manager.py", True),  # v3.0: MTF
+        ("agents/multi_agent_analyzer.py", True),  # 多代理分析
         ("requirements.txt", True),
         ("setup.sh", True),
         ("nautilus-trader.service", True),
@@ -364,43 +369,80 @@ def check_env():
     return all_ok
 
 def check_nautilus_config():
-    """5. NautilusTrader 配置检查"""
-    header("5. 策略配置检查")
+    """5. 策略配置检查 (ConfigManager)"""
+    header("5. 策略配置检查 (ConfigManager)")
     all_ok = True
     details = {}
 
     try:
         import yaml
-        config_path = PROJECT_DIR / "configs" / "strategy_config.yaml"
 
-        if not config_path.exists():
-            fail("strategy_config.yaml 不存在")
+        # v3.0: 使用 ConfigManager 分层配置
+        base_config_path = PROJECT_DIR / "configs" / "base.yaml"
+
+        if not base_config_path.exists():
+            fail("configs/base.yaml 不存在")
             results.add_check("nautilus_config", "fail", error="配置文件不存在")
             return False
 
-        with open(config_path) as f:
+        with open(base_config_path) as f:
             config = yaml.safe_load(f)
 
-        # 检查关键配置
-        strategy = config.get("strategy", {})
-        details["name"] = strategy.get("name", "N/A")
-        details["symbol"] = strategy.get("symbol", "N/A")
-        details["leverage"] = strategy.get("leverage", "N/A")
-        details["risk_per_trade"] = strategy.get("risk_per_trade", "N/A")
-        details["default_sl_pct"] = strategy.get("default_sl_pct", "N/A")
+        # 检查关键配置路径
+        # Trading config
+        trading = config.get("trading", {})
+        details["instrument_id"] = trading.get("instrument_id", "N/A")
+        details["timeframe"] = trading.get("timeframe", "N/A")
+        info(f"交易对: {details['instrument_id']}")
+        info(f"时间周期: {details['timeframe']}")
 
-        info(f"策略名称: {details['name']}")
-        info(f"交易对: {details['symbol']}")
+        # Capital config
+        capital = config.get("capital", {})
+        details["equity"] = capital.get("equity", "N/A")
+        details["leverage"] = capital.get("leverage", "N/A")
+        info(f"初始资金: {details['equity']}")
         info(f"杠杆: {details['leverage']}")
-        info(f"风险比例: {details['risk_per_trade']}")
-        info(f"止损百分比: {details['default_sl_pct']}")
 
-        deepseek = config.get("deepseek", {})
+        # AI config
+        ai = config.get("ai", {})
+        deepseek = ai.get("deepseek", {})
         details["model"] = deepseek.get("model", "N/A")
-        details["analysis_interval"] = deepseek.get("analysis_interval", "N/A")
-
+        details["temperature"] = deepseek.get("temperature", "N/A")
         info(f"DeepSeek模型: {details['model']}")
-        info(f"分析间隔: {details['analysis_interval']}秒")
+        info(f"温度参数: {details['temperature']}")
+
+        # Risk config
+        risk = config.get("risk", {})
+        details["enable_auto_sl_tp"] = risk.get("enable_auto_sl_tp", "N/A")
+        details["rsi_upper"] = risk.get("rsi_extreme_threshold_upper", "N/A")
+        details["rsi_lower"] = risk.get("rsi_extreme_threshold_lower", "N/A")
+        info(f"自动止损止盈: {details['enable_auto_sl_tp']}")
+        info(f"RSI 阈值: {details['rsi_lower']}/{details['rsi_upper']}")
+
+        # Indicators config
+        indicators = config.get("indicators", {})
+        sma = indicators.get("sma", {})
+        details["sma_periods"] = sma.get("periods", "N/A")
+        info(f"SMA 周期: {details['sma_periods']}")
+
+        # Timing config
+        timing = config.get("timing", {})
+        details["timer_interval"] = timing.get("timer_interval_sec", "N/A")
+        info(f"分析间隔: {details['timer_interval']}秒")
+
+        # v3.0: MTF config
+        mtf = config.get("multi_timeframe", {})
+        details["mtf_enabled"] = mtf.get("enabled", False)
+        if details["mtf_enabled"]:
+            ok("✅ 多时间框架 (MTF) 已启用")
+            trend = mtf.get("trend_layer", {})
+            decision = mtf.get("decision_layer", {})
+            execution = mtf.get("execution_layer", {})
+            info(f"  趋势层: {trend.get('timeframe', 'N/A')} (SMA_{trend.get('sma_period', 200)})")
+            info(f"  决策层: {decision.get('timeframe', 'N/A')}")
+            info(f"  执行层: {execution.get('default_timeframe', 'N/A')}")
+        else:
+            info("多时间框架 (MTF): 未启用")
 
         ok("配置文件格式正确")
 
@@ -830,7 +872,11 @@ def check_imports():
         ("strategy.deepseek_strategy", "DeepSeek策略"),
         ("utils.deepseek_client", "DeepSeek客户端"),
         ("utils.sentiment_client", "情绪分析客户端"),
+        ("utils.config_manager", "ConfigManager配置管理"),  # v3.0
         ("patches.binance_enums", "Binance枚举补丁"),
+        ("indicators.technical_manager", "技术指标管理器"),  # v3.0
+        ("indicators.multi_timeframe_manager", "多时间框架管理器"),  # v3.0
+        ("agents.multi_agent_analyzer", "多代理分析器"),  # v3.0
     ]
 
     for module, desc in modules_to_test:

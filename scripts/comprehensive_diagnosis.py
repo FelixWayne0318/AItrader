@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v2.9.1)
+配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v3.0.0)
 
 完整验证 Phase 0-6 的所有实施内容，确保配置管理方案正确实施。
+v3.0.0: 添加 MTF (多时间框架) 三层架构验证。
 
 Usage:
     python3 scripts/comprehensive_diagnosis.py
@@ -57,7 +58,8 @@ class ConfigManagementDiagnostic:
     def run_all_tests(self):
         """运行所有测试"""
         print("=" * 70)
-        print("  配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v2.9.1)")
+        print("  配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v3.0.0)")
+        print("  v3.0.0: 添加 MTF 多时间框架验证")
         print("=" * 70)
         print()
 
@@ -106,6 +108,14 @@ class ConfigManagementDiagnostic:
         print("Phase 6: 文档同步")
         print("-" * 70)
         self.test_phase6_documentation_sync()
+        print()
+
+        # Phase 7: MTF 多时间框架 (v3.0.0 新增)
+        print("Phase 7: MTF 多时间框架 (v3.0.0)")
+        print("-" * 70)
+        self.test_phase7_mtf_config()
+        self.test_phase7_mtf_manager()
+        self.test_phase7_mtf_dataclass_fields()
         print()
 
         # 综合验证
@@ -595,6 +605,156 @@ class ConfigManagementDiagnostic:
             self.add_result('Phase 6', '文档同步', False, str(e))
             print(f"❌ [Phase 6] 文档同步: {e}")
 
+    # ==================== Phase 7 测试 (MTF) ====================
+
+    def test_phase7_mtf_config(self):
+        """测试 Phase 7: MTF 配置"""
+        try:
+            import yaml
+            base_config = project_root / 'configs' / 'base.yaml'
+
+            if not base_config.exists():
+                self.add_result('Phase 7', 'MTF 配置', False, 'base.yaml 不存在')
+                print("❌ [Phase 7] MTF 配置")
+                print("   base.yaml 不存在")
+                return
+
+            with open(base_config, 'r') as f:
+                config = yaml.safe_load(f)
+
+            mtf = config.get('multi_timeframe', {})
+
+            # 检查 MTF 配置结构
+            required_keys = ['enabled', 'trend_layer', 'decision_layer', 'execution_layer']
+            missing = [k for k in required_keys if k not in mtf]
+
+            if missing:
+                self.add_result('Phase 7', 'MTF 配置', False, f'缺失配置: {", ".join(missing)}')
+                print("❌ [Phase 7] MTF 配置")
+                print(f"   缺失配置: {', '.join(missing)}")
+                return
+
+            # 检查各层配置
+            trend = mtf.get('trend_layer', {})
+            decision = mtf.get('decision_layer', {})
+            execution = mtf.get('execution_layer', {})
+
+            details = []
+            details.append(f"enabled={mtf.get('enabled')}")
+            details.append(f"trend={trend.get('timeframe', 'N/A')}")
+            details.append(f"decision={decision.get('timeframe', 'N/A')}")
+            details.append(f"execution={execution.get('default_timeframe', 'N/A')}")
+
+            self.add_result(
+                'Phase 7', 'MTF 配置',
+                True,
+                f'MTF 配置完整: {", ".join(details)}'
+            )
+            print("✅ [Phase 7] MTF 配置")
+            print(f"   {', '.join(details)}")
+
+        except Exception as e:
+            self.add_result('Phase 7', 'MTF 配置', False, str(e))
+            print(f"❌ [Phase 7] MTF 配置: {e}")
+
+    def test_phase7_mtf_manager(self):
+        """测试 Phase 7: MultiTimeframeManager 模块"""
+        try:
+            mtf_file = project_root / 'indicators' / 'multi_timeframe_manager.py'
+
+            if not mtf_file.exists():
+                self.add_result('Phase 7', 'MTF Manager', False, 'multi_timeframe_manager.py 不存在')
+                print("❌ [Phase 7] MTF Manager")
+                print("   multi_timeframe_manager.py 不存在")
+                return
+
+            content = mtf_file.read_text()
+
+            # 检查关键类和枚举
+            checks = [
+                ('class MultiTimeframeManager', 'MultiTimeframeManager 类'),
+                ('class RiskState', 'RiskState 枚举'),
+                ('class DecisionState', 'DecisionState 枚举'),
+                ('def route_bar', 'route_bar 方法'),
+                ('def evaluate_risk_state', 'evaluate_risk_state 方法'),
+                ('def check_execution_confirmation', 'check_execution_confirmation 方法'),
+            ]
+
+            missing = []
+            for check_str, description in checks:
+                if check_str not in content:
+                    missing.append(description)
+
+            if missing:
+                self.add_result('Phase 7', 'MTF Manager', False, f'缺失: {", ".join(missing)}')
+                print("❌ [Phase 7] MTF Manager")
+                print(f"   缺失: {', '.join(missing)}")
+            else:
+                # 尝试导入验证
+                try:
+                    from indicators.multi_timeframe_manager import (
+                        MultiTimeframeManager,
+                        RiskState,
+                        DecisionState
+                    )
+                    self.add_result('Phase 7', 'MTF Manager', True, '模块导入成功')
+                    print("✅ [Phase 7] MTF Manager")
+                    print("   模块导入成功")
+                except ImportError as e:
+                    self.add_result('Phase 7', 'MTF Manager', False, f'导入失败: {e}')
+                    print(f"❌ [Phase 7] MTF Manager: 导入失败 {e}")
+
+        except Exception as e:
+            self.add_result('Phase 7', 'MTF Manager', False, str(e))
+            print(f"❌ [Phase 7] MTF Manager: {e}")
+
+    def test_phase7_mtf_dataclass_fields(self):
+        """测试 Phase 7: strategy dataclass MTF 字段"""
+        try:
+            strategy_file = project_root / 'strategy' / 'deepseek_strategy.py'
+            content = strategy_file.read_text()
+
+            # 检查 MTF 相关字段
+            mtf_fields = [
+                'mtf_enabled',
+            ]
+
+            missing = []
+            for field in mtf_fields:
+                if f'{field}:' not in content and f'{field} =' not in content:
+                    missing.append(field)
+
+            # 检查 MTF 初始化逻辑
+            mtf_init_checks = [
+                ('MultiTimeframeManager', 'MTF Manager 导入'),
+                ('_prefetch_multi_timeframe_bars', 'MTF 预取方法'),
+            ]
+
+            for check_str, description in mtf_init_checks:
+                if check_str not in content:
+                    missing.append(description)
+
+            if not missing:
+                self.add_result(
+                    'Phase 7', 'MTF dataclass 字段',
+                    True,
+                    'MTF 字段和方法已集成到 strategy'
+                )
+                print("✅ [Phase 7] MTF dataclass 字段")
+                print("   MTF 字段和方法已集成到 strategy")
+            else:
+                self.add_result(
+                    'Phase 7', 'MTF dataclass 字段',
+                    False,
+                    f'缺失: {", ".join(missing)}'
+                )
+                print("❌ [Phase 7] MTF dataclass 字段")
+                print(f"   缺失: {', '.join(missing)}")
+
+        except Exception as e:
+            self.add_result('Phase 7', 'MTF dataclass 字段', False, str(e))
+            print(f"❌ [Phase 7] MTF dataclass 字段: {e}")
+
     # ==================== 综合验证 ====================
 
     def test_comprehensive_circular_imports(self):
@@ -762,7 +922,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v2.9.1)'
+        description='配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v3.0.0 + MTF)'
     )
     parser.add_argument(
         '--quick',

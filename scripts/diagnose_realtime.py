@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v9.0 (TradingAgents 架构)
+实盘信号诊断脚本 v10.0 (TradingAgents 架构 + MTF 支持)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -9,7 +9,8 @@
 4. 检查 Binance 真实持仓
 5. 模拟完整的 _execute_trade 流程（包括完整的 SL/TP 验证逻辑）
 6. 输出实盘环境下会产生的真实结果
-7. 检查可能导致不能下单的关键配置 (v9.0 新增)
+7. 检查可能导致不能下单的关键配置
+8. v10.0: 多时间框架 (MTF) 三层架构支持
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -18,7 +19,17 @@
 - Judge 决策即最终决策，不需要信号合并
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
+MTF 三层架构 (v10.0):
+- 趋势层 (1D): SMA_200 判断长期趋势 → Risk State
+- 决策层 (4H): 技术分析 + 情绪分析 → Decision State
+- 执行层 (15M): 精确入场时机
+- 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
+
 历史更新:
+v10.0:
+- 添加 MTF 配置检查和三层框架验证
+- 添加 MTF 历史数据预取状态诊断
+
 v9.0:
 - 添加关键配置检查 (load_all, reconciliation, SL/TP 字段名)
 - 检测可能导致不能下单的配置问题
@@ -251,7 +262,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v9.0 (TradingAgents 架构){mode_str}")
+print(f"  实盘信号诊断工具 v10.0 (TradingAgents 架构 + MTF 支持){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -296,6 +307,77 @@ if config_issues:
     if response.lower() != 'y':
         print("  退出诊断。")
         sys.exit(1)
+
+print()
+
+# =============================================================================
+# 0.5. MTF 多时间框架配置检查 (v10.0 新增)
+# =============================================================================
+print("[0.5/10] MTF 多时间框架配置检查 (v10.0)...")
+print("-" * 70)
+
+try:
+    import yaml
+    mtf_config_path = project_root / "configs" / "base.yaml"
+
+    if mtf_config_path.exists():
+        with open(mtf_config_path, 'r', encoding='utf-8') as f:
+            base_config = yaml.safe_load(f)
+
+        mtf_config = base_config.get('multi_timeframe', {})
+        mtf_enabled = mtf_config.get('enabled', False)
+
+        if mtf_enabled:
+            print("  ✅ MTF 多时间框架: 已启用")
+
+            # 趋势层 (1D)
+            trend_layer = mtf_config.get('trend_layer', {})
+            trend_tf = trend_layer.get('timeframe', 'N/A')
+            trend_sma = trend_layer.get('sma_period', 200)
+            print(f"     趋势层 (Trend): {trend_tf} (SMA_{trend_sma})")
+
+            # 决策层 (4H)
+            decision_layer = mtf_config.get('decision_layer', {})
+            decision_tf = decision_layer.get('timeframe', 'N/A')
+            print(f"     决策层 (Decision): {decision_tf}")
+
+            # 执行层 (15M)
+            execution_layer = mtf_config.get('execution_layer', {})
+            execution_tf = execution_layer.get('default_timeframe', 'N/A')
+            print(f"     执行层 (Execution): {execution_tf}")
+
+            # 检查 MultiTimeframeManager 模块
+            mtf_manager_path = project_root / "indicators" / "multi_timeframe_manager.py"
+            if mtf_manager_path.exists():
+                print("  ✅ MultiTimeframeManager 模块存在")
+
+                # 尝试导入验证
+                try:
+                    from indicators.multi_timeframe_manager import (
+                        MultiTimeframeManager,
+                        RiskState,
+                        DecisionState
+                    )
+                    print("  ✅ MultiTimeframeManager 导入成功")
+                    print(f"     RiskState: {[s.name for s in RiskState]}")
+                    print(f"     DecisionState: {[s.name for s in DecisionState]}")
+                except ImportError as e:
+                    print(f"  ⚠️ MultiTimeframeManager 导入失败: {e}")
+            else:
+                print("  ❌ MultiTimeframeManager 模块不存在!")
+                print("     → 预期路径: indicators/multi_timeframe_manager.py")
+        else:
+            print("  ℹ️ MTF 多时间框架: 未启用")
+            print("     → 如需启用，编辑 configs/base.yaml:")
+            print("       multi_timeframe:")
+            print("         enabled: true")
+    else:
+        print("  ⚠️ configs/base.yaml 不存在，跳过 MTF 检查")
+        mtf_enabled = False
+
+except Exception as e:
+    print(f"  ⚠️ MTF 配置检查失败: {e}")
+    mtf_enabled = False
 
 print()
 
@@ -970,8 +1052,15 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents - Judge 层级决策)")
+print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.0)")
 print("=" * 70)
+print()
+
+# 显示 MTF 状态
+if mtf_enabled:
+    print(f"  📊 MTF Status: ✅ 已启用 (1D/4H/15M 三层架构)")
+else:
+    print(f"  📊 MTF Status: ❌ 未启用")
 print()
 
 # TradingAgents: Judge 决策即最终决策，无需共识检查
