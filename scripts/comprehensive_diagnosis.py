@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v2.9.1)
+配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v3.1.0)
 
 完整验证 Phase 0-6 的所有实施内容，确保配置管理方案正确实施。
+v3.0.0: 添加 MTF (多时间框架) 三层架构验证。
+v3.1.0: 添加 MTF 详细配置验证、初始化配置、Order Flow 配置检查。
 
 Usage:
     python3 scripts/comprehensive_diagnosis.py
@@ -10,11 +12,35 @@ Usage:
     python3 scripts/comprehensive_diagnosis.py --json result.json  # 导出 JSON 结果
 """
 
+import os
 import sys
 import json
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+# ============================================================
+# 自动切换到 venv (与 diagnose.py 一致)
+# ============================================================
+def ensure_venv():
+    """确保在 venv 中运行，否则自动切换"""
+    project_dir = Path(__file__).parent.parent.absolute()
+    venv_python = project_dir / "venv" / "bin" / "python"
+
+    # 检查是否已在 venv 中
+    in_venv = (
+        hasattr(sys, 'real_prefix') or
+        (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix)
+    )
+
+    if not in_venv and venv_python.exists():
+        print(f"\033[93m[!]\033[0m 检测到未使用 venv，自动切换...")
+        os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+
+    return in_venv
+
+# 在导入其他模块前先确保 venv
+ensure_venv()
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -57,7 +83,8 @@ class ConfigManagementDiagnostic:
     def run_all_tests(self):
         """运行所有测试"""
         print("=" * 70)
-        print("  配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v2.9.1)")
+        print("  配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v3.1.0)")
+        print("  v3.1.0: MTF 详细配置 + 初始化配置 + Order Flow 检查")
         print("=" * 70)
         print()
 
@@ -106,6 +133,22 @@ class ConfigManagementDiagnostic:
         print("Phase 6: 文档同步")
         print("-" * 70)
         self.test_phase6_documentation_sync()
+        print()
+
+        # Phase 7: MTF 多时间框架 (v3.0.0 新增)
+        print("Phase 7: MTF 多时间框架 (v3.1.0)")
+        print("-" * 70)
+        self.test_phase7_mtf_config()
+        self.test_phase7_mtf_manager()
+        self.test_phase7_mtf_dataclass_fields()
+        self.test_phase7_mtf_layer_details()  # v3.1.0 新增
+        self.test_phase7_mtf_initialization()  # v3.1.0 新增
+        print()
+
+        # Phase 8: Order Flow 配置 (v3.1.0 新增)
+        print("Phase 8: Order Flow 配置 (v3.1.0)")
+        print("-" * 70)
+        self.test_phase8_order_flow_config()
         print()
 
         # 综合验证
@@ -595,6 +638,334 @@ class ConfigManagementDiagnostic:
             self.add_result('Phase 6', '文档同步', False, str(e))
             print(f"❌ [Phase 6] 文档同步: {e}")
 
+    # ==================== Phase 7 测试 (MTF) ====================
+
+    def test_phase7_mtf_config(self):
+        """测试 Phase 7: MTF 配置"""
+        try:
+            import yaml
+            base_config = project_root / 'configs' / 'base.yaml'
+
+            if not base_config.exists():
+                self.add_result('Phase 7', 'MTF 配置', False, 'base.yaml 不存在')
+                print("❌ [Phase 7] MTF 配置")
+                print("   base.yaml 不存在")
+                return
+
+            with open(base_config, 'r') as f:
+                config = yaml.safe_load(f)
+
+            mtf = config.get('multi_timeframe', {})
+
+            # 检查 MTF 配置结构
+            required_keys = ['enabled', 'trend_layer', 'decision_layer', 'execution_layer']
+            missing = [k for k in required_keys if k not in mtf]
+
+            if missing:
+                self.add_result('Phase 7', 'MTF 配置', False, f'缺失配置: {", ".join(missing)}')
+                print("❌ [Phase 7] MTF 配置")
+                print(f"   缺失配置: {', '.join(missing)}")
+                return
+
+            # 检查各层配置
+            trend = mtf.get('trend_layer', {})
+            decision = mtf.get('decision_layer', {})
+            execution = mtf.get('execution_layer', {})
+
+            details = []
+            details.append(f"enabled={mtf.get('enabled')}")
+            details.append(f"trend={trend.get('timeframe', 'N/A')}")
+            details.append(f"decision={decision.get('timeframe', 'N/A')}")
+            details.append(f"execution={execution.get('default_timeframe', 'N/A')}")
+
+            self.add_result(
+                'Phase 7', 'MTF 配置',
+                True,
+                f'MTF 配置完整: {", ".join(details)}'
+            )
+            print("✅ [Phase 7] MTF 配置")
+            print(f"   {', '.join(details)}")
+
+        except Exception as e:
+            self.add_result('Phase 7', 'MTF 配置', False, str(e))
+            print(f"❌ [Phase 7] MTF 配置: {e}")
+
+    def test_phase7_mtf_manager(self):
+        """测试 Phase 7: MultiTimeframeManager 模块"""
+        try:
+            mtf_file = project_root / 'indicators' / 'multi_timeframe_manager.py'
+
+            if not mtf_file.exists():
+                self.add_result('Phase 7', 'MTF Manager', False, 'multi_timeframe_manager.py 不存在')
+                print("❌ [Phase 7] MTF Manager")
+                print("   multi_timeframe_manager.py 不存在")
+                return
+
+            content = mtf_file.read_text()
+
+            # 检查关键类和枚举
+            checks = [
+                ('class MultiTimeframeManager', 'MultiTimeframeManager 类'),
+                ('class RiskState', 'RiskState 枚举'),
+                ('class DecisionState', 'DecisionState 枚举'),
+                ('def route_bar', 'route_bar 方法'),
+                ('def evaluate_risk_state', 'evaluate_risk_state 方法'),
+                ('def check_execution_confirmation', 'check_execution_confirmation 方法'),
+            ]
+
+            missing = []
+            for check_str, description in checks:
+                if check_str not in content:
+                    missing.append(description)
+
+            if missing:
+                self.add_result('Phase 7', 'MTF Manager', False, f'缺失: {", ".join(missing)}')
+                print("❌ [Phase 7] MTF Manager")
+                print(f"   缺失: {', '.join(missing)}")
+            else:
+                # 尝试导入验证
+                try:
+                    from indicators.multi_timeframe_manager import (
+                        MultiTimeframeManager,
+                        RiskState,
+                        DecisionState
+                    )
+                    self.add_result('Phase 7', 'MTF Manager', True, '模块导入成功')
+                    print("✅ [Phase 7] MTF Manager")
+                    print("   模块导入成功")
+                except ImportError as e:
+                    self.add_result('Phase 7', 'MTF Manager', False, f'导入失败: {e}')
+                    print(f"❌ [Phase 7] MTF Manager: 导入失败 {e}")
+
+        except Exception as e:
+            self.add_result('Phase 7', 'MTF Manager', False, str(e))
+            print(f"❌ [Phase 7] MTF Manager: {e}")
+
+    def test_phase7_mtf_dataclass_fields(self):
+        """测试 Phase 7: strategy dataclass MTF 字段"""
+        try:
+            strategy_file = project_root / 'strategy' / 'deepseek_strategy.py'
+            content = strategy_file.read_text()
+
+            # 检查 MTF 相关字段
+            mtf_fields = [
+                'mtf_enabled',
+            ]
+
+            missing = []
+            for field in mtf_fields:
+                if f'{field}:' not in content and f'{field} =' not in content:
+                    missing.append(field)
+
+            # 检查 MTF 初始化逻辑
+            mtf_init_checks = [
+                ('MultiTimeframeManager', 'MTF Manager 导入'),
+                ('_prefetch_multi_timeframe_bars', 'MTF 预取方法'),
+            ]
+
+            for check_str, description in mtf_init_checks:
+                if check_str not in content:
+                    missing.append(description)
+
+            if not missing:
+                self.add_result(
+                    'Phase 7', 'MTF dataclass 字段',
+                    True,
+                    'MTF 字段和方法已集成到 strategy'
+                )
+                print("✅ [Phase 7] MTF dataclass 字段")
+                print("   MTF 字段和方法已集成到 strategy")
+            else:
+                self.add_result(
+                    'Phase 7', 'MTF dataclass 字段',
+                    False,
+                    f'缺失: {", ".join(missing)}'
+                )
+                print("❌ [Phase 7] MTF dataclass 字段")
+                print(f"   缺失: {', '.join(missing)}")
+
+        except Exception as e:
+            self.add_result('Phase 7', 'MTF dataclass 字段', False, str(e))
+            print(f"❌ [Phase 7] MTF dataclass 字段: {e}")
+
+    def test_phase7_mtf_layer_details(self):
+        """测试 Phase 7.1: MTF 层详细配置 (v3.1.0)"""
+        try:
+            import yaml
+            base_config = project_root / 'configs' / 'base.yaml'
+
+            if not base_config.exists():
+                self.add_result('Phase 7', 'MTF 层详细配置', False, 'base.yaml 不存在')
+                print("❌ [Phase 7] MTF 层详细配置")
+                return
+
+            with open(base_config, 'r') as f:
+                config = yaml.safe_load(f)
+
+            mtf = config.get('multi_timeframe', {})
+            if not mtf.get('enabled', False):
+                self.add_result('Phase 7', 'MTF 层详细配置', True, 'MTF 未启用，跳过')
+                print("⏭️ [Phase 7] MTF 层详细配置: MTF 未启用，跳过")
+                return
+
+            missing = []
+
+            # 趋势层详细字段
+            trend = mtf.get('trend_layer', {})
+            trend_required = ['timeframe', 'sma_period']
+            for field in trend_required:
+                if field not in trend:
+                    missing.append(f'trend_layer.{field}')
+
+            # 决策层详细字段
+            decision = mtf.get('decision_layer', {})
+            decision_required = ['timeframe']
+            for field in decision_required:
+                if field not in decision:
+                    missing.append(f'decision_layer.{field}')
+
+            # 执行层详细字段
+            execution = mtf.get('execution_layer', {})
+            execution_required = ['default_timeframe']
+            for field in execution_required:
+                if field not in execution:
+                    missing.append(f'execution_layer.{field}')
+
+            if not missing:
+                self.add_result('Phase 7', 'MTF 层详细配置', True, '所有必需字段存在')
+                print("✅ [Phase 7] MTF 层详细配置")
+                print("   所有必需字段存在")
+                # 显示可选字段状态
+                optional_found = []
+                if 'require_above_sma' in trend:
+                    optional_found.append('trend.require_above_sma')
+                if 'require_macd_positive' in trend:
+                    optional_found.append('trend.require_macd_positive')
+                if 'debate_rounds' in decision:
+                    optional_found.append('decision.debate_rounds')
+                if 'rsi_entry_min' in execution:
+                    optional_found.append('execution.rsi_entry_min/max')
+                if optional_found:
+                    print(f"   可选字段: {', '.join(optional_found)}")
+            else:
+                self.add_result('Phase 7', 'MTF 层详细配置', False, f'缺失: {", ".join(missing)}')
+                print("❌ [Phase 7] MTF 层详细配置")
+                print(f"   缺失: {', '.join(missing)}")
+
+        except Exception as e:
+            self.add_result('Phase 7', 'MTF 层详细配置', False, str(e))
+            print(f"❌ [Phase 7] MTF 层详细配置: {e}")
+
+    def test_phase7_mtf_initialization(self):
+        """测试 Phase 7.2: MTF 初始化配置 (v3.1.0)"""
+        try:
+            import yaml
+            base_config = project_root / 'configs' / 'base.yaml'
+
+            if not base_config.exists():
+                self.add_result('Phase 7', 'MTF 初始化配置', False, 'base.yaml 不存在')
+                print("❌ [Phase 7] MTF 初始化配置")
+                return
+
+            with open(base_config, 'r') as f:
+                config = yaml.safe_load(f)
+
+            mtf = config.get('multi_timeframe', {})
+            if not mtf.get('enabled', False):
+                self.add_result('Phase 7', 'MTF 初始化配置', True, 'MTF 未启用，跳过')
+                print("⏭️ [Phase 7] MTF 初始化配置: MTF 未启用，跳过")
+                return
+
+            init_config = mtf.get('initialization', {})
+            if not init_config:
+                self.add_result('Phase 7', 'MTF 初始化配置', False, 'initialization 段不存在')
+                print("❌ [Phase 7] MTF 初始化配置")
+                print("   initialization 段不存在")
+                return
+
+            # 检查必需字段
+            required_fields = ['trend_min_bars', 'decision_min_bars', 'execution_min_bars']
+            missing = [f for f in required_fields if f not in init_config]
+
+            if not missing:
+                details = []
+                details.append(f"trend={init_config.get('trend_min_bars')}")
+                details.append(f"decision={init_config.get('decision_min_bars')}")
+                details.append(f"execution={init_config.get('execution_min_bars')}")
+                self.add_result('Phase 7', 'MTF 初始化配置', True, f'配置完整: {", ".join(details)}')
+                print("✅ [Phase 7] MTF 初始化配置")
+                print(f"   {', '.join(details)}")
+                if 'request_timeout_sec' in init_config:
+                    print(f"   timeout={init_config['request_timeout_sec']}s, retries={init_config.get('max_retry_attempts', 'N/A')}")
+            else:
+                self.add_result('Phase 7', 'MTF 初始化配置', False, f'缺失: {", ".join(missing)}')
+                print("❌ [Phase 7] MTF 初始化配置")
+                print(f"   缺失: {', '.join(missing)}")
+
+        except Exception as e:
+            self.add_result('Phase 7', 'MTF 初始化配置', False, str(e))
+            print(f"❌ [Phase 7] MTF 初始化配置: {e}")
+
+    # ==================== Phase 8 测试 (Order Flow) ====================
+
+    def test_phase8_order_flow_config(self):
+        """测试 Phase 8: Order Flow 配置 (v3.1.0)"""
+        try:
+            import yaml
+            base_config = project_root / 'configs' / 'base.yaml'
+
+            if not base_config.exists():
+                self.add_result('Phase 8', 'Order Flow 配置', False, 'base.yaml 不存在')
+                print("❌ [Phase 8] Order Flow 配置")
+                return
+
+            with open(base_config, 'r') as f:
+                config = yaml.safe_load(f)
+
+            order_flow = config.get('order_flow', {})
+
+            if not order_flow:
+                self.add_result('Phase 8', 'Order Flow 配置', True, 'order_flow 段不存在 (可选功能)')
+                print("⏭️ [Phase 8] Order Flow 配置: 段不存在 (可选功能)")
+                return
+
+            enabled = order_flow.get('enabled', False)
+
+            if not enabled:
+                self.add_result('Phase 8', 'Order Flow 配置', True, 'Order Flow 未启用')
+                print("⏭️ [Phase 8] Order Flow 配置: 未启用")
+                return
+
+            # 检查子配置
+            issues = []
+            binance = order_flow.get('binance', {})
+            coinalyze = order_flow.get('coinalyze', {})
+
+            if binance.get('enabled'):
+                if not binance.get('symbol'):
+                    issues.append('binance.symbol 未配置')
+
+            if coinalyze.get('enabled'):
+                if not coinalyze.get('api_key'):
+                    issues.append('coinalyze.api_key 未配置')
+
+            if not issues:
+                details = []
+                details.append(f"enabled={enabled}")
+                details.append(f"binance={binance.get('enabled', False)}")
+                details.append(f"coinalyze={coinalyze.get('enabled', False)}")
+                self.add_result('Phase 8', 'Order Flow 配置', True, f'{", ".join(details)}')
+                print("✅ [Phase 8] Order Flow 配置")
+                print(f"   {', '.join(details)}")
+            else:
+                self.add_result('Phase 8', 'Order Flow 配置', False, f'问题: {", ".join(issues)}')
+                print("⚠️  [Phase 8] Order Flow 配置")
+                print(f"   问题: {', '.join(issues)}")
+
+        except Exception as e:
+            self.add_result('Phase 8', 'Order Flow 配置', False, str(e))
+            print(f"❌ [Phase 8] Order Flow 配置: {e}")
+
     # ==================== 综合验证 ====================
 
     def test_comprehensive_circular_imports(self):
@@ -762,7 +1133,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v2.9.1)'
+        description='配置管理方案实施全面诊断 (CONFIG_MANAGEMENT_PROPOSAL.md v3.1.0 + MTF + Order Flow)'
     )
     parser.add_argument(
         '--quick',
