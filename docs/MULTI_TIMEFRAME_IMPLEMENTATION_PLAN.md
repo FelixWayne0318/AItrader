@@ -1178,7 +1178,7 @@ from enum import Enum
 from datetime import datetime
 import logging
 
-from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.data import Bar, BarType, GenericData
 from indicators.technical_manager import TechnicalIndicatorManager
 
 
@@ -1362,14 +1362,16 @@ class MultiTimeframeManager:
             if layer not in managers:
                 return False
             mgr = managers[layer]
-            bars_count = len(mgr.recent_bars) if hasattr(mgr, 'recent_bars') else 0
+            # TechnicalIndicatorManager 始终有 recent_bars 属性
+            bars_count = len(mgr.recent_bars)
             return bars_count >= min_bars.get(layer, 0)
 
         # 检查全部
         for name, mgr in managers.items():
             if mgr is None:
                 return False
-            bars_count = len(mgr.recent_bars) if hasattr(mgr, 'recent_bars') else 0
+            # TechnicalIndicatorManager 始终有 recent_bars 属性
+            bars_count = len(mgr.recent_bars)
             if bars_count < min_bars.get(name, 0):
                 self.logger.debug(f"{name} 层未初始化: {bars_count}/{min_bars[name]} bars")
                 return False
@@ -1389,24 +1391,29 @@ class MultiTimeframeManager:
         -------
         str
             路由目标: "trend" / "decision" / "execution" / "unknown" / "disabled"
+
+        Notes
+        -----
+        使用 bar_type.id 进行哈希比较，而非对象相等性比较，
+        以避免 NautilusTrader 创建新 BarType 实例时的匹配失败。
         """
         if not self.enabled:
             return "disabled"
 
-        # 使用精确的 BarType 匹配
-        if self.trend_bar_type and bar.bar_type == self.trend_bar_type:
+        # 使用 BarType.id 哈希比较 (更可靠)
+        if self.trend_bar_type and bar.bar_type.id == self.trend_bar_type.id:
             self.trend_manager.update(bar)
             self._last_trend_price = float(bar.close)
             self.logger.debug(f"[1D] 趋势层 bar 更新: close={bar.close}")
             return "trend"
 
-        elif self.decision_bar_type and bar.bar_type == self.decision_bar_type:
+        elif self.decision_bar_type and bar.bar_type.id == self.decision_bar_type.id:
             self.decision_manager.update(bar)
             self._last_decision_price = float(bar.close)
             self.logger.debug(f"[4H] 决策层 bar 更新: close={bar.close}")
             return "decision"
 
-        elif self.execution_bar_type and bar.bar_type == self.execution_bar_type:
+        elif self.execution_bar_type and bar.bar_type.id == self.execution_bar_type.id:
             self.execution_manager.update(bar)
             self._last_execution_price = float(bar.close)
             self.logger.debug(f"[15M] 执行层 bar 更新: close={bar.close}")
@@ -1847,11 +1854,16 @@ def _prefetch_multi_timeframe_bars(self):
         self.log.error(f"MTF: 预取历史数据请求失败: {e}")
         # 不抛出异常，允许策略继续运行 (降级模式)
 
-def on_historical_data(self, data):
+def on_historical_data(self, data: GenericData):
     """
     ⚠️ v3.2.8 新增: 处理 request_bars 的异步回调
 
     NautilusTrader 在历史数据到达时调用此方法。
+
+    Parameters
+    ----------
+    data : GenericData
+        历史数据对象，包含 bars 和 bar_type 属性
     """
     if not hasattr(data, 'bars') or not data.bars:
         return
@@ -1859,21 +1871,21 @@ def on_historical_data(self, data):
     bars = data.bars
     bar_type = data.bar_type
 
-    # 根据 bar_type 路由到对应的层
+    # 根据 bar_type 路由到对应的层 (使用 .id 哈希比较)
     if self.mtf_enabled and self.mtf_manager:
-        if bar_type == self.trend_bar_type:
+        if bar_type.id == self.trend_bar_type.id:
             for bar in bars:
                 self.mtf_manager.trend_manager.update(bar)
             self.log.info(f"MTF: 趋势层预取完成 ({len(bars)} bars)")
             self._mtf_trend_initialized = True
 
-        elif bar_type == self.decision_bar_type:
+        elif bar_type.id == self.decision_bar_type.id:
             for bar in bars:
                 self.mtf_manager.decision_manager.update(bar)
             self.log.info(f"MTF: 决策层预取完成 ({len(bars)} bars)")
             self._mtf_decision_initialized = True
 
-        elif bar_type == self.execution_bar_type:
+        elif bar_type.id == self.execution_bar_type.id:
             for bar in bars:
                 self.mtf_manager.execution_manager.update(bar)
             self.log.info(f"MTF: 执行层预取完成 ({len(bars)} bars)")
@@ -1886,21 +1898,27 @@ def on_historical_data(self, data):
             self._verify_mtf_initialization()
 
 def _verify_mtf_initialization(self):
-    """验证各层指标管理器是否已正确初始化"""
+    """验证各层指标管理器是否已正确初始化
+
+    Notes
+    -----
+    TechnicalIndicatorManager 始终有 recent_bars 属性 (line 93),
+    因此直接访问而不需要 hasattr() 检查。
+    """
     issues = []
 
     # 趋势层: 需要至少 200 根 bar 用于 SMA_200
-    trend_bars_count = len(self.mtf_manager.trend_manager.recent_bars) if hasattr(self.mtf_manager.trend_manager, 'recent_bars') else 0
+    trend_bars_count = len(self.mtf_manager.trend_manager.recent_bars)
     if trend_bars_count < 200:
         issues.append(f"趋势层 bars 不足: {trend_bars_count}/200")
 
     # 决策层: 需要至少 50 根
-    decision_bars_count = len(self.mtf_manager.decision_manager.recent_bars) if hasattr(self.mtf_manager.decision_manager, 'recent_bars') else 0
+    decision_bars_count = len(self.mtf_manager.decision_manager.recent_bars)
     if decision_bars_count < 50:
         issues.append(f"决策层 bars 不足: {decision_bars_count}/50")
 
     # 执行层: 需要至少 20 根
-    execution_bars_count = len(self.mtf_manager.execution_manager.recent_bars) if hasattr(self.mtf_manager.execution_manager, 'recent_bars') else 0
+    execution_bars_count = len(self.mtf_manager.execution_manager.recent_bars)
     if execution_bars_count < 20:
         issues.append(f"执行层 bars 不足: {execution_bars_count}/20")
 

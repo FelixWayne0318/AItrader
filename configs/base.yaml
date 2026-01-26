@@ -277,3 +277,100 @@ binance:
   api_secret: ""
   testnet_api_key: ""
   testnet_api_secret: ""
+
+# =============================================================================
+# 多时间框架配置 (Multi-Timeframe Framework) v3.2
+# =============================================================================
+multi_timeframe:
+  enabled: false                      # 默认禁用,确保向后兼容
+
+  # ---------------------------------------------------------------------------
+  # 趋势层配置 (1D) - Risk-On/Risk-Off 判断
+  # ---------------------------------------------------------------------------
+  trend_layer:
+    timeframe: "1d"
+    sma_period: 200                   # SMA_200 判断长期趋势
+    require_above_sma: true           # 价格需在 SMA 上方才能交易
+    require_macd_positive: true       # MACD > 0 才能交易
+    cache_ttl_hours: 4                # 趋势状态缓存时间
+
+  # ---------------------------------------------------------------------------
+  # 决策层配置 (4H) - Bull/Bear 辩论决定方向
+  # ---------------------------------------------------------------------------
+  decision_layer:
+    timeframe: "4h"
+    debate_rounds: 2                  # TradingAgents 辩论轮数
+    include_trend_context: true       # 在辩论中包含趋势层信息
+    indicators:
+      sma_periods: [20, 50]
+      rsi_period: 14
+      macd_fast: 12
+      macd_slow: 26
+      bb_period: 20
+      bb_std: 2.0
+
+  # ---------------------------------------------------------------------------
+  # 执行层配置 (5M / 15M) - 精确入场时机
+  # ---------------------------------------------------------------------------
+  execution_layer:
+    default_timeframe: "15m"          # 默认执行周期
+    high_volatility_timeframe: "5m"   # 高波动时使用 5M
+    rsi_entry_min: 35                 # RSI 入场范围下限
+    rsi_entry_max: 65                 # RSI 入场范围上限
+    indicators:
+      sma_periods: [5, 20]
+      ema_periods: [10]
+      rsi_period: 14
+      support_resistance_lookback: 20
+
+# =============================================================================
+# 订单流数据配置 (Order Flow) v3.2
+# =============================================================================
+order_flow:
+  enabled: true                       # 启用订单流数据增强
+
+  # ---------------------------------------------------------------------------
+  # Binance K线完整字段
+  # ---------------------------------------------------------------------------
+  binance:
+    use_taker_data: true              # 使用 taker_buy_volume (列[9])
+    use_quote_volume: true            # 使用 quote_volume (列[7])
+    use_trades_count: true            # 使用 trades_count (列[8])
+    bars_for_analysis: 10             # 分析最近 N 根 K线
+
+  # ---------------------------------------------------------------------------
+  # Coinalyze 衍生品数据 (需要 API Key)
+  # ---------------------------------------------------------------------------
+  coinalyze:
+    enabled: true                     # 启用 Coinalyze 数据
+    api_key: ""                       # 从 ~/.env.aitrader 的 COINALYZE_API_KEY 读取
+    timeout: 10                       # API 请求超时 (秒)
+    symbol: "BTCUSDT_PERP.A"          # Coinalyze Symbol 格式 (A=Binance)
+    endpoints:
+      open_interest: true
+      liquidations: true
+      funding_rate: true
+    # 降级策略: API 失败时使用默认值
+    fallback_enabled: true
+    fallback_oi_usd: 0
+    fallback_funding_rate: 0
+
+  # ---------------------------------------------------------------------------
+  # 买卖比阈值
+  # ---------------------------------------------------------------------------
+  buy_ratio:
+    bullish_threshold: 0.55           # >55% 视为多头主导
+    bearish_threshold: 0.45           # <45% 视为空头主导
+    trend_threshold: 0.01             # 趋势判断阈值 (前5根 vs 后5根差值)
+
+  # ---------------------------------------------------------------------------
+  # Prompt 配置
+  # ---------------------------------------------------------------------------
+  prompt:
+    version: "optimized"              # "optimized" (~600 tokens) 或 "full" (~1800 tokens)
+    include_interpretation_guide: true # 在 Prompt 中包含解读指南
+    weights:                          # 各数据权重 (供 AI 参考)
+      order_flow: 0.30
+      technical: 0.25
+      derivatives: 0.25
+      sentiment: 0.20
