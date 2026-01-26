@@ -53,7 +53,7 @@ ensure_venv()
 # ============================================================
 # 配置
 # ============================================================
-VERSION = "3.0"  # v3.0: MTF support, ConfigManager integration
+VERSION = "3.1"  # v3.1: MTF detailed checks, initialization, order_flow
 BRANCH = "main"
 PROJECT_DIR = Path(__file__).parent.parent.absolute()
 SERVICE_NAME = "nautilus-trader"
@@ -441,8 +441,62 @@ def check_nautilus_config():
             info(f"  趋势层: {trend.get('timeframe', 'N/A')} (SMA_{trend.get('sma_period', 200)})")
             info(f"  决策层: {decision.get('timeframe', 'N/A')}")
             info(f"  执行层: {execution.get('default_timeframe', 'N/A')}")
+
+            # v3.1: MTF 详细配置验证
+            # 趋势层详细配置
+            trend_details = []
+            if 'require_above_sma' in trend:
+                trend_details.append(f"require_above_sma={trend['require_above_sma']}")
+            if 'require_macd_positive' in trend:
+                trend_details.append(f"require_macd_positive={trend['require_macd_positive']}")
+            if trend_details:
+                info(f"    趋势层详情: {', '.join(trend_details)}")
+
+            # 决策层详细配置
+            decision_details = []
+            if 'debate_rounds' in decision:
+                decision_details.append(f"debate_rounds={decision['debate_rounds']}")
+            if 'include_trend_context' in decision:
+                decision_details.append(f"include_trend_context={decision['include_trend_context']}")
+            if decision_details:
+                info(f"    决策层详情: {', '.join(decision_details)}")
+
+            # 执行层详细配置
+            exec_details = []
+            if 'rsi_entry_min' in execution:
+                exec_details.append(f"RSI范围={execution.get('rsi_entry_min', 30)}-{execution.get('rsi_entry_max', 70)}")
+            if 'high_volatility_timeframe' in execution:
+                exec_details.append(f"高波动周期={execution['high_volatility_timeframe']}")
+            if exec_details:
+                info(f"    执行层详情: {', '.join(exec_details)}")
+
+            # v3.1: 初始化配置验证
+            init_config = mtf.get("initialization", {})
+            if init_config:
+                ok("✅ MTF 初始化配置存在")
+                info(f"    trend_min_bars: {init_config.get('trend_min_bars', 'N/A')}")
+                info(f"    decision_min_bars: {init_config.get('decision_min_bars', 'N/A')}")
+                info(f"    execution_min_bars: {init_config.get('execution_min_bars', 'N/A')}")
+                details["mtf_init_config"] = True
+            else:
+                warn("MTF initialization 配置段不存在")
+                details["mtf_init_config"] = False
         else:
             info("多时间框架 (MTF): 未启用")
+
+        # v3.1: Order Flow 配置验证
+        order_flow = config.get("order_flow", {})
+        details["order_flow_enabled"] = order_flow.get("enabled", False)
+        if details["order_flow_enabled"]:
+            ok("✅ Order Flow 已启用")
+            binance_of = order_flow.get("binance", {})
+            coinalyze = order_flow.get("coinalyze", {})
+            info(f"    Binance enabled: {binance_of.get('enabled', False)}")
+            info(f"    Coinalyze enabled: {coinalyze.get('enabled', False)}")
+            if coinalyze.get('enabled') and not coinalyze.get('api_key'):
+                warn("    Coinalyze 已启用但缺少 API key")
+        else:
+            info("Order Flow: 未启用")
 
         ok("配置文件格式正确")
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.0 (TradingAgents 架构 + MTF 支持)
+实盘信号诊断脚本 v10.1 (TradingAgents 架构 + MTF 完整支持)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -11,6 +11,7 @@
 6. 输出实盘环境下会产生的真实结果
 7. 检查可能导致不能下单的关键配置
 8. v10.0: 多时间框架 (MTF) 三层架构支持
+9. v10.1: MTF 详细配置验证、初始化配置、Order Flow 检查
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -19,13 +20,18 @@
 - Judge 决策即最终决策，不需要信号合并
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
-MTF 三层架构 (v10.0):
+MTF 三层架构 (v10.0+):
 - 趋势层 (1D): SMA_200 判断长期趋势 → Risk State
 - 决策层 (4H): 技术分析 + 情绪分析 → Decision State
 - 执行层 (15M): 精确入场时机
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.1:
+- 添加 MTF 层详细配置验证 (require_above_sma, debate_rounds, rsi_entry 等)
+- 添加 MTF 初始化配置检查 (trend_min_bars, decision_min_bars, execution_min_bars)
+- 添加 Order Flow 配置检查
+
 v10.0:
 - 添加 MTF 配置检查和三层框架验证
 - 添加 MTF 历史数据预取状态诊断
@@ -262,7 +268,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v10.0 (TradingAgents 架构 + MTF 支持){mode_str}")
+print(f"  实盘信号诊断工具 v10.1 (TradingAgents + MTF 完整支持){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -311,10 +317,12 @@ if config_issues:
 print()
 
 # =============================================================================
-# 0.5. MTF 多时间框架配置检查 (v10.0 新增)
+# 0.5. MTF 多时间框架配置检查 (v10.1 详细验证)
 # =============================================================================
-print("[0.5/10] MTF 多时间框架配置检查 (v10.0)...")
+print("[0.5/10] MTF 多时间框架配置检查 (v10.1 详细验证)...")
 print("-" * 70)
+
+mtf_init_config = {}  # 用于后续历史数据检查
 
 try:
     import yaml
@@ -335,16 +343,44 @@ try:
             trend_tf = trend_layer.get('timeframe', 'N/A')
             trend_sma = trend_layer.get('sma_period', 200)
             print(f"     趋势层 (Trend): {trend_tf} (SMA_{trend_sma})")
+            # v10.1: 详细配置
+            if 'require_above_sma' in trend_layer:
+                print(f"       require_above_sma: {trend_layer['require_above_sma']}")
+            if 'require_macd_positive' in trend_layer:
+                print(f"       require_macd_positive: {trend_layer['require_macd_positive']}")
 
             # 决策层 (4H)
             decision_layer = mtf_config.get('decision_layer', {})
             decision_tf = decision_layer.get('timeframe', 'N/A')
             print(f"     决策层 (Decision): {decision_tf}")
+            # v10.1: 详细配置
+            if 'debate_rounds' in decision_layer:
+                print(f"       debate_rounds: {decision_layer['debate_rounds']}")
+            if 'include_trend_context' in decision_layer:
+                print(f"       include_trend_context: {decision_layer['include_trend_context']}")
 
             # 执行层 (15M)
             execution_layer = mtf_config.get('execution_layer', {})
             execution_tf = execution_layer.get('default_timeframe', 'N/A')
             print(f"     执行层 (Execution): {execution_tf}")
+            # v10.1: 详细配置
+            if 'rsi_entry_min' in execution_layer:
+                print(f"       RSI 入场范围: {execution_layer.get('rsi_entry_min', 30)}-{execution_layer.get('rsi_entry_max', 70)}")
+            if 'high_volatility_timeframe' in execution_layer:
+                print(f"       高波动周期: {execution_layer['high_volatility_timeframe']}")
+
+            # v10.1: 初始化配置检查
+            mtf_init_config = mtf_config.get('initialization', {})
+            if mtf_init_config:
+                print("  ✅ MTF 初始化配置存在")
+                print(f"     trend_min_bars: {mtf_init_config.get('trend_min_bars', 'N/A')}")
+                print(f"     decision_min_bars: {mtf_init_config.get('decision_min_bars', 'N/A')}")
+                print(f"     execution_min_bars: {mtf_init_config.get('execution_min_bars', 'N/A')}")
+                if 'request_timeout_sec' in mtf_init_config:
+                    print(f"     request_timeout: {mtf_init_config['request_timeout_sec']}s")
+            else:
+                print("  ⚠️ MTF initialization 配置段不存在")
+                print("     → 将使用默认值 (220/60/40 bars)")
 
             # 检查 MultiTimeframeManager 模块
             mtf_manager_path = project_root / "indicators" / "multi_timeframe_manager.py"
@@ -371,6 +407,22 @@ try:
             print("     → 如需启用，编辑 configs/base.yaml:")
             print("       multi_timeframe:")
             print("         enabled: true")
+
+        # v10.1: Order Flow 配置检查
+        order_flow = base_config.get('order_flow', {})
+        order_flow_enabled = order_flow.get('enabled', False)
+        if order_flow_enabled:
+            print()
+            print("  ✅ Order Flow: 已启用")
+            binance_of = order_flow.get('binance', {})
+            coinalyze = order_flow.get('coinalyze', {})
+            print(f"     Binance enabled: {binance_of.get('enabled', False)}")
+            print(f"     Coinalyze enabled: {coinalyze.get('enabled', False)}")
+            if coinalyze.get('enabled') and not coinalyze.get('api_key'):
+                print("     ⚠️ Coinalyze 已启用但缺少 API key")
+        else:
+            print()
+            print("  ℹ️ Order Flow: 未启用")
     else:
         print("  ⚠️ configs/base.yaml 不存在，跳过 MTF 检查")
         mtf_enabled = False
@@ -1052,13 +1104,15 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.0)")
+print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.1)")
 print("=" * 70)
 print()
 
 # 显示 MTF 状态
 if mtf_enabled:
     print(f"  📊 MTF Status: ✅ 已启用 (1D/4H/15M 三层架构)")
+    if mtf_init_config:
+        print(f"     初始化: trend={mtf_init_config.get('trend_min_bars', 220)}, decision={mtf_init_config.get('decision_min_bars', 60)}, execution={mtf_init_config.get('execution_min_bars', 40)} bars")
 else:
     print(f"  📊 MTF Status: ❌ 未启用")
 print()
