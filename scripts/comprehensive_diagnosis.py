@@ -12,11 +12,35 @@ Usage:
     python3 scripts/comprehensive_diagnosis.py --json result.json  # 导出 JSON 结果
 """
 
+import os
 import sys
 import json
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+# ============================================================
+# 自动切换到 venv (与 diagnose.py 一致)
+# ============================================================
+def ensure_venv():
+    """确保在 venv 中运行，否则自动切换"""
+    project_dir = Path(__file__).parent.parent.absolute()
+    venv_python = project_dir / "venv" / "bin" / "python"
+
+    # 检查是否已在 venv 中
+    in_venv = (
+        hasattr(sys, 'real_prefix') or
+        (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix)
+    )
+
+    if not in_venv and venv_python.exists():
+        print(f"\033[93m[!]\033[0m 检测到未使用 venv，自动切换...")
+        os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+
+    return in_venv
+
+# 在导入其他模块前先确保 venv
+ensure_venv()
 
 # Add project root to path
 project_root = Path(__file__).parent.parent

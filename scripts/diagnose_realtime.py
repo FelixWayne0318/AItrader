@@ -61,21 +61,45 @@ v5.0:
 
 使用方法:
     cd /home/linuxuser/nautilus_AItrader
-    source venv/bin/activate
-    python3 diagnose_realtime.py              # 完整诊断
-    python3 diagnose_realtime.py --summary    # 快速诊断（仅显示关键结果）
+    python3 scripts/diagnose_realtime.py              # 完整诊断 (自动切换 venv)
+    python3 scripts/diagnose_realtime.py --summary    # 快速诊断（仅显示关键结果）
 """
 
-import argparse
 import os
 import sys
+from pathlib import Path
+
+# ============================================================
+# 自动切换到 venv (与 diagnose.py 一致)
+# ============================================================
+def ensure_venv():
+    """确保在 venv 中运行，否则自动切换"""
+    project_dir = Path(__file__).parent.parent.absolute()
+    venv_python = project_dir / "venv" / "bin" / "python"
+
+    # 检查是否已在 venv 中
+    in_venv = (
+        hasattr(sys, 'real_prefix') or
+        (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix)
+    )
+
+    if not in_venv and venv_python.exists():
+        print(f"\033[93m[!]\033[0m 检测到未使用 venv，自动切换...")
+        os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+
+    return in_venv
+
+# 在导入其他模块前先确保 venv
+ensure_venv()
+
+# 其他导入
+import argparse
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v9.0')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.1')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 args = parser.parse_args()
