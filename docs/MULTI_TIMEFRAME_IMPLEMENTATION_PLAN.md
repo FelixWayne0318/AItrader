@@ -1,14 +1,14 @@
-# 多时间框架实施方案 v3.2
+# 多时间框架实施方案 v3.2.1
 
 ## 文档信息
 
 | 项目 | 值 |
 |------|-----|
-| 版本 | 3.2 |
+| 版本 | 3.2.1 |
 | 创建日期 | 2026-01-26 |
 | 更新日期 | 2026-01-26 |
 | 基于 | TradingAgents 架构 + AItrader 现有系统 |
-| 状态 | **订单流数据增强** (v3.2 - 含完整 Prompt 设计) |
+| 状态 | **API 验证 + 完整配置** (v3.2.1 - Coinalyze API Key + base.yaml 配置) |
 
 ## 版本历史
 
@@ -18,22 +18,43 @@
 | v2.0 | 2026-01-26 | 根据审查报告修复 API 兼容性问题 |
 | v3.0 | 2026-01-26 | 全面仓库审查后修复，合并审查报告，删除冗余文件 |
 | v3.1 | 2026-01-26 | **新增完整数据流图** (Section 1.5)，详细描述从数据获取到信号执行的完整流程 |
-| v3.2 | 2026-01-26 | **订单流数据增强** (Section 9)，整合 Binance + Coinalyze 免费数据，含完整 Prompt 设计 |
+| v3.2 | 2026-01-26 | **订单流数据增强** (Section 9)，整合 Binance + Coinalyze 数据，含完整 Prompt 设计 |
+| v3.2.1 | 2026-01-26 | **Coinalyze API 验证 + 完整配置**，修正 API Key 要求、Symbol 格式、完整 base.yaml 配置 |
+
+### v3.2.1 主要更新 (API 验证 + 完整配置)
+
+1. **Coinalyze API 调研验证**
+   - ⚠️ **需要 API Key** (免费注册获取，非完全免费)
+   - Symbol 格式: `BTCUSDT_PERP.A` (A = Binance)
+   - 速率限制: 40 次/分钟
+   - 更新 CoinalyzeClient 代码支持 API Key 认证
+
+2. **完整配置文档** (Section 9.7)
+   - 新增 `~/.env.aitrader` 的 `COINALYZE_API_KEY`
+   - 新增 `configs/base.yaml` 完整的 `multi_timeframe` 配置节
+   - 新增 `configs/base.yaml` 完整的 `order_flow` 配置节
+   - 新增 `configs/production.yaml` 和 `development.yaml` 环境覆盖
+   - 新增代码示例读取配置
+
+3. **降级策略**
+   - Coinalyze API 失败时使用默认值 (OI=0, 费率=0)
+   - 记录警告日志但不中断交易
 
 ### v3.2 主要更新 (订单流数据增强)
 
 1. **新增 Section 9: 订单流数据整合** - 完整数据增强方案
-   - 9.1 数据源概览 (Binance + Coinalyze 免费 API)
+   - 9.1 数据源概览 (Binance 免费 + Coinalyze 需 API Key)
    - 9.2 Binance K线完整字段利用 (12 列 → 全部使用)
-   - 9.3 Coinalyze 免费数据整合 (OI, 清算, 资金费率)
+   - 9.3 Coinalyze 数据整合 (OI, 清算, 资金费率)
    - 9.4 数据处理原则 (简单计算，AI 处理复杂分析)
    - 9.5 DeepSeek Prompt 设计 (优化版 ~600 tokens)
    - 9.6 代码实现模板
+   - 9.7 完整配置 (base.yaml + 环境覆盖)
 
 2. **核心设计原则**
    - **简单计算**: 只做简单除法 (buy_ratio = taker_buy / volume)
    - **AI 分析复杂模式**: 让 AI 判断 CVD 趋势、背离等
-   - **零成本数据**: 仅使用 Binance + Coinalyze 免费 API
+   - **低成本数据**: Binance (免费) + Coinalyze (免费注册)
    - **结构化输出**: JSON 格式便于解析
 
 ### v3.1 主要更新
@@ -1967,20 +1988,20 @@ v3.0 删除了以下冗余文件 (内容已合并到本文档):
 
 ## 9. 订单流数据整合 (v3.2 新增)
 
-本节描述如何利用 Binance K线完整数据 + Coinalyze 免费 API 增强交易信号质量。
+本节描述如何利用 Binance K线完整数据 + Coinalyze API 增强交易信号质量。
 
 ### 9.1 数据源概览
 
 #### 9.1.1 成本对比
 
-| 数据源 | 价格 | 数据内容 |
-|--------|------|----------|
-| **Binance API** | 免费 | K线12列、多空比、大户持仓 |
-| **Coinalyze API** | 免费 | 聚合OI、清算、资金费率 |
-| CoinGlass | $29-699/月 | 专业衍生品数据 |
-| CryptoQuant | $39-799/月 | 链上+衍生品数据 |
+| 数据源 | 价格 | 数据内容 | 认证要求 |
+|--------|------|----------|----------|
+| **Binance API** | 免费 | K线12列、多空比、大户持仓 | 无需 API Key |
+| **Coinalyze API** | 免费 (需注册) | 聚合OI、清算、资金费率 | **需要 API Key** |
+| CoinGlass | $29-699/月 | 专业衍生品数据 | 付费 API Key |
+| CryptoQuant | $39-799/月 | 链上+衍生品数据 | 付费 API Key |
 
-**结论**: Binance + Coinalyze 免费组合已足够，无需付费服务。
+**结论**: Binance (完全免费) + Coinalyze (免费注册获取 API Key) 组合成本为 $0。
 
 #### 9.1.2 Binance 免费数据
 
@@ -1991,19 +2012,68 @@ v3.0 删除了以下冗余文件 (内容已合并到本文档):
 | `/futures/data/topLongShortPositionRatio` | 大户持仓比 | 主力动向 |
 | `/futures/data/takerlongshortRatio` | 主动买卖比 | 资金流向 |
 
-#### 9.1.3 Coinalyze 免费数据
+#### 9.1.3 Coinalyze API (需 API Key)
 
-| 端点 | 数据 | 用途 |
-|------|------|------|
-| `/v1/open-interest` | 聚合持仓量 | 趋势强度 |
-| `/v1/open-interest-history` | OI 历史 | OI 变化趋势 |
-| `/v1/funding-rate` | 资金费率 | 情绪指标 |
-| `/v1/funding-rate-history` | 费率历史 | 费率趋势 |
-| `/v1/liquidation` | 清算数据 | 极端行情信号 |
-| `/v1/liquidation-history` | 清算历史 | 清算趋势 |
-| `/v1/long-short-ratio` | 多空比 | 市场偏向 |
-| `/v1/exchange-list` | 交易所列表 | 数据来源 |
-| `/v1/symbol-list` | 交易对列表 | 支持的资产 |
+**重要**: Coinalyze API 需要注册并获取免费 API Key。
+
+**获取 API Key**:
+1. 访问 [coinalyze.net](https://coinalyze.net/) 注册账户
+2. 在账户设置中生成 API Key
+3. 将 API Key 添加到 `~/.env.aitrader`: `COINALYZE_API_KEY=xxx`
+
+**API 规格**:
+| 项目 | 值 |
+|------|-----|
+| Base URL | `https://api.coinalyze.net/v1` |
+| 认证方式 | Header: `api_key` 或 Query: `?api_key=xxx` |
+| 速率限制 | **40 次/分钟** |
+| 超限响应 | HTTP 429 + `Retry-After` header |
+| 数据保留 | 日内数据保留 1500-2000 条 |
+
+**Symbol 格式** (重要):
+```
+格式: [PAIR]_[CONTRACT_TYPE].[EXCHANGE_CODE]
+示例: BTCUSDT_PERP.A
+
+交易所代码:
+- A = Binance
+- 其他代码通过 /v1/exchanges 获取
+```
+
+**可用端点**:
+
+| 端点 | 数据 | 用途 | 示例 Symbol |
+|------|------|------|-------------|
+| `/v1/open-interest` | 当前聚合 OI | 趋势强度 | `BTCUSDT_PERP.A` |
+| `/v1/open-interest-history` | OI 历史 | OI 变化趋势 | `BTCUSDT_PERP.A` |
+| `/v1/funding-rate` | 当前资金费率 | 情绪指标 | `BTCUSDT_PERP.A` |
+| `/v1/funding-rate-history` | 费率历史 | 费率趋势 | `BTCUSDT_PERP.A` |
+| `/v1/liquidation-history` | 清算历史 | 极端行情信号 | `BTCUSDT_PERP.A` |
+| `/v1/long-short-ratio-history` | 多空比历史 | 市场偏向 | `BTCUSDT_PERP.A` |
+| `/v1/exchanges` | 交易所列表 | 获取交易所代码 | - |
+| `/v1/future-markets` | 市场列表 | 支持的交易对 | - |
+
+**响应示例** (Open Interest):
+```json
+[
+  {
+    "symbol": "BTCUSDT_PERP.A",
+    "openInterest": 185000000000,  // 单位: 合约面值
+    "openInterestUsd": 18500000000, // 单位: USD
+    "timestamp": 1706270400000
+  }
+]
+```
+
+**降级策略**: 如果 Coinalyze API 不可用，系统将:
+1. 使用默认值 (OI=0, 清算=0, 费率=0)
+2. 记录警告日志
+3. 继续正常交易 (仅依赖 Binance 数据)
+
+**Python 包** (可选):
+```bash
+pip install coinalyze  # 非官方 Python 包装器
+```
 
 ### 9.2 Binance K线完整字段
 
@@ -2268,54 +2338,146 @@ import aiohttp
 from typing import Optional
 
 class CoinalyzeClient:
-    """Coinalyze 免费 API 客户端"""
+    """
+    Coinalyze API 客户端
+
+    注意: 需要 API Key，从 ~/.env.aitrader 的 COINALYZE_API_KEY 获取
+    Symbol 格式: BTCUSDT_PERP.A (A = Binance)
+    速率限制: 40 次/分钟
+    """
 
     BASE_URL = "https://api.coinalyze.net/v1"
 
-    def __init__(self, timeout: int = 10):
-        self.timeout = timeout
+    # Binance 的 Symbol 格式
+    DEFAULT_SYMBOL = "BTCUSDT_PERP.A"
 
-    async def get_open_interest(self, symbol: str = "BTCUSDT") -> Optional[dict]:
-        """获取聚合持仓量"""
+    def __init__(self, api_key: str = "", timeout: int = 10):
+        """
+        初始化 Coinalyze 客户端
+
+        Args:
+            api_key: Coinalyze API Key (从 COINALYZE_API_KEY 环境变量获取)
+            timeout: 请求超时时间 (秒)
+        """
+        self.api_key = api_key
+        self.timeout = timeout
+        self._enabled = bool(api_key)
+
+        if not self._enabled:
+            print("⚠️ CoinalyzeClient: API key not provided, derivatives data disabled")
+
+    def _get_headers(self) -> dict:
+        """获取请求头 (含 API Key)"""
+        return {"api_key": self.api_key} if self.api_key else {}
+
+    async def get_open_interest(self, symbol: str = None) -> Optional[dict]:
+        """
+        获取聚合持仓量
+
+        Returns:
+            {
+                "symbol": "BTCUSDT_PERP.A",
+                "openInterest": 185000000000,
+                "openInterestUsd": 18500000000,
+                "timestamp": 1706270400000
+            }
+        """
+        if not self._enabled:
+            return None
+
+        symbol = symbol or self.DEFAULT_SYMBOL
         try:
             async with aiohttp.ClientSession() as session:
                 url = f"{self.BASE_URL}/open-interest"
                 params = {"symbols": symbol}
-                async with session.get(url, params=params, timeout=self.timeout) as resp:
+                headers = self._get_headers()
+                async with session.get(url, params=params, headers=headers,
+                                       timeout=self.timeout) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         return data[0] if data else None
+                    elif resp.status == 429:
+                        retry_after = resp.headers.get('Retry-After', '60')
+                        print(f"⚠️ Coinalyze rate limit, retry after {retry_after}s")
+                    else:
+                        print(f"⚠️ Coinalyze OI error: HTTP {resp.status}")
         except Exception as e:
-            print(f"Coinalyze OI error: {e}")
+            print(f"⚠️ Coinalyze OI error: {e}")
         return None
 
-    async def get_liquidations(self, symbol: str = "BTCUSDT") -> Optional[dict]:
-        """获取清算数据"""
+    async def get_liquidations(self, symbol: str = None) -> Optional[dict]:
+        """
+        获取清算数据 (历史数据，最近1小时)
+
+        注意: Binance 从 2021-04 起只提供每秒1条清算数据
+        """
+        if not self._enabled:
+            return None
+
+        symbol = symbol or self.DEFAULT_SYMBOL
         try:
             async with aiohttp.ClientSession() as session:
-                url = f"{self.BASE_URL}/liquidation"
-                params = {"symbols": symbol}
-                async with session.get(url, params=params, timeout=self.timeout) as resp:
+                url = f"{self.BASE_URL}/liquidation-history"
+                # 获取最近1小时的清算数据
+                import time
+                end_time = int(time.time() * 1000)
+                start_time = end_time - 3600000  # 1小时前
+                params = {
+                    "symbols": symbol,
+                    "interval": "1h",
+                    "from": start_time,
+                    "to": end_time
+                }
+                headers = self._get_headers()
+                async with session.get(url, params=params, headers=headers,
+                                       timeout=self.timeout) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        return data[0] if data else None
+                        if data and len(data) > 0:
+                            # 返回最新一条
+                            latest = data[-1] if isinstance(data, list) else data
+                            return latest
+                    elif resp.status == 429:
+                        print(f"⚠️ Coinalyze rate limit reached")
         except Exception as e:
-            print(f"Coinalyze liquidation error: {e}")
+            print(f"⚠️ Coinalyze liquidation error: {e}")
         return None
 
-    async def get_funding_rate(self, symbol: str = "BTCUSDT") -> Optional[dict]:
-        """获取资金费率"""
+    async def get_funding_rate(self, symbol: str = None) -> Optional[dict]:
+        """
+        获取当前资金费率
+
+        Returns:
+            {
+                "symbol": "BTCUSDT_PERP.A",
+                "fundingRate": 0.0008,
+                "predictedFundingRate": 0.0007,
+                "timestamp": 1706270400000
+            }
+        """
+        if not self._enabled:
+            return None
+
+        symbol = symbol or self.DEFAULT_SYMBOL
         try:
             async with aiohttp.ClientSession() as session:
                 url = f"{self.BASE_URL}/funding-rate"
                 params = {"symbols": symbol}
-                async with session.get(url, params=params, timeout=self.timeout) as resp:
+                headers = self._get_headers()
+                async with session.get(url, params=params, headers=headers,
+                                       timeout=self.timeout) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         return data[0] if data else None
+                    elif resp.status == 429:
+                        print(f"⚠️ Coinalyze rate limit reached")
         except Exception as e:
-            print(f"Coinalyze funding error: {e}")
+            print(f"⚠️ Coinalyze funding error: {e}")
         return None
+
+    def is_enabled(self) -> bool:
+        """检查客户端是否启用 (有 API Key)"""
+        return self._enabled
 ```
 
 #### 9.6.3 数据组装器
@@ -2386,30 +2548,189 @@ class AIDataAssembler:
 
 ### 9.7 配置项扩展
 
-在 `configs/base.yaml` 中添加:
+#### 9.7.1 敏感信息 (~/.env.aitrader)
+
+```bash
+# === 新增 Coinalyze API Key ===
+COINALYZE_API_KEY=your_api_key_here  # 从 coinalyze.net 获取免费 API Key
+
+# === 已有配置 (保持不变) ===
+BINANCE_API_KEY=xxx
+BINANCE_API_SECRET=xxx
+DEEPSEEK_API_KEY=xxx
+TELEGRAM_BOT_TOKEN=xxx
+TELEGRAM_CHAT_ID=xxx
+```
+
+#### 9.7.2 完整配置 (configs/base.yaml)
+
+在 `configs/base.yaml` 末尾添加以下配置:
 
 ```yaml
-# 订单流数据配置 (v3.2 新增)
+# =============================================================================
+# 多时间框架配置 (Multi-Timeframe Framework) v3.2
+# =============================================================================
+multi_timeframe:
+  enabled: false                      # 默认禁用，确保向后兼容
+
+  # ---------------------------------------------------------------------------
+  # 趋势层配置 (1D) - Risk-On/Risk-Off 判断
+  # ---------------------------------------------------------------------------
+  trend_layer:
+    timeframe: "1d"
+    sma_period: 200                   # SMA_200 判断长期趋势
+    require_above_sma: true           # 价格需在 SMA 上方才能交易
+    require_macd_positive: true       # MACD > 0 才能交易
+    cache_ttl_hours: 4                # 趋势状态缓存时间
+
+  # ---------------------------------------------------------------------------
+  # 决策层配置 (4H) - Bull/Bear 辩论决定方向
+  # ---------------------------------------------------------------------------
+  decision_layer:
+    timeframe: "4h"
+    debate_rounds: 2                  # TradingAgents 辩论轮数
+    include_trend_context: true       # 在辩论中包含趋势层信息
+    indicators:
+      sma_periods: [20, 50]
+      rsi_period: 14
+      macd_fast: 12
+      macd_slow: 26
+      bb_period: 20
+      bb_std: 2.0
+
+  # ---------------------------------------------------------------------------
+  # 执行层配置 (5M / 15M) - 精确入场时机
+  # ---------------------------------------------------------------------------
+  execution_layer:
+    default_timeframe: "15m"          # 默认执行周期
+    high_volatility_timeframe: "5m"   # 高波动时使用 5M
+    rsi_entry_min: 35                 # RSI 入场范围下限
+    rsi_entry_max: 65                 # RSI 入场范围上限
+    indicators:
+      sma_periods: [5, 20]
+      ema_periods: [10]
+      rsi_period: 14
+      support_resistance_lookback: 20
+
+# =============================================================================
+# 订单流数据配置 (Order Flow) v3.2
+# =============================================================================
+order_flow:
+  enabled: true                       # 启用订单流数据增强
+
+  # ---------------------------------------------------------------------------
+  # Binance K线完整字段
+  # ---------------------------------------------------------------------------
+  binance:
+    use_taker_data: true              # 使用 taker_buy_volume (列[9])
+    use_quote_volume: true            # 使用 quote_volume (列[7])
+    use_trades_count: true            # 使用 trades_count (列[8])
+    bars_for_analysis: 10             # 分析最近 N 根 K线
+
+  # ---------------------------------------------------------------------------
+  # Coinalyze 衍生品数据 (需要 API Key)
+  # ---------------------------------------------------------------------------
+  coinalyze:
+    enabled: true                     # 启用 Coinalyze 数据
+    api_key: ""                       # 从 ~/.env.aitrader 的 COINALYZE_API_KEY 读取
+    timeout: 10                       # API 请求超时 (秒)
+    symbol: "BTCUSDT_PERP.A"          # Coinalyze Symbol 格式 (A=Binance)
+    endpoints:
+      open_interest: true
+      liquidations: true
+      funding_rate: true
+    # 降级策略: API 失败时使用默认值
+    fallback_enabled: true
+    fallback_oi_usd: 0
+    fallback_funding_rate: 0
+
+  # ---------------------------------------------------------------------------
+  # 买卖比阈值
+  # ---------------------------------------------------------------------------
+  buy_ratio:
+    bullish_threshold: 0.55           # >55% 视为多头主导
+    bearish_threshold: 0.45           # <45% 视为空头主导
+    trend_threshold: 0.01             # 趋势判断阈值 (前5根 vs 后5根差值)
+
+  # ---------------------------------------------------------------------------
+  # Prompt 配置
+  # ---------------------------------------------------------------------------
+  prompt:
+    version: "optimized"              # "optimized" (~600 tokens) 或 "full" (~1800 tokens)
+    include_interpretation_guide: true # 在 Prompt 中包含解读指南
+    weights:                          # 各数据权重 (供 AI 参考)
+      order_flow: 0.30
+      technical: 0.25
+      derivatives: 0.25
+      sentiment: 0.20
+```
+
+#### 9.7.3 环境覆盖 (configs/production.yaml)
+
+```yaml
+# 生产环境: 启用多时间框架
+multi_timeframe:
+  enabled: true
+  execution_layer:
+    default_timeframe: "15m"
+
 order_flow:
   enabled: true
-  # Binance K线完整字段
-  use_taker_data: true
-  # Coinalyze 数据
   coinalyze:
     enabled: true
-    timeout: 10
-    endpoints:
-      - open_interest
-      - liquidations
-      - funding_rate
-  # 买卖比阈值
-  buy_ratio:
-    bullish_threshold: 0.55  # >55% 视为多头主导
-    bearish_threshold: 0.45  # <45% 视为空头主导
-  # Prompt 配置
-  prompt:
-    version: "optimized"  # "optimized" (~600 tokens) 或 "full" (~1800 tokens)
-    include_interpretation_guide: true
+```
+
+#### 9.7.4 环境覆盖 (configs/development.yaml)
+
+```yaml
+# 开发环境: 使用更短周期便于测试
+multi_timeframe:
+  enabled: true
+  trend_layer:
+    timeframe: "4h"                   # 开发用 4H 代替 1D
+    sma_period: 50                    # 开发用 SMA_50 代替 SMA_200
+  decision_layer:
+    timeframe: "1h"                   # 开发用 1H 代替 4H
+  execution_layer:
+    default_timeframe: "5m"           # 开发用 5M 代替 15M
+
+order_flow:
+  enabled: true
+  binance:
+    bars_for_analysis: 5              # 开发用 5 根代替 10 根
+  coinalyze:
+    enabled: false                    # 开发环境可禁用 Coinalyze
+```
+
+#### 9.7.5 代码中读取配置
+
+```python
+# main_live.py 中加载配置
+from utils.config_manager import ConfigManager
+import os
+
+config = ConfigManager(env='production')
+config.load()
+
+# 多时间框架配置
+mtf_enabled = config.get('multi_timeframe', 'enabled', default=False)
+trend_sma_period = config.get('multi_timeframe', 'trend_layer', 'sma_period', default=200)
+decision_timeframe = config.get('multi_timeframe', 'decision_layer', 'timeframe', default='4h')
+
+# 订单流配置
+order_flow_enabled = config.get('order_flow', 'enabled', default=True)
+coinalyze_enabled = config.get('order_flow', 'coinalyze', 'enabled', default=True)
+coinalyze_symbol = config.get('order_flow', 'coinalyze', 'symbol', default='BTCUSDT_PERP.A')
+
+# Coinalyze API Key (从环境变量)
+coinalyze_api_key = os.getenv('COINALYZE_API_KEY', '')
+
+# 初始化 Coinalyze 客户端
+from utils.coinalyze_client import CoinalyzeClient
+coinalyze_client = CoinalyzeClient(
+    api_key=coinalyze_api_key,
+    timeout=config.get('order_flow', 'coinalyze', 'timeout', default=10)
+)
 ```
 
 ### 9.8 实施计划
@@ -2447,4 +2768,4 @@ python3 scripts/count_prompt_tokens.py
 
 ---
 
-*文档更新于 2026-01-26 v3.2 - 订单流数据增强*
+*文档更新于 2026-01-26 v3.2.1 - Coinalyze API 验证 + 完整 base.yaml 配置*
