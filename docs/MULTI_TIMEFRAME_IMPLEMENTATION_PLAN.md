@@ -1,14 +1,14 @@
-# 多时间框架实施方案 v3.2.1
+# 多时间框架实施方案 v3.2.2
 
 ## 文档信息
 
 | 项目 | 值 |
 |------|-----|
-| 版本 | 3.2.1 |
+| 版本 | 3.2.2 |
 | 创建日期 | 2026-01-26 |
 | 更新日期 | 2026-01-26 |
 | 基于 | TradingAgents 架构 + AItrader 现有系统 |
-| 状态 | **API 验证 + 完整配置** (v3.2.1 - Coinalyze API Key + base.yaml 配置) |
+| 状态 | **数据格式转换** (v3.2.2 - Coinalyze 格式 → 统一格式转换) |
 
 ## 版本历史
 
@@ -20,6 +20,24 @@
 | v3.1 | 2026-01-26 | **新增完整数据流图** (Section 1.5)，详细描述从数据获取到信号执行的完整流程 |
 | v3.2 | 2026-01-26 | **订单流数据增强** (Section 9)，整合 Binance + Coinalyze 数据，含完整 Prompt 设计 |
 | v3.2.1 | 2026-01-26 | **Coinalyze API 验证 + 完整配置**，修正 API Key 要求、Symbol 格式、完整 base.yaml 配置 |
+| v3.2.2 | 2026-01-26 | **数据格式转换**，添加 Coinalyze → 统一格式转换逻辑，含字段映射表 |
+
+### v3.2.2 主要更新 (数据格式转换)
+
+1. **格式转换逻辑** (Section 9.6.3)
+   - 新增 `_convert_derivatives()` 方法
+   - Coinalyze `openInterestUsd` → 统一格式 `total_usd`
+   - Coinalyze `fundingRate` → 统一格式 `current`
+   - Coinalyze `l/s` → 统一格式 `long_usd/short_usd`
+
+2. **OI 变化率计算**
+   - Coinalyze 不提供 `change_24h_pct`
+   - 使用缓存对比自行计算
+   - 首次运行时为 0
+
+3. **字段映射表** (Section 9.6.4)
+   - 详细的 Coinalyze 原始格式 vs 统一格式对照
+   - API 响应示例
 
 ### v3.2.1 主要更新 (API 验证 + 完整配置)
 
@@ -2480,18 +2498,27 @@ class CoinalyzeClient:
         return self._enabled
 ```
 
-#### 9.6.3 数据组装器
+#### 9.6.3 数据组装器 (含格式转换)
 
 ```python
 # utils/ai_data_assembler.py
 
 class AIDataAssembler:
-    """组装 AI 输入数据"""
+    """
+    组装 AI 输入数据
+
+    负责:
+    1. 并行获取外部数据
+    2. **格式转换**: 将 Coinalyze 原始格式转换为统一格式
+    3. 组装最终数据结构
+    """
 
     def __init__(self, order_flow_processor, coinalyze_client, sentiment_client):
         self.order_flow = order_flow_processor
         self.coinalyze = coinalyze_client
         self.sentiment = sentiment_client
+        # 缓存上一次 OI 值用于计算变化率
+        self._last_oi_usd: float = 0.0
 
     async def assemble(self, klines: list, technical: dict, position: dict) -> dict:
         """
@@ -2503,7 +2530,7 @@ class AIDataAssembler:
             position: 当前持仓信息
 
         Returns:
-            完整的 AI 输入数据字典
+            完整的 AI 输入数据字典 (统一格式)
         """
         # 并行获取外部数据
         import asyncio
@@ -2512,13 +2539,16 @@ class AIDataAssembler:
         funding_task = self.coinalyze.get_funding_rate()
         sentiment_task = self.sentiment.get_long_short_ratio()
 
-        oi, liq, funding, sentiment = await asyncio.gather(
+        oi_raw, liq_raw, funding_raw, sentiment = await asyncio.gather(
             oi_task, liq_task, funding_task, sentiment_task,
             return_exceptions=True
         )
 
         # 处理订单流
         order_flow_data = self.order_flow.process_klines(klines)
+
+        # ⭐ 格式转换: Coinalyze → 统一格式
+        derivatives = self._convert_derivatives(oi_raw, liq_raw, funding_raw)
 
         # 组装数据
         return {
@@ -2528,14 +2558,65 @@ class AIDataAssembler:
             },
             "technical": technical,
             "order_flow": order_flow_data,
-            "derivatives": {
-                "open_interest": oi if not isinstance(oi, Exception) else None,
-                "liquidations_1h": liq if not isinstance(liq, Exception) else None,
-                "funding_rate": funding if not isinstance(funding, Exception) else None,
-            },
+            "derivatives": derivatives,
             "sentiment": sentiment if not isinstance(sentiment, Exception) else {},
             "current_position": position,
         }
+
+    def _convert_derivatives(self, oi_raw, liq_raw, funding_raw) -> dict:
+        """
+        ⭐ 格式转换: Coinalyze API → 统一格式
+
+        Coinalyze 返回格式:
+        - OI: {"openInterestUsd": 18500000000, "timestamp": ...}
+        - Funding: {"fundingRate": 0.0008, "predictedFundingRate": ...}
+        - Liquidation: {"longLiquidationUsd": ..., "shortLiquidationUsd": ...}
+
+        统一格式:
+        - open_interest: {"total_usd": 18500000000, "change_24h_pct": 3.5}
+        - funding_rate: {"current": 0.0008, "predicted": 0.0007}
+        - liquidations_1h: {"long_usd": 2500000, "short_usd": 1800000}
+        """
+        result = {
+            "open_interest": None,
+            "liquidations_1h": None,
+            "funding_rate": None,
+        }
+
+        # === Open Interest 转换 ===
+        if oi_raw and not isinstance(oi_raw, Exception):
+            current_oi = oi_raw.get('openInterestUsd', 0)
+            # 计算 24h 变化率 (使用缓存值)
+            change_pct = 0.0
+            if self._last_oi_usd > 0 and current_oi > 0:
+                change_pct = round((current_oi - self._last_oi_usd) / self._last_oi_usd * 100, 2)
+            self._last_oi_usd = current_oi
+
+            result["open_interest"] = {
+                "total_usd": current_oi,
+                "change_24h_pct": change_pct,  # 注意: 首次运行时为 0
+            }
+
+        # === Funding Rate 转换 ===
+        if funding_raw and not isinstance(funding_raw, Exception):
+            result["funding_rate"] = {
+                "current": funding_raw.get('fundingRate', 0),
+                "predicted": funding_raw.get('predictedFundingRate', 0),
+            }
+
+        # === Liquidation 转换 ===
+        if liq_raw and not isinstance(liq_raw, Exception):
+            # Coinalyze liquidation 格式可能是:
+            # {"longLiquidationUsd": ..., "shortLiquidationUsd": ...}
+            # 或者 history 格式: {"t": timestamp, "l": long, "s": short}
+            result["liquidations_1h"] = {
+                "long_usd": liq_raw.get('longLiquidationUsd',
+                           liq_raw.get('l', 0)),
+                "short_usd": liq_raw.get('shortLiquidationUsd',
+                            liq_raw.get('s', 0)),
+            }
+
+        return result
 
     def _calc_change(self, klines: list) -> float:
         """计算 24h 涨跌幅"""
@@ -2545,6 +2626,51 @@ class AIDataAssembler:
         new_close = float(klines[-1][4])
         return round((new_close - old_close) / old_close * 100, 2) if old_close > 0 else 0.0
 ```
+
+#### 9.6.4 Coinalyze 数据格式参考
+
+**API 原始响应 vs 统一格式对照表**:
+
+| 端点 | Coinalyze 原始字段 | 转换后字段 | 说明 |
+|------|-------------------|-----------|------|
+| `/open-interest` | `openInterestUsd` | `total_usd` | 直接映射 |
+| `/open-interest` | (无) | `change_24h_pct` | 需自己计算 (缓存对比) |
+| `/funding-rate` | `fundingRate` | `current` | 直接映射 |
+| `/funding-rate` | `predictedFundingRate` | `predicted` | 直接映射 |
+| `/liquidation-history` | `longLiquidationUsd` 或 `l` | `long_usd` | 兼容两种格式 |
+| `/liquidation-history` | `shortLiquidationUsd` 或 `s` | `short_usd` | 兼容两种格式 |
+
+**Coinalyze API 响应示例**:
+
+```json
+// GET /v1/open-interest?symbols=BTCUSDT_PERP.A
+[{
+    "symbol": "BTCUSDT_PERP.A",
+    "openInterest": 185000,           // 合约数量
+    "openInterestUsd": 18500000000,   // USD 价值 ⭐ 使用这个
+    "timestamp": 1706270400000
+}]
+
+// GET /v1/funding-rate?symbols=BTCUSDT_PERP.A
+[{
+    "symbol": "BTCUSDT_PERP.A",
+    "fundingRate": 0.0008,            // 当前费率 ⭐
+    "predictedFundingRate": 0.0007,   // 预测费率 ⭐
+    "timestamp": 1706270400000
+}]
+
+// GET /v1/liquidation-history?symbols=BTCUSDT_PERP.A&interval=1h
+[{
+    "t": 1706270400000,               // timestamp
+    "l": 2500000,                     // long liquidation USD ⭐
+    "s": 1800000                      // short liquidation USD ⭐
+}]
+```
+
+**注意事项**:
+1. `change_24h_pct` 需要自己计算 (Coinalyze 不提供)
+2. 清算数据有两种格式，代码需兼容
+3. 首次运行时 OI 变化率为 0 (无历史数据对比)
 
 ### 9.7 配置项扩展
 
@@ -2768,4 +2894,4 @@ python3 scripts/count_prompt_tokens.py
 
 ---
 
-*文档更新于 2026-01-26 v3.2.1 - Coinalyze API 验证 + 完整 base.yaml 配置*
+*文档更新于 2026-01-26 v3.2.2 - Coinalyze 数据格式转换 + 字段映射表*
