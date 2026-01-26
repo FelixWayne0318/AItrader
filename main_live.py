@@ -281,6 +281,15 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         network_oco_manager_socket_timeout=config_manager.get('network', 'oco_manager', 'socket_timeout', default=5.0),
         network_oco_manager_socket_connect_timeout=config_manager.get('network', 'oco_manager', 'socket_connect_timeout', default=5.0),
         sentiment_timeout=config_manager.get('sentiment', 'timeout', default=10.0),
+
+        # Multi-Timeframe Configuration (v3.2.9)
+        multi_timeframe_enabled=config_manager.get('multi_timeframe', 'enabled', default=False),
+        mtf_trend_sma_period=config_manager.get('multi_timeframe', 'trend_layer', 'sma_period', default=200),
+        mtf_trend_require_above_sma=config_manager.get('multi_timeframe', 'trend_layer', 'require_above_sma', default=True),
+        mtf_trend_require_macd_positive=config_manager.get('multi_timeframe', 'trend_layer', 'require_macd_positive', default=True),
+        mtf_decision_debate_rounds=config_manager.get('multi_timeframe', 'decision_layer', 'debate_rounds', default=2),
+        mtf_execution_rsi_entry_min=config_manager.get('multi_timeframe', 'execution_layer', 'rsi_entry_min', default=35),
+        mtf_execution_rsi_entry_max=config_manager.get('multi_timeframe', 'execution_layer', 'rsi_entry_max', default=65),
     )
 
 

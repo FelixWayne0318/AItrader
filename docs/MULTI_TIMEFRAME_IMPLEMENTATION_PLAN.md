@@ -1,14 +1,14 @@
-# 多时间框架实施方案 v3.2.8
+# 多时间框架实施方案 v3.2.9
 
 ## 文档信息
 
 | 项目 | 值 |
 |------|-----|
-| 版本 | 3.2.8 |
+| 版本 | 3.2.9 |
 | 创建日期 | 2026-01-26 |
 | 更新日期 | 2026-01-26 |
 | 基于 | TradingAgents 架构 + AItrader 现有系统 |
-| 状态 | **API 合规性修复** (v3.2.8 - request_bars 签名修正 + MultiTimeframeManager 定义) |
+| 状态 | **✅ 实际代码已实现** (v3.2.9 - 核心模块已创建并集成) |
 
 ## 版本历史
 
@@ -27,6 +27,46 @@
 | v3.2.6 | 2026-01-26 | **服务器实测修正**，时间戳单位不一致 (当前端点毫秒/历史端点秒)，Liquidation 嵌套结构 |
 | v3.2.7 | 2026-01-26 | **P0 阻塞项修复**，BarType构建、_prefetch_multi_timeframe_bars()、SMA_200初始化、时间戳标准化 |
 | v3.2.8 | 2026-01-26 | **NautilusTrader API 合规性修复**，request_bars 签名修正 (start/end datetime)、新增 MultiTimeframeManager 完整定义 |
+| v3.2.9 | 2026-01-26 | **✅ 实际代码实现完成**，创建核心模块文件、集成 main_live.py、添加 Config 字段 |
+
+### v3.2.9 主要更新 (✅ 实际代码实现完成)
+
+**本版本将设计文档转化为实际可运行代码，所有核心模块已创建并集成。**
+
+1. **✅ 创建 `indicators/multi_timeframe_manager.py` (~400 行)**
+   - `RiskState` 枚举: RISK_ON / RISK_OFF
+   - `DecisionState` 枚举: ALLOW_LONG / ALLOW_SHORT / WAIT
+   - `MultiTimeframeManager` 类完整实现
+   - 方法: `route_bar()`, `evaluate_risk_state()`, `check_execution_confirmation()`, `is_initialized()`, `get_summary()`
+
+2. **✅ 更新 `configs/base.yaml` MTF 配置**
+   - `multi_timeframe.enabled`: 默认 false
+   - `multi_timeframe.trend_layer`: SMA_200, MACD 条件
+   - `multi_timeframe.decision_layer`: debate_rounds, indicators
+   - `multi_timeframe.execution_layer`: RSI 入场范围 (35-65)
+   - `multi_timeframe.initialization`: min_bars, timeout, retry
+
+3. **✅ 更新 `strategy/deepseek_strategy.py`**
+   - 添加 `DeepSeekAIStrategyConfig` MTF 字段 (7 个)
+   - `__init__`: MTF 初始化 + BarType 构建
+   - `on_start()`: MTF bars 订阅
+   - `on_bar()`: MTF 路由逻辑
+   - `on_historical_data()`: 异步回调处理
+   - `_prefetch_multi_timeframe_bars()`: 历史数据预取
+   - `_verify_mtf_initialization()`: 初始化验证
+
+4. **✅ 更新 `main_live.py`**
+   - `get_strategy_config()` 添加 MTF 参数加载
+   - 从 ConfigManager 读取所有 MTF 配置
+
+**实现文件清单:**
+
+| 文件 | 状态 | 说明 |
+|------|------|------|
+| `indicators/multi_timeframe_manager.py` | ✅ 已创建 | ~400 行核心类 |
+| `configs/base.yaml` | ✅ 已更新 | MTF + initialization 配置 |
+| `strategy/deepseek_strategy.py` | ✅ 已更新 | +180 行 MTF 集成代码 |
+| `main_live.py` | ✅ 已更新 | +8 行配置加载 |
 
 ### v3.2.8 主要更新 (NautilusTrader API 合规性修复)
 
