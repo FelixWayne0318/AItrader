@@ -216,6 +216,17 @@ CodeQL 提供更深入的语义分析，包括安全漏洞检测和数据流分�
 | 自定义查询 | QL 语言 | Python 代码 |
 | 本地运行 | 需安装 CodeQL CLI | 无需额外安装 |
 
+### 访问 Code Scanning 结果
+
+**本地开发**: 访问 https://github.com/FelixWayne0318/AItrader/security/code-scanning
+
+**CI/CD 自动化**: 由于 GitHub Actions 的 `GITHUB_TOKEN` 对 Code Scanning Alerts API 有访问限制，推荐使用 SARIF Artifact 解析。详细配置方法和故障排除参见:
+- 📖 **[GitHub Actions 和 CI/CD 开发指南](docs/development/GITHUB_ACTIONS_GUIDE.md)**
+  - Code Scanning Alerts 访问方法 (SARIF / PAT / Web UI)
+  - 自定义 CodeQL 查询编写
+  - 权限配置和 Secrets 管理
+  - 常见错误故障排除
+
 ## ⚠️ 关键信息
 
 | 项目 | 值 |

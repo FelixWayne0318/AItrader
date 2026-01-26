@@ -12,18 +12,5 @@ import python
 
 from ImportingStmt imp, string moduleName
 where
-  (
-    imp instanceof Import and
-    moduleName = imp.(Import).getAName().getId()
-  )
-  or
-  (
-    imp instanceof ImportStar and
-    moduleName = imp.(ImportStar).getModule().getName()
-  )
-  or
-  (
-    imp instanceof ImportMember and
-    moduleName = imp.(ImportMember).getModule().getName()
-  )
+  moduleName = imp.getAnImportedModuleName()
 select imp, "Import of module: " + moduleName

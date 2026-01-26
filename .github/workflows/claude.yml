@@ -21,11 +21,14 @@ jobs:
       )
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      actions: read
-      id-token: write
+      contents: write          # 读写代码
+      pull-requests: write     # 管理 PR
+      issues: write            # 管理 Issue
+      actions: read            # 读取 Actions 日志
+      id-token: write          # OIDC 认证
+      security-events: read    # 读取 Code Scanning 告警
+      checks: write            # 更新 CI 检查状态
+      statuses: write          # 更新 commit 状态
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -36,3 +39,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        env:
+          # 使用 PAT 访问 Code Scanning API (需要在 Secrets 中配置 CODE_SCANNING_PAT)
+          # 如果未配置，回退到默认 GITHUB_TOKEN
+          GH_TOKEN: ${{ secrets.CODE_SCANNING_PAT || secrets.GITHUB_TOKEN }}
