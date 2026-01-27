@@ -158,6 +158,10 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     network_bar_persistence_timeout: float = 10.0
     network_oco_manager_socket_timeout: float = 5.0
     network_oco_manager_socket_connect_timeout: float = 5.0
+    network_instrument_discovery_max_retries: int = 60  # Instrument 加载最大重试次数
+    network_instrument_discovery_retry_interval: float = 1.0  # Instrument 加载重试间隔 (秒)
+    network_binance_api_timeout: float = 10.0  # Binance API 超时 (秒)
+    network_telegram_message_timeout: float = 30.0  # Telegram 消息发送超时 (秒)
     sentiment_timeout: float = 10.0
 
     # Multi-Timeframe Configuration (v3.2.9)
@@ -258,6 +262,7 @@ class DeepSeekAIStrategy(Strategy):
             logger=self.log,
             cache_ttl=config.network_binance_balance_cache_ttl,
             recv_window=config.network_binance_recv_window,
+            api_timeout=config.network_binance_api_timeout,
         )
         self._real_balance: Dict[str, float] = {}  # Cached real balance from Binance
 
@@ -303,7 +308,7 @@ class DeepSeekAIStrategy(Strategy):
 
         if self.mtf_enabled:
             try:
-                from indicators.multi_timeframe_manager import MultiTimeframeManager
+                from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState
 
                 # Build BarType objects for each layer
                 instrument_str = str(self.instrument_id)
@@ -338,6 +343,8 @@ class DeepSeekAIStrategy(Strategy):
                     execution_bar_type=self.execution_bar_type,
                     logger=self.log,
                 )
+                # Store RiskState enum for use in on_timer
+                self._RiskState = RiskState
                 self.log.info(f"✅ MTF Manager initialized: trend={self.trend_bar_type}, decision={self.decision_bar_type}, exec={self.execution_bar_type}")
             except Exception as e:
                 self.log.error(f"❌ Failed to initialize MTF Manager: {e}")
@@ -383,7 +390,8 @@ class DeepSeekAIStrategy(Strategy):
                         token=bot_token,
                         chat_id=chat_id,
                         logger=self.log,
-                        enabled=True
+                        enabled=True,
+                        message_timeout=config.network_telegram_message_timeout
                     )
                     # Store notification preferences
                     self.telegram_notify_signals = config.telegram_notify_signals
@@ -517,8 +525,9 @@ class DeepSeekAIStrategy(Strategy):
         # The instrument may not be immediately available as the data client
         # loads instruments asynchronously from Binance
         import time
-        max_retries = 60  # Wait up to 60 seconds (increased for network latency)
-        retry_interval = 1.0  # Check every second
+        # 从配置读取重试参数 (原硬编码 60/1.0)
+        max_retries = self.config.network_instrument_discovery_max_retries
+        retry_interval = self.config.network_instrument_discovery_retry_interval
 
         self.instrument = None
         for attempt in range(max_retries):
@@ -1080,6 +1089,16 @@ class DeepSeekAIStrategy(Strategy):
             self.log.warning("Indicators not yet initialized, skipping analysis")
             return
 
+        # ========== MTF 初始化检查 ==========
+        # 如果启用了 MTF，检查三层是否都已初始化
+        if self.mtf_enabled and self.mtf_manager:
+            if not self.mtf_manager.is_all_layers_initialized():
+                self.log.warning("[MTF] 多时间框架未完全初始化，跳过分析")
+                self.log.debug(f"[MTF] 初始化状态: trend={self._mtf_trend_initialized}, "
+                              f"decision={self._mtf_decision_initialized}, "
+                              f"execution={self._mtf_execution_initialized}")
+                return
+
         # Get current market data
         current_bar = self.indicator_manager.recent_bars[-1] if self.indicator_manager.recent_bars else None
         if not current_bar:
@@ -1148,6 +1167,27 @@ class DeepSeekAIStrategy(Strategy):
                 f"{current_position['quantity']} @ ${current_position['avg_px']:.2f}"
             )
 
+        # ========== MTF 优先级规则 (Phase 1: RISK_OFF 过滤) ==========
+        # 趋势层 (1D) 决定是否允许新开仓
+        mtf_risk_state = None
+        mtf_allows_new_position = True  # 默认允许
+
+        if self.mtf_enabled and self.mtf_manager:
+            try:
+                # 评估趋势层风险状态
+                mtf_risk_state = self.mtf_manager.evaluate_risk_state(current_price)
+                self.log.info(f"[MTF] 趋势层 (1D) 风险状态: {mtf_risk_state.value}")
+
+                # 如果 RISK_OFF，禁止新开仓（但允许平仓和管理现有仓位）
+                if mtf_risk_state == self._RiskState.RISK_OFF:
+                    mtf_allows_new_position = False
+                    self.log.warning(
+                        f"[MTF] ⚠️ RISK_OFF - 市场结构恶化，禁止新开仓 "
+                        f"(价格低于 SMA_200 或 MACD 为负)"
+                    )
+            except Exception as e:
+                self.log.warning(f"[MTF] 趋势层评估失败: {e}")
+
         # ========== 层级决策架构 (TradingAgents) ==========
         # MultiAgent 的 Judge 作为最终决策者，不再与 DeepSeek 并行合并
         # 流程: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
@@ -1164,6 +1204,50 @@ class DeepSeekAIStrategy(Strategy):
                 current_position=current_position,
                 price_data=price_data,
             )
+
+            # ========== MTF 优先级规则 (Phase 2: 信号过滤) ==========
+            original_signal = signal_data['signal']
+
+            if self.mtf_enabled and self.mtf_manager:
+                # 规则 1: RISK_OFF 时禁止新开仓
+                if not mtf_allows_new_position and signal_data['signal'] in ['BUY', 'SELL']:
+                    # 检查是否是开新仓 (无现有仓位或反转)
+                    is_opening_new = (
+                        current_position is None or
+                        current_position.get('side') == 'FLAT' or
+                        (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
+                        (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
+                    )
+
+                    if is_opening_new:
+                        self.log.warning(
+                            f"[MTF] 🚫 RISK_OFF 过滤: {signal_data['signal']} → HOLD "
+                            f"(市场结构恶化，禁止新开仓)"
+                        )
+                        signal_data['signal'] = 'HOLD'
+                        signal_data['reason'] = f"[MTF RISK_OFF] {signal_data.get('reason', '')}"
+
+                # 规则 2: 执行层 RSI 确认 (仅在 RISK_ON 且有交易信号时)
+                if signal_data['signal'] in ['BUY', 'SELL']:
+                    try:
+                        exec_result = self.mtf_manager.check_execution_confirmation(current_price)
+                        self.log.info(f"[MTF] 执行层 (15M) RSI 确认: {exec_result['reason']}")
+
+                        if not exec_result['confirmed']:
+                            self.log.warning(
+                                f"[MTF] ⏳ RSI 不在入场范围: {signal_data['signal']} → HOLD "
+                                f"(RSI={exec_result.get('rsi', 0):.1f}, 范围={exec_result.get('rsi_range', [])})"
+                            )
+                            signal_data['signal'] = 'HOLD'
+                            signal_data['reason'] = f"[MTF RSI] {signal_data.get('reason', '')}"
+                    except Exception as e:
+                        self.log.warning(f"[MTF] 执行层确认失败: {e}")
+
+            # 记录 MTF 过滤结果
+            if original_signal != signal_data['signal']:
+                self.log.info(
+                    f"[MTF] 信号被过滤: {original_signal} → {signal_data['signal']}"
+                )
 
             # Log Judge's final decision
             self.log.info(

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.2 (TradingAgents 架构 + MTF 完整支持 + Order Flow 测试)
+实盘信号诊断脚本 v10.3 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -13,6 +13,7 @@
 8. v10.0: 多时间框架 (MTF) 三层架构支持
 9. v10.1: MTF 详细配置验证、初始化配置、Order Flow 检查
 10. v10.2: Order Flow 实际数据获取测试、Telegram 命令处理验证、MTF 预取验证
+11. v10.3: Post-Trade 生命周期测试、情绪 fallback 完整字段、从配置读取 Symbol
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -28,6 +29,12 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.3:
+- 添加 Step 8.5: Post-Trade 生命周期测试 (OCO 清理 + Trailing Stop)
+- 修复情绪数据 fallback 缺失字段 (positive_ratio, negative_ratio, net_sentiment)
+- 修复硬编码 Symbol，改从 strategy_config.instrument_id 提取
+- MTF 预取添加实际 API 调用测试 (1D/4H/15M)
+
 v10.2:
 - 添加 Step 0.6: MTF 历史数据预取验证 (检查各层初始化状态)
 - 添加 Step 9: Order Flow 数据实际获取测试 (Coinalyze API 调用验证)
@@ -170,17 +177,34 @@ def check_critical_config() -> Tuple[list, list]:
             # 所有都是 True
             pass  # 正常
 
-        # 检查 reconciliation 设置
-        reconciliation_matches = re.findall(r'reconciliation\s*=\s*(True|False)', main_live_content)
+        # 检查 reconciliation 设置 (支持两种格式)
+        # 格式1 (旧): reconciliation=True
+        # 格式2 (新): config_manager.get('execution', 'engine', 'reconciliation', default=True)
+        reconciliation_hardcoded = re.findall(r'reconciliation\s*=\s*(True|False)', main_live_content)
+        reconciliation_configmanager = re.search(
+            r"config_manager\.get\s*\(\s*['\"]execution['\"].*['\"]reconciliation['\"].*default\s*=\s*(True|False)",
+            main_live_content
+        )
 
-        if not reconciliation_matches:
+        if reconciliation_configmanager:
+            # 使用 ConfigManager 格式 (推荐)
+            if reconciliation_configmanager.group(1) == 'False':
+                issues.append(
+                    "❌ main_live.py: reconciliation default=False\n"
+                    "   → 仓位不同步，可能导致订单管理异常\n"
+                    "   → 修复: 改为 default=True"
+                )
+            # else: default=True, 正常
+        elif reconciliation_hardcoded:
+            # 使用硬编码格式 (旧版)
+            if 'False' in reconciliation_hardcoded:
+                issues.append(
+                    "❌ main_live.py: reconciliation=False\n"
+                    "   → 仓位不同步，可能导致订单管理异常\n"
+                    "   → 修复: 改为 reconciliation=True"
+                )
+        else:
             warnings.append("main_live.py: 未找到 reconciliation 配置")
-        elif 'False' in reconciliation_matches:
-            issues.append(
-                "❌ main_live.py: reconciliation=False\n"
-                "   → 仓位不同步，可能导致订单管理异常\n"
-                "   → 修复: 改为 reconciliation=True"
-            )
     else:
         issues.append("❌ main_live.py 文件不存在!")
 
@@ -243,20 +267,24 @@ def check_critical_config() -> Tuple[list, list]:
                     f"   → 建议至少设置为 0.01 (1%)"
                 )
 
-    # 检查 multi_agent_analyzer.py 是否正确导入共享常量
+    # 检查 multi_agent_analyzer.py 是否正确导入共享常量/函数
     analyzer_path = project_root / "agents" / "multi_agent_analyzer.py"
     if analyzer_path.exists():
         with open(analyzer_path, 'r', encoding='utf-8') as f:
             analyzer_content = f.read()
 
-        # 支持单行和多行导入格式
+        # 支持两种模式:
+        # 1. 旧模式: 导入常量 MIN_SL_DISTANCE_PCT
+        # 2. 新模式: 导入 getter 函数 get_min_sl_distance_pct (Phase 3 迁移后)
         has_trading_logic_import = "from strategy.trading_logic import" in analyzer_content
         has_min_sl_constant = "MIN_SL_DISTANCE_PCT" in analyzer_content
+        has_min_sl_getter = "get_min_sl_distance_pct" in analyzer_content
 
-        if not (has_trading_logic_import and has_min_sl_constant):
+        # 新模式 (getter 函数) 或 旧模式 (常量) 都可接受
+        if not (has_trading_logic_import and (has_min_sl_constant or has_min_sl_getter)):
             warnings.append(
-                "multi_agent_analyzer.py: 未从 trading_logic 导入 MIN_SL_DISTANCE_PCT\n"
-                "   → 可能导致 SL 验证不一致"
+                "multi_agent_analyzer.py: 未从 trading_logic 导入 SL 验证函数/常量\n"
+                "   → 应导入 get_min_sl_distance_pct() 或 MIN_SL_DISTANCE_PCT"
             )
 
     # ==========================================================================
@@ -478,7 +506,7 @@ if not SUMMARY_MODE and mtf_enabled:
         from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState, DecisionState
 
         # 检查 MTF 管理器的关键方法
-        mtf_methods = ['on_bar', 'on_request_bars', 'get_trend_state', 'get_decision_state']
+        mtf_methods = ['route_bar', 'is_initialized', 'get_risk_state', 'get_decision_state', 'evaluate_risk_state']
         missing_methods = []
         for method in mtf_methods:
             if not hasattr(MultiTimeframeManager, method):
@@ -534,6 +562,51 @@ if not SUMMARY_MODE and mtf_enabled:
             print(f"     趋势层: {trend_bars} 天 ≈ {trend_bars/365:.1f} 年历史数据")
             print(f"     决策层: {decision_bars * 4} 小时 ≈ {decision_bars * 4 / 24:.1f} 天历史数据")
             print(f"     执行层: {execution_bars * 15} 分钟 ≈ {execution_bars * 15 / 60:.1f} 小时历史数据")
+
+        print()
+
+        # v10.3: 实际测试 MTF 数据预取 (与实盘 _prefetch_multi_timeframe_bars 一致)
+        print("  📋 MTF 数据预取测试 (实际 API 调用):")
+        import requests as mtf_requests
+
+        mtf_test_symbol = "BTCUSDT"  # 默认测试 symbol
+        mtf_base_url = "https://fapi.binance.com/fapi/v1/klines"
+
+        # 测试趋势层 (1D)
+        try:
+            params = {'symbol': mtf_test_symbol, 'interval': '1d', 'limit': min(trend_bars, 10)}
+            resp = mtf_requests.get(mtf_base_url, params=params, timeout=10)
+            if resp.status_code == 200:
+                klines = resp.json()
+                print(f"     ✅ 趋势层 (1D): 成功获取 {len(klines)} 根 K线 (测试 limit=10)")
+            else:
+                print(f"     ❌ 趋势层 (1D): API 错误 {resp.status_code}")
+        except Exception as e:
+            print(f"     ❌ 趋势层 (1D): {e}")
+
+        # 测试决策层 (4H)
+        try:
+            params = {'symbol': mtf_test_symbol, 'interval': '4h', 'limit': min(decision_bars, 10)}
+            resp = mtf_requests.get(mtf_base_url, params=params, timeout=10)
+            if resp.status_code == 200:
+                klines = resp.json()
+                print(f"     ✅ 决策层 (4H): 成功获取 {len(klines)} 根 K线 (测试 limit=10)")
+            else:
+                print(f"     ❌ 决策层 (4H): API 错误 {resp.status_code}")
+        except Exception as e:
+            print(f"     ❌ 决策层 (4H): {e}")
+
+        # 测试执行层 (15M)
+        try:
+            params = {'symbol': mtf_test_symbol, 'interval': '15m', 'limit': min(execution_bars, 10)}
+            resp = mtf_requests.get(mtf_base_url, params=params, timeout=10)
+            if resp.status_code == 200:
+                klines = resp.json()
+                print(f"     ✅ 执行层 (15M): 成功获取 {len(klines)} 根 K线 (测试 limit=10)")
+            else:
+                print(f"     ❌ 执行层 (15M): API 错误 {resp.status_code}")
+        except Exception as e:
+            print(f"     ❌ 执行层 (15M): {e}")
 
         print()
         print("  ✅ MTF 预取配置验证完成")
@@ -622,7 +695,9 @@ elif "1-DAY" in bar_type_str:
 else:
     interval = "15m"
 
-symbol = "BTCUSDT"
+# 从配置提取 symbol (例如 "BTCUSDT-PERP.BINANCE" → "BTCUSDT")
+instrument_id_str = strategy_config.instrument_id
+symbol = instrument_id_str.split('-')[0]  # 提取交易对名称
 limit = 100
 
 try:
@@ -831,11 +906,14 @@ try:
         print(f"  Source: {sentiment_data.get('source', 'N/A')}")
         print("  ✅ 情绪数据获取成功")
     else:
-        # 与 on_timer 相同的 fallback 逻辑
+        # 与 on_timer 相同的 fallback 逻辑 (deepseek_strategy.py:1114-1125)
         sentiment_data = {
             'long_short_ratio': 1.0,
             'long_account_pct': 50.0,
             'short_account_pct': 50.0,
+            'positive_ratio': 0.5,      # 必需字段 - deepseek_client.py 使用
+            'negative_ratio': 0.5,      # 必需字段 - deepseek_client.py 使用
+            'net_sentiment': 0.0,       # 必需字段 - deepseek_client.py 使用
             'source': 'default_neutral',
             'timestamp': None,
         }
@@ -847,7 +925,11 @@ except (ImportError, AttributeError, requests.RequestException, ValueError) as e
         'long_short_ratio': 1.0,
         'long_account_pct': 50.0,
         'short_account_pct': 50.0,
+        'positive_ratio': 0.5,      # 必需字段
+        'negative_ratio': 0.5,      # 必需字段
+        'net_sentiment': 0.0,       # 必需字段
         'source': 'fallback',
+        'timestamp': None,
     }
 except (KeyboardInterrupt, SystemExit):
     print("\n  用户中断")
@@ -1310,6 +1392,58 @@ print("     如果收到信号但无交易，检查服务日志查看 _execute_t
 print()
 
 # =============================================================================
+# 8.5 Post-Trade 生命周期测试 (v10.3)
+# 与实盘 on_timer 的 1237-1243 行一致
+# =============================================================================
+if not SUMMARY_MODE:
+    print("[8.5/10] Post-Trade 生命周期测试...")
+    print("-" * 70)
+
+    # 测试 OCO 孤儿订单清理
+    print("  📋 OCO 孤儿订单清理 (_cleanup_oco_orphans):")
+    enable_oco = getattr(strategy_config, 'enable_oco', False)
+    if enable_oco:
+        print("     ✅ enable_oco = True")
+        print("        → 实盘会在每次 on_timer 后调用 _cleanup_oco_orphans()")
+        print("        → 清理无持仓时的 reduce-only 订单")
+    else:
+        print("     ⚠️ enable_oco = False (跳过清理)")
+
+    # 测试移动止损更新
+    print()
+    print("  📋 移动止损更新 (_update_trailing_stops):")
+    enable_trailing = getattr(strategy_config, 'enable_trailing_stop', False)
+    if enable_trailing:
+        activation_pct = getattr(strategy_config, 'trailing_activation_pct', 0.01)
+        distance_pct = getattr(strategy_config, 'trailing_distance_pct', 0.005)
+        print("     ✅ enable_trailing_stop = True")
+        print(f"        → 激活条件: 盈利 >= {activation_pct*100:.2f}%")
+        print(f"        → 跟踪距离: {distance_pct*100:.2f}%")
+        print("        → 实盘会在每次 on_timer 后调用 _update_trailing_stops()")
+
+        # 模拟计算当前是否会激活
+        if current_position:
+            entry_price = current_position.get('entry_price', 0)
+            if entry_price > 0:
+                current_pnl_pct = (current_price - entry_price) / entry_price
+                if current_position.get('side') == 'short':
+                    current_pnl_pct = -current_pnl_pct
+
+                if current_pnl_pct >= activation_pct:
+                    new_sl = current_price * (1 - distance_pct) if current_position.get('side') == 'long' else current_price * (1 + distance_pct)
+                    print(f"        → 当前盈利 {current_pnl_pct*100:.2f}% >= {activation_pct*100:.2f}%")
+                    print(f"        → 🟢 Trailing Stop 会激活，新 SL ≈ ${new_sl:,.2f}")
+                else:
+                    print(f"        → 当前盈利 {current_pnl_pct*100:.2f}% < {activation_pct*100:.2f}%")
+                    print(f"        → ⚪ Trailing Stop 未激活")
+    else:
+        print("     ⚠️ enable_trailing_stop = False (跳过更新)")
+
+    print()
+    print("  ✅ Post-Trade 生命周期测试完成")
+    print()
+
+# =============================================================================
 # 9. Order Flow 数据获取测试 (v10.2)
 # =============================================================================
 if not SUMMARY_MODE:
@@ -1408,8 +1542,17 @@ if not SUMMARY_MODE:
             print()
             print("  📊 测试 Liquidations API...")
             try:
+                import time as time_module
                 liq_url = f"{base_url}/liquidation-history"
-                params_liq = {"symbols": coinalyze_symbol, "interval": "1h"}
+                end_time = int(time_module.time())
+                start_time = end_time - 3600  # 1 小时前
+                # 注意: interval 必须是 "1hour" 而不是 "1h"
+                params_liq = {
+                    "symbols": coinalyze_symbol,
+                    "interval": "1hour",
+                    "from": start_time,
+                    "to": end_time
+                }
                 resp = requests.get(liq_url, headers=headers, params=params_liq, timeout=timeout)
 
                 if resp.status_code == 200:
@@ -1417,10 +1560,19 @@ if not SUMMARY_MODE:
                     if data:
                         print(f"     ✅ Liquidations API 成功")
                         print(f"        数据点数: {len(data) if isinstance(data, list) else 1}")
+                        # 显示最新一条数据
+                        if isinstance(data, list) and len(data) > 0:
+                            latest = data[-1]
+                            long_liq = latest.get('l', latest.get('longLiquidationUsd', 0))
+                            short_liq = latest.get('s', latest.get('shortLiquidationUsd', 0))
+                            print(f"        Long Liquidations: ${long_liq:,.0f}")
+                            print(f"        Short Liquidations: ${short_liq:,.0f}")
                     else:
-                        print(f"     ⚠️ API 返回空数据")
+                        print(f"     ⚠️ API 返回空数据 (可能近 1 小时无清算)")
                 else:
                     print(f"     ❌ API 错误: {resp.status_code}")
+                    if resp.status_code == 400:
+                        print(f"        → 检查参数格式: interval='1hour', from/to=UNIX秒")
 
             except Exception as e:
                 print(f"     ❌ Liquidations 测试失败: {e}")
@@ -1466,12 +1618,18 @@ if not SUMMARY_MODE:
             if telegram_bot_path.exists():
                 print("     ✅ utils/telegram_bot.py 存在")
 
-                # 检查 send_message_sync 函数
+                # 检查 TelegramBot 类和 send_message_sync 方法
                 try:
-                    from utils.telegram_bot import send_message_sync
-                    print("     ✅ send_message_sync 函数可导入")
+                    from utils.telegram_bot import TelegramBot
+                    print("     ✅ TelegramBot 类可导入")
 
-                    # 测试发送消息 (可选，需要用户确认)
+                    # 检查 send_message_sync 是否是类方法
+                    if hasattr(TelegramBot, 'send_message_sync'):
+                        print("     ✅ TelegramBot.send_message_sync 方法存在")
+                    else:
+                        print("     ⚠️ TelegramBot.send_message_sync 方法缺失")
+
+                    # 测试 Telegram API 连通性
                     print()
                     print("  📤 Telegram API 连通性测试:")
                     import requests
@@ -1493,7 +1651,7 @@ if not SUMMARY_MODE:
                         print(f"     ❌ API 错误: {resp.status_code}")
 
                 except ImportError as e:
-                    print(f"     ❌ 无法导入 send_message_sync: {e}")
+                    print(f"     ❌ 无法导入 TelegramBot: {e}")
             else:
                 print("     ❌ utils/telegram_bot.py 不存在")
 
@@ -1505,8 +1663,8 @@ if not SUMMARY_MODE:
                     from utils.telegram_command_handler import TelegramCommandHandler
                     print("     ✅ TelegramCommandHandler 类可导入")
 
-                    # 检查命令处理方法
-                    commands = ['_cmd_status', '_cmd_position', '_cmd_pause', '_cmd_resume', '_cmd_close']
+                    # 检查命令处理方法 (注意：方法名没有下划线前缀)
+                    commands = ['cmd_status', 'cmd_position', 'cmd_pause', 'cmd_resume', 'cmd_close', 'cmd_orders', 'cmd_history']
                     for cmd in commands:
                         if hasattr(TelegramCommandHandler, cmd):
                             print(f"        ✅ {cmd} 方法存在")
