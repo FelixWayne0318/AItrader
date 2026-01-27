@@ -1199,12 +1199,92 @@
       "pattern_type": "contains",
       "created": "2026-01-27T03:06:25.749139",
       "auto_generated": true
+    },
+    {
+      "id": "77038b1e693d",
+      "commit": "d4ad5e7",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: Auto-calculate unrealized PnL in diagnose_realtime.py v10.13",
+      "pattern": "if unrealized_pnl == 0 and entry_price > 0 and current_price > 0:",
+      "pattern_type": "contains",
+      "created": "2026-01-27T12:49:51.990117",
+      "auto_generated": true
+    },
+    {
+      "id": "0d6af29a762c",
+      "commit": "dd3d65b",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: Fix type conversion errors in multi_agent_analyzer.py",
+      "pattern": "raw_price = price_data.get('price', 0) if price_data else technical_report.get('price', 0)",
+      "pattern_type": "contains",
+      "created": "2026-01-27T12:49:52.028654",
+      "auto_generated": true
+    },
+    {
+      "id": "37ceff666b8d",
+      "commit": "8b6f8d3",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: Fix field name mismatches in diagnose_realtime.py v10.12",
+      "pattern": "if entry_price > 0:",
+      "pattern_type": "contains",
+      "created": "2026-01-27T12:49:52.068353",
+      "auto_generated": true
+    },
+    {
+      "id": "de13f8ce9207",
+      "commit": "b80a903",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: Fix Liquidations unit display in diagnose_realtime.py v10.11",
+      "pattern": "long_liq_btc = float(item.get('l', 0))",
+      "pattern_type": "contains",
+      "created": "2026-01-27T12:49:52.108692",
+      "auto_generated": true
+    },
+    {
+      "id": "0f35d3348ef1",
+      "commit": "ff38a17",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: Update diagnose_realtime.py to v10.10 - add Liquidations debug output",
+      "pattern": "print(f\"        [DEBUG] history type: {type(history)}, len: {len(history) if history else 0}\")",
+      "pattern_type": "contains",
+      "created": "2026-01-27T12:49:52.147876",
+      "auto_generated": true
+    },
+    {
+      "id": "f05d32d21c76",
+      "commit": "b9a5f89",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: Update diagnose_realtime.py to v10.8 - fix Coinalyze config path",
+      "pattern": "- 修复 Step 9.3 Coinalyze 配置路径: base_config.get('coinalyze') → order_flow.get('coinalyze')",
+      "pattern_type": "contains",
+      "created": "2026-01-27T12:49:52.189458",
+      "auto_generated": true
+    },
+    {
+      "id": "34a2e0047347",
+      "commit": "776d8f3",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: Update diagnose_realtime.py to v10.7 - fix SentimentDataFetcher init",
+      "pattern": "print(f\"  实盘信号诊断工具 v10.7 (TradingAgents + MTF 100% 覆盖){mode_str}\")",
+      "pattern_type": "contains",
+      "created": "2026-01-27T12:49:52.225744",
+      "auto_generated": true
+    },
+    {
+      "id": "26dce713b0bc",
+      "commit": "7558960",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: Update diagnose_realtime.py to v10.5 with Coinalyze data parsing fixes",
+      "pattern": "fr_value = fr_data.get('value', 0)",
+      "pattern_type": "contains",
+      "created": "2026-01-27T12:49:52.261689",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-01-27T03:06:29.516329",
-    "count": 120,
+    "updated": "2026-01-27T12:49:56.490363",
+    "count": 128,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
