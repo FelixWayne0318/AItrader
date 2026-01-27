@@ -372,20 +372,33 @@ cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && g
 | 显示提交 | `git log --oneline -5` | 核对 commit hash 确认版本 |
 | 实时诊断 | `scripts/diagnose_realtime.py` | 调用真实 API，验证完整数据流 |
 
-### 诊断报告导出到 GitHub
-
-服务器上的诊断报告可以自动推送到 GitHub 仓库，便于远程查看和历史追踪：
+### 实时诊断工具 (diagnose_realtime.py)
 
 ```bash
-# 在服务器上运行诊断并导出到 GitHub
 cd /home/linuxuser/nautilus_AItrader
 source venv/bin/activate
-python3 scripts/diagnose_realtime.py --export-github
 
-# 报告会保存到 logs/diagnosis_YYYYMMDD_HHMMSS.txt 并推送到仓库
+# 完整诊断 (详细输出)
+python3 scripts/diagnose_realtime.py
+
+# 仅显示关键结果 (跳过详细分析)
+python3 scripts/diagnose_realtime.py --summary
+
+# 导出到本地文件
+python3 scripts/diagnose_realtime.py --export
+
+# 导出并推送到 GitHub (远程查看)
+python3 scripts/diagnose_realtime.py --export --push
 ```
 
-**前提条件**：
+| 参数 | 说明 |
+|------|------|
+| (无参数) | 完整诊断，详细输出所有数据 |
+| `--summary` | 仅显示关键结果，跳过中间分析 |
+| `--export` | 保存到 `logs/diagnosis_YYYYMMDD_HHMMSS.txt` |
+| `--push` | 配合 `--export` 推送到 GitHub 仓库 |
+
+**GitHub 推送前提条件**：
 - 服务器已配置 SSH Key 用于 GitHub 推送
 - 远程仓库 URL 已设置为 SSH 格式: `git@github.com:FelixWayne0318/AItrader.git`
 
