@@ -177,17 +177,34 @@ def check_critical_config() -> Tuple[list, list]:
             # 所有都是 True
             pass  # 正常
 
-        # 检查 reconciliation 设置
-        reconciliation_matches = re.findall(r'reconciliation\s*=\s*(True|False)', main_live_content)
+        # 检查 reconciliation 设置 (支持两种格式)
+        # 格式1 (旧): reconciliation=True
+        # 格式2 (新): config_manager.get('execution', 'engine', 'reconciliation', default=True)
+        reconciliation_hardcoded = re.findall(r'reconciliation\s*=\s*(True|False)', main_live_content)
+        reconciliation_configmanager = re.search(
+            r"config_manager\.get\s*\(\s*['\"]execution['\"].*['\"]reconciliation['\"].*default\s*=\s*(True|False)",
+            main_live_content
+        )
 
-        if not reconciliation_matches:
+        if reconciliation_configmanager:
+            # 使用 ConfigManager 格式 (推荐)
+            if reconciliation_configmanager.group(1) == 'False':
+                issues.append(
+                    "❌ main_live.py: reconciliation default=False\n"
+                    "   → 仓位不同步，可能导致订单管理异常\n"
+                    "   → 修复: 改为 default=True"
+                )
+            # else: default=True, 正常
+        elif reconciliation_hardcoded:
+            # 使用硬编码格式 (旧版)
+            if 'False' in reconciliation_hardcoded:
+                issues.append(
+                    "❌ main_live.py: reconciliation=False\n"
+                    "   → 仓位不同步，可能导致订单管理异常\n"
+                    "   → 修复: 改为 reconciliation=True"
+                )
+        else:
             warnings.append("main_live.py: 未找到 reconciliation 配置")
-        elif 'False' in reconciliation_matches:
-            issues.append(
-                "❌ main_live.py: reconciliation=False\n"
-                "   → 仓位不同步，可能导致订单管理异常\n"
-                "   → 修复: 改为 reconciliation=True"
-            )
     else:
         issues.append("❌ main_live.py 文件不存在!")
 
