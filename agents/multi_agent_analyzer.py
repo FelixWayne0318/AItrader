@@ -258,16 +258,17 @@ class MultiAgentAnalyzer:
             tech_summary = self._format_technical_report(technical_report)
             sent_summary = self._format_sentiment_report(sentiment_report)
 
-            # MTF v2.1: Format order flow and derivatives for prompts
-            order_flow_summary = self._format_order_flow_report(order_flow_report)
-            derivatives_summary = self._format_derivatives_report(derivatives_report)
-
             # Get current price for calculations (确保是数值类型)
+            # 注意: 需要在 _format_derivatives_report 之前计算，用于 Liquidations BTC→USD 转换
             raw_price = price_data.get('price', 0) if price_data else technical_report.get('price', 0)
             try:
                 current_price = float(raw_price) if raw_price is not None else 0.0
             except (ValueError, TypeError):
                 current_price = 0.0
+
+            # MTF v2.1: Format order flow and derivatives for prompts
+            order_flow_summary = self._format_order_flow_report(order_flow_report)
+            derivatives_summary = self._format_derivatives_report(derivatives_report, current_price)
 
             # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
@@ -986,7 +987,7 @@ INTERPRETATION:
 - CVD FALLING: Distribution phase, potential breakdown
 """
 
-    def _format_derivatives_report(self, data: Optional[Dict[str, Any]]) -> str:
+    def _format_derivatives_report(self, data: Optional[Dict[str, Any]], current_price: float = 0.0) -> str:
         """
         Format derivatives data for AI prompts.
 
@@ -996,6 +997,8 @@ INTERPRETATION:
         ----------
         data : Dict, optional
             Derivatives data (OI, funding rate, liquidations)
+        current_price : float
+            Current BTC price for converting liquidations from BTC to USD
 
         Returns
         -------
@@ -1043,23 +1046,30 @@ INTERPRETATION:
         else:
             parts.append("- Funding Rate: N/A")
 
-        # Liquidations
+        # Liquidations (注意: Coinalyze API 返回的是 BTC 单位，需要转换为 USD)
         liq = data.get('liquidations')
         if liq:
             history = liq.get('history', [])
             if history:
                 item = history[-1]
-                long_liq = float(item.get('l', 0))
-                short_liq = float(item.get('s', 0))
-                total = long_liq + short_liq
+                # API 返回的是 BTC 单位
+                long_liq_btc = float(item.get('l', 0))
+                short_liq_btc = float(item.get('s', 0))
+                total_btc = long_liq_btc + short_liq_btc
 
-                parts.append(f"- Liquidations (1h): ${total/1e6:.1f}M total")
-                if total > 0:
-                    long_ratio = long_liq / total
-                    parts.append(f"  → Long Liq: ${long_liq/1e6:.1f}M ({long_ratio:.0%})")
-                    parts.append(f"  → Short Liq: ${short_liq/1e6:.1f}M ({1-long_ratio:.0%})")
+                # 转换为 USD (使用传入的 current_price)
+                price_for_conversion = current_price if current_price > 0 else 88000  # fallback
+                long_liq_usd = long_liq_btc * price_for_conversion
+                short_liq_usd = short_liq_btc * price_for_conversion
+                total_usd = total_btc * price_for_conversion
 
-                    if total > 50_000_000:  # > $50M
+                parts.append(f"- Liquidations (1h): {total_btc:.4f} BTC (${total_usd:,.0f})")
+                if total_btc > 0:
+                    long_ratio = long_liq_btc / total_btc
+                    parts.append(f"  → Long Liq: {long_liq_btc:.4f} BTC (${long_liq_usd:,.0f}) ({long_ratio:.0%})")
+                    parts.append(f"  → Short Liq: {short_liq_btc:.4f} BTC (${short_liq_usd:,.0f}) ({1-long_ratio:.0%})")
+
+                    if total_usd > 50_000_000:  # > $50M USD
                         parts.append("  → ⚠️ HIGH liquidations: Extreme volatility, be cautious")
             else:
                 parts.append("- Liquidations (1h): N/A")
