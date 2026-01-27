@@ -830,7 +830,7 @@ MTF (Multi-Timeframe) 框架使用三层时间周期协同决策，结合订单�
 |------|--------|------|
 | **Open Interest** | Coinalyze API | 持仓量变化，确认趋势强度 (+5% = 强趋势) |
 | **Funding Rate** | Coinalyze API | 资金费率，判断多空情绪 (>0.01% 多头过热) |
-| **Liquidations (1h)** | Coinalyze API | 爆仓数据，极端行情信号 |
+| **Liquidations (1h)** | Coinalyze API | 爆仓数据，极端行情信号 (单位: BTC，需乘价格转 USD) |
 
 **注意**: Coinalyze 数据需要 API Key，失败时自动降级到中性值。
 
