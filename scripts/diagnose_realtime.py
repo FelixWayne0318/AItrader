@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.11 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.12 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -22,6 +22,7 @@
 17. v10.9: 添加完整数据流覆盖 (on_bar 路由、仓位计算、订单提交、数据汇总)
 18. v10.10: 添加 Liquidations 调试输出 (原始响应、history 类型和长度)
 19. v10.11: 修复 Liquidations 单位问题 (BTC → USD 转换)
+20. v10.12: 修复情绪/持仓数据字段名不匹配问题
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -37,6 +38,11 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.12:
+- 修复情绪数据字段名不匹配: positive_ratio → long_account_pct
+- 修复持仓数据字段名不匹配: avg_px → entry_price, 添加 pnl_pct
+- Step 5 和 Step 13 的情绪/持仓数据现在能正确显示
+
 v10.11:
 - 修复 Liquidations 显示问题: API 返回 BTC 单位，不是 USD
 - 添加 BTC → USD 转换 (乘以当前价格)
@@ -858,22 +864,24 @@ try:
 
         if pos_amt != 0:
             side = 'long' if pos_amt > 0 else 'short'
+            # 计算盈亏百分比
+            pnl_pct = 0.0
+            if entry_price > 0:
+                pnl_pct = (unrealized_pnl / (entry_price * abs(pos_amt))) * 100
             current_position = {
                 'side': side,
                 'quantity': abs(pos_amt),
-                'avg_px': entry_price,
+                'entry_price': entry_price,  # 修复: 使用一致的字段名
+                'avg_px': entry_price,       # 保留兼容
                 'unrealized_pnl': unrealized_pnl,
+                'pnl_pct': pnl_pct,           # 修复: 存储 pnl_pct
             }
             print(f"  ⚠️ 检测到现有持仓!")
             print(f"     方向: {side.upper()}")
             print(f"     数量: {abs(pos_amt):.4f} BTC")
             print(f"     入场价: ${entry_price:,.2f}")
             print(f"     未实现盈亏: ${unrealized_pnl:,.2f}")
-
-            # 计算盈亏百分比
-            if entry_price > 0:
-                pnl_pct = (unrealized_pnl / (entry_price * abs(pos_amt))) * 100
-                print(f"     盈亏比例: {pnl_pct:+.2f}%")
+            print(f"     盈亏比例: {pnl_pct:+.2f}%")
         else:
             print("  ✅ 无持仓")
     else:
@@ -948,8 +956,8 @@ try:
 
     if sentiment_data:
         print(f"  Long/Short Ratio: {sentiment_data.get('long_short_ratio', 0):.4f}")
-        print(f"  Long Account %: {sentiment_data.get('long_account_pct', 0):.2f}%")
-        print(f"  Short Account %: {sentiment_data.get('short_account_pct', 0):.2f}%")
+        print(f"  Long Account %: {sentiment_data.get('positive_ratio', 0)*100:.2f}%")
+        print(f"  Short Account %: {sentiment_data.get('negative_ratio', 0)*100:.2f}%")
         print(f"  Source: {sentiment_data.get('source', 'N/A')}")
         print("  ✅ 情绪数据获取成功")
     else:
@@ -2474,8 +2482,8 @@ if not SUMMARY_MODE:
     print()
     print(f"  Binance 多空比:")
     print(f"    Long/Short Ratio: {sentiment_data.get('long_short_ratio', 0):.4f}")
-    print(f"    Long Account %:   {sentiment_data.get('long_account_pct', 0):.2f}%")
-    print(f"    Short Account %:  {sentiment_data.get('short_account_pct', 0):.2f}%")
+    print(f"    Long Account %:   {sentiment_data.get('positive_ratio', 0)*100:.2f}%")
+    print(f"    Short Account %:  {sentiment_data.get('negative_ratio', 0)*100:.2f}%")
     print(f"    Net Sentiment:    {sentiment_data.get('net_sentiment', 0):.4f}")
     print(f"    数据来源: {sentiment_data.get('source', 'N/A')}")
 
