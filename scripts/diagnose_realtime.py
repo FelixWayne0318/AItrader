@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.9 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.10 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -20,6 +20,7 @@
 15. v10.7: 修复 SentimentDataFetcher 初始化参数错误
 16. v10.8: 修复 Step 9.3 Coinalyze 配置路径 (order_flow.coinalyze)
 17. v10.9: 添加完整数据流覆盖 (on_bar 路由、仓位计算、订单提交、数据汇总)
+18. v10.10: 添加 Liquidations 调试输出 (原始响应、history 类型和长度)
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -35,6 +36,10 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.10:
+- 添加 Liquidations API 调试输出 (原始响应、history 类型、数据长度)
+- 帮助诊断 "history 为空" 是真的无数据还是解析错误
+
 v10.9:
 - 添加 [10/13] on_bar MTF 路由逻辑模拟 (1D/4H/15M bar 分发)
 - 添加 [11/13] 仓位计算函数测试 (calculate_position_size 完整验证)
@@ -1895,19 +1900,23 @@ if not SUMMARY_MODE:
                         symbol=coinalyze_symbol,
                         interval="1hour"
                     )
+                    # 调试: 打印原始响应
+                    print(f"        [DEBUG] Raw liq_data: {liq_data}")
                     if liq_data:
-                        # 正确结构: {"history": [{"t": ..., "l": long_usd, "s": short_usd}]}
+                        # 正确结构: {"symbol": "...", "history": [{"t": ..., "l": long_usd, "s": short_usd}]}
                         # (参考 coinalyze_client.py:150-187)
                         history = liq_data.get('history', [])
+                        print(f"        [DEBUG] history type: {type(history)}, len: {len(history) if history else 0}")
                         if history:
                             item = history[-1]  # 最近一条
+                            print(f"        [DEBUG] Latest item: {item}")
                             long_liq = float(item.get('l', 0))
                             short_liq = float(item.get('s', 0))
                             print(f"        ✅ Long Liq: ${long_liq:,.0f}, Short Liq: ${short_liq:,.0f}")
                         else:
-                            print("        ℹ️ Liquidations history 为空")
+                            print("        ℹ️ Liquidations history 为空 (该时间段无爆仓记录)")
                     else:
-                        print("        ℹ️ Liquidations 数据不可用")
+                        print("        ⚠️ Liquidations 数据不可用 (API 返回 None)")
 
                     # 测试 fetch_all (完整数据)
                     print("        测试 fetch_all (完整数据)...")
