@@ -836,8 +836,12 @@ try:
 
         latest = klines_raw[-1]
         current_price = float(latest[4])
-        print(f"  最新价格: ${current_price:,.2f}")
+        # v2.1: 记录快照时间，所有后续计算使用同一价格
+        snapshot_timestamp = datetime.now().strftime('%H:%M:%S')
+        print(f"  最新价格: ${current_price:,.2f} (快照时间: {snapshot_timestamp})")
         print("  ✅ 市场数据获取成功")
+        # 保存快照价格，防止后续被覆盖
+        snapshot_price = current_price
     else:
         print(f"  ❌ K线数据异常: {klines_raw}")
         sys.exit(1)
@@ -2065,10 +2069,11 @@ if not SUMMARY_MODE:
                     print(f"          - Quote Volume: {latest[7]} USDT")
                     print(f"          - Trades Count: {latest[8]}")
 
-                    # 测试获取当前价格
-                    current_price = kline_client.get_current_price(symbol=symbol_clean)
-                    if current_price:
-                        print(f"     ✅ 当前价格: ${current_price:,.2f}")
+                    # 测试获取当前价格 (v2.1: 使用独立变量，不覆盖 snapshot)
+                    test_live_price = kline_client.get_current_price(symbol=symbol_clean)
+                    if test_live_price:
+                        price_diff = test_live_price - snapshot_price
+                        print(f"     ✅ 实时价格: ${test_live_price:,.2f} (vs 快照 ${snapshot_price:,.2f}, 差值: ${price_diff:+,.2f})")
                 else:
                     print("     ❌ 获取 K线失败")
 
@@ -2092,16 +2097,18 @@ if not SUMMARY_MODE:
                 print("     ✅ OrderFlowProcessor 导入成功")
 
                 if klines and len(klines) >= 10:
-                    print("     📊 计算订单流指标...")
+                    # v2.1: 明确标注这是测试数据 (50 bars)，AI 输入用 10 bars
+                    print(f"     📊 计算订单流指标 (测试: {len(klines)} bars, AI输入: 10 bars)...")
                     order_flow_data = processor.process_klines(klines)
 
-                    print(f"     ✅ 订单流指标计算完成:")
+                    print(f"     ✅ 订单流指标计算完成 [测试窗口: {len(klines)} bars]:")
                     print(f"        - Buy Ratio: {order_flow_data['buy_ratio']:.4f} ({'多头' if order_flow_data['buy_ratio'] > 0.5 else '空头'}主导)")
                     print(f"        - CVD Trend: {order_flow_data['cvd_trend']}")
                     print(f"        - Avg Trade Size: ${order_flow_data['avg_trade_usdt']:,.2f}")
                     print(f"        - Volume (USDT): ${order_flow_data['volume_usdt']:,.0f}")
                     print(f"        - Trades Count: {order_flow_data['trades_count']:,}")
                     print(f"        - Data Source: {order_flow_data['data_source']}")
+                    print(f"        ℹ️ 注: 以上数据来自 {len(klines)} 根 K线，AI 输入仅使用最近 10 根")
 
                     if order_flow_data['recent_10_bars']:
                         recent_avg = sum(order_flow_data['recent_10_bars']) / len(order_flow_data['recent_10_bars'])
@@ -2151,15 +2158,37 @@ if not SUMMARY_MODE:
                     else:
                         print("        ❌ OI 获取失败")
 
-                    # 测试 get_funding_rate
+                    # 测试 get_funding_rate (v2.1: 对比 Binance 和 Coinalyze)
                     print("        测试 Funding Rate...")
                     fr_data = coinalyze_client.get_funding_rate(symbol=coinalyze_symbol)
+
+                    # 同时获取 Binance 直接的 Funding Rate 做对比
+                    binance_fr = None
+                    try:
+                        binance_fr = kline_client.get_funding_rate(symbol=symbol_clean)
+                    except Exception:
+                        pass
+
                     if fr_data:
-                        # 正确的字段名是 'value' (参考 coinalyze_client.py:189-207)
                         fr_value = fr_data.get('value', 0)
-                        print(f"        ✅ Funding Rate: {fr_value:.6f} ({fr_value*100:.4f}%)")
+                        print(f"        ✅ Coinalyze Funding: {fr_value:.6f} ({fr_value*100:.4f}%)")
+
+                        # v2.1: 显示 Binance 对比 + 差异警告
+                        if binance_fr:
+                            binance_value = binance_fr.get('funding_rate', 0)
+                            binance_pct = binance_fr.get('funding_rate_pct', 0)
+                            print(f"        ✅ Binance Funding:  {binance_value:.6f} ({binance_pct:.4f}%)")
+
+                            # 计算差异倍数
+                            if binance_value > 0 and fr_value > 0:
+                                ratio = fr_value / binance_value
+                                if ratio > 5 or ratio < 0.2:
+                                    print(f"        ⚠️ 差异 {ratio:.1f}x - Coinalyze 可能是聚合/累计值")
+                                    print(f"        ℹ️ AI 输入将使用 Binance 8h funding rate")
                     else:
-                        print("        ❌ Funding Rate 获取失败")
+                        print("        ❌ Coinalyze Funding Rate 获取失败")
+                        if binance_fr:
+                            print(f"        ✅ Binance Funding: {binance_fr.get('funding_rate', 0):.6f} ({binance_fr.get('funding_rate_pct', 0):.4f}%)")
 
                     # 测试 get_liquidations
                     print("        测试 Liquidations (1h)...")
@@ -2175,10 +2204,9 @@ if not SUMMARY_MODE:
                             item = history[-1]  # 最近一条
                             long_liq_btc = float(item.get('l', 0))
                             short_liq_btc = float(item.get('s', 0))
-                            # 获取当前价格计算 USD 等值
-                            current_price = float(klines[-1][4]) if klines else 88000
-                            long_liq_usd = long_liq_btc * current_price
-                            short_liq_usd = short_liq_btc * current_price
+                            # v2.1: 使用 snapshot_price 而非重新获取 (保持一致性)
+                            long_liq_usd = long_liq_btc * snapshot_price
+                            short_liq_usd = short_liq_btc * snapshot_price
                             print(f"        ✅ Long Liq: {long_liq_btc:.4f} BTC (${long_liq_usd:,.0f})")
                             print(f"        ✅ Short Liq: {short_liq_btc:.4f} BTC (${short_liq_usd:,.0f})")
                         else:
@@ -2747,7 +2775,9 @@ if not SUMMARY_MODE:
         print("  ┃                        订单流数据                                   ┃")
         print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
         print()
-        print(f"  Binance Taker 数据:")
+        # v2.1: 添加采样窗口标注
+        bars_count = order_flow_report.get('bars_count', 10)
+        print(f"  Binance Taker 数据 [采样窗口: {bars_count} bars]:")
         print(f"    Buy Ratio:      {order_flow_report.get('buy_ratio', 0):.4f} ({order_flow_report.get('buy_ratio', 0)*100:.2f}%)")
         print(f"    CVD Trend:      {order_flow_report.get('cvd_trend', 'N/A')}")
         print(f"    Avg Trade Size: ${order_flow_report.get('avg_trade_usdt', 0):,.2f}")
@@ -2782,8 +2812,15 @@ if not SUMMARY_MODE:
         print(f"  Funding Rate:")
         if fr_data:
             fr_value = fr_data.get('value', 0)
+            source = fr_data.get('source', 'unknown')
             print(f"    Current:     {fr_value:.6f} ({fr_value*100:.4f}%)")
             print(f"    Interpret:   {fr_data.get('interpretation', 'N/A')}")
+            print(f"    Source:      {source}")
+            # v2.1: 显示两个数据源对比
+            binance_pct = fr_data.get('binance_pct')
+            coinalyze_pct = fr_data.get('coinalyze_pct')
+            if binance_pct is not None and coinalyze_pct is not None:
+                print(f"    [对比] Binance 8h: {binance_pct:.4f}%, Coinalyze: {coinalyze_pct:.4f}%")
         else:
             print(f"    (数据不可用)")
         print()

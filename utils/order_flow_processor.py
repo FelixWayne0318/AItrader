@@ -109,6 +109,7 @@ class OrderFlowProcessor:
             "recent_10_bars": recent_10_bars,
             "recent_10_bars_avg": round(avg_buy_ratio, 4),  # 明确标记这是平均值
             "data_source": "binance_raw",
+            "bars_count": len(klines),  # v2.1: 添加采样窗口大小，便于诊断
         }
 
     def _process_dict_format(self, klines: List[Dict]) -> Dict[str, Any]:
@@ -134,6 +135,7 @@ class OrderFlowProcessor:
             "cvd_trend": "NEUTRAL",
             "recent_10_bars": [],
             "data_source": "local_dict",  # 标记为降级模式
+            "bars_count": len(klines),  # v2.1: 添加采样窗口大小
             "_warning": "Dict format has no order flow data, using neutral values",
         }
 
