@@ -842,9 +842,14 @@ class DeepSeekAIStrategy(Strategy):
         # Multi-Timeframe routing (v3.2.8)
         if self.mtf_enabled and self.mtf_manager:
             layer = self.mtf_manager.route_bar(bar)
-            if layer in ["trend", "decision"]:
-                # Non-execution bars only update indicators, no trading
-                self.log.debug(f"MTF: {layer} bar routed")
+            if layer == "trend":
+                # 趋势层 (1D) 只更新指标，RISK 状态在 on_timer 中评估
+                self.log.debug(f"MTF: trend (1D) bar routed")
+                return
+            elif layer == "decision":
+                # 决策层 (4H) 收盘时评估方向 - 核心 MTF 逻辑
+                self.log.info(f"[MTF] 4H bar 收盘，触发决策层评估...")
+                self._evaluate_decision_layer_on_bar_close(bar)
                 return
             elif layer == "execution":
                 # Update cached price for execution layer
@@ -869,6 +874,125 @@ class DeepSeekAIStrategy(Strategy):
                 f"Bar #{self.bars_received}: "
                 f"O:{bar.open} H:{bar.high} L:{bar.low} C:{bar.close} V:{bar.volume}"
             )
+
+    def _evaluate_decision_layer_on_bar_close(self, bar: Bar):
+        """
+        评估决策层方向 (在 4H bar 收盘时调用)
+
+        根据设计文档 Section 1.5.4，决策层应该在 4H bar 收盘时评估，
+        使用技术指标规则确定方向 (ALLOW_LONG / ALLOW_SHORT / WAIT)。
+
+        这个方向状态将持续到下一个 4H bar 收盘，期间 on_timer 中的
+        交易信号必须符合此方向才能执行。
+
+        Parameters
+        ----------
+        bar : Bar
+            4H bar 数据
+        """
+        if not self.mtf_manager or not self.mtf_manager.decision_manager:
+            self.log.warning("[MTF] 决策层管理器未初始化")
+            return
+
+        current_price = float(bar.close)
+
+        # 获取 4H 决策层技术数据
+        try:
+            decision_data = self.mtf_manager.get_technical_data_for_layer("decision", current_price)
+
+            if not decision_data.get('_initialized', True):
+                self.log.warning("[MTF] 决策层指标未完全初始化，保持当前状态")
+                return
+
+            # 提取关键指标
+            macd = decision_data.get('macd', 0)
+            macd_signal = decision_data.get('macd_signal', 0)
+            rsi = decision_data.get('rsi', 50)
+            sma_20 = decision_data.get('sma_20', current_price)
+            sma_50 = decision_data.get('sma_50', current_price)
+            overall_trend = decision_data.get('overall_trend', 'NEUTRAL')
+
+            # 决策规则 (基于 4H 技术指标)
+            # 规则设计参考业界最佳实践：
+            # - MACD 金叉/死叉 作为主要方向信号
+            # - RSI 区间确认动量
+            # - 价格与均线关系确认趋势
+
+            bullish_signals = 0
+            bearish_signals = 0
+
+            # 规则 1: MACD 方向
+            if macd > macd_signal and macd > 0:
+                bullish_signals += 2  # MACD 金叉且为正，强看涨
+            elif macd > macd_signal:
+                bullish_signals += 1  # MACD 金叉但为负，弱看涨
+            elif macd < macd_signal and macd < 0:
+                bearish_signals += 2  # MACD 死叉且为负，强看跌
+            elif macd < macd_signal:
+                bearish_signals += 1  # MACD 死叉但为正，弱看跌
+
+            # 规则 2: RSI 区间
+            if rsi > 55:
+                bullish_signals += 1
+            elif rsi < 45:
+                bearish_signals += 1
+
+            # 规则 3: 价格与均线关系
+            if current_price > sma_20 and sma_20 > sma_50:
+                bullish_signals += 1  # 多头排列
+            elif current_price < sma_20 and sma_20 < sma_50:
+                bearish_signals += 1  # 空头排列
+
+            # 决定方向
+            old_state = self.mtf_manager.get_decision_state()
+
+            if bullish_signals >= 3 and bullish_signals > bearish_signals:
+                confidence = "HIGH" if bullish_signals >= 4 else "MEDIUM"
+                self.mtf_manager.set_decision_state(self._DecisionState.ALLOW_LONG, confidence)
+                self.log.info(
+                    f"[MTF] 4H 决策层评估: ALLOW_LONG ({confidence}) | "
+                    f"多头信号={bullish_signals}, 空头信号={bearish_signals} | "
+                    f"MACD={macd:.2f}, RSI={rsi:.1f}, Price vs SMA20={current_price:.2f}/{sma_20:.2f}"
+                )
+            elif bearish_signals >= 3 and bearish_signals > bullish_signals:
+                confidence = "HIGH" if bearish_signals >= 4 else "MEDIUM"
+                self.mtf_manager.set_decision_state(self._DecisionState.ALLOW_SHORT, confidence)
+                self.log.info(
+                    f"[MTF] 4H 决策层评估: ALLOW_SHORT ({confidence}) | "
+                    f"多头信号={bullish_signals}, 空头信号={bearish_signals} | "
+                    f"MACD={macd:.2f}, RSI={rsi:.1f}, Price vs SMA20={current_price:.2f}/{sma_20:.2f}"
+                )
+            else:
+                self.mtf_manager.set_decision_state(self._DecisionState.WAIT, "LOW")
+                self.log.info(
+                    f"[MTF] 4H 决策层评估: WAIT (方向不明确) | "
+                    f"多头信号={bullish_signals}, 空头信号={bearish_signals} | "
+                    f"MACD={macd:.2f}, RSI={rsi:.1f}"
+                )
+
+            # 如果状态变化，发送 Telegram 通知
+            new_state = self.mtf_manager.get_decision_state()
+            if old_state != new_state and self.telegram_bot and self.enable_telegram:
+                try:
+                    state_emoji = {
+                        self._DecisionState.ALLOW_LONG: "🟢",
+                        self._DecisionState.ALLOW_SHORT: "🔴",
+                        self._DecisionState.WAIT: "🟡",
+                    }
+                    emoji = state_emoji.get(new_state, "⚪")
+                    msg = (
+                        f"{emoji} [MTF 4H 方向更新]\n"
+                        f"方向: {old_state.value} → {new_state.value}\n"
+                        f"价格: ${current_price:,.2f}\n"
+                        f"MACD: {macd:.2f}\n"
+                        f"RSI: {rsi:.1f}"
+                    )
+                    self.telegram_bot.send_message_sync(msg)
+                except Exception as e:
+                    self.log.warning(f"Telegram 通知发送失败: {e}")
+
+        except Exception as e:
+            self.log.error(f"[MTF] 决策层评估失败: {e}")
 
     def on_historical_data(self, data):
         """
@@ -1243,18 +1367,9 @@ class DeepSeekAIStrategy(Strategy):
                 price_data=price_data,
             )
 
-            # ========== MTF 决策层状态更新 ==========
-            # AI 决策后更新决策层状态 (ALLOW_LONG / ALLOW_SHORT / WAIT)
-            if self.mtf_enabled and self.mtf_manager:
-                ai_signal = signal_data.get('signal', 'HOLD')
-                ai_confidence = signal_data.get('confidence', 'MEDIUM')
-
-                if ai_signal == 'BUY':
-                    self.mtf_manager.set_decision_state(self._DecisionState.ALLOW_LONG, ai_confidence)
-                elif ai_signal == 'SELL':
-                    self.mtf_manager.set_decision_state(self._DecisionState.ALLOW_SHORT, ai_confidence)
-                else:
-                    self.mtf_manager.set_decision_state(self._DecisionState.WAIT, ai_confidence)
+            # NOTE: 决策层状态 (ALLOW_LONG/SHORT/WAIT) 在 4H bar 收盘时更新
+            # (见 _evaluate_decision_layer_on_bar_close 方法)
+            # 这里不再更新，保持 4H 方向的稳定性
 
             # ========== MTF 优先级规则 (Phase 2: 信号过滤) ==========
             original_signal = signal_data['signal']
