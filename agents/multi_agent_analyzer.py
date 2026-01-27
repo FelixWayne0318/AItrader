@@ -705,7 +705,8 @@ JSON response only:"""
             val = data.get(key)
             return float(val) if val is not None else default
 
-        return f"""
+        # Base report (15M execution layer data)
+        report = f"""
 Price: ${safe_get('price'):,.2f}
 24h Change: {safe_get('price_change'):+.2f}%
 
@@ -714,18 +715,18 @@ TREND ANALYSIS:
 - Short-term: {data.get('short_term_trend', 'N/A')}
 - MACD Direction: {data.get('macd_trend', 'N/A')}
 
-MOVING AVERAGES:
+MOVING AVERAGES (15M):
 - SMA 5: ${safe_get('sma_5'):,.2f}
 - SMA 20: ${safe_get('sma_20'):,.2f}
 - SMA 50: ${safe_get('sma_50'):,.2f}
 
-MOMENTUM:
+MOMENTUM (15M):
 - RSI: {safe_get('rsi'):.1f} ({'Overbought >70' if safe_get('rsi') > 70 else 'Oversold <30' if safe_get('rsi') < 30 else 'Neutral 30-70'})
 - MACD: {safe_get('macd'):.4f}
 - MACD Signal: {safe_get('macd_signal'):.4f}
 - MACD Histogram: {safe_get('macd_histogram'):.4f} ({'Bullish' if safe_get('macd_histogram') > 0 else 'Bearish'})
 
-VOLATILITY (Bollinger Bands):
+VOLATILITY (Bollinger Bands 15M):
 - Upper: ${safe_get('bb_upper'):,.2f}
 - Middle: ${safe_get('bb_middle'):,.2f}
 - Lower: ${safe_get('bb_lower'):,.2f}
@@ -738,6 +739,44 @@ KEY LEVELS:
 VOLUME:
 - Volume Ratio: {safe_get('volume_ratio'):.2f}x average
 """
+
+        # Add 4H decision layer data if available (Multi-Timeframe Analysis)
+        mtf_decision = data.get('mtf_decision_layer')
+        if mtf_decision:
+            def mtf_safe_get(key, default=0):
+                val = mtf_decision.get(key)
+                return float(val) if val is not None else default
+
+            mtf_rsi = mtf_safe_get('rsi')
+            mtf_macd = mtf_safe_get('macd')
+
+            report += f"""
+=== 4-HOUR DECISION LAYER (IMPORTANT FOR DIRECTION) ===
+This is the medium-term view for directional bias. Weight this heavily in your analysis.
+
+MOMENTUM (4H):
+- RSI: {mtf_rsi:.1f} ({'Overbought >70' if mtf_rsi > 70 else 'Oversold <30' if mtf_rsi < 30 else 'Neutral 30-70'})
+- MACD: {mtf_macd:.4f} ({'Bullish' if mtf_macd > 0 else 'Bearish'})
+- MACD Signal: {mtf_safe_get('macd_signal'):.4f}
+
+MOVING AVERAGES (4H):
+- SMA 20: ${mtf_safe_get('sma_20'):,.2f}
+- SMA 50: ${mtf_safe_get('sma_50'):,.2f}
+
+BOLLINGER BANDS (4H):
+- Upper: ${mtf_safe_get('bb_upper'):,.2f}
+- Middle: ${mtf_safe_get('bb_middle'):,.2f}
+- Lower: ${mtf_safe_get('bb_lower'):,.2f}
+
+4H TREND: {mtf_decision.get('overall_trend', 'N/A')}
+
+MULTI-TIMEFRAME GUIDANCE:
+- Use 4H data for DIRECTIONAL BIAS (bullish/bearish)
+- Use 15M data for ENTRY TIMING (RSI levels, precise entry)
+- If 4H and 15M conflict, PREFER 4H direction with patience for better 15M entry
+"""
+
+        return report
 
     def _format_sentiment_report(self, data: Optional[Dict[str, Any]]) -> str:
         """Format sentiment data for prompts."""
