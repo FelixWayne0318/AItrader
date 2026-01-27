@@ -36,6 +36,10 @@ from utils.deepseek_client import DeepSeekAnalyzer
 from utils.sentiment_client import SentimentDataFetcher
 from utils.binance_account import BinanceAccountFetcher
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
+# Order Flow and Derivatives clients (MTF v2.1)
+from utils.binance_kline_client import BinanceKlineClient
+from utils.order_flow_processor import OrderFlowProcessor
+from utils.coinalyze_client import CoinalyzeClient
 from strategy.trading_logic import (
     check_confidence_threshold,
     calculate_position_size,
@@ -510,6 +514,41 @@ class DeepSeekAIStrategy(Strategy):
             self.log.info(f"Sentiment fetcher initialized with timeframe: {sentiment_tf}")
         else:
             self.sentiment_fetcher = None
+
+        # ========== Order Flow & Derivatives (MTF v2.1) ==========
+        # 从配置读取参数
+        order_flow_enabled = config.order_flow_enabled if hasattr(config, 'order_flow_enabled') else True
+
+        if order_flow_enabled:
+            # Binance K线客户端 (获取完整 12 列数据)
+            self.binance_kline_client = BinanceKlineClient(
+                timeout=config.order_flow_binance_timeout if hasattr(config, 'order_flow_binance_timeout') else 10,
+                logger=self.log,
+            )
+
+            # 订单流处理器
+            self.order_flow_processor = OrderFlowProcessor(logger=self.log)
+
+            # Coinalyze 客户端 (衍生品数据)
+            coinalyze_enabled = config.order_flow_coinalyze_enabled if hasattr(config, 'order_flow_coinalyze_enabled') else True
+            if coinalyze_enabled:
+                self.coinalyze_client = CoinalyzeClient(
+                    api_key=None,  # 从环境变量读取
+                    timeout=config.order_flow_coinalyze_timeout if hasattr(config, 'order_flow_coinalyze_timeout') else 10,
+                    max_retries=config.order_flow_coinalyze_max_retries if hasattr(config, 'order_flow_coinalyze_max_retries') else 2,
+                    retry_delay=config.order_flow_coinalyze_retry_delay if hasattr(config, 'order_flow_coinalyze_retry_delay') else 1.0,
+                    logger=self.log,
+                )
+            else:
+                self.coinalyze_client = None
+                self.log.info("Coinalyze client disabled by config")
+
+            self.log.info("✅ Order Flow & Derivatives clients initialized")
+        else:
+            self.binance_kline_client = None
+            self.order_flow_processor = None
+            self.coinalyze_client = None
+            self.log.info("Order Flow disabled by config")
 
         # State tracking
         self.instrument: Optional[Instrument] = None
@@ -1359,12 +1398,53 @@ class DeepSeekAIStrategy(Strategy):
                 }
                 self.log.info(f"[MTF] AI 分析使用 4H 决策层数据: RSI={ai_technical_data['mtf_decision_layer']['rsi']:.1f}")
 
+            # ========== 获取订单流数据 (MTF v2.1) ==========
+            order_flow_data = None
+            if self.binance_kline_client and self.order_flow_processor:
+                try:
+                    # 获取 Binance 完整 K线 (12 列，包含订单流字段)
+                    raw_klines = self.binance_kline_client.get_klines(
+                        symbol="BTCUSDT",
+                        interval="15m",
+                        limit=50,
+                    )
+                    if raw_klines:
+                        order_flow_data = self.order_flow_processor.process_klines(raw_klines)
+                        self.log.info(
+                            f"📊 Order Flow: buy_ratio={order_flow_data.get('buy_ratio', 0):.1%}, "
+                            f"cvd_trend={order_flow_data.get('cvd_trend', 'N/A')}"
+                        )
+                    else:
+                        self.log.warning("⚠️ Failed to get Binance klines for order flow")
+                except Exception as e:
+                    self.log.warning(f"⚠️ Order flow processing failed: {e}")
+
+            # ========== 获取衍生品数据 (MTF v2.1) ==========
+            derivatives_data = None
+            if self.coinalyze_client and self.coinalyze_client.is_enabled():
+                try:
+                    derivatives_data = self.coinalyze_client.fetch_all()
+                    if derivatives_data.get('enabled'):
+                        oi = derivatives_data.get('open_interest')
+                        funding = derivatives_data.get('funding_rate')
+                        self.log.info(
+                            f"📊 Derivatives: OI={oi.get('value', 0):.2f} BTC, "
+                            f"Funding={funding.get('value', 0)*100:.4f}%" if oi and funding else "Derivatives: partial data"
+                        )
+                    else:
+                        self.log.debug("Coinalyze client disabled, no derivatives data")
+                except Exception as e:
+                    self.log.warning(f"⚠️ Derivatives fetch failed: {e}")
+
             signal_data = self.multi_agent.analyze(
                 symbol="BTCUSDT",
                 technical_report=ai_technical_data,
                 sentiment_report=sentiment_data,
                 current_position=current_position,
                 price_data=price_data,
+                # ========== MTF v2.1 新增参数 ==========
+                order_flow_report=order_flow_data,
+                derivatives_report=derivatives_data,
             )
 
             # NOTE: 决策层状态 (ALLOW_LONG/SHORT/WAIT) 在 4H bar 收盘时更新

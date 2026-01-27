@@ -1,6 +1,6 @@
 # NautilusTrader DeepSeek AI Trading Strategy
 
-## v1.2.2 - Advanced AI-Powered Cryptocurrency Trading System
+## v2.1.0 - Advanced AI-Powered Multi-Timeframe Trading System
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![NautilusTrader](https://img.shields.io/badge/NautilusTrader-Latest-green.svg)](https://nautilustrader.io/)
@@ -123,11 +123,22 @@ python test_sl_fix.py                           # 测试修复
 
 ---
 
-## What's New in v1.2.2
+## What's New in v2.1
 
 ### Latest Updates
 
-**v1.2.2** (Current - November 2025)
+**v2.1.0** (Current - January 2026) 🆕
+- **Multi-Timeframe Framework (MTF)**: Three-layer decision architecture (1D/4H/15M)
+  - Trend Layer (1D): Risk-On/Off market filter using SMA_200 and MACD
+  - Decision Layer (4H): Bull/Bear debate with Judge quantitative framework
+  - Execution Layer (15M): Precise entry timing with RSI confirmation
+- **Order Flow Analysis**: Buy/Sell ratio, CVD trend, average trade size from Binance K-line data
+- **Derivatives Data Integration**: Open Interest, Funding Rate, Liquidations via Coinalyze API
+- **TradingAgents Framework**: 4-AI-call architecture (Bull/Bear/Judge/Risk) based on UCLA/MIT research
+- **Enhanced AI Context**: AI now sees 4 data sources (technical + sentiment + order flow + derivatives)
+- **Graceful Degradation**: Complete fallback strategy when external APIs fail
+
+**v1.2.2** (November 2025)
 - Fixed: Bracket order emulation for Binance
 - Fixed: Telegram event loop error in `send_message_sync`
 - Improved: Bracket order flow and documentation
@@ -164,12 +175,19 @@ python test_sl_fix.py                           # 测试修复
 └────────────────────────┬────────────────────────────────┘
                          │
 ┌────────────────────────┴────────────────────────────────┐
-│              DeepSeek AI Strategy                        │
+│              DeepSeek AI Strategy (v2.1 MTF)             │
 │  ┌──────────────────────────────────────────────────┐  │
-│  │  AI Decision Engine (DeepSeek)                    │  │
-│  │  • Market analysis                                │  │
-│  │  • Signal generation (BUY/SELL/HOLD)             │  │
-│  │  • Confidence assessment                         │  │
+│  │  Multi-Timeframe Framework (NEW v2.1) 🆕          │  │
+│  │  • Trend Layer (1D): Risk-On/Off Filter          │  │
+│  │  • Decision Layer (4H): Bull/Bear Debate         │  │
+│  │  • Execution Layer (15M): Precise Entry          │  │
+│  └──────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │  AI Decision Engine (TradingAgents)               │  │
+│  │  • Bull Analyst (persuasive bullish case)        │  │
+│  │  • Bear Analyst (skeptical bearish case)         │  │
+│  │  • Judge (quantitative decision framework)       │  │
+│  │  • Risk Manager (position sizing + SL/TP)        │  │
 │  └──────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────┐  │
 │  │  Risk Management                                  │  │
@@ -191,21 +209,37 @@ python test_sl_fix.py                           # 测试修复
 │  • Event Engine  • Order Management  • Position Cache   │
 └────────────────────────┬────────────────────────────────┘
                          │
-         ┌───────────────┴───────────────┬────────────────┐
-         │                               │                │
-┌────────┴─────────┐        ┌───────────┴──────┐  ┌─────┴─────┐
-│ Binance Futures  │        │ Binance L/S API  │  │   Redis   │
-│  (Market Data &  │        │  (Sentiment Data)│  │  (OCO DB) │
-│   Execution)     │        └──────────────────┘  └───────────┘
-└──────────────────┘
+         ┌───────────────┴───────────────┬────────────────┬───────────────┐
+         │                               │                │               │
+┌────────┴─────────┐  ┌─────────────────┴──────┐  ┌─────┴─────┐  ┌──────┴──────┐
+│ Binance Futures  │  │ Binance L/S + K-line   │  │   Redis   │  │ Coinalyze   │
+│  (Market Data &  │  │ (Sentiment + Order Flow│  │  (OCO DB) │  │ (Derivatives│
+│   Execution)     │  │  Data) 🆕               │  └───────────┘  │  Data) 🆕    │
+└──────────────────┘  └────────────────────────┘                 └─────────────┘
 ```
 
-### Data Flow
+### Data Flow (v2.1 Enhanced)
 
 ```
-Market Data → Technical Indicators → ┐
-Sentiment Data → AI Analysis → ──────┤→ Trading Signal → Position Management
-Current Position → Risk Assessment → ┘   (with SL/TP/OCO/Trailing)
+┌─ Multi-Timeframe Data Sources (NEW v2.1) ────────────────┐
+│                                                           │
+│  1D Bars → Trend Filter (SMA_200, MACD)                  │
+│     ↓                                                     │
+│  4H Bars → Technical Indicators → ─────────┐             │
+│  Order Flow (Buy/Sell Ratio, CVD) → ───────┤             │
+│  Derivatives (OI, Funding, Liquidations) → ─┤→ AI Data   │
+│  Sentiment (L/S Ratio) → ──────────────────┘  Assembler  │
+│                                                     ↓     │
+└─────────────────────────────────────────────────────────┘
+                                                      ↓
+┌─ TradingAgents Framework (4 AI Calls) ─────────────────┐
+│  Bull Analyst → ┐                                       │
+│  Bear Analyst → ├→ Judge Decision → Risk Manager        │
+└─────────────────┴─────────────────────────────────────┘
+                          ↓
+                Trading Signal (with confidence)
+                          ↓
+              Position Management (SL/TP/OCO/Trailing)
 ```
 
 ### Project Structure

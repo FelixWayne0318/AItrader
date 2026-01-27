@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.3 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.4 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -14,6 +14,7 @@
 9. v10.1: MTF 详细配置验证、初始化配置、Order Flow 检查
 10. v10.2: Order Flow 实际数据获取测试、Telegram 命令处理验证、MTF 预取验证
 11. v10.3: Post-Trade 生命周期测试、情绪 fallback 完整字段、从配置读取 Symbol
+12. v10.4: MTF v2.1 完整组件测试、AIDataAssembler 集成、更新 MultiAgent 接口
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -29,6 +30,11 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.4:
+- 添加 MTF v2.1 完整组件测试 (BinanceKlineClient, OrderFlowProcessor, CoinalyzeClient, AIDataAssembler)
+- 更新 MultiAgentAnalyzer.analyze() 调用以传递 order_flow_report 和 derivatives_report
+- 重构 Step 9 为完整的 MTF 组件集成测试
+
 v10.3:
 - 添加 Step 8.5: Post-Trade 生命周期测试 (OCO 清理 + Trailing Stop)
 - 修复情绪数据 fallback 缺失字段 (positive_ratio, negative_ratio, net_sentiment)
@@ -565,7 +571,7 @@ if not SUMMARY_MODE and mtf_enabled:
 
         print()
 
-        # v10.3: 实际测试 MTF 数据预取 (与实盘 _prefetch_multi_timeframe_bars 一致)
+# v10.3: 实际测试 MTF 数据预取 (与实盘 _prefetch_multi_timeframe_bars 一致)
         print("  📋 MTF 数据预取测试 (实际 API 调用):")
         import requests as mtf_requests
 
@@ -1003,12 +1009,58 @@ try:
 
     # 调用分析 (与 on_timer 相同，使用真实持仓)
     # TradingAgents: Judge 决策即最终决策，不需要与 DeepSeek 合并
+    # 准备 MTF v2.1 增强数据 (如果可用)
+    order_flow_report = None
+    derivatives_report = None
+    
+    # 尝试导入 AIDataAssembler 获取 MTF 数据
+    try:
+        from utils.binance_kline_client import BinanceKlineClient
+        from utils.order_flow_processor import OrderFlowProcessor
+        from utils.coinalyze_client import CoinalyzeClient
+        from utils.ai_data_assembler import AIDataAssembler
+        from utils.sentiment_client import SentimentDataFetcher
+        
+        # 初始化 MTF 组件
+        kline_client = BinanceKlineClient(timeout=10)
+        processor = OrderFlowProcessor()
+        coinalyze_client = CoinalyzeClient()
+        sentiment_client = SentimentDataFetcher()
+        assembler = AIDataAssembler(
+            binance_kline_client=kline_client,
+            order_flow_processor=processor,
+            coinalyze_client=coinalyze_client,
+            sentiment_client=sentiment_client
+        )
+        
+        # 组装数据
+        symbol_clean = strategy_config.instrument_id.split('-')[0]
+        assembled = assembler.assemble(
+            technical_data=technical_data,
+            position_data=current_position,
+            symbol=symbol_clean,
+            interval="15m"
+        )
+        
+        order_flow_report = assembled.get('order_flow')
+        derivatives_report = assembled.get('derivatives')
+        
+        if order_flow_report:
+            print("  📊 MTF Order Flow 数据已加载")
+        if derivatives_report:
+            print("  📊 MTF Derivatives 数据已加载")
+            
+    except Exception as e:
+        print(f"  ℹ️ MTF 增强数据不可用 (使用基础模式): {e}")
+    
     signal_data = multi_agent.analyze(
         symbol="BTCUSDT",
         technical_report=technical_data,
         sentiment_report=sentiment_data,
         current_position=current_position,  # 使用真实持仓
         price_data=price_data,
+        order_flow_report=order_flow_report,  # MTF v2.1
+        derivatives_report=derivatives_report,  # MTF v2.1
     )
 
     print()
@@ -1443,145 +1495,260 @@ if not SUMMARY_MODE:
     print("  ✅ Post-Trade 生命周期测试完成")
     print()
 
+# MTF v2.1 测试代码片段 - 替换 diagnose_realtime.py 的 Step 9
+
 # =============================================================================
-# 9. Order Flow 数据获取测试 (v10.2)
+# 9. MTF v2.1 组件集成测试 (Order Flow + Derivatives + AI Data Assembler)
 # =============================================================================
 if not SUMMARY_MODE:
-    print("[9/10] Order Flow 数据获取测试...")
+    print("[9/10] MTF v2.1 组件集成测试...")
     print("-" * 70)
 
     try:
-        # 读取 Order Flow 配置
+        # 读取配置
         base_yaml_path = project_root / "configs" / "base.yaml"
         order_flow_enabled = False
         coinalyze_enabled = False
-        coinalyze_api_key = None
 
         if base_yaml_path.exists():
             with open(base_yaml_path) as f:
                 base_config = yaml.safe_load(f)
             order_flow = base_config.get('order_flow', {})
             order_flow_enabled = order_flow.get('enabled', False)
-            coinalyze_cfg = order_flow.get('coinalyze', {})
+            coinalyze_cfg = base_config.get('coinalyze', {})
             coinalyze_enabled = coinalyze_cfg.get('enabled', False)
-            coinalyze_api_key = coinalyze_cfg.get('api_key') or os.getenv('COINALYZE_API_KEY')
 
         if not order_flow_enabled:
-            print("  ℹ️ Order Flow 未启用，跳过测试")
-        elif not coinalyze_enabled:
-            print("  ℹ️ Coinalyze 未启用，跳过 API 测试")
-        elif not coinalyze_api_key:
-            print("  ⚠️ Coinalyze API key 未配置")
+            print("  ℹ️ Order Flow 未启用，跳过 MTF 组件测试")
         else:
-            print("  📋 Coinalyze API 测试:")
-            print(f"     API Key: {coinalyze_api_key[:8]}...{coinalyze_api_key[-4:]}")
-
-            # 测试 Coinalyze API
-            import requests
-
-            coinalyze_symbol = coinalyze_cfg.get('symbol', 'BTCUSDT_PERP.A')
-            timeout = coinalyze_cfg.get('timeout', 10)
-            base_url = "https://api.coinalyze.net/v1"
-
-            # 测试 Open Interest 端点
+            print("  ✅ Order Flow 已启用，开始测试 MTF 组件...")
             print()
-            print("  📊 测试 Open Interest API...")
+
+            # ================================================================
+            # 9.1 测试 BinanceKlineClient (获取完整 12 列 K线)
+            # ================================================================
+            print("  [9.1] 测试 BinanceKlineClient...")
             try:
-                oi_url = f"{base_url}/open-interest"
-                headers = {"api_key": coinalyze_api_key}
-                params = {"symbols": coinalyze_symbol}
+                from utils.binance_kline_client import BinanceKlineClient
 
-                resp = requests.get(oi_url, headers=headers, params=params, timeout=timeout)
+                kline_client = BinanceKlineClient(timeout=10, logger=None)
+                print("     ✅ BinanceKlineClient 导入成功")
 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data:
-                        oi_data = data[0] if isinstance(data, list) else data
-                        print(f"     ✅ Open Interest API 成功")
-                        print(f"        Symbol: {oi_data.get('symbol', 'N/A')}")
-                        print(f"        Open Interest: {oi_data.get('openInterest', 'N/A')}")
-                        print(f"        OI Change 24h: {oi_data.get('openInterestChange24h', 'N/A')}")
-                    else:
-                        print(f"     ⚠️ API 返回空数据")
-                elif resp.status_code == 401:
-                    print(f"     ❌ API Key 无效 (401 Unauthorized)")
-                elif resp.status_code == 429:
-                    print(f"     ⚠️ API 限流 (429 Too Many Requests)")
+                # 测试获取 15M K线
+                symbol = base_config.get('trading', {}).get('instrument_id', 'BTCUSDT-PERP.BINANCE')
+                symbol_clean = symbol.split('-')[0]  # BTCUSDT
+
+                print(f"     📊 获取 {symbol_clean} 15M K线 (最近 50 根)...")
+                klines = kline_client.get_klines(
+                    symbol=symbol_clean,
+                    interval="15m",
+                    limit=50
+                )
+
+                if klines:
+                    print(f"     ✅ 成功获取 {len(klines)} 根 K线")
+                    latest = klines[-1]
+                    print(f"        最新 K线:")
+                    print(f"          - Close: {latest[4]}")
+                    print(f"          - Volume: {latest[5]}")
+                    print(f"          - Taker Buy Volume: {latest[9]} (订单流关键数据)")
+                    print(f"          - Quote Volume: {latest[7]} USDT")
+                    print(f"          - Trades Count: {latest[8]}")
+
+                    # 测试获取当前价格
+                    current_price = kline_client.get_current_price(symbol=symbol_clean)
+                    if current_price:
+                        print(f"     ✅ 当前价格: ${current_price:,.2f}")
                 else:
-                    print(f"     ❌ API 错误: {resp.status_code}")
-                    print(f"        响应: {resp.text[:200]}")
+                    print("     ❌ 获取 K线失败")
 
-            except requests.exceptions.Timeout:
-                print(f"     ❌ API 超时 ({timeout}s)")
-            except requests.exceptions.RequestException as e:
-                print(f"     ❌ 网络错误: {e}")
-
-            # 测试 Funding Rate 端点
-            print()
-            print("  📊 测试 Funding Rate API...")
-            try:
-                fr_url = f"{base_url}/funding-rate"
-                resp = requests.get(fr_url, headers=headers, params=params, timeout=timeout)
-
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data:
-                        fr_data = data[0] if isinstance(data, list) else data
-                        print(f"     ✅ Funding Rate API 成功")
-                        funding_rate = fr_data.get('fundingRate', 0)
-                        print(f"        Funding Rate: {funding_rate:.6f} ({funding_rate*100:.4f}%)")
-                    else:
-                        print(f"     ⚠️ API 返回空数据")
-                else:
-                    print(f"     ❌ API 错误: {resp.status_code}")
-
+            except ImportError as e:
+                print(f"     ❌ 无法导入 BinanceKlineClient: {e}")
             except Exception as e:
-                print(f"     ❌ Funding Rate 测试失败: {e}")
+                print(f"     ❌ BinanceKlineClient 测试失败: {e}")
+                import traceback
+                traceback.print_exc()
 
-            # 测试 Liquidations 端点
             print()
-            print("  📊 测试 Liquidations API...")
+
+            # ================================================================
+            # 9.2 测试 OrderFlowProcessor (订单流指标计算)
+            # ================================================================
+            print("  [9.2] 测试 OrderFlowProcessor...")
             try:
-                import time as time_module
-                liq_url = f"{base_url}/liquidation-history"
-                end_time = int(time_module.time())
-                start_time = end_time - 3600  # 1 小时前
-                # 注意: interval 必须是 "1hour" 而不是 "1h"
-                params_liq = {
-                    "symbols": coinalyze_symbol,
-                    "interval": "1hour",
-                    "from": start_time,
-                    "to": end_time
+                from utils.order_flow_processor import OrderFlowProcessor
+
+                processor = OrderFlowProcessor(logger=None)
+                print("     ✅ OrderFlowProcessor 导入成功")
+
+                if klines and len(klines) >= 10:
+                    print("     📊 计算订单流指标...")
+                    order_flow_data = processor.process_klines(klines)
+
+                    print(f"     ✅ 订单流指标计算完成:")
+                    print(f"        - Buy Ratio: {order_flow_data['buy_ratio']:.4f} ({'多头' if order_flow_data['buy_ratio'] > 0.5 else '空头'}主导)")
+                    print(f"        - CVD Trend: {order_flow_data['cvd_trend']}")
+                    print(f"        - Avg Trade Size: ${order_flow_data['avg_trade_usdt']:,.2f}")
+                    print(f"        - Volume (USDT): ${order_flow_data['volume_usdt']:,.0f}")
+                    print(f"        - Trades Count: {order_flow_data['trades_count']:,}")
+                    print(f"        - Data Source: {order_flow_data['data_source']}")
+
+                    if order_flow_data['recent_10_bars']:
+                        recent_avg = sum(order_flow_data['recent_10_bars']) / len(order_flow_data['recent_10_bars'])
+                        print(f"        - Recent 10 Bars Avg Buy Ratio: {recent_avg:.4f}")
+                else:
+                    print("     ⚠️ K线数据不足，跳过订单流测试")
+
+            except ImportError as e:
+                print(f"     ❌ 无法导入 OrderFlowProcessor: {e}")
+            except Exception as e:
+                print(f"     ❌ OrderFlowProcessor 测试失败: {e}")
+                import traceback
+                traceback.print_exc()
+
+            print()
+
+            # ================================================================
+            # 9.3 测试 CoinalyzeClient (衍生品数据)
+            # ================================================================
+            print("  [9.3] 测试 CoinalyzeClient...")
+            try:
+                from utils.coinalyze_client import CoinalyzeClient
+
+                coinalyze_api_key = coinalyze_cfg.get('api_key') or os.getenv('COINALYZE_API_KEY')
+                coinalyze_client = CoinalyzeClient(
+                    api_key=coinalyze_api_key,
+                    timeout=coinalyze_cfg.get('timeout', 10),
+                    max_retries=coinalyze_cfg.get('max_retries', 2),
+                    logger=None
+                )
+                print("     ✅ CoinalyzeClient 导入成功")
+
+                if not coinalyze_enabled:
+                    print("     ℹ️ Coinalyze 未启用")
+                elif not coinalyze_api_key:
+                    print("     ⚠️ Coinalyze API Key 未配置")
+                else:
+                    print(f"     📊 Coinalyze API 测试 (API Key: {coinalyze_api_key[:8]}...)")
+
+                    coinalyze_symbol = coinalyze_cfg.get('symbol', 'BTCUSDT_PERP.A')
+
+                    # 测试 get_open_interest
+                    print("        测试 Open Interest...")
+                    oi_data = coinalyze_client.get_open_interest(symbol=coinalyze_symbol)
+                    if oi_data:
+                        print(f"        ✅ OI (BTC): {oi_data.get('value', 0):,.2f}")
+                    else:
+                        print("        ❌ OI 获取失败")
+
+                    # 测试 get_funding_rate
+                    print("        测试 Funding Rate...")
+                    fr_data = coinalyze_client.get_funding_rate(symbol=coinalyze_symbol)
+                    if fr_data:
+                        fr_value = fr_data.get('fundingRate', 0)
+                        print(f"        ✅ Funding Rate: {fr_value:.6f} ({fr_value*100:.4f}%)")
+                    else:
+                        print("        ❌ Funding Rate 获取失败")
+
+                    # 测试 get_liquidations
+                    print("        测试 Liquidations (1h)...")
+                    liq_data = coinalyze_client.get_liquidations(
+                        symbol=coinalyze_symbol,
+                        interval="1hour"
+                    )
+                    if liq_data:
+                        long_liq = liq_data.get('longLiquidationUsd', 0)
+                        short_liq = liq_data.get('shortLiquidationUsd', 0)
+                        print(f"        ✅ Long Liq: ${long_liq:,.0f}, Short Liq: ${short_liq:,.0f}")
+                    else:
+                        print("        ℹ️ Liquidations 数据不可用")
+
+                    # 测试 fetch_all (完整数据)
+                    print("        测试 fetch_all (完整数据)...")
+                    all_data = coinalyze_client.fetch_all(symbol=coinalyze_symbol)
+                    if all_data:
+                        print(f"        ✅ fetch_all 成功:")
+                        print(f"           - OI: {all_data.get('open_interest') is not None}")
+                        print(f"           - Funding: {all_data.get('funding_rate') is not None}")
+                        print(f"           - Liquidations: {all_data.get('liquidations') is not None}")
+                    else:
+                        print("        ❌ fetch_all 失败")
+
+            except ImportError as e:
+                print(f"     ❌ 无法导入 CoinalyzeClient: {e}")
+            except Exception as e:
+                print(f"     ❌ CoinalyzeClient 测试失败: {e}")
+                import traceback
+                traceback.print_exc()
+
+            print()
+
+            # ================================================================
+            # 9.4 测试 AIDataAssembler (完整数据组装)
+            # ================================================================
+            print("  [9.4] 测试 AIDataAssembler...")
+            try:
+                from utils.ai_data_assembler import AIDataAssembler
+                from utils.sentiment_client import SentimentDataFetcher
+
+                # 初始化所有组件
+                sentiment_client = SentimentDataFetcher(logger=None)
+                assembler = AIDataAssembler(
+                    binance_kline_client=kline_client,
+                    order_flow_processor=processor,
+                    coinalyze_client=coinalyze_client,
+                    sentiment_client=sentiment_client,
+                    logger=None
+                )
+                print("     ✅ AIDataAssembler 导入成功")
+
+                # 创建模拟技术指标数据
+                mock_technical_data = {
+                    'price': float(klines[-1][4]) if klines else 0,
+                    'rsi': 50.0,
+                    'macd': 100.0,
+                    'signal': 90.0,
+                    'sma_20': 85000.0,
+                    'sma_50': 84000.0,
+                    'bb_upper': 86000.0,
+                    'bb_lower': 84000.0,
                 }
-                resp = requests.get(liq_url, headers=headers, params=params_liq, timeout=timeout)
 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data:
-                        print(f"     ✅ Liquidations API 成功")
-                        print(f"        数据点数: {len(data) if isinstance(data, list) else 1}")
-                        # 显示最新一条数据
-                        if isinstance(data, list) and len(data) > 0:
-                            latest = data[-1]
-                            long_liq = latest.get('l', latest.get('longLiquidationUsd', 0))
-                            short_liq = latest.get('s', latest.get('shortLiquidationUsd', 0))
-                            print(f"        Long Liquidations: ${long_liq:,.0f}")
-                            print(f"        Short Liquidations: ${short_liq:,.0f}")
-                    else:
-                        print(f"     ⚠️ API 返回空数据 (可能近 1 小时无清算)")
-                else:
-                    print(f"     ❌ API 错误: {resp.status_code}")
-                    if resp.status_code == 400:
-                        print(f"        → 检查参数格式: interval='1hour', from/to=UNIX秒")
+                print("     📊 组装完整 AI 输入数据...")
+                assembled_data = assembler.assemble(
+                    technical_data=mock_technical_data,
+                    position_data=None,
+                    symbol=symbol_clean,
+                    interval="15m"
+                )
 
+                print(f"     ✅ 数据组装完成:")
+                print(f"        - 技术指标: {assembled_data.get('technical') is not None}")
+                print(f"        - 订单流: {assembled_data.get('order_flow') is not None}")
+                print(f"        - 衍生品: {assembled_data.get('derivatives') is not None}")
+                print(f"        - 情绪数据: {assembled_data.get('sentiment') is not None}")
+
+                if assembled_data.get('order_flow'):
+                    of = assembled_data['order_flow']
+                    print(f"        - Order Flow Buy Ratio: {of.get('buy_ratio', 0):.4f}")
+
+                if assembled_data.get('derivatives'):
+                    deriv = assembled_data['derivatives']
+                    print(f"        - Derivatives OI Change: {deriv.get('oi_change_pct', 0):.2f}%")
+                    print(f"        - Derivatives Funding Rate: {deriv.get('funding_rate_pct', 0):.4f}%")
+
+            except ImportError as e:
+                print(f"     ❌ 无法导入 AIDataAssembler: {e}")
             except Exception as e:
-                print(f"     ❌ Liquidations 测试失败: {e}")
+                print(f"     ❌ AIDataAssembler 测试失败: {e}")
+                import traceback
+                traceback.print_exc()
 
         print()
-        print("  ✅ Order Flow 测试完成")
+        print("  ✅ MTF v2.1 组件集成测试完成")
 
     except Exception as e:
-        print(f"  ❌ Order Flow 测试失败: {e}")
+        print(f"  ❌ MTF 组件测试失败: {e}")
         import traceback
         traceback.print_exc()
 
