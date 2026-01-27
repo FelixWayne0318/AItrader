@@ -1089,12 +1089,122 @@
       "pattern_type": "function_exists",
       "created": "2026-01-26T11:34:56.744940",
       "auto_generated": true
+    },
+    {
+      "id": "73606e259dd9",
+      "commit": "9409f4b",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: diagnose_realtime.py recognizes getter functions for SL validation",
+      "pattern": "if not (has_trading_logic_import and (has_min_sl_constant or has_min_sl_getter)):",
+      "pattern_type": "contains",
+      "created": "2026-01-27T03:06:25.410584",
+      "auto_generated": true
+    },
+    {
+      "id": "0d3fbc10a1ec",
+      "commit": "3f10551",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: update diagnose_realtime.py to recognize ConfigManager format",
+      "pattern": "# 格式2 (新): config_manager.get('execution', 'engine', 'reconciliation', default=True)",
+      "pattern_type": "contains",
+      "created": "2026-01-27T03:06:25.456719",
+      "auto_generated": true
+    },
+    {
+      "id": "0cb04a548ac7",
+      "commit": "2ad8efb",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "feat: diagnose_realtime v10.3 - full parity with live trading",
+      "pattern": "import requests as mtf_requests",
+      "pattern_type": "import",
+      "created": "2026-01-27T03:06:25.494585",
+      "auto_generated": true
+    },
+    {
+      "id": "66205c85e10a",
+      "commit": "24ef917",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: correct method names in diagnose_realtime.py v10.2",
+      "pattern": "import time as time_module",
+      "pattern_type": "import",
+      "created": "2026-01-27T03:06:25.533971",
+      "auto_generated": true
+    },
+    {
+      "id": "28f348de0cbb",
+      "commit": "2bab2a4",
+      "file": "scripts/comprehensive_diagnosis.py",
+      "message": "fix: check COINALYZE_API_KEY from both YAML and environment variable",
+      "pattern": "coinalyze_api_key = coinalyze.get('api_key') or os.getenv('COINALYZE_API_KEY')",
+      "pattern_type": "contains",
+      "created": "2026-01-27T03:06:25.567679",
+      "auto_generated": true
+    },
+    {
+      "id": "7a53e4ba0ad6",
+      "commit": "2bab2a4",
+      "file": "scripts/diagnose.py",
+      "message": "fix: check COINALYZE_API_KEY from both YAML and environment variable",
+      "pattern": "coinalyze_api_key = coinalyze.get('api_key') or os.getenv('COINALYZE_API_KEY')",
+      "pattern_type": "contains",
+      "created": "2026-01-27T03:06:25.585842",
+      "auto_generated": true
+    },
+    {
+      "id": "1f7832be712d",
+      "commit": "2bab2a4",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: check COINALYZE_API_KEY from both YAML and environment variable",
+      "pattern": "coinalyze_api_key = coinalyze.get('api_key') or os.getenv('COINALYZE_API_KEY')",
+      "pattern_type": "contains",
+      "created": "2026-01-27T03:06:25.605396",
+      "auto_generated": true
+    },
+    {
+      "id": "6fb7bb091af2",
+      "commit": "85a8dbd",
+      "file": "scripts/comprehensive_diagnosis.py",
+      "message": "fix: add venv auto-switch to comprehensive_diagnosis and diagnose_realtime",
+      "pattern": "import os",
+      "pattern_type": "import",
+      "created": "2026-01-27T03:06:25.654528",
+      "auto_generated": true
+    },
+    {
+      "id": "a33ebf05cfe2",
+      "commit": "85a8dbd",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: add venv auto-switch to comprehensive_diagnosis and diagnose_realtime",
+      "pattern": "from pathlib import Path",
+      "pattern_type": "import",
+      "created": "2026-01-27T03:06:25.675591",
+      "auto_generated": true
+    },
+    {
+      "id": "c8dc5375ab45",
+      "commit": "e70b094",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: use direct Binance API for MTF historical data prefetch",
+      "pattern": "import requests",
+      "pattern_type": "import",
+      "created": "2026-01-27T03:06:25.714162",
+      "auto_generated": true
+    },
+    {
+      "id": "6bcbb335f243",
+      "commit": "53f7e78",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: use configured timeout for Binance klines request",
+      "pattern": "response = requests.get(url, params=params, timeout=self.config.network_bar_persistence_timeout)",
+      "pattern_type": "contains",
+      "created": "2026-01-27T03:06:25.749139",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-01-26T11:34:56.745225",
-    "count": 109,
+    "updated": "2026-01-27T03:06:29.516329",
+    "count": 120,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
