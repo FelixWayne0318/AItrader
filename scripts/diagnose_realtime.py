@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.15 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.16 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -26,6 +26,7 @@
 21. v10.13: 修复未实现PnL显示0的问题 (自动计算)
 22. v10.14: 修复 AI 收到价格 $0.00 的问题 (添加 price 到 technical_data)
 23. v10.15: 添加完整数据流追踪 (AI 输入数据验证、Judge 计数、辩论记录)
+24. v10.16: 修复 MTF 趋势层使用 SMA_200 (与 multi_timeframe_manager.py 一致)
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -41,6 +42,12 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.16:
+- 修复 MTF 趋势层使用 SMA_200 (配置: trend_layer.sma_period=200)
+- 之前错误使用 SMA_50，导致诊断结果与实盘不一致
+- 添加 SMA_200 不可用时回退到 SMA_50 的逻辑 (需要 200 根 K线)
+- configs/base.yaml 同步添加 sma_periods: [5, 20, 50, 200]
+
 v10.15:
 - 添加完整数据流追踪，可判断问题出在哪一步
 - 新增 "AI 输入数据验证" 部分，显示传给 MultiAgent 的所有数据
@@ -1295,23 +1302,29 @@ if mtf_enabled:
         from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState
 
         # 模拟趋势层评估: 检查价格是否在 SMA_200 上方
-        # 注意: 我们使用技术指标数据来模拟，因为没有真正初始化 MTF manager
-        sma_50 = technical_data.get('sma_50', 0)  # 使用 SMA_50 作为近似
-
-        # 读取趋势层配置
+        # MTF 趋势层使用 SMA_200 判断 RISK_ON/OFF (与 multi_timeframe_manager.py 一致)
         trend_layer_cfg = base_config.get('multi_timeframe', {}).get('trend_layer', {})
+        sma_period = trend_layer_cfg.get('sma_period', 200)
+        sma_for_risk = technical_data.get(f'sma_{sma_period}', 0)
+
+        # 如果没有 SMA_200 (历史数据不足)，回退到 SMA_50
+        if sma_for_risk == 0:
+            sma_for_risk = technical_data.get('sma_50', 0)
+            sma_period = 50
+            print(f"     ℹ️ SMA_200 不可用 (需要 200 根 K线)，使用 SMA_50 作为后备")
+
         require_above_sma = trend_layer_cfg.get('require_above_sma', True)
 
         # 模拟 RISK_ON/RISK_OFF 判断
-        if require_above_sma and sma_50 > 0:
-            if current_price > sma_50:
+        if require_above_sma and sma_for_risk > 0:
+            if current_price > sma_for_risk:
                 risk_state = "RISK_ON"
                 mtf_allows_new_position = True
-                print(f"     ✅ RISK_ON: 价格 ${current_price:,.2f} > SMA_50 ${sma_50:,.2f}")
+                print(f"     ✅ RISK_ON: 价格 ${current_price:,.2f} > SMA_{sma_period} ${sma_for_risk:,.2f}")
             else:
                 risk_state = "RISK_OFF"
                 mtf_allows_new_position = False
-                print(f"     ⚠️ RISK_OFF: 价格 ${current_price:,.2f} < SMA_50 ${sma_50:,.2f}")
+                print(f"     ⚠️ RISK_OFF: 价格 ${current_price:,.2f} < SMA_{sma_period} ${sma_for_risk:,.2f}")
         else:
             risk_state = "RISK_ON"
             mtf_allows_new_position = True
@@ -2738,11 +2751,17 @@ if not SUMMARY_MODE:
     mtf_enabled = base_config.get('multi_timeframe', {}).get('enabled', False) if 'base_config' in dir() else False
     if mtf_enabled:
         print(f"  MTF 状态: 已启用")
-        sma_50 = technical_data.get('sma_50', 0)
-        if current_price < sma_50:
-            print(f"  趋势层: RISK_OFF (价格 ${current_price:,.2f} < SMA_50 ${sma_50:,.2f})")
+        # 使用配置中的 SMA 周期 (默认 200)，与规则1检查一致
+        trend_layer_cfg = base_config.get('multi_timeframe', {}).get('trend_layer', {})
+        sma_period_summary = trend_layer_cfg.get('sma_period', 200)
+        sma_for_summary = technical_data.get(f'sma_{sma_period_summary}', 0)
+        if sma_for_summary == 0:
+            sma_for_summary = technical_data.get('sma_50', 0)
+            sma_period_summary = 50
+        if current_price < sma_for_summary:
+            print(f"  趋势层: RISK_OFF (价格 ${current_price:,.2f} < SMA_{sma_period_summary} ${sma_for_summary:,.2f})")
         else:
-            print(f"  趋势层: RISK_ON (价格 ${current_price:,.2f} >= SMA_50 ${sma_50:,.2f})")
+            print(f"  趋势层: RISK_ON (价格 ${current_price:,.2f} >= SMA_{sma_period_summary} ${sma_for_summary:,.2f})")
 
         original_signal = signal_data.get('signal', 'HOLD')
         if final_signal != original_signal:

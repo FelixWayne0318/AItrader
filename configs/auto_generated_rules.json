@@ -1279,12 +1279,42 @@
       "pattern_type": "contains",
       "created": "2026-01-27T12:49:52.261689",
       "auto_generated": true
+    },
+    {
+      "id": "e89520d22f6c",
+      "commit": "3106a65",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: Add 'price' to technical_data for AI analysis (v10.14)",
+      "pattern": "- technical_data (from indicator_manager.get_technical_data()) 不包含 'price' 键",
+      "pattern_type": "contains",
+      "created": "2026-01-27T13:21:34.719236",
+      "auto_generated": true
+    },
+    {
+      "id": "2b23b449376d",
+      "commit": "3106a65",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: Add 'price' to technical_data for AI analysis (v10.14)",
+      "pattern": "ai_technical_data['price'] = current_price",
+      "pattern_type": "contains",
+      "created": "2026-01-27T13:21:34.743055",
+      "auto_generated": true
+    },
+    {
+      "id": "7be81bf170ed",
+      "commit": "5713613",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: Fix Liquidations BTC→USD conversion in multi_agent_analyzer.py",
+      "pattern": "_format_derivatives_report",
+      "pattern_type": "function_exists",
+      "created": "2026-01-27T13:21:34.781165",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-01-27T12:49:56.490363",
-    "count": 128,
+    "updated": "2026-01-27T13:21:38.877662",
+    "count": 131,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
