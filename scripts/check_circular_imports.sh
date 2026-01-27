@@ -58,7 +58,7 @@ sys.path.insert(0, '$PROJECT_ROOT')
 
 # 按依赖顺序导入
 from utils.config_manager import ConfigManager
-from utils.deepseek_client import DeepSeekClient
+from utils.deepseek_client import DeepSeekAnalyzer
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
 from strategy import trading_logic
 from strategy.deepseek_strategy import DeepSeekAIStrategy
