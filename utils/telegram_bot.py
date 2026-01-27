@@ -404,7 +404,7 @@ class TelegramBot:
 
     def format_heartbeat_message(self, heartbeat_data: Dict[str, Any]) -> str:
         """
-        Format heartbeat status message for periodic monitoring (v2.1).
+        Format heartbeat status message for periodic monitoring (v2.2 - Enhanced).
 
         Sent every on_timer run to confirm server is alive.
 
@@ -419,7 +419,16 @@ class TelegramBot:
             - has_position: bool
             - position_side: str (LONG/SHORT/None)
             - position_pnl_pct: float
+            - entry_price: float (if has position)
+            - position_size: float (if has position)
             - timer_count: int (number of runs since startup)
+            - equity: float (account balance)
+            - trend_status: str (RISK_ON/RISK_OFF/N/A)
+            - macd: float
+            - macd_signal: float
+            - bb_position: float (0-100, where price is in BB)
+            - price_change_24h: float (percentage)
+            - uptime_str: str (e.g. "2h 15m")
         """
         signal = heartbeat_data.get('signal', 'N/A')
         confidence = heartbeat_data.get('confidence', 'N/A')
@@ -427,6 +436,15 @@ class TelegramBot:
         rsi = heartbeat_data.get('rsi', 0)
         has_position = heartbeat_data.get('has_position', False)
         timer_count = heartbeat_data.get('timer_count', 0)
+
+        # New fields (v2.2)
+        equity = heartbeat_data.get('equity', 0)
+        trend_status = heartbeat_data.get('trend_status', 'N/A')
+        macd = heartbeat_data.get('macd', 0)
+        macd_signal = heartbeat_data.get('macd_signal', 0)
+        bb_position = heartbeat_data.get('bb_position', 50)
+        price_change_24h = heartbeat_data.get('price_change_24h', 0)
+        uptime_str = heartbeat_data.get('uptime_str', 'N/A')
 
         # Signal emoji
         signal_emoji = {
@@ -442,22 +460,82 @@ class TelegramBot:
             'LOW': '💤'
         }.get(confidence, '')
 
-        msg = f"💓 *Heartbeat #{timer_count}*\n\n"
-        msg += f"*Signal*: {signal_emoji} {conf_emoji}\n"
-        msg += f"*Price*: ${price:,.2f}\n"
-        msg += f"*RSI*: {rsi:.1f}\n\n"
+        # Trend emoji
+        trend_emoji = {
+            'RISK_ON': '🟢',
+            'RISK_OFF': '🔴',
+        }.get(trend_status, '⚪')
 
+        # RSI status
+        if rsi >= 70:
+            rsi_status = "超买"
+        elif rsi <= 30:
+            rsi_status = "超卖"
+        else:
+            rsi_status = "中性"
+
+        # BB position status
+        if bb_position >= 80:
+            bb_status = "上轨"
+        elif bb_position <= 20:
+            bb_status = "下轨"
+        else:
+            bb_status = "中轨"
+
+        # MACD status
+        macd_diff = macd - macd_signal if macd_signal else 0
+        if macd_diff > 0:
+            macd_status = "📈 多头"
+        elif macd_diff < 0:
+            macd_status = "📉 空头"
+        else:
+            macd_status = "➖ 中性"
+
+        # Price change emoji
+        price_change_emoji = "📈" if price_change_24h > 0 else "📉" if price_change_24h < 0 else "➖"
+
+        msg = f"💓 *Heartbeat #{timer_count}*\n"
+        msg += f"━━━━━━━━━━━━━━━━\n\n"
+
+        # Market section
+        msg += f"📊 *市场*\n"
+        msg += f"价格: ${price:,.2f} {price_change_emoji}{price_change_24h:+.2f}%\n"
+        msg += f"趋势: {trend_emoji} {trend_status}\n\n"
+
+        # Technical indicators
+        msg += f"📈 *技术指标*\n"
+        msg += f"RSI: {rsi:.1f} ({rsi_status})\n"
+        msg += f"MACD: {macd_status}\n"
+        msg += f"BB: {bb_position:.0f}% ({bb_status})\n\n"
+
+        # Signal section
+        msg += f"🎯 *信号*\n"
+        msg += f"方向: {signal_emoji} {conf_emoji}\n\n"
+
+        # Position section
         if has_position:
             side = heartbeat_data.get('position_side', 'N/A')
             pnl_pct = heartbeat_data.get('position_pnl_pct', 0)
+            entry_price = heartbeat_data.get('entry_price', 0)
+            position_size = heartbeat_data.get('position_size', 0)
             pnl_emoji = "📈" if pnl_pct > 0 else "📉" if pnl_pct < 0 else "➖"
             side_emoji = "🟢" if side == "LONG" else "🔴" if side == "SHORT" else "❓"
-            msg += f"*Position*: {side_emoji} {side}\n"
-            msg += f"*P&L*: {pnl_emoji} {pnl_pct:+.2f}%\n"
-        else:
-            msg += "*Position*: ⚪ None\n"
 
-        msg += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
+            msg += f"💰 *持仓*\n"
+            msg += f"方向: {side_emoji} {side}\n"
+            msg += f"入场: ${entry_price:,.2f}\n"
+            msg += f"数量: {position_size:.4f}\n"
+            msg += f"盈亏: {pnl_emoji} {pnl_pct:+.2f}%\n\n"
+        else:
+            msg += f"💰 *持仓*: ⚪ 无\n\n"
+
+        # Account section
+        msg += f"🏦 *账户*\n"
+        msg += f"余额: ${equity:,.2f}\n"
+        msg += f"运行: {uptime_str}\n\n"
+
+        msg += f"━━━━━━━━━━━━━━━━\n"
+        msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
 
         return msg
 

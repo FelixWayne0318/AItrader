@@ -563,6 +563,10 @@ class DeepSeekAIStrategy(Strategy):
         """Actions to be performed on strategy start."""
         self.log.info("Starting DeepSeek AI Strategy...")
 
+        # v2.2: 记录启动时间 (用于心跳消息显示运行时长)
+        from datetime import datetime
+        self._start_time = datetime.now()
+
         # Load instrument with retry mechanism
         # The instrument may not be immediately available as the data client
         # loads instruments asynchronously from Binance
@@ -1617,10 +1621,19 @@ class DeepSeekAIStrategy(Strategy):
 
     def _send_heartbeat_notification(self):
         """
-        v2.1: 发送心跳通知 - 在 on_timer 开始时调用
+        v2.2: 发送心跳通知 (增强版) - 在 on_timer 开始时调用
 
         即使后续分析失败，用户也能知道服务器在运行。
         使用缓存的价格和持仓数据，不依赖当前分析结果。
+
+        新增信息 (v2.2):
+        - 账户余额 (equity)
+        - 趋势状态 (RISK_ON/RISK_OFF)
+        - MACD 状态
+        - BB 位置
+        - 24h 价格变化
+        - 运行时长
+        - 持仓入场价和数量
         """
         if not (self.telegram_bot and self.enable_telegram and getattr(self, 'telegram_notify_heartbeat', False)):
             return
@@ -1631,12 +1644,68 @@ class DeepSeekAIStrategy(Strategy):
             if cached_price is None and self.indicator_manager.recent_bars:
                 cached_price = float(self.indicator_manager.recent_bars[-1].close)
 
-            # 获取 RSI (如果可用)
+            # 获取技术指标 (如果可用)
             rsi = 0
+            macd = 0
+            macd_signal = 0
+            bb_position = 50  # 默认中间位置
             try:
                 if self.indicator_manager.is_initialized():
                     tech_data = self.indicator_manager.get_technical_data(cached_price or 0)
                     rsi = tech_data.get('rsi', 0)
+                    macd = tech_data.get('macd', 0)
+                    macd_signal = tech_data.get('macd_signal', 0)
+                    bb_position = tech_data.get('bb_position', 50)
+            except Exception:
+                pass
+
+            # 获取趋势状态 (MTF)
+            trend_status = 'N/A'
+            try:
+                if self.mtf_enabled and self.mtf_manager:
+                    trend_result = self.mtf_manager.check_trend_filter(cached_price or 0)
+                    if trend_result:
+                        trend_status = 'RISK_ON' if trend_result.get('risk_on', False) else 'RISK_OFF'
+            except Exception:
+                pass
+
+            # 获取账户余额
+            equity = 0
+            try:
+                equity = getattr(self, 'equity', 0) or 0
+            except Exception:
+                pass
+
+            # 计算运行时长
+            uptime_str = 'N/A'
+            try:
+                start_time = getattr(self, '_start_time', None)
+                if start_time:
+                    from datetime import datetime
+                    uptime_seconds = (datetime.now() - start_time).total_seconds()
+                    hours = int(uptime_seconds // 3600)
+                    minutes = int((uptime_seconds % 3600) // 60)
+                    if hours > 0:
+                        uptime_str = f"{hours}h {minutes}m"
+                    else:
+                        uptime_str = f"{minutes}m"
+            except Exception:
+                pass
+
+            # 计算 24h 价格变化 (使用缓存的 K 线数据)
+            price_change_24h = 0.0
+            try:
+                bars = self.indicator_manager.recent_bars
+                # 15 分钟 K 线，24 小时 = 96 根
+                if len(bars) >= 96:
+                    price_24h_ago = float(bars[-96].close)
+                    if price_24h_ago > 0 and cached_price:
+                        price_change_24h = ((cached_price - price_24h_ago) / price_24h_ago) * 100
+                elif len(bars) >= 2:
+                    # 如果数据不足，用最早的数据估算
+                    oldest_price = float(bars[0].close)
+                    if oldest_price > 0 and cached_price:
+                        price_change_24h = ((cached_price - oldest_price) / oldest_price) * 100
             except Exception:
                 pass
 
@@ -1644,12 +1713,15 @@ class DeepSeekAIStrategy(Strategy):
             position_pnl_pct = 0.0
             position_side = None
             has_position = False
+            entry_price = 0
+            position_size = 0
             try:
                 pos_data = self._get_current_position_data(current_price=cached_price, from_telegram=True)
                 if pos_data and pos_data.get('size', 0) != 0:
                     has_position = True
                     position_side = pos_data.get('side', 'LONG')
                     entry_price = pos_data.get('entry_price', 0)
+                    position_size = abs(pos_data.get('size', 0))
                     if entry_price > 0 and cached_price:
                         if position_side == 'LONG':
                             position_pnl_pct = ((cached_price - entry_price) / entry_price) * 100
@@ -1668,10 +1740,19 @@ class DeepSeekAIStrategy(Strategy):
                 'confidence': confidence,
                 'price': cached_price or 0,
                 'rsi': rsi,
+                'macd': macd,
+                'macd_signal': macd_signal,
+                'bb_position': bb_position,
                 'has_position': has_position,
                 'position_side': position_side,
                 'position_pnl_pct': position_pnl_pct,
+                'entry_price': entry_price,
+                'position_size': position_size,
                 'timer_count': getattr(self, '_timer_count', 0),
+                'equity': equity,
+                'trend_status': trend_status,
+                'price_change_24h': price_change_24h,
+                'uptime_str': uptime_str,
             })
             self.telegram_bot.send_message_sync(heartbeat_msg)
             self.log.info(f"💓 Sent heartbeat #{self._timer_count}")
