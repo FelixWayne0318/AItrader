@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.7 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.8 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -18,6 +18,7 @@
 13. v10.5: 修复 Coinalyze 数据解析 (funding_rate.value, liquidations.history 结构)
 14. v10.6: 添加 MTF 信号过滤模拟 (Step 7.5) - 100% 流程覆盖
 15. v10.7: 修复 SentimentDataFetcher 初始化参数错误
+16. v10.8: 修复 Step 9.3 Coinalyze 配置路径 (order_flow.coinalyze)
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -33,6 +34,9 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.8:
+- 修复 Step 9.3 Coinalyze 配置路径: base_config.get('coinalyze') → order_flow.get('coinalyze')
+
 v10.7:
 - 修复 SentimentDataFetcher 初始化: 移除不存在的 logger 参数
 
@@ -136,7 +140,7 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.7')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.8')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 args = parser.parse_args()
@@ -350,7 +354,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v10.7 (TradingAgents + MTF 100% 覆盖){mode_str}")
+print(f"  实盘信号诊断工具 v10.8 (TradingAgents + MTF 100% 覆盖){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1572,7 +1576,7 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.7)")
+print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.8)")
 print("=" * 70)
 print()
 
@@ -1741,7 +1745,7 @@ if not SUMMARY_MODE:
                 base_config = yaml.safe_load(f)
             order_flow = base_config.get('order_flow', {})
             order_flow_enabled = order_flow.get('enabled', False)
-            coinalyze_cfg = base_config.get('coinalyze', {})
+            coinalyze_cfg = order_flow.get('coinalyze', {})  # 正确路径: order_flow.coinalyze
             coinalyze_enabled = coinalyze_cfg.get('enabled', False)
 
         if not order_flow_enabled:
