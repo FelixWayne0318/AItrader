@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.6 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.7 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -17,6 +17,7 @@
 12. v10.4: MTF v2.1 完整组件测试、AIDataAssembler 集成、更新 MultiAgent 接口
 13. v10.5: 修复 Coinalyze 数据解析 (funding_rate.value, liquidations.history 结构)
 14. v10.6: 添加 MTF 信号过滤模拟 (Step 7.5) - 100% 流程覆盖
+15. v10.7: 修复 SentimentDataFetcher 初始化参数错误
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -32,6 +33,9 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.7:
+- 修复 SentimentDataFetcher 初始化: 移除不存在的 logger 参数
+
 v10.6:
 - 添加 Step 7.5: MTF 信号过滤模拟 (与 deepseek_strategy.py:1454-1525 100% 一致)
 - 规则1: RISK_OFF 检查 (趋势层禁止新开仓)
@@ -132,7 +136,7 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.6')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.7')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 args = parser.parse_args()
@@ -346,7 +350,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v10.6 (TradingAgents + MTF 100% 覆盖){mode_str}")
+print(f"  实盘信号诊断工具 v10.7 (TradingAgents + MTF 100% 覆盖){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1568,7 +1572,7 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.6)")
+print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.7)")
 print("=" * 70)
 print()
 
@@ -1922,7 +1926,7 @@ if not SUMMARY_MODE:
                 from utils.sentiment_client import SentimentDataFetcher
 
                 # 初始化所有组件
-                sentiment_client = SentimentDataFetcher(logger=None)
+                sentiment_client = SentimentDataFetcher()
                 assembler = AIDataAssembler(
                     binance_kline_client=kline_client,
                     order_flow_processor=processor,
