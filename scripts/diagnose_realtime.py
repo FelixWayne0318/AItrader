@@ -267,20 +267,24 @@ def check_critical_config() -> Tuple[list, list]:
                     f"   → 建议至少设置为 0.01 (1%)"
                 )
 
-    # 检查 multi_agent_analyzer.py 是否正确导入共享常量
+    # 检查 multi_agent_analyzer.py 是否正确导入共享常量/函数
     analyzer_path = project_root / "agents" / "multi_agent_analyzer.py"
     if analyzer_path.exists():
         with open(analyzer_path, 'r', encoding='utf-8') as f:
             analyzer_content = f.read()
 
-        # 支持单行和多行导入格式
+        # 支持两种模式:
+        # 1. 旧模式: 导入常量 MIN_SL_DISTANCE_PCT
+        # 2. 新模式: 导入 getter 函数 get_min_sl_distance_pct (Phase 3 迁移后)
         has_trading_logic_import = "from strategy.trading_logic import" in analyzer_content
         has_min_sl_constant = "MIN_SL_DISTANCE_PCT" in analyzer_content
+        has_min_sl_getter = "get_min_sl_distance_pct" in analyzer_content
 
-        if not (has_trading_logic_import and has_min_sl_constant):
+        # 新模式 (getter 函数) 或 旧模式 (常量) 都可接受
+        if not (has_trading_logic_import and (has_min_sl_constant or has_min_sl_getter)):
             warnings.append(
-                "multi_agent_analyzer.py: 未从 trading_logic 导入 MIN_SL_DISTANCE_PCT\n"
-                "   → 可能导致 SL 验证不一致"
+                "multi_agent_analyzer.py: 未从 trading_logic 导入 SL 验证函数/常量\n"
+                "   → 应导入 get_min_sl_distance_pct() 或 MIN_SL_DISTANCE_PCT"
             )
 
     # ==========================================================================
