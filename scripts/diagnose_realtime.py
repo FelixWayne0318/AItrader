@@ -3249,13 +3249,13 @@ if EXPORT_MODE:
 
     if PUSH_TO_GITHUB:
         import subprocess
+        commit_msg = f"chore: Add diagnosis report {filename}"
         try:
             # 切换到项目目录
             os.chdir(project_dir)
 
-            # Git 操作
-            subprocess.run(['git', 'add', str(filepath)], check=True, capture_output=True)
-            commit_msg = f"chore: Add diagnosis report {filename}"
+            # Git 操作 (使用 -f 强制添加，因为 logs/ 在 .gitignore 中)
+            subprocess.run(['git', 'add', '-f', str(filepath)], check=True, capture_output=True)
             subprocess.run(['git', 'commit', '-m', commit_msg], check=True, capture_output=True)
 
             # 获取当前分支
@@ -3274,7 +3274,7 @@ if EXPORT_MODE:
 
         except subprocess.CalledProcessError as e:
             print(f"  ⚠️ Git 推送失败: {e}")
-            print(f"     请手动提交: git add {filepath} && git commit -m '{commit_msg}' && git push")
+            print(f"     请手动提交: git add -f {filepath} && git commit -m '{commit_msg}' && git push")
         except Exception as e:
             print(f"  ⚠️ 导出错误: {e}")
     else:
