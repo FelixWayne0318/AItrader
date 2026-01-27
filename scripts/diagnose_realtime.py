@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.4 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.5 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -15,6 +15,7 @@
 10. v10.2: Order Flow 实际数据获取测试、Telegram 命令处理验证、MTF 预取验证
 11. v10.3: Post-Trade 生命周期测试、情绪 fallback 完整字段、从配置读取 Symbol
 12. v10.4: MTF v2.1 完整组件测试、AIDataAssembler 集成、更新 MultiAgent 接口
+13. v10.5: 修复 Coinalyze 数据解析 (funding_rate.value, liquidations.history 结构)
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -30,6 +31,11 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.5:
+- 修复 get_funding_rate() 数据解析: 使用 'value' 字段而非 'fundingRate'
+- 修复 get_liquidations() 数据解析: 正确解析 history[x]['l'/'s'] 嵌套结构
+- 修复 AIDataAssembler 衍生品数据访问: 使用正确的嵌套结构路径
+
 v10.4:
 - 添加 MTF v2.1 完整组件测试 (BinanceKlineClient, OrderFlowProcessor, CoinalyzeClient, AIDataAssembler)
 - 更新 MultiAgentAnalyzer.analyze() 调用以传递 order_flow_report 和 derivatives_report
@@ -118,7 +124,7 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.1')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.5')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 args = parser.parse_args()
@@ -332,7 +338,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v10.1 (TradingAgents + MTF 完整支持){mode_str}")
+print(f"  实盘信号诊断工具 v10.5 (TradingAgents + MTF 完整支持){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1352,7 +1358,7 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.1)")
+print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.5)")
 print("=" * 70)
 print()
 
@@ -1645,7 +1651,8 @@ if not SUMMARY_MODE:
                     print("        测试 Funding Rate...")
                     fr_data = coinalyze_client.get_funding_rate(symbol=coinalyze_symbol)
                     if fr_data:
-                        fr_value = fr_data.get('fundingRate', 0)
+                        # 正确的字段名是 'value' (参考 coinalyze_client.py:189-207)
+                        fr_value = fr_data.get('value', 0)
                         print(f"        ✅ Funding Rate: {fr_value:.6f} ({fr_value*100:.4f}%)")
                     else:
                         print("        ❌ Funding Rate 获取失败")
@@ -1657,9 +1664,16 @@ if not SUMMARY_MODE:
                         interval="1hour"
                     )
                     if liq_data:
-                        long_liq = liq_data.get('longLiquidationUsd', 0)
-                        short_liq = liq_data.get('shortLiquidationUsd', 0)
-                        print(f"        ✅ Long Liq: ${long_liq:,.0f}, Short Liq: ${short_liq:,.0f}")
+                        # 正确结构: {"history": [{"t": ..., "l": long_usd, "s": short_usd}]}
+                        # (参考 coinalyze_client.py:150-187)
+                        history = liq_data.get('history', [])
+                        if history:
+                            item = history[-1]  # 最近一条
+                            long_liq = float(item.get('l', 0))
+                            short_liq = float(item.get('s', 0))
+                            print(f"        ✅ Long Liq: ${long_liq:,.0f}, Short Liq: ${short_liq:,.0f}")
+                        else:
+                            print("        ℹ️ Liquidations history 为空")
                     else:
                         print("        ℹ️ Liquidations 数据不可用")
 
@@ -1734,8 +1748,13 @@ if not SUMMARY_MODE:
 
                 if assembled_data.get('derivatives'):
                     deriv = assembled_data['derivatives']
-                    print(f"        - Derivatives OI Change: {deriv.get('oi_change_pct', 0):.2f}%")
-                    print(f"        - Derivatives Funding Rate: {deriv.get('funding_rate_pct', 0):.4f}%")
+                    # 正确的嵌套结构 (参考 ai_data_assembler.py:159-177)
+                    oi_data = deriv.get('open_interest', {})
+                    fr_data = deriv.get('funding_rate', {})
+                    oi_change = oi_data.get('change_pct') if oi_data else None
+                    funding_pct = fr_data.get('current_pct', 0) if fr_data else 0
+                    print(f"        - Derivatives OI Change: {oi_change if oi_change else 'N/A (首次)'}%")
+                    print(f"        - Derivatives Funding Rate: {funding_pct:.4f}%")
 
             except ImportError as e:
                 print(f"     ❌ 无法导入 AIDataAssembler: {e}")
