@@ -262,8 +262,12 @@ class MultiAgentAnalyzer:
             order_flow_summary = self._format_order_flow_report(order_flow_report)
             derivatives_summary = self._format_derivatives_report(derivatives_report)
 
-            # Get current price for calculations
-            current_price = price_data.get('price', 0) if price_data else technical_report.get('price', 0)
+            # Get current price for calculations (确保是数值类型)
+            raw_price = price_data.get('price', 0) if price_data else technical_report.get('price', 0)
+            try:
+                current_price = float(raw_price) if raw_price is not None else 0.0
+            except (ValueError, TypeError):
+                current_price = 0.0
 
             # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
@@ -682,14 +686,28 @@ JSON response only:"""
 
     def _validate_sl_tp(self, decision: Dict[str, Any], current_price: float) -> Dict[str, Any]:
         """Validate and fix stop loss / take profit values."""
+        # 修复: 确保 current_price 是数值类型
+        try:
+            current_price = float(current_price) if current_price is not None else 0.0
+        except (ValueError, TypeError):
+            current_price = 0.0
         # Defensive check: ensure current_price is valid before calculations
         if current_price is None or current_price <= 0:
             self.logger.warning(f"Invalid current_price ({current_price}) for SL/TP validation, skipping")
             return decision
 
         signal = decision.get("signal", "HOLD")
-        sl = decision.get("stop_loss", 0) or 0  # Handle None
-        tp = decision.get("take_profit", 0) or 0  # Handle None
+        # 修复: 确保 sl/tp 是数值类型 (AI 可能返回字符串)
+        sl_raw = decision.get("stop_loss", 0)
+        tp_raw = decision.get("take_profit", 0)
+        try:
+            sl = float(sl_raw) if sl_raw is not None else 0.0
+        except (ValueError, TypeError):
+            sl = 0.0
+        try:
+            tp = float(tp_raw) if tp_raw is not None else 0.0
+        except (ValueError, TypeError):
+            tp = 0.0
 
         # Get configuration values (Phase 3: migrated to ConfigManager)
         min_sl_distance = get_min_sl_distance_pct()
