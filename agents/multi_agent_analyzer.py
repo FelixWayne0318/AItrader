@@ -202,6 +202,9 @@ class MultiAgentAnalyzer:
         sentiment_report: Optional[Dict[str, Any]] = None,
         current_position: Optional[Dict[str, Any]] = None,
         price_data: Optional[Dict[str, Any]] = None,
+        # ========== MTF v2.1: Multi-Timeframe Support ==========
+        order_flow_report: Optional[Dict[str, Any]] = None,
+        derivatives_report: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis with Bull/Bear debate.
@@ -227,6 +230,10 @@ class MultiAgentAnalyzer:
             Current position information
         price_data : Dict, optional
             Current price data for stop/take profit calculation
+        order_flow_report : Dict, optional
+            Order flow data (buy/sell ratio, CVD trend) - MTF v2.1
+        derivatives_report : Dict, optional
+            Derivatives market data (OI, funding, liquidations) - MTF v2.1
 
         Returns
         -------
@@ -251,6 +258,10 @@ class MultiAgentAnalyzer:
             tech_summary = self._format_technical_report(technical_report)
             sent_summary = self._format_sentiment_report(sentiment_report)
 
+            # MTF v2.1: Format order flow and derivatives for prompts
+            order_flow_summary = self._format_order_flow_report(order_flow_report)
+            derivatives_summary = self._format_derivatives_report(derivatives_report)
+
             # Get current price for calculations
             current_price = price_data.get('price', 0) if price_data else technical_report.get('price', 0)
 
@@ -268,6 +279,8 @@ class MultiAgentAnalyzer:
                     symbol=symbol,
                     technical_report=tech_summary,
                     sentiment_report=sent_summary,
+                    order_flow_report=order_flow_summary,      # MTF v2.1
+                    derivatives_report=derivatives_summary,     # MTF v2.1
                     history=debate_history,
                     bear_argument=bear_argument,
                 )
@@ -278,6 +291,8 @@ class MultiAgentAnalyzer:
                     symbol=symbol,
                     technical_report=tech_summary,
                     sentiment_report=sent_summary,
+                    order_flow_report=order_flow_summary,      # MTF v2.1
+                    derivatives_report=derivatives_summary,     # MTF v2.1
                     history=debate_history,
                     bull_argument=bull_argument,
                 )
@@ -322,6 +337,8 @@ class MultiAgentAnalyzer:
         symbol: str,
         technical_report: str,
         sentiment_report: str,
+        order_flow_report: str,      # MTF v2.1
+        derivatives_report: str,     # MTF v2.1
         history: str,
         bear_argument: str,
     ) -> str:
@@ -329,20 +346,27 @@ class MultiAgentAnalyzer:
         Generate bull analyst's argument.
 
         Borrowed from: TradingAgents/agents/researchers/bull_researcher.py
+        MTF v2.1: Added order flow and derivatives data
         """
         prompt = f"""You are a Bull Analyst advocating for LONG position on {symbol}.
 Your task is to build a strong, evidence-based case for going LONG.
 
 Key points to focus on:
 - BULLISH Technical Signals: Price above SMAs, RSI recovering from oversold, MACD bullish crossover
+- Order Flow Confirmation: Buy ratio > 50%, CVD rising (accumulation)
+- Derivatives Support: OI rising with price, neutral/negative funding (not overheated)
 - Growth Momentum: Breakout patterns, increasing volume, support holding
 - Counter Bear Arguments: Use specific numbers to refute bearish concerns
 
 Resources Available:
-Technical Analysis:
+
+TECHNICAL ANALYSIS:
 {technical_report}
 
-Sentiment Data:
+{order_flow_report}
+
+{derivatives_report}
+
 {sentiment_report}
 
 Previous Debate:
@@ -353,14 +377,14 @@ Last Bear Argument:
 
 INSTRUCTIONS:
 1. Present 2-3 compelling reasons for LONG
-2. Use specific numbers from the data (RSI values, price levels, etc.)
+2. Use specific numbers from ALL data sources (technical, order flow, derivatives)
 3. If bear made arguments, directly counter them with data
 4. Be persuasive but factual
 
 Deliver your argument now (2-3 paragraphs):"""
 
         return self._call_api_with_retry([
-            {"role": "system", "content": "You are a professional Bull Analyst in a trading debate. Be persuasive and data-driven."},
+            {"role": "system", "content": "You are a professional Bull Analyst. Use order flow and derivatives data to strengthen your arguments."},
             {"role": "user", "content": prompt}
         ])
 
@@ -369,6 +393,8 @@ Deliver your argument now (2-3 paragraphs):"""
         symbol: str,
         technical_report: str,
         sentiment_report: str,
+        order_flow_report: str,      # MTF v2.1
+        derivatives_report: str,     # MTF v2.1
         history: str,
         bull_argument: str,
     ) -> str:
@@ -376,20 +402,27 @@ Deliver your argument now (2-3 paragraphs):"""
         Generate bear analyst's argument.
 
         Borrowed from: TradingAgents/agents/researchers/bear_researcher.py
+        MTF v2.1: Added order flow and derivatives data
         """
         prompt = f"""You are a Bear Analyst making the case AGAINST going LONG on {symbol}.
 Your goal is to present well-reasoned arguments for SHORT or staying FLAT.
 
 Key points to focus on:
 - BEARISH Technical Signals: Price below SMAs, overbought RSI, MACD bearish divergence
+- Order Flow Warning: Buy ratio < 50%, CVD falling (distribution)
+- Derivatives Risk: High funding rate (squeeze risk), OI falling (trend weakening)
 - Downside Risks: Resistance levels, decreasing volume, support breaking
 - Counter Bull Arguments: Expose over-optimistic assumptions with specific data
 
 Resources Available:
-Technical Analysis:
+
+TECHNICAL ANALYSIS:
 {technical_report}
 
-Sentiment Data:
+{order_flow_report}
+
+{derivatives_report}
+
 {sentiment_report}
 
 Previous Debate:
@@ -400,14 +433,14 @@ Last Bull Argument:
 
 INSTRUCTIONS:
 1. Present 2-3 compelling reasons AGAINST long / FOR short
-2. Use specific numbers from the data (RSI values, price levels, etc.)
+2. Use specific numbers from ALL data sources (technical, order flow, derivatives)
 3. Directly counter the bull's arguments with data
 4. Highlight risks the bull is ignoring
 
 Deliver your argument now (2-3 paragraphs):"""
 
         return self._call_api_with_retry([
-            {"role": "system", "content": "You are a professional Bear Analyst in a trading debate. Be skeptical and highlight risks."},
+            {"role": "system", "content": "You are a professional Bear Analyst. Use order flow and derivatives data to highlight risks."},
             {"role": "user", "content": prompt}
         ])
 
@@ -883,3 +916,136 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
     def get_last_debate(self) -> str:
         """Return the last debate transcript for debugging/logging."""
         return self.last_debate_transcript
+
+    def _format_order_flow_report(self, data: Optional[Dict[str, Any]]) -> str:
+        """
+        Format order flow data for AI prompts.
+
+        MTF v2.1: New method for order flow integration
+
+        Parameters
+        ----------
+        data : Dict, optional
+            Order flow data containing buy_ratio, cvd_trend, etc.
+
+        Returns
+        -------
+        str
+            Formatted order flow report for AI prompts
+        """
+        if not data or data.get('data_source') == 'none':
+            return "ORDER FLOW: Data not available (using neutral assumptions)"
+
+        buy_ratio = data.get('buy_ratio', 0.5)
+        cvd_trend = data.get('cvd_trend', 'NEUTRAL')
+        avg_trade = data.get('avg_trade_usdt', 0)
+        trades_count = data.get('trades_count', 0)
+        recent_bars = data.get('recent_10_bars', [])
+
+        # Interpret buy/sell ratio
+        if buy_ratio > 0.55:
+            buy_interpretation = "BULLISH (buyers dominating)"
+        elif buy_ratio < 0.45:
+            buy_interpretation = "BEARISH (sellers dominating)"
+        else:
+            buy_interpretation = "NEUTRAL (balanced)"
+
+        # Format recent bars
+        recent_str = ", ".join([f"{r:.1%}" for r in recent_bars[-5:]]) if recent_bars else "N/A"
+
+        return f"""
+ORDER FLOW ANALYSIS (Binance Taker Data):
+- Buy Ratio: {buy_ratio:.1%} ({buy_interpretation})
+- CVD Trend: {cvd_trend} ({'Accumulation' if cvd_trend == 'RISING' else 'Distribution' if cvd_trend == 'FALLING' else 'Sideways'})
+- Avg Trade Size: ${avg_trade:,.0f} USDT
+- Trade Count: {trades_count:,}
+- Recent 5 Bars Buy Ratio: [{recent_str}]
+
+INTERPRETATION:
+- Buy Ratio > 55%: Strong buying pressure, confirms bullish momentum
+- Buy Ratio < 45%: Strong selling pressure, confirms bearish momentum
+- CVD RISING: Smart money accumulating, potential breakout
+- CVD FALLING: Distribution phase, potential breakdown
+"""
+
+    def _format_derivatives_report(self, data: Optional[Dict[str, Any]]) -> str:
+        """
+        Format derivatives data for AI prompts.
+
+        MTF v2.1: New method for derivatives integration
+
+        Parameters
+        ----------
+        data : Dict, optional
+            Derivatives data (OI, funding rate, liquidations)
+
+        Returns
+        -------
+        str
+            Formatted derivatives report for AI prompts
+        """
+        if not data or not data.get('enabled', True):
+            return "DERIVATIVES: Data not available (Coinalyze API disabled or unavailable)"
+
+        parts = ["DERIVATIVES MARKET DATA:"]
+
+        # Open Interest
+        oi = data.get('open_interest')
+        if oi:
+            oi_btc = oi.get('value', 0)
+            parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
+            parts.append("  → OI Rising + Price Rising: Trend strengthening (bullish confirmation)")
+            parts.append("  → OI Falling: Positions closing, trend may be weakening")
+        else:
+            parts.append("- Open Interest: N/A")
+
+        # Funding Rate
+        funding = data.get('funding_rate')
+        if funding:
+            rate = funding.get('value', 0)
+            rate_pct = rate * 100
+
+            if rate > 0.001:
+                interp = "VERY_BULLISH (longs paying shorts, potential squeeze risk)"
+            elif rate > 0.0005:
+                interp = "BULLISH"
+            elif rate < -0.001:
+                interp = "VERY_BEARISH (shorts paying longs, potential short squeeze)"
+            elif rate < -0.0005:
+                interp = "BEARISH"
+            else:
+                interp = "NEUTRAL"
+
+            parts.append(f"- Funding Rate: {rate_pct:.4f}% ({interp})")
+
+            if rate > 0.001:
+                parts.append("  → ⚠️ HIGH Funding: Market overheated, long squeeze risk")
+            elif rate < -0.001:
+                parts.append("  → NEGATIVE Funding: Shorts paying longs, potential short squeeze")
+        else:
+            parts.append("- Funding Rate: N/A")
+
+        # Liquidations
+        liq = data.get('liquidations')
+        if liq:
+            history = liq.get('history', [])
+            if history:
+                item = history[-1]
+                long_liq = float(item.get('l', 0))
+                short_liq = float(item.get('s', 0))
+                total = long_liq + short_liq
+
+                parts.append(f"- Liquidations (1h): ${total/1e6:.1f}M total")
+                if total > 0:
+                    long_ratio = long_liq / total
+                    parts.append(f"  → Long Liq: ${long_liq/1e6:.1f}M ({long_ratio:.0%})")
+                    parts.append(f"  → Short Liq: ${short_liq/1e6:.1f}M ({1-long_ratio:.0%})")
+
+                    if total > 50_000_000:  # > $50M
+                        parts.append("  → ⚠️ HIGH liquidations: Extreme volatility, be cautious")
+            else:
+                parts.append("- Liquidations (1h): N/A")
+        else:
+            parts.append("- Liquidations (1h): N/A")
+
+        return "\n".join(parts)
