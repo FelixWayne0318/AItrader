@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.8 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.9 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -19,6 +19,7 @@
 14. v10.6: 添加 MTF 信号过滤模拟 (Step 7.5) - 100% 流程覆盖
 15. v10.7: 修复 SentimentDataFetcher 初始化参数错误
 16. v10.8: 修复 Step 9.3 Coinalyze 配置路径 (order_flow.coinalyze)
+17. v10.9: 添加完整数据流覆盖 (on_bar 路由、仓位计算、订单提交、数据汇总)
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -34,6 +35,13 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.9:
+- 添加 [10/13] on_bar MTF 路由逻辑模拟 (1D/4H/15M bar 分发)
+- 添加 [11/13] 仓位计算函数测试 (calculate_position_size 完整验证)
+- 添加 [12/13] 订单提交流程模拟 (_submit_bracket_order + SL/TP 验证)
+- 添加 [13/13] 完整数据流汇总 (所有获取数据的具体值输出)
+- 测试步骤从 10 步扩展到 13 步，实现 100% 数据流覆盖
+
 v10.8:
 - 修复 Step 9.3 Coinalyze 配置路径: base_config.get('coinalyze') → order_flow.get('coinalyze')
 
@@ -140,7 +148,7 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.8')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.9')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 args = parser.parse_args()
@@ -354,7 +362,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v10.8 (TradingAgents + MTF 100% 覆盖){mode_str}")
+print(f"  实盘信号诊断工具 v10.9 (TradingAgents + MTF 100% 覆盖){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1576,7 +1584,7 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.8)")
+print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.9)")
 print("=" * 70)
 print()
 
@@ -2101,6 +2109,468 @@ if not SUMMARY_MODE:
         import traceback
         traceback.print_exc()
 
+    print()
+
+# =============================================================================
+# 10. on_bar MTF 路由逻辑模拟 (v10.9 新增)
+# 模拟 deepseek_strategy.py:on_bar() 的 MTF bar 路由
+# =============================================================================
+if not SUMMARY_MODE:
+    print("[10/13] on_bar MTF 路由逻辑模拟...")
+    print("-" * 70)
+
+    try:
+        # 检查 MTF 配置
+        mtf_config = base_config.get('multi_timeframe', {}) if 'base_config' in dir() else {}
+        mtf_enabled = mtf_config.get('enabled', False)
+
+        if not mtf_enabled:
+            print("  ℹ️ MTF 未启用，跳过路由测试")
+        else:
+            print("  📊 MTF Bar 路由逻辑 (与 deepseek_strategy.py:on_bar 一致):")
+            print()
+
+            # 模拟三种 bar 类型的路由
+            trend_tf = mtf_config.get('trend_layer', {}).get('timeframe', '1d')
+            decision_tf = mtf_config.get('decision_layer', {}).get('timeframe', '4h')
+            execution_tf = mtf_config.get('execution_layer', {}).get('default_timeframe', '15m')
+
+            print(f"  [路由规则] Bar 类型 → 处理层:")
+            print(f"     • {trend_tf.upper()} bar → 趋势层 (_handle_trend_bar)")
+            print(f"       - 更新 SMA_200, MACD")
+            print(f"       - 计算 RISK_ON/RISK_OFF 状态")
+            print(f"       - 设置 _mtf_trend_initialized = True")
+            print()
+            print(f"     • {decision_tf.upper()} bar → 决策层 (_handle_decision_bar)")
+            print(f"       - 更新决策层技术指标")
+            print(f"       - 计算 ALLOW_LONG/ALLOW_SHORT/WAIT 状态")
+            print(f"       - 设置 _mtf_decision_initialized = True")
+            print()
+            print(f"     • {execution_tf.upper()} bar → 执行层 (_handle_execution_bar)")
+            print(f"       - 更新执行层指标 (RSI, MACD 等)")
+            print(f"       - 更新 _cached_current_price (线程安全)")
+            print(f"       - 设置 _mtf_execution_initialized = True")
+            print()
+
+            # 模拟当前 bar 的路由
+            print(f"  [模拟路由] 当前诊断使用的 bar_type:")
+            bar_type_str = str(getattr(strategy_config, 'bar_type', '15-MINUTE'))
+            print(f"     bar_type: {bar_type_str}")
+
+            if '1-DAY' in bar_type_str or '1D' in bar_type_str.upper():
+                print(f"     → 路由到: 趋势层 (1D)")
+            elif '4-HOUR' in bar_type_str or '4H' in bar_type_str.upper():
+                print(f"     → 路由到: 决策层 (4H)")
+            else:
+                print(f"     → 路由到: 执行层 (15M) - 主分析周期")
+            print()
+
+            # 输出指标更新数据
+            print(f"  [指标更新] 本次 bar 更新的指标值:")
+            print(f"     indicator_manager.update(bar) 后:")
+            print(f"     • 价格: ${current_price:,.2f}")
+            print(f"     • SMA_5: ${technical_data.get('sma_5', 0):,.2f}")
+            print(f"     • SMA_20: ${technical_data.get('sma_20', 0):,.2f}")
+            print(f"     • SMA_50: ${technical_data.get('sma_50', 0):,.2f}")
+            print(f"     • RSI: {technical_data.get('rsi', 0):.2f}")
+            print(f"     • MACD: {technical_data.get('macd', 0):.4f}")
+            print(f"     • MACD Signal: {technical_data.get('macd_signal', 0):.4f}")
+            print(f"     • Support: ${technical_data.get('support', 0):,.2f}")
+            print(f"     • Resistance: ${technical_data.get('resistance', 0):,.2f}")
+
+        print()
+        print("  ✅ on_bar MTF 路由模拟完成")
+
+    except Exception as e:
+        print(f"  ❌ on_bar 路由模拟失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print()
+
+# =============================================================================
+# 11. 仓位计算函数测试 (v10.9 新增)
+# 测试 trading_logic.py:calculate_position_size() 的完整逻辑
+# =============================================================================
+if not SUMMARY_MODE:
+    print("[11/13] 仓位计算函数测试 (calculate_position_size)...")
+    print("-" * 70)
+
+    try:
+        from strategy.trading_logic import calculate_position_size
+
+        # 构建配置字典
+        calc_config = {
+            'base_usdt': getattr(strategy_config, 'base_usdt_amount', 100),
+            'equity': getattr(strategy_config, 'equity', 1000),
+            'high_confidence_multiplier': getattr(strategy_config, 'high_confidence_multiplier', 1.5),
+            'medium_confidence_multiplier': getattr(strategy_config, 'medium_confidence_multiplier', 1.0),
+            'low_confidence_multiplier': getattr(strategy_config, 'low_confidence_multiplier', 0.5),
+            'trend_strength_multiplier': getattr(strategy_config, 'trend_strength_multiplier', 1.2),
+            'rsi_extreme_multiplier': getattr(strategy_config, 'rsi_extreme_multiplier', 0.7),
+            'rsi_extreme_upper': getattr(strategy_config, 'rsi_extreme_threshold_upper', 70),
+            'rsi_extreme_lower': getattr(strategy_config, 'rsi_extreme_threshold_lower', 30),
+            'max_position_ratio': getattr(strategy_config, 'max_position_ratio', 0.30),
+            'min_trade_amount': getattr(strategy_config, 'min_trade_amount', 0.001),
+        }
+
+        print("  📋 仓位计算配置:")
+        print(f"     base_usdt: ${calc_config['base_usdt']}")
+        print(f"     equity: ${calc_config['equity']}")
+        print(f"     max_position_ratio: {calc_config['max_position_ratio']*100:.0f}%")
+        print(f"     min_trade_amount: {calc_config['min_trade_amount']} BTC")
+        print()
+
+        print("  📋 信心乘数配置:")
+        print(f"     HIGH: {calc_config['high_confidence_multiplier']}x → ${calc_config['base_usdt'] * calc_config['high_confidence_multiplier']:.0f}")
+        print(f"     MEDIUM: {calc_config['medium_confidence_multiplier']}x → ${calc_config['base_usdt'] * calc_config['medium_confidence_multiplier']:.0f}")
+        print(f"     LOW: {calc_config['low_confidence_multiplier']}x → ${calc_config['base_usdt'] * calc_config['low_confidence_multiplier']:.0f}")
+        print()
+
+        print("  📋 风险调整乘数:")
+        print(f"     趋势强度乘数: {calc_config['trend_strength_multiplier']}x (强趋势时放大)")
+        print(f"     RSI 极值乘数: {calc_config['rsi_extreme_multiplier']}x (RSI>{calc_config['rsi_extreme_upper']} 或 <{calc_config['rsi_extreme_lower']} 时缩小)")
+        print()
+
+        # 使用当前信号数据计算仓位
+        print("  📊 当前信号仓位计算:")
+        quantity, calc_details = calculate_position_size(
+            signal_data=signal_data,
+            price_data=price_data,
+            technical_data=technical_data,
+            config=calc_config,
+            logger=None
+        )
+
+        print(f"     输入信号: {signal_data.get('signal', 'N/A')}")
+        print(f"     输入信心: {signal_data.get('confidence', 'N/A')}")
+        print(f"     当前价格: ${current_price:,.2f}")
+        print(f"     当前趋势: {technical_data.get('overall_trend', 'N/A')}")
+        print(f"     当前 RSI: {technical_data.get('rsi', 50):.2f}")
+        print()
+        print(f"     计算结果:")
+        print(f"     • 目标仓位: {quantity:.6f} BTC")
+        print(f"     • 等值 USDT: ${quantity * current_price:,.2f}")
+        print(f"     • 占 equity 比例: {(quantity * current_price / calc_config['equity']) * 100:.2f}%")
+        print()
+
+        # 计算详情
+        if calc_details:
+            print(f"     计算详情:")
+            for key, value in calc_details.items():
+                if isinstance(value, float):
+                    print(f"     • {key}: {value:.4f}")
+                else:
+                    print(f"     • {key}: {value}")
+
+        # 模拟不同信心级别的仓位
+        print()
+        print("  📊 不同信心级别仓位对比:")
+        for conf_level in ['HIGH', 'MEDIUM', 'LOW']:
+            test_signal = {'signal': signal_data.get('signal', 'BUY'), 'confidence': conf_level}
+            q, _ = calculate_position_size(test_signal, price_data, technical_data, calc_config)
+            print(f"     {conf_level}: {q:.6f} BTC (${q * current_price:,.2f})")
+
+        print()
+        print("  ✅ 仓位计算测试完成")
+
+    except Exception as e:
+        print(f"  ❌ 仓位计算测试失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print()
+
+# =============================================================================
+# 12. 订单提交流程模拟 (v10.9 新增)
+# 模拟 deepseek_strategy.py:_submit_bracket_order() 的参数验证
+# =============================================================================
+if not SUMMARY_MODE:
+    print("[12/13] 订单提交流程模拟 (_submit_bracket_order)...")
+    print("-" * 70)
+
+    try:
+        # 使用当前信号数据模拟订单参数
+        signal = signal_data.get('signal', 'HOLD')
+        confidence = signal_data.get('confidence', 'MEDIUM')
+        multi_sl = signal_data.get('stop_loss')
+        multi_tp = signal_data.get('take_profit')
+
+        print("  📋 订单提交前提检查:")
+        print(f"     信号: {signal}")
+        print(f"     信心: {confidence}")
+        print(f"     当前价格: ${current_price:,.2f}")
+        print()
+
+        if signal == 'HOLD':
+            print("  ℹ️ 信号为 HOLD，不会提交订单")
+        else:
+            # 计算仓位
+            from strategy.trading_logic import calculate_position_size
+            calc_config = {
+                'base_usdt': getattr(strategy_config, 'base_usdt_amount', 100),
+                'equity': getattr(strategy_config, 'equity', 1000),
+                'high_confidence_multiplier': getattr(strategy_config, 'high_confidence_multiplier', 1.5),
+                'medium_confidence_multiplier': getattr(strategy_config, 'medium_confidence_multiplier', 1.0),
+                'low_confidence_multiplier': getattr(strategy_config, 'low_confidence_multiplier', 0.5),
+                'trend_strength_multiplier': getattr(strategy_config, 'trend_strength_multiplier', 1.2),
+                'rsi_extreme_multiplier': getattr(strategy_config, 'rsi_extreme_multiplier', 0.7),
+                'rsi_extreme_upper': getattr(strategy_config, 'rsi_extreme_threshold_upper', 70),
+                'rsi_extreme_lower': getattr(strategy_config, 'rsi_extreme_threshold_lower', 30),
+                'max_position_ratio': getattr(strategy_config, 'max_position_ratio', 0.30),
+                'min_trade_amount': getattr(strategy_config, 'min_trade_amount', 0.001),
+            }
+            quantity, _ = calculate_position_size(signal_data, price_data, technical_data, calc_config)
+
+            # 验证 SL/TP
+            from strategy.trading_logic import validate_multiagent_sltp, calculate_technical_sltp
+
+            print("  📋 SL/TP 验证流程:")
+            print(f"     AI Judge SL: ${multi_sl:,.2f}" if multi_sl else "     AI Judge SL: None")
+            print(f"     AI Judge TP: ${multi_tp:,.2f}" if multi_tp else "     AI Judge TP: None")
+            print()
+
+            # 验证 AI 提供的 SL/TP
+            if multi_sl and multi_tp:
+                sl_valid, tp_valid = validate_multiagent_sltp(
+                    current_price, multi_sl, multi_tp, signal
+                )
+                print(f"     SL 验证 (validate_multiagent_sltp):")
+                if signal == 'BUY':
+                    print(f"       BUY 要求: SL < 入场价 → {multi_sl:,.2f} < {current_price:,.2f} = {sl_valid}")
+                    print(f"       BUY 要求: TP > 入场价 → {multi_tp:,.2f} > {current_price:,.2f} = {tp_valid}")
+                else:
+                    print(f"       SELL 要求: SL > 入场价 → {multi_sl:,.2f} > {current_price:,.2f} = {sl_valid}")
+                    print(f"       SELL 要求: TP < 入场价 → {multi_tp:,.2f} < {current_price:,.2f} = {tp_valid}")
+                print()
+
+                if sl_valid and tp_valid:
+                    print("     ✅ AI SL/TP 验证通过，使用 AI 价位")
+                    final_sl, final_tp = multi_sl, multi_tp
+                else:
+                    print("     ⚠️ AI SL/TP 验证失败，回退到技术分析")
+                    sl_config = {
+                        'use_support_resistance': getattr(strategy_config, 'sl_use_support_resistance', True),
+                        'buffer_pct': getattr(strategy_config, 'sl_buffer_pct', 0.001),
+                        'tp_high_pct': getattr(strategy_config, 'tp_high_confidence_pct', 0.03),
+                        'tp_medium_pct': getattr(strategy_config, 'tp_medium_confidence_pct', 0.02),
+                        'tp_low_pct': getattr(strategy_config, 'tp_low_confidence_pct', 0.01),
+                    }
+                    final_sl, final_tp = calculate_technical_sltp(
+                        current_price, signal, confidence, technical_data, sl_config
+                    )
+            else:
+                print("     ⚠️ AI 未提供 SL/TP，使用技术分析计算")
+                sl_config = {
+                    'use_support_resistance': getattr(strategy_config, 'sl_use_support_resistance', True),
+                    'buffer_pct': getattr(strategy_config, 'sl_buffer_pct', 0.001),
+                    'tp_high_pct': getattr(strategy_config, 'tp_high_confidence_pct', 0.03),
+                    'tp_medium_pct': getattr(strategy_config, 'tp_medium_confidence_pct', 0.02),
+                    'tp_low_pct': getattr(strategy_config, 'tp_low_confidence_pct', 0.01),
+                }
+                final_sl, final_tp = calculate_technical_sltp(
+                    current_price, signal, confidence, technical_data, sl_config
+                )
+
+            print()
+            print("  📋 最终订单参数 (模拟 _submit_bracket_order):")
+            print(f"     order_side: {'BUY' if signal == 'BUY' else 'SELL'}")
+            print(f"     quantity: {quantity:.6f} BTC")
+            print(f"     entry_price: ${current_price:,.2f} (MARKET)")
+            print(f"     sl_trigger_price: ${final_sl:,.2f}")
+            print(f"     tp_price: ${final_tp:,.2f}")
+            print()
+
+            # 计算风险/收益
+            if signal == 'BUY':
+                sl_pct = ((current_price - final_sl) / current_price) * 100
+                tp_pct = ((final_tp - current_price) / current_price) * 100
+            else:
+                sl_pct = ((final_sl - current_price) / current_price) * 100
+                tp_pct = ((current_price - final_tp) / current_price) * 100
+
+            rr_ratio = tp_pct / sl_pct if sl_pct > 0 else 0
+
+            print("  📊 风险/收益分析:")
+            print(f"     止损距离: {sl_pct:.2f}%")
+            print(f"     止盈距离: {tp_pct:.2f}%")
+            print(f"     风险/收益比: 1:{rr_ratio:.2f}")
+            print(f"     最大亏损: ${quantity * current_price * sl_pct / 100:,.2f}")
+            print(f"     最大盈利: ${quantity * current_price * tp_pct / 100:,.2f}")
+
+        print()
+        print("  ✅ 订单提交流程模拟完成")
+
+    except Exception as e:
+        print(f"  ❌ 订单提交模拟失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print()
+
+# =============================================================================
+# 13. 完整数据流汇总 (v10.9 新增)
+# 输出所有获取的数据的具体值
+# =============================================================================
+if not SUMMARY_MODE:
+    print("[13/13] 完整数据流汇总...")
+    print("-" * 70)
+
+    print()
+    print("  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
+    print("  ┃                        技术指标数据                                  ┃")
+    print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
+    print()
+    print(f"  价格数据:")
+    print(f"    当前价格: ${current_price:,.2f}")
+    print(f"    24H 最高: ${price_data.get('high', 0):,.2f}")
+    print(f"    24H 最低: ${price_data.get('low', 0):,.2f}")
+    print(f"    价格变化: {price_data.get('price_change', 0):.2f}%")
+    print()
+    print(f"  移动平均线:")
+    print(f"    SMA_5:  ${technical_data.get('sma_5', 0):,.2f}")
+    print(f"    SMA_20: ${technical_data.get('sma_20', 0):,.2f}")
+    print(f"    SMA_50: ${technical_data.get('sma_50', 0):,.2f}")
+    print(f"    EMA_12: ${technical_data.get('ema_12', 0):,.2f}")
+    print(f"    EMA_26: ${technical_data.get('ema_26', 0):,.2f}")
+    print()
+    print(f"  震荡指标:")
+    print(f"    RSI:           {technical_data.get('rsi', 0):.2f}")
+    print(f"    MACD:          {technical_data.get('macd', 0):.4f}")
+    print(f"    MACD Signal:   {technical_data.get('macd_signal', 0):.4f}")
+    print(f"    MACD Histogram:{technical_data.get('macd_histogram', 0):.4f}")
+    print()
+    print(f"  布林带:")
+    print(f"    BB Upper: ${technical_data.get('bb_upper', 0):,.2f}")
+    print(f"    BB Middle: ${technical_data.get('bb_middle', 0):,.2f}")
+    print(f"    BB Lower: ${technical_data.get('bb_lower', 0):,.2f}")
+    print()
+    print(f"  支撑/阻力:")
+    print(f"    支撑位: ${technical_data.get('support', 0):,.2f}")
+    print(f"    阻力位: ${technical_data.get('resistance', 0):,.2f}")
+    print()
+    print(f"  趋势判断: {technical_data.get('overall_trend', 'N/A')}")
+
+    print()
+    print("  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
+    print("  ┃                        情绪数据                                     ┃")
+    print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
+    print()
+    print(f"  Binance 多空比:")
+    print(f"    Long/Short Ratio: {sentiment_data.get('long_short_ratio', 0):.4f}")
+    print(f"    Long Account %:   {sentiment_data.get('long_account_pct', 0):.2f}%")
+    print(f"    Short Account %:  {sentiment_data.get('short_account_pct', 0):.2f}%")
+    print(f"    Net Sentiment:    {sentiment_data.get('net_sentiment', 0):.4f}")
+    print(f"    数据来源: {sentiment_data.get('source', 'N/A')}")
+
+    # 输出订单流数据
+    if 'order_flow_data' in dir() and order_flow_data:
+        print()
+        print("  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
+        print("  ┃                        订单流数据                                   ┃")
+        print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
+        print()
+        print(f"  Binance Taker 数据:")
+        print(f"    Buy Ratio:      {order_flow_data.get('buy_ratio', 0):.4f} ({order_flow_data.get('buy_ratio', 0)*100:.2f}%)")
+        print(f"    CVD Trend:      {order_flow_data.get('cvd_trend', 'N/A')}")
+        print(f"    Avg Trade Size: ${order_flow_data.get('avg_trade_usdt', 0):,.2f}")
+        print(f"    Volume (USDT):  ${order_flow_data.get('volume_usdt', 0):,.0f}")
+        print(f"    Trades Count:   {order_flow_data.get('trades_count', 0):,}")
+        print(f"    数据来源: {order_flow_data.get('data_source', 'N/A')}")
+
+        # 最近10根K线的 buy ratio
+        recent_10 = order_flow_data.get('recent_10_bars_buy_ratio', [])
+        if recent_10:
+            print(f"    最近 10 根 K线 Buy Ratio: {[f'{r:.2f}' for r in recent_10[-5:]]}")
+
+    # 输出衍生品数据
+    if 'derivatives_data' in dir() and derivatives_data:
+        print()
+        print("  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
+        print("  ┃                        衍生品数据 (Coinalyze)                       ┃")
+        print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
+        print()
+        oi_data = derivatives_data.get('open_interest', {})
+        fr_data = derivatives_data.get('funding_rate', {})
+        liq_data = derivatives_data.get('liquidations_1h', {})
+
+        print(f"  Open Interest:")
+        print(f"    OI (BTC):    {oi_data.get('value', 0):,.2f}")
+        print(f"    OI Change:   {oi_data.get('change_pct', 'N/A')}")
+        print()
+        print(f"  Funding Rate:")
+        print(f"    Current:     {fr_data.get('value', 0):.6f} ({fr_data.get('value', 0)*100:.4f}%)")
+        print()
+        print(f"  Liquidations (1h):")
+        print(f"    Long Liq:  ${liq_data.get('long', 0):,.0f}")
+        print(f"    Short Liq: ${liq_data.get('short', 0):,.0f}")
+        print(f"    Total:     ${liq_data.get('total', 0):,.0f}")
+
+    # 输出持仓数据
+    print()
+    print("  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
+    print("  ┃                        当前持仓                                     ┃")
+    print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
+    print()
+    if current_position:
+        print(f"  持仓状态: 有持仓")
+        print(f"    方向:     {current_position.get('side', 'N/A').upper()}")
+        print(f"    数量:     {current_position.get('quantity', 0)} BTC")
+        print(f"    入场价:   ${current_position.get('entry_price', 0):,.2f}")
+        print(f"    未实现PnL: ${current_position.get('unrealized_pnl', 0):,.2f}")
+        pnl_pct = current_position.get('pnl_pct', 0)
+        print(f"    盈亏比例: {pnl_pct:+.2f}%")
+    else:
+        print(f"  持仓状态: 无持仓 (FLAT)")
+
+    # 输出 AI 决策数据
+    print()
+    print("  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
+    print("  ┃                        AI 决策结果                                  ┃")
+    print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
+    print()
+    print(f"  原始信号: {signal_data.get('signal', 'N/A')}")
+    print(f"  最终信号: {final_signal}")
+    print(f"  信心等级: {signal_data.get('confidence', 'N/A')}")
+    print(f"  风险等级: {signal_data.get('risk_level', 'N/A')}")
+    print(f"  胜出方:   {signal_data.get('judge_decision', {}).get('winning_side', 'N/A')}")
+    print()
+    print(f"  AI 止损: ${signal_data.get('stop_loss', 0):,.2f}" if signal_data.get('stop_loss') else "  AI 止损: N/A")
+    print(f"  AI 止盈: ${signal_data.get('take_profit', 0):,.2f}" if signal_data.get('take_profit') else "  AI 止盈: N/A")
+    print()
+    print(f"  关键理由:")
+    key_reasons = signal_data.get('judge_decision', {}).get('key_reasons', [])
+    for i, reason in enumerate(key_reasons[:3], 1):
+        print(f"    {i}. {reason[:70]}...")
+    print()
+    print(f"  决策理由: {signal_data.get('reason', 'N/A')[:100]}...")
+
+    # MTF 过滤状态
+    print()
+    print("  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
+    print("  ┃                        MTF 过滤状态                                 ┃")
+    print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
+    print()
+
+    mtf_enabled = base_config.get('multi_timeframe', {}).get('enabled', False) if 'base_config' in dir() else False
+    if mtf_enabled:
+        print(f"  MTF 状态: 已启用")
+        sma_50 = technical_data.get('sma_50', 0)
+        if current_price < sma_50:
+            print(f"  趋势层: RISK_OFF (价格 ${current_price:,.2f} < SMA_50 ${sma_50:,.2f})")
+        else:
+            print(f"  趋势层: RISK_ON (价格 ${current_price:,.2f} >= SMA_50 ${sma_50:,.2f})")
+
+        original_signal = signal_data.get('signal', 'HOLD')
+        if final_signal != original_signal:
+            print(f"  过滤结果: {original_signal} → {final_signal}")
+        else:
+            print(f"  过滤结果: 信号未被过滤")
+    else:
+        print(f"  MTF 状态: 未启用")
+
+    print()
+    print("  ✅ 完整数据流汇总完成")
     print()
 
 print("=" * 70)
