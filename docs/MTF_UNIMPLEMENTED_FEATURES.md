@@ -36,6 +36,70 @@
 
 ---
 
+## 🚀 实现路线图 (Quick Reference)
+
+### 实施阶段
+
+| Phase | 任务 | 优先级 | 预计时间 | 文档章节 |
+|-------|------|--------|----------|----------|
+| **1. 接口扩展** | 修改 `multi_agent_analyzer.analyze()` 签名 | P0 | 0.5 天 | 8.2.1, 11.2.1 |
+|  | 添加 `_format_order_flow_report()` 方法 | P0 | 0.5 天 | 8.2.2 |
+|  | 添加 `_format_derivatives_report()` 方法 | P0 | 0.5 天 | 8.2.3 |
+| **2. 数据获取** | 实现 `BinanceKlineClient` | P2 | 0.5 天 | 3.5 |
+|  | 实现 `OrderFlowProcessor` | P2 | 0.5 天 | 3.6 |
+|  | 实现 `CoinalyzeClient` | P2 | 1.0 天 | 2.5 |
+| **3. 数据整合** | 实现 `AIDataAssembler` | P2 | 1.0 天 | 4.3 |
+|  | 修改 `deepseek_strategy.py` 调用链 | P1 | 0.5 天 | 11.1 |
+| **4. MTF 激活** | 在 strategy 中启用 MTF | P1 | 0.5 天 | 11.3 |
+|  | 配置调整和测试 | P1 | 1.0 天 | 第十三章 |
+
+**总计**: 6-7 个工作日 (包含测试)
+
+### 关键代码索引
+
+| 功能 | 文档章节 | 代码行数 | 状态 |
+|------|----------|----------|------|
+| 接口签名修复 | 8.2.1, 11.2.1 | ~10 行 | ✅ 代码已提供 |
+| _format_order_flow_report() | 8.2.2 | ~50 行 | ✅ 代码已提供 |
+| _format_derivatives_report() | 8.2.3 | ~50 行 | ✅ 代码已提供 |
+| BinanceKlineClient | 3.5 | ~80 行 | ✅ 代码已提供 |
+| OrderFlowProcessor | 3.6 | ~100 行 | ✅ 代码已提供 |
+| CoinalyzeClient | 2.5 | ~200 行 | ✅ 代码已提供 |
+| AIDataAssembler | 4.3 | ~150 行 | ✅ 代码已提供 |
+| 测试模板 | 5.2 | ~300 行 | ✅ 代码已提供 |
+
+**总代码量**: ~940 行 (含测试)
+
+### 实施 Checklist
+
+#### Phase 1: 接口扩展 ✅
+- [ ] 修改 `multi_agent_analyzer.py:198` 的 `analyze()` 签名 (添加 order_flow_report, derivatives_report 参数)
+- [ ] 添加 `_format_order_flow_report()` 方法 (第 8.2.2 节)
+- [ ] 添加 `_format_derivatives_report()` 方法 (第 8.2.3 节)
+- [ ] 更新 Bull/Bear Prompt (第 11.2.4-11.2.5 节)
+- [ ] 运行单元测试: `pytest tests/test_multi_agent.py -v`
+
+#### Phase 2: 数据获取 ✅
+- [ ] 创建 `utils/binance_kline_client.py` (第 3.5 节代码模板)
+- [ ] 创建 `utils/order_flow_processor.py` (第 3.6 节代码模板)
+- [ ] 创建 `utils/coinalyze_client.py` (第 2.5 节代码模板)
+- [ ] 在 `~/.env.aitrader` 添加 `COINALYZE_API_KEY=xxx` (如有 API key)
+- [ ] 单元测试: 验证数据获取和降级逻辑
+
+#### Phase 3: 数据整合 ✅
+- [ ] 创建 `utils/ai_data_assembler.py` (第 4.3 节代码模板)
+- [ ] 修改 `deepseek_strategy.py` __init__ 方法 (第 11.1.2 节)
+- [ ] 修改 `deepseek_strategy.py` on_timer() 方法 (第 11.1.3-11.1.4 节)
+- [ ] 验证数据流: `python3 scripts/diagnose_realtime.py`
+
+#### Phase 4: MTF 激活 ✅
+- [ ] 确认 `configs/base.yaml` 中 `multi_timeframe.enabled: true` (已默认启用)
+- [ ] 运行回测验证: `python3 main_backtest.py --days 30`
+- [ ] 观察 AI 输出: 确认 "ORDER FLOW ANALYSIS" 和 "DERIVATIVES MARKET DATA" 出现
+- [ ] 逐步上线: Week 1 (仅订单流) → Week 2 (+衍生品) → Week 3 (完整 MTF)
+
+---
+
 ## 一、未实现文件清单
 
 | 文件 | 用途 | 优先级 | 代码量估算 |
