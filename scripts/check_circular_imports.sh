@@ -44,7 +44,7 @@ echo "测试 3: trading_logic + multi_agent_analyzer 导入"
 python3 -c "
 import sys
 sys.path.insert(0, '$PROJECT_ROOT')
-from strategy.trading_logic import TradingLogic
+from strategy.trading_logic import check_confidence_threshold, validate_multiagent_sltp
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
 print('✅ trading_logic + multi_agent_analyzer 导入成功')
 "
@@ -60,7 +60,7 @@ sys.path.insert(0, '$PROJECT_ROOT')
 from utils.config_manager import ConfigManager
 from utils.deepseek_client import DeepSeekClient
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
-from strategy.trading_logic import TradingLogic
+from strategy import trading_logic
 from strategy.deepseek_strategy import DeepSeekAIStrategy
 
 print('✅ 完整导入链验证成功')
