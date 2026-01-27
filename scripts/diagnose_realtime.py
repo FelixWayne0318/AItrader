@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.10 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.11 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -21,6 +21,7 @@
 16. v10.8: 修复 Step 9.3 Coinalyze 配置路径 (order_flow.coinalyze)
 17. v10.9: 添加完整数据流覆盖 (on_bar 路由、仓位计算、订单提交、数据汇总)
 18. v10.10: 添加 Liquidations 调试输出 (原始响应、history 类型和长度)
+19. v10.11: 修复 Liquidations 单位问题 (BTC → USD 转换)
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -36,6 +37,11 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.11:
+- 修复 Liquidations 显示问题: API 返回 BTC 单位，不是 USD
+- 添加 BTC → USD 转换 (乘以当前价格)
+- 移除多余的 DEBUG 输出，保留清晰的结果展示
+
 v10.10:
 - 添加 Liquidations API 调试输出 (原始响应、history 类型、数据长度)
 - 帮助诊断 "history 为空" 是真的无数据还是解析错误
@@ -1900,19 +1906,20 @@ if not SUMMARY_MODE:
                         symbol=coinalyze_symbol,
                         interval="1hour"
                     )
-                    # 调试: 打印原始响应
-                    print(f"        [DEBUG] Raw liq_data: {liq_data}")
                     if liq_data:
-                        # 正确结构: {"symbol": "...", "history": [{"t": ..., "l": long_usd, "s": short_usd}]}
-                        # (参考 coinalyze_client.py:150-187)
+                        # 正确结构: {"symbol": "...", "history": [{"t": ..., "l": long_btc, "s": short_btc}]}
+                        # 注意: l/s 单位是 BTC，需要乘以价格转换为 USD
                         history = liq_data.get('history', [])
-                        print(f"        [DEBUG] history type: {type(history)}, len: {len(history) if history else 0}")
                         if history:
                             item = history[-1]  # 最近一条
-                            print(f"        [DEBUG] Latest item: {item}")
-                            long_liq = float(item.get('l', 0))
-                            short_liq = float(item.get('s', 0))
-                            print(f"        ✅ Long Liq: ${long_liq:,.0f}, Short Liq: ${short_liq:,.0f}")
+                            long_liq_btc = float(item.get('l', 0))
+                            short_liq_btc = float(item.get('s', 0))
+                            # 获取当前价格计算 USD 等值
+                            current_price = float(klines[-1][4]) if klines else 88000
+                            long_liq_usd = long_liq_btc * current_price
+                            short_liq_usd = short_liq_btc * current_price
+                            print(f"        ✅ Long Liq: {long_liq_btc:.4f} BTC (${long_liq_usd:,.0f})")
+                            print(f"        ✅ Short Liq: {short_liq_btc:.4f} BTC (${short_liq_usd:,.0f})")
                         else:
                             print("        ℹ️ Liquidations history 为空 (该时间段无爆仓记录)")
                     else:
