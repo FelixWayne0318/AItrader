@@ -179,6 +179,7 @@ network:
   binance:
     recv_window: 5000             # 接收窗口 (ms)
     balance_cache_ttl: 5.0        # 余额缓存时间 (秒)
+    api_timeout: 10               # API 请求超时 (秒)
 
   # K线数据持久化
   bar_persistence:
@@ -221,6 +222,13 @@ execution:
   time_in_force: "GTC"
   reduce_only_for_closes: true
   position_adjustment_threshold: 0.001  # Min 0.001 BTC difference to adjust
+
+  # NautilusTrader 执行引擎配置 (原 main_live.py 硬编码)
+  engine:
+    reconciliation: true                  # 仓位对账
+    inflight_check_interval_ms: 5000      # 在途订单检查间隔 (ms)
+    filter_position_reports: true         # 过滤持仓报告
+    filter_unclaimed_external_orders: true # 过滤未认领的外部订单
 
 # =============================================================================
 # 定时器配置

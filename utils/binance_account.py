@@ -34,6 +34,7 @@ class BinanceAccountFetcher:
         logger: Optional[logging.Logger] = None,
         cache_ttl: float = 5.0,
         recv_window: int = 5000,
+        api_timeout: float = 10.0,
     ):
         """
         Initialize Binance account fetcher.
@@ -50,6 +51,8 @@ class BinanceAccountFetcher:
             Cache time-to-live (seconds), default: 5.0
         recv_window : int, optional
             Binance API receive window (ms), default: 5000
+        api_timeout : float, optional
+            API request timeout (seconds), default: 10.0
         """
         self.api_key = api_key or os.getenv('BINANCE_API_KEY', '')
         self.api_secret = api_secret or os.getenv('BINANCE_API_SECRET', '')
@@ -62,6 +65,7 @@ class BinanceAccountFetcher:
 
         # Binance API configuration
         self._recv_window: int = recv_window
+        self._api_timeout: float = api_timeout
 
     def _sign_request(self, params: Dict[str, Any]) -> str:
         """Create HMAC SHA256 signature for request."""
@@ -100,7 +104,7 @@ class BinanceAccountFetcher:
                 "User-Agent": "AItrader/1.0"
             })
 
-            response = urllib.request.urlopen(req, timeout=10)
+            response = urllib.request.urlopen(req, timeout=self._api_timeout)
             data = json.loads(response.read())
             return data
 
@@ -229,13 +233,23 @@ _fetcher_instance: Optional[BinanceAccountFetcher] = None
 def get_binance_fetcher(
     api_key: Optional[str] = None,
     api_secret: Optional[str] = None,
-    logger: Optional[logging.Logger] = None
+    logger: Optional[logging.Logger] = None,
+    cache_ttl: float = 5.0,
+    recv_window: int = 5000,
+    api_timeout: float = 10.0,
 ) -> BinanceAccountFetcher:
     """Get or create a BinanceAccountFetcher instance."""
     global _fetcher_instance
 
     if _fetcher_instance is None:
-        _fetcher_instance = BinanceAccountFetcher(api_key, api_secret, logger)
+        _fetcher_instance = BinanceAccountFetcher(
+            api_key=api_key,
+            api_secret=api_secret,
+            logger=logger,
+            cache_ttl=cache_ttl,
+            recv_window=recv_window,
+            api_timeout=api_timeout,
+        )
 
     return _fetcher_instance
 

@@ -122,11 +122,24 @@ class MultiTimeframeManager:
         初始化各层技术指标管理器
 
         v3.2.7 修正: 必须传递所有必需参数，确保指标正确初始化
+        v3.2.10 修正: 从配置读取参数，移除硬编码
         TechnicalIndicatorManager 参数参考 indicators/technical_manager.py:29-40
         """
         trend_config = self.config.get('trend_layer', {})
         decision_config = self.config.get('decision_layer', {})
         exec_config = self.config.get('execution_layer', {})
+
+        # 全局默认指标参数 (从 configs/base.yaml indicators 部分读取)
+        global_indicators = self.config.get('global_indicators', {})
+        default_ema_periods = global_indicators.get('ema_periods', [12, 26])
+        default_rsi_period = global_indicators.get('rsi_period', 14)
+        default_macd_fast = global_indicators.get('macd_fast', 12)
+        default_macd_slow = global_indicators.get('macd_slow', 26)
+        default_macd_signal = global_indicators.get('macd_signal', 9)
+        default_bb_period = global_indicators.get('bb_period', 20)
+        default_bb_std = global_indicators.get('bb_std', 2.0)
+        default_volume_ma_period = global_indicators.get('volume_ma_period', 20)
+        default_support_resistance_lookback = global_indicators.get('support_resistance_lookback', 20)
 
         # ========================================
         # 趋势层 (1D) - 需要 SMA_200 用于趋势判断
@@ -135,49 +148,53 @@ class MultiTimeframeManager:
         sma_period = trend_config.get('sma_period', 200)
         self.trend_manager = TechnicalIndicatorManager(
             sma_periods=[sma_period],      # SMA_200 用于趋势判断
-            ema_periods=[12, 26],          # MACD 需要的 EMA
-            rsi_period=14,
-            macd_fast=12,
-            macd_slow=26,
-            macd_signal=9,                 # v3.2.7: 必须指定 signal 周期
-            bb_period=20,                  # BB 用于波动率参考
-            bb_std=2.0,
-            volume_ma_period=20,
-            support_resistance_lookback=20,
+            ema_periods=default_ema_periods,
+            rsi_period=default_rsi_period,
+            macd_fast=default_macd_fast,
+            macd_slow=default_macd_slow,
+            macd_signal=default_macd_signal,
+            bb_period=default_bb_period,
+            bb_std=default_bb_std,
+            volume_ma_period=default_volume_ma_period,
+            support_resistance_lookback=default_support_resistance_lookback,
         )
         self.logger.debug(f"趋势层管理器初始化: SMA_{sma_period}")
 
         # ========================================
         # 决策层 (4H) - Bull/Bear 辩论使用的指标
+        # 从 decision_layer.indicators 读取配置
         # ========================================
+        decision_indicators = decision_config.get('indicators', {})
         self.decision_manager = TechnicalIndicatorManager(
-            sma_periods=[20, 50],          # SMA_20, SMA_50
-            ema_periods=[12, 26],
-            rsi_period=14,
-            macd_fast=12,
-            macd_slow=26,
-            macd_signal=9,
-            bb_period=20,
-            bb_std=2.0,
-            volume_ma_period=20,
-            support_resistance_lookback=20,
+            sma_periods=decision_indicators.get('sma_periods', [20, 50]),
+            ema_periods=default_ema_periods,
+            rsi_period=decision_indicators.get('rsi_period', default_rsi_period),
+            macd_fast=decision_indicators.get('macd_fast', default_macd_fast),
+            macd_slow=decision_indicators.get('macd_slow', default_macd_slow),
+            macd_signal=default_macd_signal,
+            bb_period=decision_indicators.get('bb_period', default_bb_period),
+            bb_std=decision_indicators.get('bb_std', default_bb_std),
+            volume_ma_period=default_volume_ma_period,
+            support_resistance_lookback=default_support_resistance_lookback,
         )
         self.logger.debug("决策层管理器初始化")
 
         # ========================================
         # 执行层 (5M/15M) - 入场确认指标
+        # 从 execution_layer.indicators 读取配置
         # ========================================
+        exec_indicators = exec_config.get('indicators', {})
         self.execution_manager = TechnicalIndicatorManager(
-            sma_periods=[5, 20],
-            ema_periods=[10, 20],          # 短周期 EMA
-            rsi_period=14,
-            macd_fast=12,
-            macd_slow=26,
-            macd_signal=9,
-            bb_period=20,
-            bb_std=2.0,
-            volume_ma_period=20,
-            support_resistance_lookback=20,
+            sma_periods=exec_indicators.get('sma_periods', [5, 20]),
+            ema_periods=exec_indicators.get('ema_periods', [10, 20]),
+            rsi_period=exec_indicators.get('rsi_period', default_rsi_period),
+            macd_fast=default_macd_fast,
+            macd_slow=default_macd_slow,
+            macd_signal=default_macd_signal,
+            bb_period=default_bb_period,
+            bb_std=default_bb_std,
+            volume_ma_period=default_volume_ma_period,
+            support_resistance_lookback=exec_indicators.get('support_resistance_lookback', default_support_resistance_lookback),
         )
         self.logger.debug("执行层管理器初始化")
 

@@ -290,6 +290,16 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         mtf_decision_debate_rounds=config_manager.get('multi_timeframe', 'decision_layer', 'debate_rounds', default=2),
         mtf_execution_rsi_entry_min=config_manager.get('multi_timeframe', 'execution_layer', 'rsi_entry_min', default=35),
         mtf_execution_rsi_entry_max=config_manager.get('multi_timeframe', 'execution_layer', 'rsi_entry_max', default=65),
+
+        # Network: Instrument Discovery (previously hardcoded in on_start)
+        network_instrument_discovery_max_retries=config_manager.get('network', 'instrument_discovery', 'max_retries', default=60),
+        network_instrument_discovery_retry_interval=config_manager.get('network', 'instrument_discovery', 'retry_interval', default=1.0),
+
+        # Network: Binance API timeout
+        network_binance_api_timeout=config_manager.get('network', 'binance', 'api_timeout', default=10.0),
+
+        # Network: Telegram message timeout
+        network_telegram_message_timeout=config_manager.get('network', 'telegram', 'message_timeout', default=30.0),
     )
 
 
@@ -375,15 +385,21 @@ def setup_trading_node(config_manager: ConfigManager) -> TradingNodeConfig:
         bypass_logging=False,
     )
 
+    # Execution engine configuration (from ConfigManager, not hardcoded)
+    exec_reconciliation = config_manager.get('execution', 'engine', 'reconciliation', default=True)
+    exec_inflight_check_ms = config_manager.get('execution', 'engine', 'inflight_check_interval_ms', default=5000)
+    exec_filter_position_reports = config_manager.get('execution', 'engine', 'filter_position_reports', default=True)
+    exec_filter_unclaimed_orders = config_manager.get('execution', 'engine', 'filter_unclaimed_external_orders', default=True)
+
     # Trading node config
     config = TradingNodeConfig(
         trader_id=TraderId("DeepSeekTrader-001"),
         logging=logging_config,
         exec_engine=LiveExecEngineConfig(
-            reconciliation=True,  # Enable position reconciliation with Binance
-            inflight_check_interval_ms=5000,  # Check in-flight orders every 5s
-            filter_position_reports=True,  # Filter positions to only known instruments
-            filter_unclaimed_external_orders=True,  # Filter unknown external orders
+            reconciliation=exec_reconciliation,
+            inflight_check_interval_ms=exec_inflight_check_ms,
+            filter_position_reports=exec_filter_position_reports,
+            filter_unclaimed_external_orders=exec_filter_unclaimed_orders,
         ),
         # Data clients
         data_clients={

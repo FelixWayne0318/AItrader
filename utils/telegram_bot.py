@@ -39,11 +39,12 @@ class TelegramBot:
         token: str,
         chat_id: str,
         logger: Optional[logging.Logger] = None,
-        enabled: bool = True
+        enabled: bool = True,
+        message_timeout: float = 30.0
     ):
         """
         Initialize Telegram Bot.
-        
+
         Parameters
         ----------
         token : str
@@ -54,18 +55,21 @@ class TelegramBot:
             Logger instance for logging
         enabled : bool
             Whether the bot is enabled (default: True)
+        message_timeout : float
+            Timeout for sending messages (seconds), default: 30.0
         """
         if not TELEGRAM_AVAILABLE:
             raise ImportError(
                 "python-telegram-bot is not installed. "
                 "Install it with: pip install python-telegram-bot"
             )
-        
+
         self.token = token
         self.chat_id = chat_id
         self.logger = logger or logging.getLogger(__name__)
         self.enabled = enabled
-        
+        self.message_timeout = message_timeout
+
         # Initialize bot
         try:
             self.bot = Bot(token=token)
@@ -182,7 +186,7 @@ class TelegramBot:
             payload['parse_mode'] = parse_mode
 
         try:
-            response = requests.post(url, json=payload, timeout=30)
+            response = requests.post(url, json=payload, timeout=self.message_timeout)
             result = response.json()
 
             if result.get('ok'):
@@ -194,7 +198,7 @@ class TelegramBot:
             if "can't parse" in error_desc.lower() or "parse entities" in error_desc.lower():
                 self.logger.warning(f"⚠️ Markdown parse error, retrying without formatting")
                 payload.pop('parse_mode', None)
-                response = requests.post(url, json=payload, timeout=30)
+                response = requests.post(url, json=payload, timeout=self.message_timeout)
                 result = response.json()
                 if result.get('ok'):
                     return True
@@ -203,7 +207,7 @@ class TelegramBot:
             return False
 
         except requests.Timeout:
-            self.logger.warning("⚠️ Telegram message timed out (30s)")
+            self.logger.warning(f"⚠️ Telegram message timed out ({self.message_timeout}s)")
             return False
         except Exception as e:
             self.logger.error(f"❌ Error sending Telegram message: {e}")

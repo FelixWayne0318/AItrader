@@ -158,6 +158,10 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     network_bar_persistence_timeout: float = 10.0
     network_oco_manager_socket_timeout: float = 5.0
     network_oco_manager_socket_connect_timeout: float = 5.0
+    network_instrument_discovery_max_retries: int = 60  # Instrument 加载最大重试次数
+    network_instrument_discovery_retry_interval: float = 1.0  # Instrument 加载重试间隔 (秒)
+    network_binance_api_timeout: float = 10.0  # Binance API 超时 (秒)
+    network_telegram_message_timeout: float = 30.0  # Telegram 消息发送超时 (秒)
     sentiment_timeout: float = 10.0
 
     # Multi-Timeframe Configuration (v3.2.9)
@@ -258,6 +262,7 @@ class DeepSeekAIStrategy(Strategy):
             logger=self.log,
             cache_ttl=config.network_binance_balance_cache_ttl,
             recv_window=config.network_binance_recv_window,
+            api_timeout=config.network_binance_api_timeout,
         )
         self._real_balance: Dict[str, float] = {}  # Cached real balance from Binance
 
@@ -383,7 +388,8 @@ class DeepSeekAIStrategy(Strategy):
                         token=bot_token,
                         chat_id=chat_id,
                         logger=self.log,
-                        enabled=True
+                        enabled=True,
+                        message_timeout=config.network_telegram_message_timeout
                     )
                     # Store notification preferences
                     self.telegram_notify_signals = config.telegram_notify_signals
@@ -517,8 +523,9 @@ class DeepSeekAIStrategy(Strategy):
         # The instrument may not be immediately available as the data client
         # loads instruments asynchronously from Binance
         import time
-        max_retries = 60  # Wait up to 60 seconds (increased for network latency)
-        retry_interval = 1.0  # Check every second
+        # 从配置读取重试参数 (原硬编码 60/1.0)
+        max_retries = self.config.network_instrument_discovery_max_retries
+        retry_interval = self.config.network_instrument_discovery_retry_interval
 
         self.instrument = None
         for attempt in range(max_retries):
