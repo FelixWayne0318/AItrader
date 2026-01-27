@@ -8,13 +8,24 @@
 | 最后更新 | 2026-01-27 |
 | 基于文档 | docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md v3.2.9 |
 | 当前完成度 | ~70% |
-| 版本 | v2.0 (修复 P0/P1 问题) |
+| 版本 | v2.1 (补充完整修改差异) |
 
 ---
 
-## 🔴 重要更新 (v2.0)
+## 🔴 重要更新 (v2.1)
 
-本次更新修复了以下关键问题：
+### v2.1 更新 (完整修改差异)
+
+| 问题 | 等级 | 修复内容 |
+|------|------|----------|
+| 接口签名冲突 | P0 | 第十一章: 完整代码修改差异 |
+| 调用链断裂 | P0 | 11.1: deepseek_strategy.py 完整修改 |
+| 格式化方法调用缺失 | P1 | 11.2: multi_agent_analyzer.py 完整修改 |
+| MTF 方法签名不兼容 | P1 | 11.3: multi_timeframe_manager.py 完整修改 |
+| 数据降级策略不明确 | P1 | 第十二章: 降级规则和过滤器优先级 |
+| 配置项缺失 | P2 | 第十三章: DeepSeekStrategyConfig 扩展 |
+
+### v2.0 更新 (架构修复)
 
 | 问题 | 等级 | 修复内容 |
 |------|------|----------|
@@ -1633,13 +1644,13 @@ order_flow:
 
 ### 10.2 文件修改清单
 
-| 文件 | 修改内容 |
-|------|----------|
-| `agents/multi_agent_analyzer.py` | 扩展 analyze() 接口，新增格式化方法，更新 Prompt |
-| `strategy/deepseek_strategy.py` | 集成 AIDataAssembler，传递新数据 |
-| `indicators/multi_timeframe_manager.py` | 可选: 添加 OI/订单流增强条件 |
-| `configs/base.yaml` | 新增协同配置项 |
-| `~/.env.aitrader` | 添加 COINALYZE_API_KEY |
+| 文件 | 修改内容 | 详细说明 |
+|------|----------|----------|
+| `strategy/deepseek_strategy.py` | 初始化新客户端 + on_timer 获取数据 | 见 11.1 节 |
+| `agents/multi_agent_analyzer.py` | 扩展 analyze() + 新增格式化方法 | 见 11.2 节 |
+| `indicators/multi_timeframe_manager.py` | 扩展方法签名 + 新增参数 | 见 11.3 节 |
+| `configs/base.yaml` | 新增 order_flow 和 MTF 协同配置 | 见 12.5 节 |
+| `~/.env.aitrader` | 添加 COINALYZE_API_KEY | 仅敏感信息 |
 
 ### 10.3 测试验证
 
@@ -1654,3 +1665,805 @@ python3 main_live.py --env development --dry-run
 # 3. 验证数据流
 python3 scripts/diagnose_realtime.py
 ```
+
+---
+
+## 十一、完整代码修改差异 (v2.1 新增)
+
+> ⚠️ **v2.1 新增**: 解决接口签名冲突和调用链断裂问题
+
+### 11.1 deepseek_strategy.py 修改
+
+#### 11.1.1 导入新模块 (文件顶部)
+
+```python
+# strategy/deepseek_strategy.py 顶部导入区域新增
+
+# Order Flow and Derivatives clients (v2.1)
+from utils.binance_kline_client import BinanceKlineClient
+from utils.order_flow_processor import OrderFlowProcessor
+from utils.coinalyze_client import CoinalyzeClient
+```
+
+#### 11.1.2 __init__ 中初始化新客户端
+
+在 `__init__` 方法中，`self.sentiment_fetcher` 初始化后添加：
+
+```python
+# strategy/deepseek_strategy.py __init__ 方法中
+# 在 self.sentiment_fetcher 初始化后添加 (约 line 512 后)
+
+# ========== Order Flow & Derivatives (v2.1) ==========
+# 从配置读取参数
+order_flow_enabled = config.order_flow_enabled if hasattr(config, 'order_flow_enabled') else True
+
+if order_flow_enabled:
+    # Binance K线客户端 (获取完整 12 列数据)
+    self.binance_kline_client = BinanceKlineClient(
+        timeout=config.order_flow_binance_timeout if hasattr(config, 'order_flow_binance_timeout') else 10,
+        logger=self.log,
+    )
+
+    # 订单流处理器
+    self.order_flow_processor = OrderFlowProcessor(logger=self.log)
+
+    # Coinalyze 客户端 (衍生品数据)
+    coinalyze_enabled = config.order_flow_coinalyze_enabled if hasattr(config, 'order_flow_coinalyze_enabled') else True
+    if coinalyze_enabled:
+        self.coinalyze_client = CoinalyzeClient(
+            api_key=None,  # 从环境变量读取
+            timeout=config.order_flow_coinalyze_timeout if hasattr(config, 'order_flow_coinalyze_timeout') else 10,
+            max_retries=config.order_flow_coinalyze_max_retries if hasattr(config, 'order_flow_coinalyze_max_retries') else 2,
+            retry_delay=config.order_flow_coinalyze_retry_delay if hasattr(config, 'order_flow_coinalyze_retry_delay') else 1.0,
+            logger=self.log,
+        )
+    else:
+        self.coinalyze_client = None
+        self.log.info("Coinalyze client disabled by config")
+
+    self.log.info("✅ Order Flow & Derivatives clients initialized")
+else:
+    self.binance_kline_client = None
+    self.order_flow_processor = None
+    self.coinalyze_client = None
+    self.log.info("Order Flow disabled by config")
+```
+
+#### 11.1.3 on_timer() 中获取新数据
+
+在 `on_timer()` 方法中，`sentiment_data` 获取后、调用 `analyze()` 前添加：
+
+```python
+# strategy/deepseek_strategy.py on_timer() 方法中
+# 在 sentiment_data 处理后 (约 line 1287 后)，调用 analyze() 前添加
+
+# ========== 获取订单流数据 (v2.1) ==========
+order_flow_data = None
+if self.binance_kline_client and self.order_flow_processor:
+    try:
+        # 获取 Binance 完整 K线 (12 列，包含订单流字段)
+        raw_klines = self.binance_kline_client.get_klines(
+            symbol="BTCUSDT",
+            interval="15m",
+            limit=50,
+        )
+        if raw_klines:
+            order_flow_data = self.order_flow_processor.process_klines(raw_klines)
+            self.log.info(
+                f"📊 Order Flow: buy_ratio={order_flow_data.get('buy_ratio', 0):.1%}, "
+                f"cvd_trend={order_flow_data.get('cvd_trend', 'N/A')}"
+            )
+        else:
+            self.log.warning("⚠️ Failed to get Binance klines for order flow")
+    except Exception as e:
+        self.log.warning(f"⚠️ Order flow processing failed: {e}")
+
+# ========== 获取衍生品数据 (v2.1) ==========
+derivatives_data = None
+if self.coinalyze_client and self.coinalyze_client.is_enabled():
+    try:
+        derivatives_data = self.coinalyze_client.fetch_all()
+        if derivatives_data.get('enabled'):
+            oi = derivatives_data.get('open_interest')
+            funding = derivatives_data.get('funding_rate')
+            self.log.info(
+                f"📊 Derivatives: OI={oi.get('value', 0):.2f} BTC, "
+                f"Funding={funding.get('value', 0)*100:.4f}%" if oi and funding else "Derivatives: partial data"
+            )
+        else:
+            self.log.debug("Coinalyze client disabled, no derivatives data")
+    except Exception as e:
+        self.log.warning(f"⚠️ Derivatives fetch failed: {e}")
+```
+
+#### 11.1.4 修改 analyze() 调用
+
+修改 `analyze()` 调用，传入新参数：
+
+```python
+# strategy/deepseek_strategy.py on_timer() 方法中
+# 替换原有的 self.multi_agent.analyze() 调用 (约 line 1362-1368)
+
+signal_data = self.multi_agent.analyze(
+    symbol="BTCUSDT",
+    technical_report=ai_technical_data,
+    sentiment_report=sentiment_data,
+    current_position=current_position,
+    price_data=price_data,
+    # ========== v2.1 新增参数 ==========
+    order_flow_report=order_flow_data,
+    derivatives_report=derivatives_data,
+)
+```
+
+### 11.2 multi_agent_analyzer.py 修改
+
+#### 11.2.1 扩展 analyze() 方法签名
+
+```python
+# agents/multi_agent_analyzer.py
+# 修改 analyze() 方法签名 (约 line 198-205)
+
+def analyze(
+    self,
+    symbol: str,
+    technical_report: Dict[str, Any],
+    sentiment_report: Optional[Dict[str, Any]] = None,
+    current_position: Optional[Dict[str, Any]] = None,
+    price_data: Optional[Dict[str, Any]] = None,
+    # ========== v2.1 新增参数 ==========
+    order_flow_report: Optional[Dict[str, Any]] = None,
+    derivatives_report: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+```
+
+#### 11.2.2 在 analyze() 方法内部格式化新数据
+
+在 `analyze()` 方法中，`tech_summary` 和 `sent_summary` 格式化后添加：
+
+```python
+# agents/multi_agent_analyzer.py analyze() 方法中
+# 在 tech_summary = ... 和 sent_summary = ... 后添加 (约 line 251-252 后)
+
+# Format order flow and derivatives for prompts (v2.1)
+order_flow_summary = self._format_order_flow_report(order_flow_report)
+derivatives_summary = self._format_derivatives_report(derivatives_report)
+```
+
+#### 11.2.3 修改 Bull/Bear 方法调用
+
+修改辩论循环中的调用：
+
+```python
+# agents/multi_agent_analyzer.py analyze() 方法中
+# 修改 _get_bull_argument 调用 (约 line 267-273)
+
+# Bull's turn
+bull_argument = self._get_bull_argument(
+    symbol=symbol,
+    technical_report=tech_summary,
+    sentiment_report=sent_summary,
+    order_flow_report=order_flow_summary,      # v2.1 新增
+    derivatives_report=derivatives_summary,     # v2.1 新增
+    history=debate_history,
+    bear_argument=bear_argument,
+)
+
+# 同样修改 _get_bear_argument 调用 (约 line 277-283)
+
+# Bear's turn
+bear_argument = self._get_bear_argument(
+    symbol=symbol,
+    technical_report=tech_summary,
+    sentiment_report=sent_summary,
+    order_flow_report=order_flow_summary,      # v2.1 新增
+    derivatives_report=derivatives_summary,     # v2.1 新增
+    history=debate_history,
+    bull_argument=bull_argument,
+)
+```
+
+#### 11.2.4 修改 _get_bull_argument() 方法
+
+```python
+# agents/multi_agent_analyzer.py
+# 替换整个 _get_bull_argument 方法 (约 line 320-365)
+
+def _get_bull_argument(
+    self,
+    symbol: str,
+    technical_report: str,
+    sentiment_report: str,
+    order_flow_report: str,      # v2.1 新增
+    derivatives_report: str,     # v2.1 新增
+    history: str,
+    bear_argument: str,
+) -> str:
+    """
+    Generate bull analyst's argument.
+
+    Borrowed from: TradingAgents/agents/researchers/bull_researcher.py
+    v2.1: Added order flow and derivatives data
+    """
+    prompt = f"""You are a Bull Analyst advocating for LONG position on {symbol}.
+Your task is to build a strong, evidence-based case for going LONG.
+
+Key points to focus on:
+- BULLISH Technical Signals: Price above SMAs, RSI recovering from oversold, MACD bullish crossover
+- Order Flow Confirmation: Buy ratio > 50%, CVD rising (accumulation)
+- Derivatives Support: OI rising with price, neutral/negative funding (not overheated)
+- Growth Momentum: Breakout patterns, increasing volume, support holding
+- Counter Bear Arguments: Use specific numbers to refute bearish concerns
+
+Resources Available:
+
+TECHNICAL ANALYSIS:
+{technical_report}
+
+{order_flow_report}
+
+{derivatives_report}
+
+{sentiment_report}
+
+Previous Debate:
+{history if history else "This is the opening argument."}
+
+Last Bear Argument:
+{bear_argument if bear_argument else "No bear argument yet - make your opening case."}
+
+INSTRUCTIONS:
+1. Present 2-3 compelling reasons for LONG
+2. Use specific numbers from ALL data sources (technical, order flow, derivatives)
+3. If bear made arguments, directly counter them with data
+4. Be persuasive but factual
+
+Deliver your argument now (2-3 paragraphs):"""
+
+    return self._call_api_with_retry([
+        {"role": "system", "content": "You are a professional Bull Analyst. Use order flow and derivatives data to strengthen your arguments."},
+        {"role": "user", "content": prompt}
+    ])
+```
+
+#### 11.2.5 修改 _get_bear_argument() 方法
+
+```python
+# agents/multi_agent_analyzer.py
+# 替换整个 _get_bear_argument 方法 (约 line 367-412)
+
+def _get_bear_argument(
+    self,
+    symbol: str,
+    technical_report: str,
+    sentiment_report: str,
+    order_flow_report: str,      # v2.1 新增
+    derivatives_report: str,     # v2.1 新增
+    history: str,
+    bull_argument: str,
+) -> str:
+    """
+    Generate bear analyst's argument.
+
+    Borrowed from: TradingAgents/agents/researchers/bear_researcher.py
+    v2.1: Added order flow and derivatives data
+    """
+    prompt = f"""You are a Bear Analyst making the case AGAINST going LONG on {symbol}.
+Your goal is to present well-reasoned arguments for SHORT or staying FLAT.
+
+Key points to focus on:
+- BEARISH Technical Signals: Price below SMAs, overbought RSI, MACD bearish divergence
+- Order Flow Warning: Buy ratio < 50%, CVD falling (distribution)
+- Derivatives Risk: High funding rate (squeeze risk), OI falling (trend weakening)
+- Downside Risks: Resistance levels, decreasing volume, support breaking
+- Counter Bull Arguments: Expose over-optimistic assumptions with specific data
+
+Resources Available:
+
+TECHNICAL ANALYSIS:
+{technical_report}
+
+{order_flow_report}
+
+{derivatives_report}
+
+{sentiment_report}
+
+Previous Debate:
+{history}
+
+Last Bull Argument:
+{bull_argument}
+
+INSTRUCTIONS:
+1. Present 2-3 compelling reasons AGAINST long / FOR short
+2. Use specific numbers from ALL data sources (technical, order flow, derivatives)
+3. Directly counter the bull's arguments with data
+4. Highlight risks the bull is ignoring
+
+Deliver your argument now (2-3 paragraphs):"""
+
+    return self._call_api_with_retry([
+        {"role": "system", "content": "You are a professional Bear Analyst. Use order flow and derivatives data to highlight risks."},
+        {"role": "user", "content": prompt}
+    ])
+```
+
+#### 11.2.6 新增格式化方法
+
+在类末尾添加两个新方法（在 `get_last_debate()` 方法后）：
+
+```python
+# agents/multi_agent_analyzer.py
+# 在类末尾添加 (约 line 886 后)
+
+def _format_order_flow_report(self, data: Optional[Dict[str, Any]]) -> str:
+    """
+    Format order flow data for AI prompts.
+
+    v2.1: New method for order flow integration
+    """
+    if not data or data.get('data_source') == 'none':
+        return "ORDER FLOW: Data not available (using neutral assumptions)"
+
+    buy_ratio = data.get('buy_ratio', 0.5)
+    cvd_trend = data.get('cvd_trend', 'NEUTRAL')
+    avg_trade = data.get('avg_trade_usdt', 0)
+    trades_count = data.get('trades_count', 0)
+    recent_bars = data.get('recent_10_bars', [])
+
+    # Interpret buy/sell ratio
+    if buy_ratio > 0.55:
+        buy_interpretation = "BULLISH (buyers dominating)"
+    elif buy_ratio < 0.45:
+        buy_interpretation = "BEARISH (sellers dominating)"
+    else:
+        buy_interpretation = "NEUTRAL (balanced)"
+
+    # Format recent bars
+    recent_str = ", ".join([f"{r:.1%}" for r in recent_bars[-5:]]) if recent_bars else "N/A"
+
+    return f"""
+ORDER FLOW ANALYSIS (Binance Taker Data):
+- Buy Ratio: {buy_ratio:.1%} ({buy_interpretation})
+- CVD Trend: {cvd_trend} ({'Accumulation' if cvd_trend == 'RISING' else 'Distribution' if cvd_trend == 'FALLING' else 'Sideways'})
+- Avg Trade Size: ${avg_trade:,.0f} USDT
+- Trade Count: {trades_count:,}
+- Recent 5 Bars Buy Ratio: [{recent_str}]
+
+INTERPRETATION:
+- Buy Ratio > 55%: Strong buying pressure, confirms bullish momentum
+- Buy Ratio < 45%: Strong selling pressure, confirms bearish momentum
+- CVD RISING: Smart money accumulating, potential breakout
+- CVD FALLING: Distribution phase, potential breakdown
+"""
+
+def _format_derivatives_report(self, data: Optional[Dict[str, Any]]) -> str:
+    """
+    Format derivatives data for AI prompts.
+
+    v2.1: New method for derivatives integration
+    """
+    if not data or not data.get('enabled', True):
+        return "DERIVATIVES: Data not available (Coinalyze API disabled or unavailable)"
+
+    parts = ["DERIVATIVES MARKET DATA:"]
+
+    # Open Interest
+    oi = data.get('open_interest')
+    if oi:
+        oi_btc = oi.get('value', 0)
+        parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
+        parts.append("  → OI Rising + Price Rising: Trend strengthening (bullish confirmation)")
+        parts.append("  → OI Falling: Positions closing, trend may be weakening")
+    else:
+        parts.append("- Open Interest: N/A")
+
+    # Funding Rate
+    funding = data.get('funding_rate')
+    if funding:
+        rate = funding.get('value', 0)
+        rate_pct = rate * 100
+
+        if rate > 0.001:
+            interp = "VERY_BULLISH (longs paying shorts, potential squeeze risk)"
+        elif rate > 0.0005:
+            interp = "BULLISH"
+        elif rate < -0.001:
+            interp = "VERY_BEARISH (shorts paying longs, potential short squeeze)"
+        elif rate < -0.0005:
+            interp = "BEARISH"
+        else:
+            interp = "NEUTRAL"
+
+        parts.append(f"- Funding Rate: {rate_pct:.4f}% ({interp})")
+
+        if rate > 0.001:
+            parts.append("  → ⚠️ HIGH Funding: Market overheated, long squeeze risk")
+        elif rate < -0.001:
+            parts.append("  → NEGATIVE Funding: Shorts paying longs, potential short squeeze")
+    else:
+        parts.append("- Funding Rate: N/A")
+
+    # Liquidations
+    liq = data.get('liquidations')
+    if liq:
+        history = liq.get('history', [])
+        if history:
+            item = history[-1]
+            long_liq = float(item.get('l', 0))
+            short_liq = float(item.get('s', 0))
+            total = long_liq + short_liq
+
+            parts.append(f"- Liquidations (1h): ${total/1e6:.1f}M total")
+            parts.append(f"  → Long Liq: ${long_liq/1e6:.1f}M, Short Liq: ${short_liq/1e6:.1f}M")
+
+            if total > 50_000_000:
+                parts.append("  → ⚠️ HIGH liquidations: Extreme volatility, be cautious")
+    else:
+        parts.append("- Liquidations: N/A")
+
+    return "\n".join(parts)
+```
+
+### 11.3 multi_timeframe_manager.py 修改
+
+#### 11.3.1 扩展 evaluate_risk_state() 方法
+
+```python
+# indicators/multi_timeframe_manager.py
+# 修改 evaluate_risk_state 方法签名和实现 (约 line 293-347)
+
+def evaluate_risk_state(
+    self,
+    current_price: float,
+    oi_data: Optional[Dict[str, Any]] = None,  # v2.1 新增
+) -> RiskState:
+    """
+    评估趋势层风险状态 (Risk-On / Risk-Off)
+
+    使用 MACD 替代 ADX (ADX 未在 TechnicalIndicatorManager 实现)
+    v2.1: 新增 OI 数据作为可选增强条件
+
+    Parameters
+    ----------
+    current_price : float
+        当前价格
+    oi_data : Dict, optional
+        Open Interest 数据 (来自 Coinalyze)
+        格式: {"value": float, "change_pct": float}
+
+    Returns
+    -------
+    RiskState
+        RISK_ON (可交易) 或 RISK_OFF (观望)
+    """
+    if not self.trend_manager or not self.trend_manager.is_initialized():
+        self.logger.warning("趋势层未初始化，返回 RISK_OFF")
+        return RiskState.RISK_OFF
+
+    trend_config = self.config.get('trend_layer', {})
+    tech_data = self.trend_manager.get_technical_data(current_price)
+
+    # 规则 1: 价格在 SMA_200 上方
+    sma_period = trend_config.get('sma_period', 200)
+    sma_value = tech_data.get(f'sma_{sma_period}', current_price)
+    price_above_sma = current_price > sma_value
+
+    # 规则 2: MACD > 0 (替代 ADX，判断趋势方向)
+    macd_value = tech_data.get('macd', 0)
+    macd_positive = macd_value > 0
+
+    # 综合判断
+    require_above_sma = trend_config.get('require_above_sma', True)
+    require_macd_positive = trend_config.get('require_macd_positive', True)
+
+    conditions_met = True
+    if require_above_sma:
+        conditions_met = conditions_met and price_above_sma
+    if require_macd_positive:
+        conditions_met = conditions_met and macd_positive
+
+    # ========== v2.1 新增: OI 增强条件 (可选) ==========
+    oi_warning = None
+    use_oi_filter = trend_config.get('use_oi_filter', False)
+
+    if use_oi_filter and oi_data:
+        oi_change = oi_data.get('change_pct')
+        oi_decline_threshold = trend_config.get('oi_decline_threshold', -10)
+
+        if oi_change is not None and oi_change < oi_decline_threshold:
+            oi_warning = f"OI 大幅下降 ({oi_change:.1f}%), 趋势减弱"
+            self.logger.warning(f"[1D] ⚠️ {oi_warning}")
+            # 注意: OI 下降只是警告，不直接改变 RISK_ON/OFF 状态
+            # 这是为了避免过度过滤
+
+    if conditions_met:
+        self._risk_state = RiskState.RISK_ON
+    else:
+        self._risk_state = RiskState.RISK_OFF
+
+    self._risk_state_updated = datetime.now(timezone.utc)
+
+    log_msg = (
+        f"[1D] 趋势层评估: {self._risk_state.value} "
+        f"(price={current_price:.2f}, SMA_{sma_period}={sma_value:.2f}, MACD={macd_value:.2f})"
+    )
+    if oi_warning:
+        log_msg += f" | ⚠️ {oi_warning}"
+    self.logger.info(log_msg)
+
+    return self._risk_state
+```
+
+#### 11.3.2 扩展 check_execution_confirmation() 方法
+
+```python
+# indicators/multi_timeframe_manager.py
+# 修改 check_execution_confirmation 方法 (约 line 402-436)
+
+def check_execution_confirmation(
+    self,
+    current_price: float,
+    direction: str = None,                           # v2.1 新增
+    order_flow_data: Optional[Dict[str, Any]] = None,  # v2.1 新增
+    liquidations_data: Optional[Dict[str, Any]] = None,  # v2.1 新增
+) -> Dict[str, Any]:
+    """
+    检查执行层入场确认条件
+
+    v2.1: 新增订单流和清算数据作为可选增强条件
+
+    Parameters
+    ----------
+    current_price : float
+        当前价格
+    direction : str, optional
+        交易方向 ("LONG" 或 "SHORT")，用于订单流确认
+    order_flow_data : Dict, optional
+        订单流数据 (来自 OrderFlowProcessor)
+    liquidations_data : Dict, optional
+        清算数据 (来自 Coinalyze)
+
+    Returns
+    -------
+    Dict
+        {
+            'confirmed': bool,
+            'rsi': float,
+            'rsi_in_range': bool,
+            'order_flow_ok': bool,      # v2.1 新增
+            'liquidation_ok': bool,     # v2.1 新增
+            'reason': str
+        }
+    """
+    if not self.execution_manager or not self.execution_manager.is_initialized():
+        return {
+            'confirmed': False,
+            'reason': '执行层未初始化'
+        }
+
+    exec_config = self.config.get('execution_layer', {})
+    tech_data = self.execution_manager.get_technical_data(current_price)
+
+    # ========== 原有: RSI 范围检查 ==========
+    rsi = tech_data.get('rsi', 50)
+    rsi_min = exec_config.get('rsi_entry_min', 35)
+    rsi_max = exec_config.get('rsi_entry_max', 65)
+    rsi_in_range = rsi_min <= rsi <= rsi_max
+
+    result = {
+        'confirmed': rsi_in_range,
+        'rsi': rsi,
+        'rsi_in_range': rsi_in_range,
+        'rsi_range': [rsi_min, rsi_max],
+        'reason': f'RSI={rsi:.1f} {"在" if rsi_in_range else "不在"}范围[{rsi_min}, {rsi_max}]内',
+        'order_flow_ok': True,      # 默认通过
+        'liquidation_ok': True,     # 默认通过
+    }
+
+    # ========== v2.1 新增: 订单流确认 ==========
+    use_order_flow_confirm = exec_config.get('use_order_flow_confirm', False)
+
+    if use_order_flow_confirm and order_flow_data and direction:
+        if order_flow_data.get('data_source') not in ['none', 'local_dict']:
+            buy_ratio = order_flow_data.get('buy_ratio', 0.5)
+
+            if direction == "LONG":
+                flow_ok = buy_ratio >= 0.50
+            elif direction == "SHORT":
+                flow_ok = buy_ratio <= 0.50
+            else:
+                flow_ok = True  # 未知方向，跳过检查
+
+            result['order_flow_ok'] = flow_ok
+            result['buy_ratio'] = buy_ratio
+
+            if not flow_ok:
+                result['confirmed'] = False
+                result['reason'] += f" | 订单流不确认 (buy_ratio={buy_ratio:.1%})"
+
+    # ========== v2.1 新增: 清算风险过滤 ==========
+    use_liquidation_filter = exec_config.get('use_liquidation_filter', False)
+    liquidation_threshold = exec_config.get('liquidation_threshold', 50_000_000)  # $50M
+
+    if use_liquidation_filter and liquidations_data:
+        history = liquidations_data.get('history', [])
+        if history:
+            item = history[-1]
+            long_liq = float(item.get('l', 0))
+            short_liq = float(item.get('s', 0))
+            total_liq = long_liq + short_liq
+
+            liq_ok = total_liq < liquidation_threshold
+            result['liquidation_ok'] = liq_ok
+            result['total_liquidation'] = total_liq
+
+            if not liq_ok:
+                result['confirmed'] = False
+                result['reason'] += f" | ⚠️ 高清算风险 (${total_liq/1e6:.1f}M)"
+
+    return result
+```
+
+---
+
+## 十二、数据降级策略 (v2.1 新增)
+
+> ⚠️ **v2.1 新增**: 定义数据不可用时的处理规则
+
+### 12.1 降级场景定义
+
+| 场景 | 原因 | 影响数据 |
+|------|------|----------|
+| **Coinalyze 禁用** | 无 API Key | OI, Funding, Liquidations |
+| **Coinalyze 超时** | 网络问题 | OI, Funding, Liquidations |
+| **Binance K线失败** | 网络问题 | buy_ratio, cvd_trend |
+| **部分数据缺失** | API 返回不完整 | 单个指标 |
+
+### 12.2 降级处理规则
+
+```python
+# 在 _format_order_flow_report 和 _format_derivatives_report 中已处理
+# 数据不可用时返回明确的提示文本
+
+# ORDER FLOW 降级
+if not data or data.get('data_source') == 'none':
+    return "ORDER FLOW: Data not available (using neutral assumptions)"
+
+# DERIVATIVES 降级
+if not data or not data.get('enabled', True):
+    return "DERIVATIVES: Data not available (Coinalyze API disabled or unavailable)"
+```
+
+### 12.3 Judge 确认点降级规则
+
+在 `_get_judge_decision()` 的 Prompt 中添加降级说明：
+
+```python
+# agents/multi_agent_analyzer.py _get_judge_decision() 方法中
+# 在确认点计数规则后添加
+
+=== DATA AVAILABILITY RULES ===
+
+IF "ORDER FLOW: Data not available" appears in the debate:
+    → Skip confirmations 6-7 (Order Flow related)
+    → Count from remaining confirmations only
+    → DO NOT penalize either side for missing data
+
+IF "DERIVATIVES: Data not available" appears in the debate:
+    → Skip confirmations 8-9 (Derivatives related)
+    → Count from remaining confirmations only
+    → DO NOT penalize either side for missing data
+
+IF BOTH are unavailable:
+    → Use original 5-point confirmation system only
+    → This is normal operation, not an error
+```
+
+### 12.4 过滤器优先级定义
+
+```
+MTF 过滤器执行顺序 (从高到低):
+
+┌─────────────────────────────────────────────────────────────┐
+│ Priority 1: RISK_OFF 过滤 (最高优先级)                       │
+│ ├─ 条件: 价格 < SMA_200 或 MACD < 0                         │
+│ ├─ 动作: 禁止新开仓 (BUY/SELL → HOLD)                       │
+│ └─ OI 警告: 仅记录日志，不过滤                              │
+├─────────────────────────────────────────────────────────────┤
+│ Priority 2: 决策层方向匹配                                   │
+│ ├─ 条件: 信号与 DecisionState 冲突                          │
+│ ├─ 动作: BUY + ALLOW_SHORT → HOLD                          │
+│ │         SELL + ALLOW_LONG → HOLD                          │
+│ │         WAIT → HOLD                                       │
+│ └─ 注意: 只在 RISK_ON 时检查                                │
+├─────────────────────────────────────────────────────────────┤
+│ Priority 3: RSI 入场确认                                     │
+│ ├─ 条件: RSI 不在 [35, 65] 范围                             │
+│ ├─ 动作: 交易信号 → HOLD                                    │
+│ └─ 注意: 只在有交易信号时检查                               │
+├─────────────────────────────────────────────────────────────┤
+│ Priority 4: 订单流确认 (可选，默认关闭)                      │
+│ ├─ 条件: LONG + buy_ratio < 50% 或 SHORT + buy_ratio > 50% │
+│ ├─ 动作: 交易信号 → HOLD                                    │
+│ └─ 配置: execution_layer.use_order_flow_confirm = true      │
+├─────────────────────────────────────────────────────────────┤
+│ Priority 5: 清算风险过滤 (可选，默认关闭)                    │
+│ ├─ 条件: 1小时清算 > $50M                                   │
+│ ├─ 动作: 交易信号 → HOLD                                    │
+│ └─ 配置: execution_layer.use_liquidation_filter = true      │
+└─────────────────────────────────────────────────────────────┘
+
+注意:
+- Priority 4-5 默认关闭，需要在配置中启用
+- 任一过滤器触发即停止检查后续过滤器
+- 每个过滤器都会记录日志
+```
+
+### 12.5 配置示例 (完整版)
+
+```yaml
+# configs/base.yaml 完整配置
+
+# ========== Order Flow 配置 ==========
+order_flow:
+  enabled: true
+
+  binance_klines:
+    timeout: 10
+    limit: 50
+
+  coinalyze:
+    enabled: true
+    timeout: 10
+    max_retries: 2
+    retry_delay: 1.0
+    symbol: "BTCUSDT_PERP.A"
+
+# ========== MTF 协同配置 ==========
+multi_timeframe:
+  enabled: true
+
+  # 趋势层 (1D)
+  trend_layer:
+    sma_period: 200
+    require_above_sma: true
+    require_macd_positive: true
+    use_oi_filter: false          # OI 过滤 (默认关闭，仅警告)
+    oi_decline_threshold: -10     # OI 下降超过 10% 发出警告
+
+  # 决策层 (4H)
+  decision_layer:
+    timeframe: "4h"
+    use_cvd_in_debate: true       # 在辩论中使用 CVD
+    use_funding_warning: true     # Funding 过热预警
+
+  # 执行层 (15M)
+  execution_layer:
+    rsi_entry_min: 35
+    rsi_entry_max: 65
+    use_order_flow_confirm: false  # 订单流确认 (默认关闭)
+    use_liquidation_filter: false  # 清算风险过滤 (默认关闭)
+    liquidation_threshold: 50000000  # $50M
+```
+
+---
+
+## 十三、DeepSeekStrategyConfig 扩展 (v2.1 新增)
+
+需要在 `strategy/deepseek_strategy.py` 的 `DeepSeekStrategyConfig` dataclass 中添加：
+
+```python
+# strategy/deepseek_strategy.py DeepSeekStrategyConfig dataclass 中添加
+
+# ========== Order Flow 配置 (v2.1) ==========
+order_flow_enabled: bool = True
+order_flow_binance_timeout: int = 10
+order_flow_coinalyze_enabled: bool = True
+order_flow_coinalyze_timeout: int = 10
+order_flow_coinalyze_max_retries: int = 2
+order_flow_coinalyze_retry_delay: float = 1.0
+```
+
+并在 `main_live.py` 中从 ConfigManager 加载这些参数。
