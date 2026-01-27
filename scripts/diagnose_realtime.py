@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.14 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.15 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -25,6 +25,7 @@
 20. v10.12: 修复情绪/持仓数据字段名不匹配问题
 21. v10.13: 修复未实现PnL显示0的问题 (自动计算)
 22. v10.14: 修复 AI 收到价格 $0.00 的问题 (添加 price 到 technical_data)
+23. v10.15: 添加完整数据流追踪 (AI 输入数据验证、Judge 计数、辩论记录)
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -40,6 +41,13 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.15:
+- 添加完整数据流追踪，可判断问题出在哪一步
+- 新增 "AI 输入数据验证" 部分，显示传给 MultiAgent 的所有数据
+- 新增 Judge 决策计数 (bullish_count/bearish_count 0-5) - 决策的核心依据
+- 新增 Bull/Bear 辩论记录输出
+- 新增 acknowledged_risks 显示
+
 v10.14:
 - 修复 AI 收到价格 $0.00 的问题
 - technical_data (from indicator_manager.get_technical_data()) 不包含 'price' 键
@@ -1123,7 +1131,72 @@ try:
             
     except Exception as e:
         print(f"  ℹ️ MTF 增强数据不可用 (使用基础模式): {e}")
-    
+
+    # ========== 显示传给 AI 的完整输入数据 (v10.15) ==========
+    print()
+    print("  ┌─────────────────────────────────────────────────────────────────┐")
+    print("  │              AI 输入数据验证 (传给 MultiAgent)                   │")
+    print("  └─────────────────────────────────────────────────────────────────┘")
+    print()
+    print("  [1] technical_data (技术指标):")
+    print(f"      price:           ${technical_data.get('price', 0):,.2f}")
+    print(f"      sma_5:           ${technical_data.get('sma_5', 0):,.2f}")
+    print(f"      sma_20:          ${technical_data.get('sma_20', 0):,.2f}")
+    print(f"      sma_50:          ${technical_data.get('sma_50', 0):,.2f}")
+    print(f"      rsi:             {technical_data.get('rsi', 0):.2f}")
+    print(f"      macd:            {technical_data.get('macd', 0):.4f}")
+    print(f"      macd_histogram:  {technical_data.get('macd_histogram', 0):.4f}")
+    print(f"      overall_trend:   {technical_data.get('overall_trend', 'N/A')}")
+    print()
+    print("  [2] sentiment_data (情绪数据):")
+    print(f"      positive_ratio:  {sentiment_data.get('positive_ratio', 0):.4f} ({sentiment_data.get('positive_ratio', 0)*100:.2f}%)")
+    print(f"      negative_ratio:  {sentiment_data.get('negative_ratio', 0):.4f} ({sentiment_data.get('negative_ratio', 0)*100:.2f}%)")
+    print(f"      net_sentiment:   {sentiment_data.get('net_sentiment', 0):.4f}")
+    print()
+    print("  [3] price_data (价格数据):")
+    print(f"      price:           ${price_data.get('price', 0):,.2f}")
+    print(f"      price_change:    {price_data.get('price_change', 0):.2f}%")
+    print()
+    if order_flow_report:
+        print("  [4] order_flow_report (订单流):")
+        print(f"      buy_ratio:       {order_flow_report.get('buy_ratio', 0):.4f} ({order_flow_report.get('buy_ratio', 0)*100:.2f}%)")
+        print(f"      cvd_trend:       {order_flow_report.get('cvd_trend', 'N/A')}")
+        print(f"      avg_trade_usdt:  ${order_flow_report.get('avg_trade_usdt', 0):,.2f}")
+        print(f"      data_source:     {order_flow_report.get('data_source', 'N/A')}")
+    else:
+        print("  [4] order_flow_report: None (未获取)")
+    print()
+    if derivatives_report:
+        print("  [5] derivatives_report (衍生品数据):")
+        oi = derivatives_report.get('open_interest', {})
+        fr = derivatives_report.get('funding_rate', {})
+        liq = derivatives_report.get('liquidations', {})
+        print(f"      OI value (BTC):  {oi.get('value', 0) if oi else 0:,.2f}")
+        print(f"      Funding rate:    {fr.get('value', 0) if fr else 0:.6f} ({fr.get('value', 0)*100 if fr else 0:.4f}%)")
+        # 显示 Liquidations 原始数据
+        if liq:
+            history = liq.get('history', [])
+            if history:
+                latest = history[-1]
+                print(f"      Liq history[-1]:  l={latest.get('l', 0)} BTC, s={latest.get('s', 0)} BTC")
+            else:
+                print(f"      Liq history:      empty")
+        else:
+            print(f"      liquidations:    None")
+    else:
+        print("  [5] derivatives_report: None (未获取)")
+    print()
+    if current_position:
+        print("  [6] current_position (当前持仓):")
+        print(f"      side:            {current_position.get('side', 'N/A')}")
+        print(f"      quantity:        {current_position.get('quantity', 0)} BTC")
+        print(f"      entry_price:     ${current_position.get('entry_price', 0):,.2f}")
+        print(f"      unrealized_pnl:  ${current_position.get('unrealized_pnl', 0):,.2f}")
+    else:
+        print("  [6] current_position: None (无持仓)")
+    print()
+    print("  ────────────────────────────────────────────────────────────────")
+
     signal_data = multi_agent.analyze(
         symbol="BTCUSDT",
         technical_report=technical_data,
@@ -1139,17 +1212,27 @@ try:
     print(f"     Signal: {signal_data.get('signal', 'N/A')}")
     print(f"     Confidence: {signal_data.get('confidence', 'N/A')}")
     print(f"     Risk Level: {signal_data.get('risk_level', 'N/A')}")
-    print(f"     Stop Loss: {signal_data.get('stop_loss', 'N/A')}")
-    print(f"     Take Profit: {signal_data.get('take_profit', 'N/A')}")
+    print(f"     Stop Loss: ${signal_data.get('stop_loss', 0):,.2f}" if signal_data.get('stop_loss') else "     Stop Loss: None")
+    print(f"     Take Profit: ${signal_data.get('take_profit', 0):,.2f}" if signal_data.get('take_profit') else "     Take Profit: None")
 
-    # 显示 Judge 详细决策
+    # 显示 Judge 详细决策 (包括关键计数)
     judge_decision = signal_data.get('judge_decision', {})
     if judge_decision:
         winning_side = judge_decision.get('winning_side', 'N/A')
-        key_reasons = judge_decision.get('key_reasons', [])
+        # ⭐ 关键数据: 确认计数 (决策的核心依据)
+        bullish_count = judge_decision.get('bullish_count', 'N/A')
+        bearish_count = judge_decision.get('bearish_count', 'N/A')
         print(f"     Winning Side: {winning_side}")
+        print(f"     📊 Bullish Count: {bullish_count}/5")
+        print(f"     📊 Bearish Count: {bearish_count}/5")
+
+        key_reasons = judge_decision.get('key_reasons', [])
         if key_reasons:
             print(f"     Key Reasons: {', '.join(key_reasons[:3])}")
+
+        acknowledged_risks = judge_decision.get('acknowledged_risks', [])
+        if acknowledged_risks:
+            print(f"     Acknowledged Risks: {', '.join(acknowledged_risks[:2])}")
 
     if signal_data.get('debate_summary'):
         summary = signal_data['debate_summary']
@@ -1157,6 +1240,20 @@ try:
 
     reason = signal_data.get('reason', 'N/A')
     print(f"     Reason: {reason[:150]}..." if len(reason) > 150 else f"     Reason: {reason}")
+
+    # 显示 Bull/Bear 辩论记录
+    if hasattr(multi_agent, 'get_last_debate') and callable(multi_agent.get_last_debate):
+        debate_transcript = multi_agent.get_last_debate()
+        if debate_transcript:
+            print()
+            print("  📜 辩论记录 (Bull/Bear Debate):")
+            # 只显示前500字符
+            if len(debate_transcript) > 500:
+                print(f"     {debate_transcript[:500]}...")
+                print(f"     [截断, 完整长度: {len(debate_transcript)} 字符]")
+            else:
+                print(f"     {debate_transcript}")
+
     print("  ✅ MultiAgent 层级决策成功")
 
 except (ImportError, AttributeError, requests.RequestException, ValueError, KeyError) as e:
@@ -2509,48 +2606,76 @@ if not SUMMARY_MODE:
     print(f"    Net Sentiment:    {sentiment_data.get('net_sentiment', 0):.4f}")
     print(f"    数据来源: {sentiment_data.get('source', 'N/A')}")
 
-    # 输出订单流数据
-    if 'order_flow_data' in dir() and order_flow_data:
+    # 输出订单流数据 (使用 order_flow_report 变量)
+    if 'order_flow_report' in dir() and order_flow_report:
         print()
         print("  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
         print("  ┃                        订单流数据                                   ┃")
         print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
         print()
         print(f"  Binance Taker 数据:")
-        print(f"    Buy Ratio:      {order_flow_data.get('buy_ratio', 0):.4f} ({order_flow_data.get('buy_ratio', 0)*100:.2f}%)")
-        print(f"    CVD Trend:      {order_flow_data.get('cvd_trend', 'N/A')}")
-        print(f"    Avg Trade Size: ${order_flow_data.get('avg_trade_usdt', 0):,.2f}")
-        print(f"    Volume (USDT):  ${order_flow_data.get('volume_usdt', 0):,.0f}")
-        print(f"    Trades Count:   {order_flow_data.get('trades_count', 0):,}")
-        print(f"    数据来源: {order_flow_data.get('data_source', 'N/A')}")
+        print(f"    Buy Ratio:      {order_flow_report.get('buy_ratio', 0):.4f} ({order_flow_report.get('buy_ratio', 0)*100:.2f}%)")
+        print(f"    CVD Trend:      {order_flow_report.get('cvd_trend', 'N/A')}")
+        print(f"    Avg Trade Size: ${order_flow_report.get('avg_trade_usdt', 0):,.2f}")
+        print(f"    Volume (USDT):  ${order_flow_report.get('volume_usdt', 0):,.0f}")
+        print(f"    Trades Count:   {order_flow_report.get('trades_count', 0):,}")
+        print(f"    数据来源: {order_flow_report.get('data_source', 'N/A')}")
 
         # 最近10根K线的 buy ratio
-        recent_10 = order_flow_data.get('recent_10_bars_buy_ratio', [])
+        recent_10 = order_flow_report.get('recent_10_bars_buy_ratio', [])
         if recent_10:
             print(f"    最近 10 根 K线 Buy Ratio: {[f'{r:.2f}' for r in recent_10[-5:]]}")
 
-    # 输出衍生品数据
-    if 'derivatives_data' in dir() and derivatives_data:
+    # 输出衍生品数据 (使用 derivatives_report 变量)
+    if 'derivatives_report' in dir() and derivatives_report:
         print()
         print("  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
         print("  ┃                        衍生品数据 (Coinalyze)                       ┃")
         print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
         print()
-        oi_data = derivatives_data.get('open_interest', {})
-        fr_data = derivatives_data.get('funding_rate', {})
-        liq_data = derivatives_data.get('liquidations_1h', {})
+        oi_data = derivatives_report.get('open_interest', {})
+        fr_data = derivatives_report.get('funding_rate', {})
+        liq_data = derivatives_report.get('liquidations', {})
 
         print(f"  Open Interest:")
-        print(f"    OI (BTC):    {oi_data.get('value', 0):,.2f}")
-        print(f"    OI Change:   {oi_data.get('change_pct', 'N/A')}")
+        if oi_data:
+            print(f"    OI (BTC):    {oi_data.get('value', 0):,.2f}")
+            print(f"    OI (USD):    ${oi_data.get('total_usd', 0):,.0f}")
+            print(f"    OI Change:   {oi_data.get('change_pct', 'N/A')}")
+        else:
+            print(f"    (数据不可用)")
         print()
         print(f"  Funding Rate:")
-        print(f"    Current:     {fr_data.get('value', 0):.6f} ({fr_data.get('value', 0)*100:.4f}%)")
+        if fr_data:
+            fr_value = fr_data.get('value', 0)
+            print(f"    Current:     {fr_value:.6f} ({fr_value*100:.4f}%)")
+            print(f"    Interpret:   {fr_data.get('interpretation', 'N/A')}")
+        else:
+            print(f"    (数据不可用)")
         print()
         print(f"  Liquidations (1h):")
-        print(f"    Long Liq:  ${liq_data.get('long', 0):,.0f}")
-        print(f"    Short Liq: ${liq_data.get('short', 0):,.0f}")
-        print(f"    Total:     ${liq_data.get('total', 0):,.0f}")
+        if liq_data:
+            history = liq_data.get('history', [])
+            if history:
+                latest = history[-1]
+                # 显示原始 BTC 数据和转换后的 USD 数据
+                long_btc = float(latest.get('l', 0))
+                short_btc = float(latest.get('s', 0))
+                total_btc = long_btc + short_btc
+                # 使用当前价格转换
+                long_usd = long_btc * current_price
+                short_usd = short_btc * current_price
+                total_usd = total_btc * current_price
+                print(f"    [原始] Long:   {long_btc:.4f} BTC")
+                print(f"    [原始] Short:  {short_btc:.4f} BTC")
+                print(f"    [原始] Total:  {total_btc:.4f} BTC")
+                print(f"    [转换] Long:   ${long_usd:,.0f}")
+                print(f"    [转换] Short:  ${short_usd:,.0f}")
+                print(f"    [转换] Total:  ${total_usd:,.0f}")
+            else:
+                print(f"    history: []")
+        else:
+            print(f"    (数据不可用)")
 
     # 输出持仓数据
     print()
@@ -2579,16 +2704,28 @@ if not SUMMARY_MODE:
     print(f"  最终信号: {final_signal}")
     print(f"  信心等级: {signal_data.get('confidence', 'N/A')}")
     print(f"  风险等级: {signal_data.get('risk_level', 'N/A')}")
-    print(f"  胜出方:   {signal_data.get('judge_decision', {}).get('winning_side', 'N/A')}")
+    judge_decision = signal_data.get('judge_decision', {})
+    print(f"  胜出方:   {judge_decision.get('winning_side', 'N/A')}")
+    # ⭐ 关键数据: 确认计数
+    print()
+    print(f"  📊 Judge 确认计数 (决策核心):")
+    print(f"    Bullish 确认: {judge_decision.get('bullish_count', 'N/A')}/5")
+    print(f"    Bearish 确认: {judge_decision.get('bearish_count', 'N/A')}/5")
     print()
     print(f"  AI 止损: ${signal_data.get('stop_loss', 0):,.2f}" if signal_data.get('stop_loss') else "  AI 止损: N/A")
     print(f"  AI 止盈: ${signal_data.get('take_profit', 0):,.2f}" if signal_data.get('take_profit') else "  AI 止盈: N/A")
     print()
     print(f"  关键理由:")
-    key_reasons = signal_data.get('judge_decision', {}).get('key_reasons', [])
+    key_reasons = judge_decision.get('key_reasons', [])
     for i, reason in enumerate(key_reasons[:3], 1):
         print(f"    {i}. {reason[:70]}...")
     print()
+    acknowledged_risks = judge_decision.get('acknowledged_risks', [])
+    if acknowledged_risks:
+        print(f"  确认风险:")
+        for i, risk in enumerate(acknowledged_risks[:2], 1):
+            print(f"    {i}. {risk[:70]}...")
+        print()
     print(f"  决策理由: {signal_data.get('reason', 'N/A')[:100]}...")
 
     # MTF 过滤状态
