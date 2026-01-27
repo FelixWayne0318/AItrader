@@ -1316,34 +1316,40 @@ try:
         _support = technical_data.get('support', 0)
         _resistance = technical_data.get('resistance', 0)
 
-        # Bullish 确认项 (5 项)
+        # Bullish 确认项 (5 项) - v2.1 量化阈值
         print("     🟢 Bullish 确认项:")
         bull_1 = _price > _sma20 or _price > _sma50
-        bull_2 = _rsi < 60
+        bull_2 = _rsi < 55  # v2.1: 改为 55 (40-55 是中性区)
         bull_3 = _macd > _macd_signal or _macd_hist > 0
-        bull_4 = abs(_price - _support) < abs(_price - _resistance) or abs(_price - _bb_lower) < abs(_price - _bb_upper)
+        # v2.1: "近" 定义为 1% 以内
+        near_support = abs(_price - _support) / _price < 0.01 if _price > 0 else False
+        near_bb_lower = abs(_price - _bb_lower) / _price < 0.01 if _price > 0 else False
+        bull_4 = near_support or near_bb_lower
         bull_5 = technical_data.get('volume_ratio', 1) > 1.0
         print(f"        {'✅' if bull_1 else '❌'} 1. 价格在 SMA20/50 上方: price=${_price:,.0f}, SMA20=${_sma20:,.0f}, SMA50=${_sma50:,.0f}")
-        print(f"        {'✅' if bull_2 else '❌'} 2. RSI < 60 (未超买): RSI={_rsi:.1f}")
+        print(f"        {'✅' if bull_2 else '❌'} 2. RSI < 55 (未超买): RSI={_rsi:.1f}")
         print(f"        {'✅' if bull_3 else '❌'} 3. MACD 金叉或柱状图>0: MACD={_macd:.2f}, Signal={_macd_signal:.2f}, Hist={_macd_hist:.2f}")
-        print(f"        {'✅' if bull_4 else '❌'} 4. 价格近支撑/BB下轨: Support=${_support:,.0f}, BBLower=${_bb_lower:,.0f}")
-        print(f"        {'✅' if bull_5 else '❌'} 5. 成交量放大: VolumeRatio={technical_data.get('volume_ratio', 'N/A')}")
+        print(f"        {'✅' if bull_4 else '❌'} 4. 价格近支撑/BB下轨 (1%内): Support=${_support:,.0f}, BBLower=${_bb_lower:,.0f}")
+        print(f"        {'✅' if bull_5 else '❌'} 5. 成交量放大 (>1.0): VolumeRatio={technical_data.get('volume_ratio', 'N/A')}")
         local_bull_count = sum([bull_1, bull_2, bull_3, bull_4, bull_5])
         print(f"        → 本地计算: {local_bull_count}/5 (AI 计数: {bullish_count}/5)")
 
         print()
-        # Bearish 确认项 (5 项)
+        # Bearish 确认项 (5 项) - v2.1 量化阈值
         print("     🔴 Bearish 确认项:")
-        bear_1 = _price < _sma20 or _price < _sma50
-        bear_2 = _rsi > 40
+        bear_1 = _price < _sma20 and _price < _sma50  # v2.1: 改为 AND (更严格)
+        bear_2 = _rsi > 65  # v2.1: 改为 65 (45-65 是中性区)
         bear_3 = _macd < _macd_signal or _macd_hist < 0
-        bear_4 = abs(_price - _resistance) < abs(_price - _support) or abs(_price - _bb_upper) < abs(_price - _bb_lower)
-        bear_5 = technical_data.get('volume_ratio', 1) < 1.0
-        print(f"        {'✅' if bear_1 else '❌'} 1. 价格在 SMA20/50 下方: price=${_price:,.0f}, SMA20=${_sma20:,.0f}, SMA50=${_sma50:,.0f}")
-        print(f"        {'✅' if bear_2 else '❌'} 2. RSI > 40 (显示弱势): RSI={_rsi:.1f}")
+        # v2.1: "近" 定义为 1% 以内
+        near_resistance = abs(_price - _resistance) / _price < 0.01 if _price > 0 else False
+        near_bb_upper = abs(_price - _bb_upper) / _price < 0.01 if _price > 0 else False
+        bear_4 = near_resistance or near_bb_upper
+        bear_5 = technical_data.get('volume_ratio', 1) < 0.8  # v2.1: 改为 0.8 (更明确的萎缩)
+        print(f"        {'✅' if bear_1 else '❌'} 1. 价格在 SMA20 AND SMA50 下方: price=${_price:,.0f}, SMA20=${_sma20:,.0f}, SMA50=${_sma50:,.0f}")
+        print(f"        {'✅' if bear_2 else '❌'} 2. RSI > 65 (超买): RSI={_rsi:.1f}")
         print(f"        {'✅' if bear_3 else '❌'} 3. MACD 死叉或柱状图<0: MACD={_macd:.2f}, Signal={_macd_signal:.2f}, Hist={_macd_hist:.2f}")
-        print(f"        {'✅' if bear_4 else '❌'} 4. 价格近阻力/BB上轨: Resistance=${_resistance:,.0f}, BBUpper=${_bb_upper:,.0f}")
-        print(f"        {'✅' if bear_5 else '❌'} 5. 成交量萎缩: VolumeRatio={technical_data.get('volume_ratio', 'N/A')}")
+        print(f"        {'✅' if bear_4 else '❌'} 4. 价格近阻力/BB上轨 (1%内): Resistance=${_resistance:,.0f}, BBUpper=${_bb_upper:,.0f}")
+        print(f"        {'✅' if bear_5 else '❌'} 5. 成交量萎缩 (<0.8): VolumeRatio={technical_data.get('volume_ratio', 'N/A')}")
         local_bear_count = sum([bear_1, bear_2, bear_3, bear_4, bear_5])
         print(f"        → 本地计算: {local_bear_count}/5 (AI 计数: {bearish_count}/5)")
         print()

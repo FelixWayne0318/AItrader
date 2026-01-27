@@ -98,3 +98,45 @@ class BinanceKlineClient:
         if klines and len(klines) > 0:
             return float(klines[-1][4])  # close price
         return None
+
+    def get_funding_rate(self, symbol: str = "BTCUSDT") -> Optional[Dict[str, Any]]:
+        """
+        获取 Binance 直接的 Funding Rate (用于对比 Coinalyze 数据)
+
+        Returns
+        -------
+        Dict or None
+            {
+                "symbol": "BTCUSDT",
+                "funding_rate": 0.0001,      # 原始值 (0.01%)
+                "funding_rate_pct": 0.01,    # 百分比形式
+                "next_funding_time": 1234567890000,
+                "source": "binance_direct"
+            }
+        """
+        try:
+            url = f"{self.BASE_URL}/fapi/v1/premiumIndex"
+            params = {"symbol": symbol}
+
+            response = requests.get(url, params=params, timeout=self.timeout)
+
+            if response.status_code == 200:
+                data = response.json()
+                funding_rate = float(data.get('lastFundingRate', 0))
+                return {
+                    "symbol": data.get('symbol'),
+                    "funding_rate": funding_rate,
+                    "funding_rate_pct": round(funding_rate * 100, 4),  # 转为百分比
+                    "next_funding_time": data.get('nextFundingTime'),
+                    "mark_price": float(data.get('markPrice', 0)),
+                    "source": "binance_direct",
+                }
+            else:
+                self.logger.warning(
+                    f"⚠️ Binance funding rate API error: {response.status_code}"
+                )
+                return None
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ Binance funding rate fetch error: {e}")
+            return None

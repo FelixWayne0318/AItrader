@@ -481,18 +481,24 @@ FULL DEBATE TRANSCRIPT:
 You MUST count how many of these specific confirmations each side presented:
 
 BULLISH Confirmations (count in Bull's arguments):
-1. Price above SMA20 OR Price above SMA50
-2. RSI < 60 (not overbought, has room to rise)
+1. Price above SMA20 OR Price above SMA50 (clear trend support)
+2. RSI < 55 (not overbought, has room to rise) - NOTE: RSI 40-55 is neutral, not bearish
 3. MACD > Signal (bullish crossover) OR MACD histogram > 0
-4. Price near support level OR Price near BB lower band
-5. Increasing volume OR bullish volume pattern mentioned
+4. Price within 1% of support level OR within 1% of BB lower band
+5. Volume ratio > 1.0 (above average) OR bullish volume pattern mentioned
 
 BEARISH Confirmations (count in Bear's arguments):
-1. Price below SMA20 OR Price below SMA50
-2. RSI > 40 (showing weakness or overbought)
+1. Price below SMA20 AND Price below SMA50 (both must be true for stronger signal)
+2. RSI > 65 (showing overbought condition) - NOTE: RSI 45-65 is neutral, not bearish weakness
 3. MACD < Signal (bearish crossover) OR MACD histogram < 0
-4. Price near resistance level OR Price near BB upper band
-5. Decreasing volume OR bearish volume pattern mentioned
+4. Price within 1% of resistance level OR within 1% of BB upper band
+5. Volume ratio < 0.8 (clearly below average) OR bearish volume pattern mentioned
+
+QUANTITATIVE THRESHOLDS (v2.1 - use these exact numbers):
+- "Near support/resistance": within 1% of the level
+- "RSI showing weakness": RSI > 65 (not just > 40)
+- "Volume decreasing": volume < 80% of average (volume_ratio < 0.8)
+- "Volume increasing": volume > average (volume_ratio > 1.0)
 
 IMPORTANT: Each confirmation is worth 1 point if ANY of the conditions in that item are true.
 Example: If price is above SMA50 but below SMA20, confirmation #1 STILL COUNTS as 1.
