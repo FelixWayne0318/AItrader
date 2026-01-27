@@ -44,6 +44,8 @@ env/
 
 # Logs
 logs/
+!logs/.gitkeep
+!logs/diagnosis_*.txt
 *.log
 
 # NautilusTrader

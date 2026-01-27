@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.16 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.17 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -27,6 +27,7 @@
 22. v10.14: 修复 AI 收到价格 $0.00 的问题 (添加 price 到 technical_data)
 23. v10.15: 添加完整数据流追踪 (AI 输入数据验证、Judge 计数、辩论记录)
 24. v10.16: 修复 MTF 趋势层使用 SMA_200 (与 multi_timeframe_manager.py 一致)
+25. v10.17: 添加账户资金详情、确认项明细、GitHub 导出功能
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -42,6 +43,16 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.17:
+- 添加账户资金详情 (使用实盘组件 BinanceAccountFetcher.get_balance())
+  * 显示: 总余额、可用余额、已用保证金、保证金率、总未实现PnL
+- 添加 Judge 确认项明细 (与 multi_agent_analyzer.py:483-495 一致)
+  * 显示 5 个 Bullish 确认项和 5 个 Bearish 确认项
+  * 对比本地计算与 AI 计数的差异
+- 添加 GitHub 导出功能:
+  * --export: 导出诊断结果到 logs/diagnosis_YYYYMMDD_HHMMSS.txt
+  * --push: 导出并推送到 GitHub (减少 token 消耗)
+
 v10.16:
 - 修复 MTF 趋势层使用 SMA_200 (配置: trend_layer.sma_period=200)
 - 之前错误使用 SMA_50，导致诊断结果与实盘不一致
@@ -157,6 +168,8 @@ v5.0:
     cd /home/linuxuser/nautilus_AItrader
     python3 scripts/diagnose_realtime.py              # 完整诊断 (自动切换 venv)
     python3 scripts/diagnose_realtime.py --summary    # 快速诊断（仅显示关键结果）
+    python3 scripts/diagnose_realtime.py --export     # 导出到 logs/diagnosis_*.txt
+    python3 scripts/diagnose_realtime.py --push       # 导出并推送到 GitHub
 """
 
 import os
@@ -193,13 +206,43 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.9')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.17')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
+parser.add_argument('--export', action='store_true',
+                   help='导出诊断结果到文件 (logs/diagnosis_YYYYMMDD_HHMMSS.txt)')
+parser.add_argument('--push', action='store_true',
+                   help='导出并推送到 GitHub (需要配合 --export)')
 args = parser.parse_args()
 
 # 全局标志
 SUMMARY_MODE = args.summary
+EXPORT_MODE = args.export or args.push
+PUSH_TO_GITHUB = args.push
+
+# ============================================================
+# 输出捕获 (用于导出到文件)
+# ============================================================
+import io
+
+class TeeOutput:
+    """同时输出到终端和缓冲区"""
+    def __init__(self, stream, buffer):
+        self.stream = stream
+        self.buffer = buffer
+
+    def write(self, data):
+        self.stream.write(data)
+        self.buffer.write(data)
+
+    def flush(self):
+        self.stream.flush()
+
+# 初始化输出捕获
+output_buffer = io.StringIO()
+if EXPORT_MODE:
+    original_stdout = sys.stdout
+    sys.stdout = TeeOutput(original_stdout, output_buffer)
 
 # 分析阈值常量 (避免魔法数字)
 BB_OVERBOUGHT_THRESHOLD = 80  # 布林带上轨接近阈值
@@ -928,6 +971,29 @@ except (KeyboardInterrupt, SystemExit):
     print("\n  用户中断")
     raise
 
+# ========== 新增: 账户资金详情 (使用实盘组件 BinanceAccountFetcher) ==========
+print()
+print("  📊 账户资金详情:")
+try:
+    # 使用 account_fetcher (已在上面初始化)
+    balance_data = account_fetcher.get_balance()
+    total_balance = balance_data.get('total_balance', 0)
+    available_balance = balance_data.get('available_balance', 0)
+    margin_balance = balance_data.get('margin_balance', 0)
+    account_unrealized_pnl = balance_data.get('unrealized_pnl', 0)
+
+    # 计算已用保证金和保证金率
+    used_margin = total_balance - available_balance
+    margin_ratio = (available_balance / total_balance * 100) if total_balance > 0 else 0
+
+    print(f"     总余额:       ${total_balance:,.2f}")
+    print(f"     可用余额:     ${available_balance:,.2f}")
+    print(f"     已用保证金:   ${used_margin:,.2f}")
+    print(f"     保证金率:     {margin_ratio:.1f}%")
+    print(f"     总未实现PnL:  ${account_unrealized_pnl:,.2f}")
+except Exception as e:
+    print(f"     ⚠️ 无法获取账户余额: {e}")
+
 print()
 
 # =============================================================================
@@ -1232,6 +1298,55 @@ try:
         print(f"     Winning Side: {winning_side}")
         print(f"     📊 Bullish Count: {bullish_count}/5")
         print(f"     📊 Bearish Count: {bearish_count}/5")
+
+        # ========== 新增: 显示 5 个确认项明细 (与 multi_agent_analyzer.py:483-495 一致) ==========
+        print()
+        print("     📋 确认项明细 (Judge 计数依据):")
+        print()
+        # 获取当前技术数据用于显示
+        _price = technical_data.get('price', current_price)
+        _sma20 = technical_data.get('sma_20', 0)
+        _sma50 = technical_data.get('sma_50', 0)
+        _rsi = technical_data.get('rsi', 50)
+        _macd = technical_data.get('macd', 0)
+        _macd_signal = technical_data.get('macd_signal', 0)
+        _macd_hist = technical_data.get('macd_histogram', 0)
+        _bb_upper = technical_data.get('bb_upper', 0)
+        _bb_lower = technical_data.get('bb_lower', 0)
+        _support = technical_data.get('support', 0)
+        _resistance = technical_data.get('resistance', 0)
+
+        # Bullish 确认项 (5 项)
+        print("     🟢 Bullish 确认项:")
+        bull_1 = _price > _sma20 or _price > _sma50
+        bull_2 = _rsi < 60
+        bull_3 = _macd > _macd_signal or _macd_hist > 0
+        bull_4 = abs(_price - _support) < abs(_price - _resistance) or abs(_price - _bb_lower) < abs(_price - _bb_upper)
+        bull_5 = technical_data.get('volume_ratio', 1) > 1.0
+        print(f"        {'✅' if bull_1 else '❌'} 1. 价格在 SMA20/50 上方: price=${_price:,.0f}, SMA20=${_sma20:,.0f}, SMA50=${_sma50:,.0f}")
+        print(f"        {'✅' if bull_2 else '❌'} 2. RSI < 60 (未超买): RSI={_rsi:.1f}")
+        print(f"        {'✅' if bull_3 else '❌'} 3. MACD 金叉或柱状图>0: MACD={_macd:.2f}, Signal={_macd_signal:.2f}, Hist={_macd_hist:.2f}")
+        print(f"        {'✅' if bull_4 else '❌'} 4. 价格近支撑/BB下轨: Support=${_support:,.0f}, BBLower=${_bb_lower:,.0f}")
+        print(f"        {'✅' if bull_5 else '❌'} 5. 成交量放大: VolumeRatio={technical_data.get('volume_ratio', 'N/A')}")
+        local_bull_count = sum([bull_1, bull_2, bull_3, bull_4, bull_5])
+        print(f"        → 本地计算: {local_bull_count}/5 (AI 计数: {bullish_count}/5)")
+
+        print()
+        # Bearish 确认项 (5 项)
+        print("     🔴 Bearish 确认项:")
+        bear_1 = _price < _sma20 or _price < _sma50
+        bear_2 = _rsi > 40
+        bear_3 = _macd < _macd_signal or _macd_hist < 0
+        bear_4 = abs(_price - _resistance) < abs(_price - _support) or abs(_price - _bb_upper) < abs(_price - _bb_lower)
+        bear_5 = technical_data.get('volume_ratio', 1) < 1.0
+        print(f"        {'✅' if bear_1 else '❌'} 1. 价格在 SMA20/50 下方: price=${_price:,.0f}, SMA20=${_sma20:,.0f}, SMA50=${_sma50:,.0f}")
+        print(f"        {'✅' if bear_2 else '❌'} 2. RSI > 40 (显示弱势): RSI={_rsi:.1f}")
+        print(f"        {'✅' if bear_3 else '❌'} 3. MACD 死叉或柱状图<0: MACD={_macd:.2f}, Signal={_macd_signal:.2f}, Hist={_macd_hist:.2f}")
+        print(f"        {'✅' if bear_4 else '❌'} 4. 价格近阻力/BB上轨: Resistance=${_resistance:,.0f}, BBUpper=${_bb_upper:,.0f}")
+        print(f"        {'✅' if bear_5 else '❌'} 5. 成交量萎缩: VolumeRatio={technical_data.get('volume_ratio', 'N/A')}")
+        local_bear_count = sum([bear_1, bear_2, bear_3, bear_4, bear_5])
+        print(f"        → 本地计算: {local_bear_count}/5 (AI 计数: {bearish_count}/5)")
+        print()
 
         key_reasons = judge_decision.get('key_reasons', [])
         if key_reasons:
@@ -3101,4 +3216,70 @@ else:
 
     print()
     print("  📖 详细分析: 运行 python3 diagnose_realtime.py (不加 --summary)")
+    print()
+
+# =============================================================================
+# 导出诊断结果到文件并可选推送到 GitHub
+# =============================================================================
+if EXPORT_MODE:
+    # 恢复原始 stdout
+    sys.stdout = original_stdout
+
+    # 创建 logs 目录
+    project_dir = Path(__file__).parent.parent.absolute()
+    logs_dir = project_dir / "logs"
+    logs_dir.mkdir(exist_ok=True)
+
+    # 生成文件名
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"diagnosis_{timestamp}.txt"
+    filepath = logs_dir / filename
+
+    # 写入文件
+    output_content = output_buffer.getvalue()
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(output_content)
+
+    print()
+    print("=" * 70)
+    print("  📤 诊断结果导出")
+    print("=" * 70)
+    print(f"  ✅ 已保存到: {filepath}")
+    print(f"  📊 文件大小: {len(output_content):,} 字符")
+
+    if PUSH_TO_GITHUB:
+        import subprocess
+        try:
+            # 切换到项目目录
+            os.chdir(project_dir)
+
+            # Git 操作
+            subprocess.run(['git', 'add', str(filepath)], check=True, capture_output=True)
+            commit_msg = f"chore: Add diagnosis report {filename}"
+            subprocess.run(['git', 'commit', '-m', commit_msg], check=True, capture_output=True)
+
+            # 获取当前分支
+            result = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                                  capture_output=True, text=True, check=True)
+            branch = result.stdout.strip()
+
+            # 推送到远程
+            subprocess.run(['git', 'push', '-u', 'origin', branch], check=True, capture_output=True)
+
+            print(f"  ✅ 已推送到 GitHub (分支: {branch})")
+            print(f"  📎 文件路径: logs/{filename}")
+            print()
+            print("  💡 在 GitHub 上查看:")
+            print(f"     https://github.com/FelixWayne0318/AItrader/blob/{branch}/logs/{filename}")
+
+        except subprocess.CalledProcessError as e:
+            print(f"  ⚠️ Git 推送失败: {e}")
+            print(f"     请手动提交: git add {filepath} && git commit -m '{commit_msg}' && git push")
+        except Exception as e:
+            print(f"  ⚠️ 导出错误: {e}")
+    else:
+        print()
+        print("  💡 要推送到 GitHub，运行:")
+        print(f"     python3 scripts/diagnose_realtime.py --push")
+
     print()
