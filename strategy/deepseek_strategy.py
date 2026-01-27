@@ -1256,6 +1256,10 @@ class DeepSeekAIStrategy(Strategy):
         # v2.1: Increment timer counter for heartbeat tracking
         self._timer_count = getattr(self, '_timer_count', 0) + 1
 
+        # v2.1: 发送心跳 - 移到 on_timer 开始位置，确保每次都发送
+        # 即使后续分析失败，用户也能知道服务器在运行
+        self._send_heartbeat_notification()
+
         # Check if indicators are ready
         if not self.indicator_manager.is_initialized():
             self.log.warning("Indicators not yet initialized, skipping analysis")
@@ -1611,36 +1615,68 @@ class DeepSeekAIStrategy(Strategy):
         if self.enable_trailing_stop:
             self._update_trailing_stops(price_data['price'])
 
-        # v2.1: Send heartbeat notification (every on_timer run)
-        if self.telegram_bot and self.enable_telegram and getattr(self, 'telegram_notify_heartbeat', False):
-            try:
-                # Calculate position P&L for heartbeat
-                position_pnl_pct = 0.0
-                position_side = None
-                has_position = current_position is not None and current_position.get('size', 0) != 0
-                if has_position:
-                    position_side = current_position.get('side', 'LONG')
-                    entry_price = current_position.get('entry_price', price_data['price'])
-                    if entry_price > 0:
-                        if position_side == 'LONG':
-                            position_pnl_pct = ((price_data['price'] - entry_price) / entry_price) * 100
-                        else:  # SHORT
-                            position_pnl_pct = ((entry_price - price_data['price']) / entry_price) * 100
+    def _send_heartbeat_notification(self):
+        """
+        v2.1: 发送心跳通知 - 在 on_timer 开始时调用
 
-                heartbeat_msg = self.telegram_bot.format_heartbeat_message({
-                    'signal': signal_data.get('signal', 'N/A'),
-                    'confidence': signal_data.get('confidence', 'N/A'),
-                    'price': price_data['price'],
-                    'rsi': technical_data.get('rsi', 0),
-                    'has_position': has_position,
-                    'position_side': position_side,
-                    'position_pnl_pct': position_pnl_pct,
-                    'timer_count': getattr(self, '_timer_count', 0),
-                })
-                self.telegram_bot.send_message_sync(heartbeat_msg)
-                self.log.debug(f"Sent heartbeat #{self._timer_count}")
-            except Exception as e:
-                self.log.warning(f"Failed to send Telegram heartbeat: {e}")
+        即使后续分析失败，用户也能知道服务器在运行。
+        使用缓存的价格和持仓数据，不依赖当前分析结果。
+        """
+        if not (self.telegram_bot and self.enable_telegram and getattr(self, 'telegram_notify_heartbeat', False)):
+            return
+
+        try:
+            # 获取缓存的价格 (线程安全)
+            cached_price = getattr(self, '_cached_current_price', None)
+            if cached_price is None and self.indicator_manager.recent_bars:
+                cached_price = float(self.indicator_manager.recent_bars[-1].close)
+
+            # 获取 RSI (如果可用)
+            rsi = 0
+            try:
+                if self.indicator_manager.is_initialized():
+                    tech_data = self.indicator_manager.get_technical_data(cached_price or 0)
+                    rsi = tech_data.get('rsi', 0)
+            except Exception:
+                pass
+
+            # 获取当前持仓信息
+            position_pnl_pct = 0.0
+            position_side = None
+            has_position = False
+            try:
+                pos_data = self._get_current_position_data(current_price=cached_price, from_telegram=True)
+                if pos_data and pos_data.get('size', 0) != 0:
+                    has_position = True
+                    position_side = pos_data.get('side', 'LONG')
+                    entry_price = pos_data.get('entry_price', 0)
+                    if entry_price > 0 and cached_price:
+                        if position_side == 'LONG':
+                            position_pnl_pct = ((cached_price - entry_price) / entry_price) * 100
+                        else:
+                            position_pnl_pct = ((entry_price - cached_price) / entry_price) * 100
+            except Exception:
+                pass
+
+            # 获取上次信号 (如果有)
+            last_signal = getattr(self, 'last_signal', {})
+            signal = last_signal.get('signal', 'PENDING') if last_signal else 'PENDING'
+            confidence = last_signal.get('confidence', 'N/A') if last_signal else 'N/A'
+
+            heartbeat_msg = self.telegram_bot.format_heartbeat_message({
+                'signal': signal,
+                'confidence': confidence,
+                'price': cached_price or 0,
+                'rsi': rsi,
+                'has_position': has_position,
+                'position_side': position_side,
+                'position_pnl_pct': position_pnl_pct,
+                'timer_count': getattr(self, '_timer_count', 0),
+            })
+            self.telegram_bot.send_message_sync(heartbeat_msg)
+            self.log.info(f"💓 Sent heartbeat #{self._timer_count}")
+        except Exception as e:
+            self.log.warning(f"Failed to send Telegram heartbeat: {e}")
 
     def _calculate_price_change(self) -> float:
         """Calculate price change percentage."""
