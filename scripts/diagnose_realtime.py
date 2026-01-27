@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.13 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.14 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -24,6 +24,7 @@
 19. v10.11: 修复 Liquidations 单位问题 (BTC → USD 转换)
 20. v10.12: 修复情绪/持仓数据字段名不匹配问题
 21. v10.13: 修复未实现PnL显示0的问题 (自动计算)
+22. v10.14: 修复 AI 收到价格 $0.00 的问题 (添加 price 到 technical_data)
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -39,6 +40,12 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.14:
+- 修复 AI 收到价格 $0.00 的问题
+- technical_data (from indicator_manager.get_technical_data()) 不包含 'price' 键
+- multi_agent_analyzer._format_technical_report 需要 'price' 键来显示当前价格
+- 同时修复了 deepseek_strategy.py 中的同一问题
+
 v10.13:
 - 修复未实现PnL显示$0.00的问题
 - 当 Binance API 返回 0 但有入场价和当前价时，自动计算 PnL
@@ -915,6 +922,9 @@ print("[4/10] 获取技术数据 (模拟 on_timer 流程)...")
 
 try:
     technical_data = indicator_manager.get_technical_data(current_price)
+
+    # 重要: 添加 'price' 键到 technical_data (multi_agent_analyzer._format_technical_report 需要)
+    technical_data['price'] = current_price
 
     # 显示关键指标
     sma_keys = [k for k in technical_data.keys() if k.startswith('sma_')]

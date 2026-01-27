@@ -1382,6 +1382,8 @@ class DeepSeekAIStrategy(Strategy):
             # 准备 AI 分析数据：优先使用 4H 决策层数据
             # 根据 MTF 设计文档 Section 1.5.4，Bull/Bear 辩论应使用 4H 数据
             ai_technical_data = technical_data.copy()  # 15M 作为基础
+            # 重要: 添加 price 到 technical_data (multi_agent_analyzer._format_technical_report 需要)
+            ai_technical_data['price'] = current_price
             if decision_layer_data and decision_layer_data.get('_initialized', True):
                 # 添加 4H 数据作为决策层信息
                 ai_technical_data['mtf_decision_layer'] = {
