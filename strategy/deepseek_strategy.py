@@ -308,7 +308,7 @@ class DeepSeekAIStrategy(Strategy):
 
         if self.mtf_enabled:
             try:
-                from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState
+                from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState, DecisionState
 
                 # Build BarType objects for each layer
                 instrument_str = str(self.instrument_id)
@@ -343,8 +343,9 @@ class DeepSeekAIStrategy(Strategy):
                     execution_bar_type=self.execution_bar_type,
                     logger=self.log,
                 )
-                # Store RiskState enum for use in on_timer
+                # Store enums for use in on_timer (avoid import in hot path)
                 self._RiskState = RiskState
+                self._DecisionState = DecisionState
                 self.log.info(f"✅ MTF Manager initialized: trend={self.trend_bar_type}, decision={self.decision_bar_type}, exec={self.execution_bar_type}")
             except Exception as e:
                 self.log.error(f"❌ Failed to initialize MTF Manager: {e}")
@@ -1107,13 +1108,31 @@ class DeepSeekAIStrategy(Strategy):
 
         current_price = float(current_bar.close)
 
-        # Get technical data
+        # Get technical data (15M - execution layer)
         try:
             technical_data = self.indicator_manager.get_technical_data(current_price)
-            self.log.debug(f"Technical data retrieved: {len(technical_data)} indicators")
+            self.log.debug(f"Technical data (15M) retrieved: {len(technical_data)} indicators")
         except Exception as e:
             self.log.error(f"Failed to get technical data: {e}")
             return
+
+        # Get 4H decision layer technical data for AI debate (MTF Phase 2)
+        decision_layer_data = None
+        if self.mtf_enabled and self.mtf_manager:
+            try:
+                decision_layer_data = self.mtf_manager.get_technical_data_for_layer("decision", current_price)
+                if decision_layer_data.get('_initialized', True):
+                    self.log.info(
+                        f"[MTF] 决策层 (4H) 数据: RSI={decision_layer_data.get('rsi', 0):.1f}, "
+                        f"MACD={decision_layer_data.get('macd', 0):.2f}, "
+                        f"SMA_20={decision_layer_data.get('sma_20', 0):.2f}"
+                    )
+                else:
+                    self.log.warning("[MTF] 决策层 (4H) 未完全初始化，使用 15M 数据")
+                    decision_layer_data = None
+            except Exception as e:
+                self.log.warning(f"[MTF] 获取决策层数据失败: {e}")
+                decision_layer_data = None
 
         # Get K-line data
         kline_data = self.indicator_manager.get_kline_data(count=10)
@@ -1193,17 +1212,49 @@ class DeepSeekAIStrategy(Strategy):
         # 流程: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
         try:
             self.log.info("🎭 Starting Multi-Agent Hierarchical Analysis...")
-            self.log.info("   Phase 1: Bull/Bear Debate")
+            self.log.info("   Phase 1: Bull/Bear Debate (using 4H decision layer data)")
             self.log.info("   Phase 2: Judge (Portfolio Manager) Decision")
             self.log.info("   Phase 3: Risk Evaluation")
 
+            # 准备 AI 分析数据：优先使用 4H 决策层数据
+            # 根据 MTF 设计文档 Section 1.5.4，Bull/Bear 辩论应使用 4H 数据
+            ai_technical_data = technical_data.copy()  # 15M 作为基础
+            if decision_layer_data and decision_layer_data.get('_initialized', True):
+                # 添加 4H 数据作为决策层信息
+                ai_technical_data['mtf_decision_layer'] = {
+                    'timeframe': '4H',
+                    'rsi': decision_layer_data.get('rsi', 50),
+                    'macd': decision_layer_data.get('macd', 0),
+                    'macd_signal': decision_layer_data.get('macd_signal', 0),
+                    'sma_20': decision_layer_data.get('sma_20', 0),
+                    'sma_50': decision_layer_data.get('sma_50', 0),
+                    'bb_upper': decision_layer_data.get('bb_upper', 0),
+                    'bb_middle': decision_layer_data.get('bb_middle', 0),
+                    'bb_lower': decision_layer_data.get('bb_lower', 0),
+                    'overall_trend': decision_layer_data.get('overall_trend', 'NEUTRAL'),
+                }
+                self.log.info(f"[MTF] AI 分析使用 4H 决策层数据: RSI={ai_technical_data['mtf_decision_layer']['rsi']:.1f}")
+
             signal_data = self.multi_agent.analyze(
                 symbol="BTCUSDT",
-                technical_report=technical_data,
+                technical_report=ai_technical_data,
                 sentiment_report=sentiment_data,
                 current_position=current_position,
                 price_data=price_data,
             )
+
+            # ========== MTF 决策层状态更新 ==========
+            # AI 决策后更新决策层状态 (ALLOW_LONG / ALLOW_SHORT / WAIT)
+            if self.mtf_enabled and self.mtf_manager:
+                ai_signal = signal_data.get('signal', 'HOLD')
+                ai_confidence = signal_data.get('confidence', 'MEDIUM')
+
+                if ai_signal == 'BUY':
+                    self.mtf_manager.set_decision_state(self._DecisionState.ALLOW_LONG, ai_confidence)
+                elif ai_signal == 'SELL':
+                    self.mtf_manager.set_decision_state(self._DecisionState.ALLOW_SHORT, ai_confidence)
+                else:
+                    self.mtf_manager.set_decision_state(self._DecisionState.WAIT, ai_confidence)
 
             # ========== MTF 优先级规则 (Phase 2: 信号过滤) ==========
             original_signal = signal_data['signal']
@@ -1227,7 +1278,36 @@ class DeepSeekAIStrategy(Strategy):
                         signal_data['signal'] = 'HOLD'
                         signal_data['reason'] = f"[MTF RISK_OFF] {signal_data.get('reason', '')}"
 
-                # 规则 2: 执行层 RSI 确认 (仅在 RISK_ON 且有交易信号时)
+                # 规则 2: 决策层方向匹配检查 (确保信号与决策层状态一致)
+                if signal_data['signal'] in ['BUY', 'SELL']:
+                    try:
+                        decision_state = self.mtf_manager.get_decision_state()
+                        self.log.info(f"[MTF] 决策层 (4H) 状态: {decision_state.value}")
+
+                        direction_mismatch = False
+                        if signal_data['signal'] == 'BUY' and decision_state == self._DecisionState.ALLOW_SHORT:
+                            direction_mismatch = True
+                            self.log.warning(
+                                f"[MTF] 🚫 方向冲突: BUY 信号但决策层为 ALLOW_SHORT → HOLD"
+                            )
+                        elif signal_data['signal'] == 'SELL' and decision_state == self._DecisionState.ALLOW_LONG:
+                            direction_mismatch = True
+                            self.log.warning(
+                                f"[MTF] 🚫 方向冲突: SELL 信号但决策层为 ALLOW_LONG → HOLD"
+                            )
+                        elif decision_state == self._DecisionState.WAIT:
+                            direction_mismatch = True
+                            self.log.warning(
+                                f"[MTF] 🚫 决策层为 WAIT 状态，暂不交易 → HOLD"
+                            )
+
+                        if direction_mismatch:
+                            signal_data['signal'] = 'HOLD'
+                            signal_data['reason'] = f"[MTF 方向检查] {signal_data.get('reason', '')}"
+                    except Exception as e:
+                        self.log.warning(f"[MTF] 决策层方向检查失败: {e}")
+
+                # 规则 3: 执行层 RSI 确认 (仅在 RISK_ON 且有交易信号时)
                 if signal_data['signal'] in ['BUY', 'SELL']:
                     try:
                         exec_result = self.mtf_manager.check_execution_confirmation(current_price)
