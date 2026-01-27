@@ -163,14 +163,15 @@ class CoinalyzeClient:
             {
                 "symbol": "...",
                 "history": [
-                    {"t": 1769418000, "l": 123456.78, "s": 98765.43}
+                    {"t": 1769418000, "l": 0.002, "s": 0.028}
                 ]
             }
 
         注意:
         - t 是秒时间戳 (10位)
-        - l = long liquidations (USD)
-        - s = short liquidations (USD)
+        - l = long liquidations (BTC 单位，需乘以价格转换为 USD)
+        - s = short liquidations (BTC 单位，需乘以价格转换为 USD)
+        - 例: l=0.002, 当前价格=$88000 → Long Liq = $176
         """
         if not self._enabled:
             return None
