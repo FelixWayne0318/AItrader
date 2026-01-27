@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.12 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.13 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -23,6 +23,7 @@
 18. v10.10: 添加 Liquidations 调试输出 (原始响应、history 类型和长度)
 19. v10.11: 修复 Liquidations 单位问题 (BTC → USD 转换)
 20. v10.12: 修复情绪/持仓数据字段名不匹配问题
+21. v10.13: 修复未实现PnL显示0的问题 (自动计算)
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -38,6 +39,11 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.13:
+- 修复未实现PnL显示$0.00的问题
+- 当 Binance API 返回 0 但有入场价和当前价时，自动计算 PnL
+- 计算公式: (当前价 - 入场价) * 持仓量
+
 v10.12:
 - 修复情绪数据字段名不匹配: positive_ratio → long_account_pct
 - 修复持仓数据字段名不匹配: avg_px → entry_price, 添加 pnl_pct
@@ -864,6 +870,12 @@ try:
 
         if pos_amt != 0:
             side = 'long' if pos_amt > 0 else 'short'
+            # 修复: 如果 API 返回 0 但有入场价和当前价，自己计算 PnL
+            if unrealized_pnl == 0 and entry_price > 0 and current_price > 0:
+                if side == 'long':
+                    unrealized_pnl = (current_price - entry_price) * abs(pos_amt)
+                else:
+                    unrealized_pnl = (entry_price - current_price) * abs(pos_amt)
             # 计算盈亏百分比
             pnl_pct = 0.0
             if entry_price > 0:
