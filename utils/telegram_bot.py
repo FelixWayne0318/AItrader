@@ -401,7 +401,66 @@ class TelegramBot:
 
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
 """
-    
+
+    def format_heartbeat_message(self, heartbeat_data: Dict[str, Any]) -> str:
+        """
+        Format heartbeat status message for periodic monitoring (v2.1).
+
+        Sent every on_timer run to confirm server is alive.
+
+        Parameters
+        ----------
+        heartbeat_data : dict
+            Heartbeat information containing:
+            - signal: str (BUY/SELL/HOLD)
+            - confidence: str (HIGH/MEDIUM/LOW)
+            - price: float
+            - rsi: float
+            - has_position: bool
+            - position_side: str (LONG/SHORT/None)
+            - position_pnl_pct: float
+            - timer_count: int (number of runs since startup)
+        """
+        signal = heartbeat_data.get('signal', 'N/A')
+        confidence = heartbeat_data.get('confidence', 'N/A')
+        price = heartbeat_data.get('price', 0)
+        rsi = heartbeat_data.get('rsi', 0)
+        has_position = heartbeat_data.get('has_position', False)
+        timer_count = heartbeat_data.get('timer_count', 0)
+
+        # Signal emoji
+        signal_emoji = {
+            'BUY': '🟢 BUY',
+            'SELL': '🔴 SELL',
+            'HOLD': '⚪ HOLD'
+        }.get(signal, f'❓ {signal}')
+
+        # Confidence emoji
+        conf_emoji = {
+            'HIGH': '🔥',
+            'MEDIUM': '✨',
+            'LOW': '💤'
+        }.get(confidence, '')
+
+        msg = f"💓 *Heartbeat #{timer_count}*\n\n"
+        msg += f"*Signal*: {signal_emoji} {conf_emoji}\n"
+        msg += f"*Price*: ${price:,.2f}\n"
+        msg += f"*RSI*: {rsi:.1f}\n\n"
+
+        if has_position:
+            side = heartbeat_data.get('position_side', 'N/A')
+            pnl_pct = heartbeat_data.get('position_pnl_pct', 0)
+            pnl_emoji = "📈" if pnl_pct > 0 else "📉" if pnl_pct < 0 else "➖"
+            side_emoji = "🟢" if side == "LONG" else "🔴" if side == "SHORT" else "❓"
+            msg += f"*Position*: {side_emoji} {side}\n"
+            msg += f"*P&L*: {pnl_emoji} {pnl_pct:+.2f}%\n"
+        else:
+            msg += "*Position*: ⚪ None\n"
+
+        msg += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
+
+        return msg
+
     async def test_connection(self) -> bool:
         """
         Test Telegram bot connection.

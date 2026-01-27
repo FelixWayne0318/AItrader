@@ -145,6 +145,7 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     telegram_notify_fills: bool = True
     telegram_notify_positions: bool = True
     telegram_notify_errors: bool = True
+    telegram_notify_heartbeat: bool = True  # v2.1: 每次 on_timer 发送心跳状态
 
     # Execution
     position_adjustment_threshold: float = 0.001
@@ -403,7 +404,8 @@ class DeepSeekAIStrategy(Strategy):
                     self.telegram_notify_fills = config.telegram_notify_fills
                     self.telegram_notify_positions = config.telegram_notify_positions
                     self.telegram_notify_errors = config.telegram_notify_errors
-                    
+                    self.telegram_notify_heartbeat = config.telegram_notify_heartbeat  # v2.1
+
                     self.log.info("✅ Telegram Bot initialized successfully")
                     
                     # Initialize command handler for remote control
@@ -656,6 +658,9 @@ class DeepSeekAIStrategy(Strategy):
         # Record start time for uptime tracking
         from datetime import datetime
         self.strategy_start_time = datetime.utcnow()
+
+        # v2.1: Timer counter for heartbeat tracking
+        self._timer_count = 0
 
         # Send Telegram startup notification
         if self.telegram_bot and self.enable_telegram:
@@ -1248,6 +1253,9 @@ class DeepSeekAIStrategy(Strategy):
         self.log.info("=" * 60)
         self.log.info("Running periodic analysis...")
 
+        # v2.1: Increment timer counter for heartbeat tracking
+        self._timer_count = getattr(self, '_timer_count', 0) + 1
+
         # Check if indicators are ready
         if not self.indicator_manager.is_initialized():
             self.log.warning("Indicators not yet initialized, skipping analysis")
@@ -1602,6 +1610,37 @@ class DeepSeekAIStrategy(Strategy):
         # Trailing stop maintenance: check and update trailing stops
         if self.enable_trailing_stop:
             self._update_trailing_stops(price_data['price'])
+
+        # v2.1: Send heartbeat notification (every on_timer run)
+        if self.telegram_bot and self.enable_telegram and getattr(self, 'telegram_notify_heartbeat', False):
+            try:
+                # Calculate position P&L for heartbeat
+                position_pnl_pct = 0.0
+                position_side = None
+                has_position = current_position is not None and current_position.get('size', 0) != 0
+                if has_position:
+                    position_side = current_position.get('side', 'LONG')
+                    entry_price = current_position.get('entry_price', price_data['price'])
+                    if entry_price > 0:
+                        if position_side == 'LONG':
+                            position_pnl_pct = ((price_data['price'] - entry_price) / entry_price) * 100
+                        else:  # SHORT
+                            position_pnl_pct = ((entry_price - price_data['price']) / entry_price) * 100
+
+                heartbeat_msg = self.telegram_bot.format_heartbeat_message({
+                    'signal': signal_data.get('signal', 'N/A'),
+                    'confidence': signal_data.get('confidence', 'N/A'),
+                    'price': price_data['price'],
+                    'rsi': technical_data.get('rsi', 0),
+                    'has_position': has_position,
+                    'position_side': position_side,
+                    'position_pnl_pct': position_pnl_pct,
+                    'timer_count': getattr(self, '_timer_count', 0),
+                })
+                self.telegram_bot.send_message_sync(heartbeat_msg)
+                self.log.debug(f"Sent heartbeat #{self._timer_count}")
+            except Exception as e:
+                self.log.warning(f"Failed to send Telegram heartbeat: {e}")
 
     def _calculate_price_change(self) -> float:
         """Calculate price change percentage."""

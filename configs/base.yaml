@@ -214,6 +214,7 @@ telegram:
     fills: true
     positions: true
     errors: true
+    heartbeat: true           # v2.1: 每次 on_timer 运行发送心跳状态 (测试阶段推荐开启)
 
 # =============================================================================
 # 执行配置
