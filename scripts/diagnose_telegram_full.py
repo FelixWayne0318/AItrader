@@ -183,7 +183,7 @@ def main():
         from utils.telegram_bot import TelegramBot
 
         telegram_bot = TelegramBot(
-            bot_token=bot_token,
+            token=bot_token,
             chat_id=chat_id
         )
         print_result("TelegramBot 初始化", True)
