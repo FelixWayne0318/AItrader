@@ -1477,126 +1477,59 @@ class DeepSeekAIStrategy(Strategy):
                     derivatives_report=derivatives_data,
                 )
 
-                # NOTE: 决策层状态 (ALLOW_LONG/SHORT/WAIT) 在 4H bar 收盘时更新
-                # (见 _evaluate_decision_layer_on_bar_close 方法)
-                # 这里不再更新，保持 4H 方向的稳定性
-
-                # ========== MTF 优先级规则 (Phase 2: 信号过滤) ==========
+                # ========== 执行层硬风控 (仅支撑/阻力位检测) ==========
+                # 设计理念: AI 负责所有交易决策，本地仅做必要的风控边界检查
+                # 参考: TradingAgents 框架 - "autonomy is non-negotiable"
                 original_signal = signal_data['signal']
 
-                if self.mtf_enabled and self.mtf_manager:
-                    # 规则 1: 方向性权限检查 (替代 RISK_OFF 二元开关)
-                    # 🔒 Fix E21: 这是硬风控边界，作为 24/7 自动化系统的必需保护
-                    # 与 TradingAgents 研究框架略有不同 (TradingAgents 假设有人工监督)
-                    try:
-                        permissions = self.mtf_manager.evaluate_directional_permissions(current_price)
+                if signal_data['signal'] in ['BUY', 'SELL']:
+                    # 获取支撑/阻力位
+                    support = technical_data.get('support', 0)
+                    resistance = technical_data.get('resistance', float('inf'))
+                    proximity_threshold = 0.01  # 1% 距离阈值
 
-                        # 记录方向性权限
-                        self.log.info(
-                            f"[MTF] 方向性权限: {permissions['regime']} | "
-                            f"allow_long={permissions['allow_long']}, "
-                            f"allow_short={permissions['allow_short']} | "
-                            f"乘数={permissions['position_multiplier']:.1f}"
-                        )
+                    # 检查是否是开新仓
+                    is_opening_new = (
+                        current_position is None or
+                        current_position.get('side') == 'FLAT' or
+                        (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
+                        (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
+                    )
 
-                        # 检查是否是开新仓
-                        is_opening_new = (
-                            current_position is None or
-                            current_position.get('side') == 'FLAT' or
-                            (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
-                            (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
-                        )
+                    # 仅在开新仓时检查支撑/阻力位
+                    if is_opening_new:
+                        # 计算距离支撑/阻力位的百分比
+                        distance_to_support = (current_price - support) / current_price if support > 0 else float('inf')
+                        distance_to_resistance = (resistance - current_price) / current_price if resistance < float('inf') else float('inf')
 
-                        # 仅在开新仓时检查方向性权限
-                        if is_opening_new and signal_data['signal'] in ['BUY', 'SELL']:
-                            if signal_data['signal'] == 'BUY' and not permissions['allow_long']:
-                                self.log.warning(
-                                    f"[MTF] 🚫 方向性过滤: BUY → HOLD "
-                                    f"({permissions['reason']})"
-                                )
-                                signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF 禁止做多] {signal_data.get('reason', '')}"
-                            elif signal_data['signal'] == 'SELL' and not permissions['allow_short']:
-                                self.log.warning(
-                                    f"[MTF] 🚫 方向性过滤: SELL → HOLD "
-                                    f"({permissions['reason']})"
-                                )
-                                signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF 禁止做空] {signal_data.get('reason', '')}"
-                            else:
-                                # 权限允许，应用仓位乘数
-                                if 'position_multiplier' in signal_data:
-                                    signal_data['position_multiplier'] *= permissions['position_multiplier']
-                                    self.log.info(
-                                        f"[MTF] 应用 {permissions['regime']} 仓位乘数: "
-                                        f"{permissions['position_multiplier']:.1f}"
-                                    )
-                    except Exception as e:
-                        self.log.warning(f"[MTF] 方向性权限检查失败: {e}")
-                        # 失败时保守处理：阻止所有新仓位开立 (Fix E1: 移除未定义变量)
-                        if signal_data['signal'] in ['BUY', 'SELL']:
-                            is_opening_new = (
-                                current_position is None or
-                                current_position.get('side') == 'FLAT' or
-                                (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
-                                (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
+                        # 规则: 离支撑位太近 (1% 内) 不做空
+                        if signal_data['signal'] == 'SELL' and distance_to_support < proximity_threshold:
+                            self.log.warning(
+                                f"[执行层] 🚫 支撑位保护: SELL → HOLD "
+                                f"(价格 ${current_price:,.2f} 距支撑 ${support:,.2f} 仅 {distance_to_support*100:.2f}%)"
                             )
-                            if is_opening_new:
-                                self.log.warning(
-                                    f"[MTF] 🚫 权限检查失败，保守处理: {signal_data['signal']} → HOLD"
-                                )
-                                signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF 权限检查异常] {signal_data.get('reason', '')}"
+                            signal_data['signal'] = 'HOLD'
+                            signal_data['reason'] = f"[支撑位保护] 价格距支撑位过近 ({distance_to_support*100:.2f}% < 1%)"
 
-                    # 规则 2: 决策层方向匹配检查 (确保信号与决策层状态一致)
-                    if signal_data['signal'] in ['BUY', 'SELL']:
-                        try:
-                            decision_state = self.mtf_manager.get_decision_state()
-                            self.log.info(f"[MTF] 决策层 (4H) 状态: {decision_state.value}")
+                        # 规则: 离阻力位太近 (1% 内) 不做多
+                        elif signal_data['signal'] == 'BUY' and distance_to_resistance < proximity_threshold:
+                            self.log.warning(
+                                f"[执行层] 🚫 阻力位保护: BUY → HOLD "
+                                f"(价格 ${current_price:,.2f} 距阻力 ${resistance:,.2f} 仅 {distance_to_resistance*100:.2f}%)"
+                            )
+                            signal_data['signal'] = 'HOLD'
+                            signal_data['reason'] = f"[阻力位保护] 价格距阻力位过近 ({distance_to_resistance*100:.2f}% < 1%)"
 
-                            direction_mismatch = False
-                            if signal_data['signal'] == 'BUY' and decision_state == self._DecisionState.ALLOW_SHORT:
-                                direction_mismatch = True
-                                self.log.warning(
-                                    f"[MTF] 🚫 方向冲突: BUY 信号但决策层为 ALLOW_SHORT → HOLD"
-                                )
-                            elif signal_data['signal'] == 'SELL' and decision_state == self._DecisionState.ALLOW_LONG:
-                                direction_mismatch = True
-                                self.log.warning(
-                                    f"[MTF] 🚫 方向冲突: SELL 信号但决策层为 ALLOW_LONG → HOLD"
-                                )
-                            elif decision_state == self._DecisionState.WAIT:
-                                direction_mismatch = True
-                                self.log.warning(
-                                    f"[MTF] 🚫 决策层为 WAIT 状态，暂不交易 → HOLD"
-                                )
+                        else:
+                            self.log.info(
+                                f"[执行层] ✅ 支撑/阻力检查通过 "
+                                f"(距支撑 {distance_to_support*100:.2f}%, 距阻力 {distance_to_resistance*100:.2f}%)"
+                            )
 
-                            if direction_mismatch:
-                                signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF 方向检查] {signal_data.get('reason', '')}"
-                        except Exception as e:
-                            self.log.warning(f"[MTF] 决策层方向检查失败: {e}")
-
-                    # 规则 3: 执行层 RSI 确认 (仅在 RISK_ON 且有交易信号时)
-                    if signal_data['signal'] in ['BUY', 'SELL']:
-                        try:
-                            exec_result = self.mtf_manager.check_execution_confirmation(current_price)
-                            self.log.info(f"[MTF] 执行层 (15M) RSI 确认: {exec_result['reason']}")
-
-                            if not exec_result['confirmed']:
-                                self.log.warning(
-                                    f"[MTF] ⏳ RSI 不在入场范围: {signal_data['signal']} → HOLD "
-                                    f"(RSI={exec_result.get('rsi', 0):.1f}, 范围={exec_result.get('rsi_range', [])})"
-                                )
-                                signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF RSI] {signal_data.get('reason', '')}"
-                        except Exception as e:
-                            self.log.warning(f"[MTF] 执行层确认失败: {e}")
-
-                # 记录 MTF 过滤结果
+                # 记录过滤结果
                 if original_signal != signal_data['signal']:
                     self.log.info(
-                        f"[MTF] 信号被过滤: {original_signal} → {signal_data['signal']}"
+                        f"[执行层] 信号被过滤: {original_signal} → {signal_data['signal']}"
                     )
 
                 # Log Judge's final decision
