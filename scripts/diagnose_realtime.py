@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.18 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.19 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -29,6 +29,7 @@
 24. v10.16: 修复 MTF 趋势层使用 SMA_200 (与 multi_timeframe_manager.py 一致)
 25. v10.17: 添加账户资金详情、确认项明细、GitHub 导出功能
 26. v10.18: 修复硬编码回退值，改为从配置读取 SMA 周期
+27. v10.19: 修复硬编码阈值违规 + RSI 确认逻辑错误
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -44,6 +45,15 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.19:
+- 修复硬编码阈值违规 (lines 255-260)
+  * BB_OVERBOUGHT/OVERSOLD_THRESHOLD 改为从 indicators.bb_*_threshold 读取
+  * LS_RATIO_* 阈值改为从 indicators.ls_ratio_* 读取
+- 修复 Judge RSI 确认逻辑错误 (line 1529-1532)
+  * 错误: rsi > 55 → bullish (与 multi_agent_analyzer.py 相反)
+  * 修正: rsi < 55 → bullish, rsi > 65 → bearish (与实际系统一致)
+  * 参考: agents/multi_agent_analyzer.py:485,492
+
 v10.18:
 - 修复 SMA 回退值硬编码问题 (line 1438: sma_period = 50)
 - 改为从 configs/base.yaml 读取 indicators.sma_periods 列表
@@ -251,13 +261,14 @@ if EXPORT_MODE:
     original_stdout = sys.stdout
     sys.stdout = TeeOutput(original_stdout, output_buffer)
 
-# 分析阈值常量 (避免魔法数字)
-BB_OVERBOUGHT_THRESHOLD = 80  # 布林带上轨接近阈值
-BB_OVERSOLD_THRESHOLD = 20    # 布林带下轨接近阈值
-LS_RATIO_EXTREME_BULLISH = 2.0  # 多空比极度看多阈值
-LS_RATIO_BULLISH = 1.5          # 多空比偏多阈值
-LS_RATIO_EXTREME_BEARISH = 0.5  # 多空比极度看空阈值
-LS_RATIO_BEARISH = 0.7          # 多空比偏空阈值
+# 分析阈值常量 (从配置加载后设置，禁止硬编码)
+# 这些变量将在加载 base_config 后从 configs/base.yaml 读取
+BB_OVERBOUGHT_THRESHOLD = None  # 从 indicators.bb_overbought_threshold 读取
+BB_OVERSOLD_THRESHOLD = None    # 从 indicators.bb_oversold_threshold 读取
+LS_RATIO_EXTREME_BULLISH = None  # 从 indicators.ls_ratio_extreme_bullish 读取
+LS_RATIO_BULLISH = None          # 从 indicators.ls_ratio_bullish 读取
+LS_RATIO_EXTREME_BEARISH = None  # 从 indicators.ls_ratio_extreme_bearish 读取
+LS_RATIO_BEARISH = None          # 从 indicators.ls_ratio_bearish 读取
 
 def print_wrapped(text: str, indent: str = "    ", width: int = 80) -> None:
     """打印自动换行的文本"""
@@ -520,6 +531,19 @@ try:
     if mtf_config_path.exists():
         with open(mtf_config_path, 'r', encoding='utf-8') as f:
             base_config = yaml.safe_load(f)
+
+        # 从配置加载分析阈值 (v10.19: 修复硬编码违规)
+        global BB_OVERBOUGHT_THRESHOLD, BB_OVERSOLD_THRESHOLD
+        global LS_RATIO_EXTREME_BULLISH, LS_RATIO_BULLISH
+        global LS_RATIO_EXTREME_BEARISH, LS_RATIO_BEARISH
+
+        indicators_config = base_config.get('indicators', {})
+        BB_OVERBOUGHT_THRESHOLD = indicators_config.get('bb_overbought_threshold', 80)
+        BB_OVERSOLD_THRESHOLD = indicators_config.get('bb_oversold_threshold', 20)
+        LS_RATIO_EXTREME_BULLISH = indicators_config.get('ls_ratio_extreme_bullish', 2.0)
+        LS_RATIO_BULLISH = indicators_config.get('ls_ratio_bullish', 1.5)
+        LS_RATIO_EXTREME_BEARISH = indicators_config.get('ls_ratio_extreme_bearish', 0.5)
+        LS_RATIO_BEARISH = indicators_config.get('ls_ratio_bearish', 0.7)
 
         mtf_config = base_config.get('multi_timeframe', {})
         mtf_enabled = mtf_config.get('enabled', False)
@@ -1525,10 +1549,12 @@ if mtf_enabled:
             elif macd < macd_signal_val:
                 bearish_signals += 1
 
-            # 规则 2: RSI 区间
-            if rsi > 55:
+            # 规则 2: RSI 区间 (v10.19: 修复错误逻辑，与 multi_agent_analyzer.py:485,492 一致)
+            # Bullish: RSI < 55 (未超买，有上升空间)
+            # Bearish: RSI > 65 (超买状态)
+            if rsi < 55:
                 bullish_signals += 1
-            elif rsi < 45:
+            elif rsi > 65:
                 bearish_signals += 1
 
             # 规则 3: 价格与均线关系
