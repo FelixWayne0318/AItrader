@@ -533,10 +533,7 @@ try:
             base_config = yaml.safe_load(f)
 
         # 从配置加载分析阈值 (v10.19: 修复硬编码违规)
-        global BB_OVERBOUGHT_THRESHOLD, BB_OVERSOLD_THRESHOLD
-        global LS_RATIO_EXTREME_BULLISH, LS_RATIO_BULLISH
-        global LS_RATIO_EXTREME_BEARISH, LS_RATIO_BEARISH
-
+        # 注: 不需要 global 声明,因为我们在模块级别 (不在函数内)
         indicators_config = base_config.get('indicators', {})
         BB_OVERBOUGHT_THRESHOLD = indicators_config.get('bb_overbought_threshold', 80)
         BB_OVERSOLD_THRESHOLD = indicators_config.get('bb_oversold_threshold', 20)
