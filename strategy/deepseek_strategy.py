@@ -1533,8 +1533,8 @@ class DeepSeekAIStrategy(Strategy):
                                     )
                     except Exception as e:
                         self.log.warning(f"[MTF] 方向性权限检查失败: {e}")
-                        # 失败时保守处理
-                        if not mtf_allows_new_position and signal_data['signal'] in ['BUY', 'SELL']:
+                        # 失败时保守处理：阻止所有新仓位开立 (Fix E1: 移除未定义变量)
+                        if signal_data['signal'] in ['BUY', 'SELL']:
                             is_opening_new = (
                                 current_position is None or
                                 current_position.get('side') == 'FLAT' or
@@ -1543,10 +1543,10 @@ class DeepSeekAIStrategy(Strategy):
                             )
                             if is_opening_new:
                                 self.log.warning(
-                                    f"[MTF] 🚫 RISK_OFF 过滤 (后备): {signal_data['signal']} → HOLD"
+                                    f"[MTF] 🚫 权限检查失败，保守处理: {signal_data['signal']} → HOLD"
                                 )
                                 signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF RISK_OFF] {signal_data.get('reason', '')}"
+                                signal_data['reason'] = f"[MTF 权限检查异常] {signal_data.get('reason', '')}"
 
                     # 规则 2: 决策层方向匹配检查 (确保信号与决策层状态一致)
                     if signal_data['signal'] in ['BUY', 'SELL']:
