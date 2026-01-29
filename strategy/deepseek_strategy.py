@@ -257,6 +257,9 @@ class DeepSeekAIStrategy(Strategy):
         # Thread lock for shared state (Telegram thread safety)
         self._state_lock = threading.Lock()
 
+        # Thread lock for on_timer (prevent re-entry if AI calls take > timer_interval)
+        self._timer_lock = threading.Lock()
+
         # Thread-safe cached price (updated in on_bar, read by Telegram commands)
         # IMPORTANT: Do NOT access indicator_manager from Telegram thread - it contains
         # Rust indicators (RSI, MACD) that are not Send/Sync and will cause panic
@@ -1254,390 +1257,489 @@ class DeepSeekAIStrategy(Strategy):
 
         Called every timer_interval_sec seconds (default: 15 minutes).
         """
-        self.log.info("=" * 60)
-        self.log.info("Running periodic analysis...")
-
-        # v2.1: Increment timer counter for heartbeat tracking
-        self._timer_count = getattr(self, '_timer_count', 0) + 1
-
-        # v2.1: 发送心跳 - 移到 on_timer 开始位置，确保每次都发送
-        # 即使后续分析失败，用户也能知道服务器在运行
-        self._send_heartbeat_notification()
-
-        # Check if indicators are ready
-        if not self.indicator_manager.is_initialized():
-            self.log.warning("Indicators not yet initialized, skipping analysis")
+        # 🔒 Fix I38: Prevent re-entry if previous on_timer is still running
+        # (e.g., AI calls take longer than timer_interval_sec)
+        if not self._timer_lock.acquire(blocking=False):
+            self.log.warning("⚠️ Previous on_timer still running, skipping this cycle")
             return
 
-        # ========== MTF 初始化检查 ==========
-        # 如果启用了 MTF，检查三层是否都已初始化
-        if self.mtf_enabled and self.mtf_manager:
-            if not self.mtf_manager.is_all_layers_initialized():
-                self.log.warning("[MTF] 多时间框架未完全初始化，跳过分析")
-                self.log.debug(f"[MTF] 初始化状态: trend={self._mtf_trend_initialized}, "
-                              f"decision={self._mtf_decision_initialized}, "
-                              f"execution={self._mtf_execution_initialized}")
+        try:
+            self.log.info("=" * 60)
+            self.log.info("Running periodic analysis...")
+
+            # v2.1: Increment timer counter for heartbeat tracking
+            self._timer_count = getattr(self, '_timer_count', 0) + 1
+
+            # v2.1: 发送心跳 - 移到 on_timer 开始位置，确保每次都发送
+            # 即使后续分析失败，用户也能知道服务器在运行
+            self._send_heartbeat_notification()
+
+            # Check if indicators are ready
+            if not self.indicator_manager.is_initialized():
+                self.log.warning("Indicators not yet initialized, skipping analysis")
                 return
 
-        # Get current market data
-        current_bar = self.indicator_manager.recent_bars[-1] if self.indicator_manager.recent_bars else None
-        if not current_bar:
-            self.log.warning("No bars available for analysis")
-            return
+            # ========== MTF 初始化检查 ==========
+            # 如果启用了 MTF，检查三层是否都已初始化
+            if self.mtf_enabled and self.mtf_manager:
+                if not self.mtf_manager.is_all_layers_initialized():
+                    self.log.warning("[MTF] 多时间框架未完全初始化，跳过分析")
+                    self.log.debug(f"[MTF] 初始化状态: trend={self._mtf_trend_initialized}, "
+                                  f"decision={self._mtf_decision_initialized}, "
+                                  f"execution={self._mtf_execution_initialized}")
+                    return
 
-        current_price = float(current_bar.close)
+            # Get current market data
+            current_bar = self.indicator_manager.recent_bars[-1] if self.indicator_manager.recent_bars else None
+            if not current_bar:
+                self.log.warning("No bars available for analysis")
+                return
 
-        # Get technical data (15M - execution layer)
-        try:
-            technical_data = self.indicator_manager.get_technical_data(current_price)
-            self.log.debug(f"Technical data (15M) retrieved: {len(technical_data)} indicators")
-        except Exception as e:
-            self.log.error(f"Failed to get technical data: {e}")
-            return
+            current_price = float(current_bar.close)
 
-        # Get 4H decision layer technical data for AI debate (MTF Phase 2)
-        decision_layer_data = None
-        if self.mtf_enabled and self.mtf_manager:
+            # Get technical data (15M - execution layer)
             try:
-                decision_layer_data = self.mtf_manager.get_technical_data_for_layer("decision", current_price)
-                if decision_layer_data.get('_initialized', True):
-                    self.log.info(
-                        f"[MTF] 决策层 (4H) 数据: RSI={decision_layer_data.get('rsi', 0):.1f}, "
-                        f"MACD={decision_layer_data.get('macd', 0):.2f}, "
-                        f"SMA_20={decision_layer_data.get('sma_20', 0):.2f}"
-                    )
-                else:
-                    self.log.warning("[MTF] 决策层 (4H) 未完全初始化，使用 15M 数据")
+                technical_data = self.indicator_manager.get_technical_data(current_price)
+                self.log.debug(f"Technical data (15M) retrieved: {len(technical_data)} indicators")
+            except Exception as e:
+                self.log.error(f"Failed to get technical data: {e}")
+                return
+
+            # Get 4H decision layer technical data for AI debate (MTF Phase 2)
+            decision_layer_data = None
+            if self.mtf_enabled and self.mtf_manager:
+                try:
+                    decision_layer_data = self.mtf_manager.get_technical_data_for_layer("decision", current_price)
+                    if decision_layer_data.get('_initialized', True):
+                        self.log.info(
+                            f"[MTF] 决策层 (4H) 数据: RSI={decision_layer_data.get('rsi', 0):.1f}, "
+                            f"MACD={decision_layer_data.get('macd', 0):.2f}, "
+                            f"SMA_20={decision_layer_data.get('sma_20', 0):.2f}"
+                        )
+                    else:
+                        self.log.warning("[MTF] 决策层 (4H) 未完全初始化，使用 15M 数据")
+                        decision_layer_data = None
+                except Exception as e:
+                    self.log.warning(f"[MTF] 获取决策层数据失败: {e}")
                     decision_layer_data = None
-            except Exception as e:
-                self.log.warning(f"[MTF] 获取决策层数据失败: {e}")
-                decision_layer_data = None
 
-        # Get K-line data
-        kline_data = self.indicator_manager.get_kline_data(count=10)
-        self.log.debug(f"Retrieved {len(kline_data)} K-lines for analysis")
+            # Get K-line data
+            kline_data = self.indicator_manager.get_kline_data(count=10)
+            self.log.debug(f"Retrieved {len(kline_data)} K-lines for analysis")
 
-        # Get sentiment data (with default neutral values as fallback)
-        sentiment_data = None
-        if self.sentiment_enabled and self.sentiment_fetcher:
-            try:
-                sentiment_data = self.sentiment_fetcher.fetch()
-                if sentiment_data:
-                    self.log.info(self.sentiment_fetcher.format_for_display(sentiment_data))
-            except Exception as e:
-                self.log.warning(f"Failed to fetch sentiment data: {e}")
+            # Get sentiment data (with default neutral values as fallback)
+            sentiment_data = None
+            if self.sentiment_enabled and self.sentiment_fetcher:
+                try:
+                    sentiment_data = self.sentiment_fetcher.fetch()
+                    if sentiment_data:
+                        self.log.info(self.sentiment_fetcher.format_for_display(sentiment_data))
+                except Exception as e:
+                    self.log.warning(f"Failed to fetch sentiment data: {e}")
 
-        # Provide default neutral sentiment if unavailable (prevents None being passed to AI)
-        if sentiment_data is None:
-            sentiment_data = {
-                'long_short_ratio': 1.0,  # Neutral (equal longs and shorts)
-                'long_account_pct': 50.0,
-                'short_account_pct': 50.0,
-                'positive_ratio': 0.5,   # Required by deepseek_client
-                'negative_ratio': 0.5,   # Required by deepseek_client
-                'net_sentiment': 0.0,    # Required by deepseek_client (long - short = 0)
-                'source': 'default_neutral',
-                'timestamp': None,
-            }
-            self.log.info("📊 Using neutral sentiment data (no data available)")
-
-        # Build price data for AI
-        price_data = {
-            'price': current_price,
-            'timestamp': self.clock.utc_now().isoformat(),
-            'high': float(current_bar.high),
-            'low': float(current_bar.low),
-            'volume': float(current_bar.volume),
-            'price_change': self._calculate_price_change(),
-            'kline_data': kline_data,
-        }
-
-        # Get current position
-        current_position = self._get_current_position_data()
-
-        # Log current state
-        self.log.info(f"Current Price: ${current_price:,.2f}")
-        self.log.info(f"Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
-        self.log.info(f"RSI: {technical_data.get('rsi', 0):.2f}")
-        if current_position:
-            self.log.info(
-                f"Current Position: {current_position['side']} "
-                f"{current_position['quantity']} @ ${current_position['avg_px']:.2f}"
-            )
-
-        # ========== MTF 优先级规则 (Phase 1: RISK_OFF 过滤) ==========
-        # 趋势层 (1D) 决定是否允许新开仓
-        mtf_risk_state = None
-        mtf_allows_new_position = True  # 默认允许
-
-        if self.mtf_enabled and self.mtf_manager:
-            try:
-                # 评估趋势层风险状态
-                mtf_risk_state = self.mtf_manager.evaluate_risk_state(current_price)
-                self.log.info(f"[MTF] 趋势层 (1D) 风险状态: {mtf_risk_state.value}")
-
-                # 如果 RISK_OFF，禁止新开仓（但允许平仓和管理现有仓位）
-                if mtf_risk_state == self._RiskState.RISK_OFF:
-                    mtf_allows_new_position = False
-                    self.log.warning(
-                        f"[MTF] ⚠️ RISK_OFF - 市场结构恶化，禁止新开仓 "
-                        f"(价格低于 SMA_200 或 MACD 为负)"
-                    )
-            except Exception as e:
-                self.log.warning(f"[MTF] 趋势层评估失败: {e}")
-
-        # ========== 层级决策架构 (TradingAgents) ==========
-        # MultiAgent 的 Judge 作为最终决策者，不再与 DeepSeek 并行合并
-        # 流程: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
-        try:
-            self.log.info("🎭 Starting Multi-Agent Hierarchical Analysis...")
-            self.log.info("   Phase 1: Bull/Bear Debate (using 4H decision layer data)")
-            self.log.info("   Phase 2: Judge (Portfolio Manager) Decision")
-            self.log.info("   Phase 3: Risk Evaluation")
-
-            # 准备 AI 分析数据：优先使用 4H 决策层数据
-            # 根据 MTF 设计文档 Section 1.5.4，Bull/Bear 辩论应使用 4H 数据
-            ai_technical_data = technical_data.copy()  # 15M 作为基础
-            # 重要: 添加 price 到 technical_data (multi_agent_analyzer._format_technical_report 需要)
-            ai_technical_data['price'] = current_price
-            if decision_layer_data and decision_layer_data.get('_initialized', True):
-                # 添加 4H 数据作为决策层信息
-                ai_technical_data['mtf_decision_layer'] = {
-                    'timeframe': '4H',
-                    'rsi': decision_layer_data.get('rsi', 50),
-                    'macd': decision_layer_data.get('macd', 0),
-                    'macd_signal': decision_layer_data.get('macd_signal', 0),
-                    'sma_20': decision_layer_data.get('sma_20', 0),
-                    'sma_50': decision_layer_data.get('sma_50', 0),
-                    'bb_upper': decision_layer_data.get('bb_upper', 0),
-                    'bb_middle': decision_layer_data.get('bb_middle', 0),
-                    'bb_lower': decision_layer_data.get('bb_lower', 0),
-                    'overall_trend': decision_layer_data.get('overall_trend', 'NEUTRAL'),
+            # Provide default neutral sentiment if unavailable (prevents None being passed to AI)
+            if sentiment_data is None:
+                sentiment_data = {
+                    'long_short_ratio': 1.0,  # Neutral (equal longs and shorts)
+                    'long_account_pct': 50.0,
+                    'short_account_pct': 50.0,
+                    'positive_ratio': 0.5,   # Required by deepseek_client
+                    'negative_ratio': 0.5,   # Required by deepseek_client
+                    'net_sentiment': 0.0,    # Required by deepseek_client (long - short = 0)
+                    'source': 'default_neutral',
+                    'timestamp': None,
                 }
-                self.log.info(f"[MTF] AI 分析使用 4H 决策层数据: RSI={ai_technical_data['mtf_decision_layer']['rsi']:.1f}")
+                self.log.info("📊 Using neutral sentiment data (no data available)")
 
-            # ========== 获取订单流数据 (MTF v2.1) ==========
-            order_flow_data = None
-            if self.binance_kline_client and self.order_flow_processor:
-                try:
-                    # 获取 Binance 完整 K线 (12 列，包含订单流字段)
-                    raw_klines = self.binance_kline_client.get_klines(
-                        symbol="BTCUSDT",
-                        interval="15m",
-                        limit=50,
-                    )
-                    if raw_klines:
-                        order_flow_data = self.order_flow_processor.process_klines(raw_klines)
-                        self.log.info(
-                            f"📊 Order Flow: buy_ratio={order_flow_data.get('buy_ratio', 0):.1%}, "
-                            f"cvd_trend={order_flow_data.get('cvd_trend', 'N/A')}"
-                        )
-                    else:
-                        self.log.warning("⚠️ Failed to get Binance klines for order flow")
-                except Exception as e:
-                    self.log.warning(f"⚠️ Order flow processing failed: {e}")
+            # Build price data for AI
+            price_data = {
+                'price': current_price,
+                'timestamp': self.clock.utc_now().isoformat(),
+                'high': float(current_bar.high),
+                'low': float(current_bar.low),
+                'volume': float(current_bar.volume),
+                'price_change': self._calculate_price_change(),
+                'kline_data': kline_data,
+            }
 
-            # ========== 获取衍生品数据 (MTF v2.1) ==========
-            derivatives_data = None
-            if self.coinalyze_client and self.coinalyze_client.is_enabled():
-                try:
-                    derivatives_data = self.coinalyze_client.fetch_all()
-                    if derivatives_data.get('enabled'):
-                        oi = derivatives_data.get('open_interest')
-                        funding = derivatives_data.get('funding_rate')
-                        self.log.info(
-                            f"📊 Derivatives: OI={oi.get('value', 0):.2f} BTC, "
-                            f"Funding={funding.get('value', 0)*100:.4f}%" if oi and funding else "Derivatives: partial data"
-                        )
-                    else:
-                        self.log.debug("Coinalyze client disabled, no derivatives data")
-                except Exception as e:
-                    self.log.warning(f"⚠️ Derivatives fetch failed: {e}")
+            # Get current position
+            current_position = self._get_current_position_data()
 
-            signal_data = self.multi_agent.analyze(
-                symbol="BTCUSDT",
-                technical_report=ai_technical_data,
-                sentiment_report=sentiment_data,
-                current_position=current_position,
-                price_data=price_data,
-                # ========== MTF v2.1 新增参数 ==========
-                order_flow_report=order_flow_data,
-                derivatives_report=derivatives_data,
-            )
+            # Log current state
+            self.log.info(f"Current Price: ${current_price:,.2f}")
+            self.log.info(f"Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
+            self.log.info(f"RSI: {technical_data.get('rsi', 0):.2f}")
+            if current_position:
+                self.log.info(
+                    f"Current Position: {current_position['side']} "
+                    f"{current_position['quantity']} @ ${current_position['avg_px']:.2f}"
+                )
 
-            # NOTE: 决策层状态 (ALLOW_LONG/SHORT/WAIT) 在 4H bar 收盘时更新
-            # (见 _evaluate_decision_layer_on_bar_close 方法)
-            # 这里不再更新，保持 4H 方向的稳定性
-
-            # ========== MTF 优先级规则 (Phase 2: 信号过滤) ==========
-            original_signal = signal_data['signal']
+            # ========== MTF 优先级规则 (Phase 1: RISK_OFF 过滤) ==========
+            # 趋势层 (1D) 决定是否允许新开仓
+            mtf_risk_state = None
+            mtf_allows_new_position = True  # 默认允许
 
             if self.mtf_enabled and self.mtf_manager:
-                # 规则 1: 方向性权限检查 (替代 RISK_OFF 二元开关)
-                # 符合 TradingAgents: 本地提供建议，不强制覆盖 AI
                 try:
-                    permissions = self.mtf_manager.evaluate_directional_permissions(current_price)
+                    # 评估趋势层风险状态
+                    mtf_risk_state = self.mtf_manager.evaluate_risk_state(current_price)
+                    self.log.info(f"[MTF] 趋势层 (1D) 风险状态: {mtf_risk_state.value}")
 
-                    # 记录方向性权限
-                    self.log.info(
-                        f"[MTF] 方向性权限: {permissions['regime']} | "
-                        f"allow_long={permissions['allow_long']}, "
-                        f"allow_short={permissions['allow_short']} | "
-                        f"乘数={permissions['position_multiplier']:.1f}"
-                    )
-
-                    # 检查是否是开新仓
-                    is_opening_new = (
-                        current_position is None or
-                        current_position.get('side') == 'FLAT' or
-                        (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
-                        (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
-                    )
-
-                    # 仅在开新仓时检查方向性权限
-                    if is_opening_new and signal_data['signal'] in ['BUY', 'SELL']:
-                        if signal_data['signal'] == 'BUY' and not permissions['allow_long']:
-                            self.log.warning(
-                                f"[MTF] 🚫 方向性过滤: BUY → HOLD "
-                                f"({permissions['reason']})"
-                            )
-                            signal_data['signal'] = 'HOLD'
-                            signal_data['reason'] = f"[MTF 禁止做多] {signal_data.get('reason', '')}"
-                        elif signal_data['signal'] == 'SELL' and not permissions['allow_short']:
-                            self.log.warning(
-                                f"[MTF] 🚫 方向性过滤: SELL → HOLD "
-                                f"({permissions['reason']})"
-                            )
-                            signal_data['signal'] = 'HOLD'
-                            signal_data['reason'] = f"[MTF 禁止做空] {signal_data.get('reason', '')}"
-                        else:
-                            # 权限允许，应用仓位乘数
-                            if 'position_multiplier' in signal_data:
-                                signal_data['position_multiplier'] *= permissions['position_multiplier']
-                                self.log.info(
-                                    f"[MTF] 应用 {permissions['regime']} 仓位乘数: "
-                                    f"{permissions['position_multiplier']:.1f}"
-                                )
+                    # 如果 RISK_OFF，禁止新开仓（但允许平仓和管理现有仓位）
+                    if mtf_risk_state == self._RiskState.RISK_OFF:
+                        mtf_allows_new_position = False
+                        self.log.warning(
+                            f"[MTF] ⚠️ RISK_OFF - 市场结构恶化，禁止新开仓 "
+                            f"(价格低于 SMA_200 或 MACD 为负)"
+                        )
                 except Exception as e:
-                    self.log.warning(f"[MTF] 方向性权限检查失败: {e}")
-                    # 失败时保守处理
-                    if not mtf_allows_new_position and signal_data['signal'] in ['BUY', 'SELL']:
+                    self.log.warning(f"[MTF] 趋势层评估失败: {e}")
+
+            # ========== 层级决策架构 (TradingAgents) ==========
+            # MultiAgent 的 Judge 作为最终决策者，不再与 DeepSeek 并行合并
+            # 流程: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
+            try:
+                self.log.info("🎭 Starting Multi-Agent Hierarchical Analysis...")
+                self.log.info("   Phase 1: Bull/Bear Debate (using 4H decision layer data)")
+                self.log.info("   Phase 2: Judge (Portfolio Manager) Decision")
+                self.log.info("   Phase 3: Risk Evaluation")
+
+                # 准备 AI 分析数据：优先使用 4H 决策层数据
+                # 根据 MTF 设计文档 Section 1.5.4，Bull/Bear 辩论应使用 4H 数据
+                ai_technical_data = technical_data.copy()  # 15M 作为基础
+                # 🏷️ Fix A4: 添加 timeframe 标记，避免 AI 混淆不同周期数据
+                ai_technical_data['timeframe'] = '15M'
+                # 重要: 添加 price 到 technical_data (multi_agent_analyzer._format_technical_report 需要)
+                ai_technical_data['price'] = current_price
+                if decision_layer_data and decision_layer_data.get('_initialized', True):
+                    # 添加 4H 数据作为决策层信息
+                    ai_technical_data['mtf_decision_layer'] = {
+                        'timeframe': '4H',
+                        'rsi': decision_layer_data.get('rsi', 50),
+                        'macd': decision_layer_data.get('macd', 0),
+                        'macd_signal': decision_layer_data.get('macd_signal', 0),
+                        'sma_20': decision_layer_data.get('sma_20', 0),
+                        'sma_50': decision_layer_data.get('sma_50', 0),
+                        'bb_upper': decision_layer_data.get('bb_upper', 0),
+                        'bb_middle': decision_layer_data.get('bb_middle', 0),
+                        'bb_lower': decision_layer_data.get('bb_lower', 0),
+                        'overall_trend': decision_layer_data.get('overall_trend', 'NEUTRAL'),
+                    }
+                    self.log.info(f"[MTF] AI 分析使用 4H 决策层数据: RSI={ai_technical_data['mtf_decision_layer']['rsi']:.1f}")
+
+                # ========== 获取订单流数据 (MTF v2.1) ==========
+                order_flow_data = None
+                if self.binance_kline_client and self.order_flow_processor:
+                    try:
+                        # 获取 Binance 完整 K线 (12 列，包含订单流字段)
+                        raw_klines = self.binance_kline_client.get_klines(
+                            symbol="BTCUSDT",
+                            interval="15m",
+                            limit=50,
+                        )
+                        if raw_klines:
+                            order_flow_data = self.order_flow_processor.process_klines(raw_klines)
+                            self.log.info(
+                                f"📊 Order Flow: buy_ratio={order_flow_data.get('buy_ratio', 0):.1%}, "
+                                f"cvd_trend={order_flow_data.get('cvd_trend', 'N/A')}"
+                            )
+                        else:
+                            self.log.warning("⚠️ Failed to get Binance klines for order flow")
+                    except Exception as e:
+                        self.log.warning(f"⚠️ Order flow processing failed: {e}")
+
+                # ========== 获取衍生品数据 (MTF v2.1) ==========
+                derivatives_data = None
+                if self.coinalyze_client and self.coinalyze_client.is_enabled():
+                    try:
+                        derivatives_data = self.coinalyze_client.fetch_all()
+                        if derivatives_data.get('enabled'):
+                            oi = derivatives_data.get('open_interest')
+                            funding = derivatives_data.get('funding_rate')
+                            self.log.info(
+                                f"📊 Derivatives: OI={oi.get('value', 0):.2f} BTC, "
+                                f"Funding={funding.get('value', 0)*100:.4f}%" if oi and funding else "Derivatives: partial data"
+                            )
+                        else:
+                            self.log.debug("Coinalyze client disabled, no derivatives data")
+                    except Exception as e:
+                        self.log.warning(f"⚠️ Derivatives fetch failed: {e}")
+
+                signal_data = self.multi_agent.analyze(
+                    symbol="BTCUSDT",
+                    technical_report=ai_technical_data,
+                    sentiment_report=sentiment_data,
+                    current_position=current_position,
+                    price_data=price_data,
+                    # ========== MTF v2.1 新增参数 ==========
+                    order_flow_report=order_flow_data,
+                    derivatives_report=derivatives_data,
+                )
+
+                # NOTE: 决策层状态 (ALLOW_LONG/SHORT/WAIT) 在 4H bar 收盘时更新
+                # (见 _evaluate_decision_layer_on_bar_close 方法)
+                # 这里不再更新，保持 4H 方向的稳定性
+
+                # ========== MTF 优先级规则 (Phase 2: 信号过滤) ==========
+                original_signal = signal_data['signal']
+
+                if self.mtf_enabled and self.mtf_manager:
+                    # 规则 1: 方向性权限检查 (替代 RISK_OFF 二元开关)
+                    # 🔒 Fix E21: 这是硬风控边界，作为 24/7 自动化系统的必需保护
+                    # 与 TradingAgents 研究框架略有不同 (TradingAgents 假设有人工监督)
+                    try:
+                        permissions = self.mtf_manager.evaluate_directional_permissions(current_price)
+
+                        # 记录方向性权限
+                        self.log.info(
+                            f"[MTF] 方向性权限: {permissions['regime']} | "
+                            f"allow_long={permissions['allow_long']}, "
+                            f"allow_short={permissions['allow_short']} | "
+                            f"乘数={permissions['position_multiplier']:.1f}"
+                        )
+
+                        # 检查是否是开新仓
                         is_opening_new = (
                             current_position is None or
                             current_position.get('side') == 'FLAT' or
                             (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
                             (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
                         )
-                        if is_opening_new:
-                            self.log.warning(
-                                f"[MTF] 🚫 RISK_OFF 过滤 (后备): {signal_data['signal']} → HOLD"
-                            )
-                            signal_data['signal'] = 'HOLD'
-                            signal_data['reason'] = f"[MTF RISK_OFF] {signal_data.get('reason', '')}"
 
-                # 规则 2: 决策层方向匹配检查 (确保信号与决策层状态一致)
-                if signal_data['signal'] in ['BUY', 'SELL']:
-                    try:
-                        decision_state = self.mtf_manager.get_decision_state()
-                        self.log.info(f"[MTF] 决策层 (4H) 状态: {decision_state.value}")
-
-                        direction_mismatch = False
-                        if signal_data['signal'] == 'BUY' and decision_state == self._DecisionState.ALLOW_SHORT:
-                            direction_mismatch = True
-                            self.log.warning(
-                                f"[MTF] 🚫 方向冲突: BUY 信号但决策层为 ALLOW_SHORT → HOLD"
-                            )
-                        elif signal_data['signal'] == 'SELL' and decision_state == self._DecisionState.ALLOW_LONG:
-                            direction_mismatch = True
-                            self.log.warning(
-                                f"[MTF] 🚫 方向冲突: SELL 信号但决策层为 ALLOW_LONG → HOLD"
-                            )
-                        elif decision_state == self._DecisionState.WAIT:
-                            direction_mismatch = True
-                            self.log.warning(
-                                f"[MTF] 🚫 决策层为 WAIT 状态，暂不交易 → HOLD"
-                            )
-
-                        if direction_mismatch:
-                            signal_data['signal'] = 'HOLD'
-                            signal_data['reason'] = f"[MTF 方向检查] {signal_data.get('reason', '')}"
+                        # 仅在开新仓时检查方向性权限
+                        if is_opening_new and signal_data['signal'] in ['BUY', 'SELL']:
+                            if signal_data['signal'] == 'BUY' and not permissions['allow_long']:
+                                self.log.warning(
+                                    f"[MTF] 🚫 方向性过滤: BUY → HOLD "
+                                    f"({permissions['reason']})"
+                                )
+                                signal_data['signal'] = 'HOLD'
+                                signal_data['reason'] = f"[MTF 禁止做多] {signal_data.get('reason', '')}"
+                            elif signal_data['signal'] == 'SELL' and not permissions['allow_short']:
+                                self.log.warning(
+                                    f"[MTF] 🚫 方向性过滤: SELL → HOLD "
+                                    f"({permissions['reason']})"
+                                )
+                                signal_data['signal'] = 'HOLD'
+                                signal_data['reason'] = f"[MTF 禁止做空] {signal_data.get('reason', '')}"
+                            else:
+                                # 权限允许，应用仓位乘数
+                                if 'position_multiplier' in signal_data:
+                                    signal_data['position_multiplier'] *= permissions['position_multiplier']
+                                    self.log.info(
+                                        f"[MTF] 应用 {permissions['regime']} 仓位乘数: "
+                                        f"{permissions['position_multiplier']:.1f}"
+                                    )
                     except Exception as e:
-                        self.log.warning(f"[MTF] 决策层方向检查失败: {e}")
-
-                # 规则 3: 执行层 RSI 确认 (仅在 RISK_ON 且有交易信号时)
-                if signal_data['signal'] in ['BUY', 'SELL']:
-                    try:
-                        exec_result = self.mtf_manager.check_execution_confirmation(current_price)
-                        self.log.info(f"[MTF] 执行层 (15M) RSI 确认: {exec_result['reason']}")
-
-                        if not exec_result['confirmed']:
-                            self.log.warning(
-                                f"[MTF] ⏳ RSI 不在入场范围: {signal_data['signal']} → HOLD "
-                                f"(RSI={exec_result.get('rsi', 0):.1f}, 范围={exec_result.get('rsi_range', [])})"
+                        self.log.warning(f"[MTF] 方向性权限检查失败: {e}")
+                        # 失败时保守处理
+                        if not mtf_allows_new_position and signal_data['signal'] in ['BUY', 'SELL']:
+                            is_opening_new = (
+                                current_position is None or
+                                current_position.get('side') == 'FLAT' or
+                                (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
+                                (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
                             )
-                            signal_data['signal'] = 'HOLD'
-                            signal_data['reason'] = f"[MTF RSI] {signal_data.get('reason', '')}"
-                    except Exception as e:
-                        self.log.warning(f"[MTF] 执行层确认失败: {e}")
+                            if is_opening_new:
+                                self.log.warning(
+                                    f"[MTF] 🚫 RISK_OFF 过滤 (后备): {signal_data['signal']} → HOLD"
+                                )
+                                signal_data['signal'] = 'HOLD'
+                                signal_data['reason'] = f"[MTF RISK_OFF] {signal_data.get('reason', '')}"
 
-            # 记录 MTF 过滤结果
-            if original_signal != signal_data['signal']:
+                    # 规则 2: 决策层方向匹配检查 (确保信号与决策层状态一致)
+                    if signal_data['signal'] in ['BUY', 'SELL']:
+                        try:
+                            decision_state = self.mtf_manager.get_decision_state()
+                            self.log.info(f"[MTF] 决策层 (4H) 状态: {decision_state.value}")
+
+                            direction_mismatch = False
+                            if signal_data['signal'] == 'BUY' and decision_state == self._DecisionState.ALLOW_SHORT:
+                                direction_mismatch = True
+                                self.log.warning(
+                                    f"[MTF] 🚫 方向冲突: BUY 信号但决策层为 ALLOW_SHORT → HOLD"
+                                )
+                            elif signal_data['signal'] == 'SELL' and decision_state == self._DecisionState.ALLOW_LONG:
+                                direction_mismatch = True
+                                self.log.warning(
+                                    f"[MTF] 🚫 方向冲突: SELL 信号但决策层为 ALLOW_LONG → HOLD"
+                                )
+                            elif decision_state == self._DecisionState.WAIT:
+                                direction_mismatch = True
+                                self.log.warning(
+                                    f"[MTF] 🚫 决策层为 WAIT 状态，暂不交易 → HOLD"
+                                )
+
+                            if direction_mismatch:
+                                signal_data['signal'] = 'HOLD'
+                                signal_data['reason'] = f"[MTF 方向检查] {signal_data.get('reason', '')}"
+                        except Exception as e:
+                            self.log.warning(f"[MTF] 决策层方向检查失败: {e}")
+
+                    # 规则 3: 执行层 RSI 确认 (仅在 RISK_ON 且有交易信号时)
+                    if signal_data['signal'] in ['BUY', 'SELL']:
+                        try:
+                            exec_result = self.mtf_manager.check_execution_confirmation(current_price)
+                            self.log.info(f"[MTF] 执行层 (15M) RSI 确认: {exec_result['reason']}")
+
+                            if not exec_result['confirmed']:
+                                self.log.warning(
+                                    f"[MTF] ⏳ RSI 不在入场范围: {signal_data['signal']} → HOLD "
+                                    f"(RSI={exec_result.get('rsi', 0):.1f}, 范围={exec_result.get('rsi_range', [])})"
+                                )
+                                signal_data['signal'] = 'HOLD'
+                                signal_data['reason'] = f"[MTF RSI] {signal_data.get('reason', '')}"
+                        except Exception as e:
+                            self.log.warning(f"[MTF] 执行层确认失败: {e}")
+
+                # 记录 MTF 过滤结果
+                if original_signal != signal_data['signal']:
+                    self.log.info(
+                        f"[MTF] 信号被过滤: {original_signal} → {signal_data['signal']}"
+                    )
+
+                # Log Judge's final decision
                 self.log.info(
-                    f"[MTF] 信号被过滤: {original_signal} → {signal_data['signal']}"
+                    f"🎯 Judge Decision: {signal_data['signal']} | "
+                    f"Confidence: {signal_data['confidence']} | "
+                    f"Risk: {signal_data.get('risk_level', 'N/A')}"
                 )
+                self.log.info(f"📋 Reason: {signal_data.get('reason', 'N/A')}")
 
-            # Log Judge's final decision
-            self.log.info(
-                f"🎯 Judge Decision: {signal_data['signal']} | "
-                f"Confidence: {signal_data['confidence']} | "
-                f"Risk: {signal_data.get('risk_level', 'N/A')}"
-            )
-            self.log.info(f"📋 Reason: {signal_data.get('reason', 'N/A')}")
+                if signal_data.get('debate_summary'):
+                    self.log.info(f"🗣️ Debate Summary: {signal_data['debate_summary'][:200]}...")
 
-            if signal_data.get('debate_summary'):
-                self.log.info(f"🗣️ Debate Summary: {signal_data['debate_summary'][:200]}...")
+                # Log judge's detailed decision if available
+                judge_decision = signal_data.get('judge_decision', {})
+                if judge_decision:
+                    winning_side = judge_decision.get('winning_side', 'N/A')
+                    key_reasons = judge_decision.get('key_reasons', [])
+                    self.log.info(f"⚖️ Winning Side: {winning_side}")
+                    if key_reasons:
+                        self.log.info(f"📌 Key Reasons: {', '.join(key_reasons[:3])}")
 
-            # Log judge's detailed decision if available
-            judge_decision = signal_data.get('judge_decision', {})
-            if judge_decision:
-                winning_side = judge_decision.get('winning_side', 'N/A')
-                key_reasons = judge_decision.get('key_reasons', [])
-                self.log.info(f"⚖️ Winning Side: {winning_side}")
-                if key_reasons:
-                    self.log.info(f"📌 Key Reasons: {', '.join(key_reasons[:3])}")
+                # Telegram notification moved to after execution (see _execute_trade)
+                # This prevents "signal sent but not executed" confusion
+                            
+            except Exception as e:
+                self.log.error(f"Multi-Agent analysis failed: {e}", exc_info=True)
 
-            # Telegram notification moved to after execution (see _execute_trade)
-            # This prevents "signal sent but not executed" confusion
-                        
+                # Send error notification
+                if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
+                    try:
+                        error_msg = self.telegram_bot.format_error_alert({
+                            'level': 'ERROR',
+                            'message': f"Multi-Agent Analysis Failed: {str(e)[:100]}",
+                            'context': 'on_timer'
+                        })
+                        self.telegram_bot.send_message_sync(error_msg)
+                    except Exception as e:
+                        self.log.warning(f"Failed to send Telegram error notification: {e}")
+                return
+
+            # Store signal
+            self.last_signal = signal_data
+
+            # 📸 Fix C16/J43: Save complete decision snapshot for replay
+            try:
+                mtf_perms = permissions if self.mtf_enabled and self.mtf_manager and 'permissions' in locals() else None
+                orig_sig = original_signal if 'original_signal' in locals() else None
+                self._save_decision_snapshot(
+                    signal_data=signal_data,
+                    technical_data=technical_data,
+                    sentiment_data=sentiment_data,
+                    order_flow_data=order_flow_data if 'order_flow_data' in locals() else None,
+                    derivatives_data=derivatives_data if 'derivatives_data' in locals() else None,
+                    current_position=current_position,
+                    price_data=price_data,
+                    mtf_permissions=mtf_perms,
+                    original_signal=orig_sig,
+                )
+            except Exception as e:
+                self.log.debug(f"Failed to save decision snapshot: {e}")
+
+            # Execute trade
+            self._execute_trade(signal_data, price_data, technical_data, current_position)
+            
+            # Orphan order cleanup: cancel reduce-only orders when no position exists
+            if self.enable_oco:
+                self._cleanup_oco_orphans()
+            
+            # Trailing stop maintenance: check and update trailing stops
+            if self.enable_trailing_stop:
+                self._update_trailing_stops(price_data['price'])
+
+
+        finally:
+            # 🔒 Fix I38: Always release lock when on_timer exits
+            self._timer_lock.release()
+
+    def _save_decision_snapshot(
+        self,
+        signal_data: dict,
+        technical_data: dict,
+        sentiment_data: dict,
+        order_flow_data: dict,
+        derivatives_data: dict,
+        current_position: dict,
+        price_data: dict,
+        mtf_permissions: dict = None,
+        original_signal: str = None,
+    ):
+        """
+        🔍 Fix C16/J43: Save complete decision snapshot for debugging and replay.
+
+        Saves all inputs, AI outputs, and filtering decisions to a JSON file.
+        This enables full replay of "why did the system make this decision?"
+        """
+        try:
+            import json
+            from datetime import datetime
+            import os
+
+            # Create logs directory if it doesn't exist
+            os.makedirs('logs/decisions', exist_ok=True)
+
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            snapshot_file = f'logs/decisions/decision_{timestamp}.json'
+
+            snapshot = {
+                'timestamp': datetime.now().isoformat(),
+                'inputs': {
+                    'technical_data': technical_data,
+                    'sentiment_data': sentiment_data,
+                    'order_flow_data': order_flow_data,
+                    'derivatives_data': derivatives_data,
+                    'current_position': current_position,
+                    'price_data': price_data,
+                },
+                'ai_outputs': {
+                    'signal': signal_data.get('signal'),
+                    'confidence': signal_data.get('confidence'),
+                    'risk_level': signal_data.get('risk_level'),
+                    'position_size_pct': signal_data.get('position_size_pct'),
+                    'stop_loss': signal_data.get('stop_loss'),
+                    'take_profit': signal_data.get('take_profit'),
+                    'reason': signal_data.get('reason'),
+                    'debate_summary': signal_data.get('debate_summary'),
+                    'judge_decision': signal_data.get('judge_decision'),
+                },
+                'mtf_filtering': {
+                    'original_signal': original_signal or signal_data.get('signal'),
+                    'final_signal': signal_data.get('signal'),
+                    'permissions': mtf_permissions,
+                    'filtered': original_signal != signal_data.get('signal') if original_signal else False,
+                },
+            }
+
+            with open(snapshot_file, 'w') as f:
+                json.dump(snapshot, f, indent=2, default=str)
+
+            self.log.debug(f"📸 Decision snapshot saved: {snapshot_file}")
+
         except Exception as e:
-            self.log.error(f"Multi-Agent analysis failed: {e}", exc_info=True)
-
-            # Send error notification
-            if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
-                try:
-                    error_msg = self.telegram_bot.format_error_alert({
-                        'level': 'ERROR',
-                        'message': f"Multi-Agent Analysis Failed: {str(e)[:100]}",
-                        'context': 'on_timer'
-                    })
-                    self.telegram_bot.send_message_sync(error_msg)
-                except Exception as e:
-                    self.log.warning(f"Failed to send Telegram error notification: {e}")
-            return
-
-        # Store signal
-        self.last_signal = signal_data
-
-        # Execute trade
-        self._execute_trade(signal_data, price_data, technical_data, current_position)
-        
-        # Orphan order cleanup: cancel reduce-only orders when no position exists
-        if self.enable_oco:
-            self._cleanup_oco_orphans()
-        
-        # Trailing stop maintenance: check and update trailing stops
-        if self.enable_trailing_stop:
-            self._update_trailing_stops(price_data['price'])
+            self.log.warning(f"Failed to save decision snapshot: {e}")
 
     def _send_heartbeat_notification(self):
         """
@@ -2299,8 +2401,28 @@ class DeepSeekAIStrategy(Strategy):
     
 
     def on_order_rejected(self, event):
-        """Handle order rejected events."""
-        self.log.error(f"❌ Order rejected: {event.reason}")
+        """
+        Handle order rejected events.
+
+        🚨 Fix G34: Send critical Telegram alert for order rejections.
+        """
+        reason = getattr(event, 'reason', 'Unknown reason')
+        client_order_id = getattr(event, 'client_order_id', 'N/A')
+
+        self.log.error(f"❌ Order rejected: {reason}")
+
+        # 🚨 Fix G34: Force Telegram alert for order rejections
+        if self.telegram_bot and self.enable_telegram:
+            try:
+                alert_msg = self.telegram_bot.format_error_alert({
+                    'level': 'CRITICAL',
+                    'message': f"Order Rejected: {reason}",
+                    'context': f"Order ID: {client_order_id}",
+                })
+                self.telegram_bot.send_message_sync(alert_msg)
+                self.log.info("📱 Telegram alert sent for order rejection")
+            except Exception as e:
+                self.log.warning(f"Failed to send Telegram alert for order rejection: {e}")
 
     def on_position_opened(self, event):
         """

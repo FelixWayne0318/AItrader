@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.20 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.21 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -28,6 +28,16 @@
 23. v10.15: 添加完整数据流追踪 (AI 输入数据验证、Judge 计数、辩论记录)
 24. v10.16: 修复 MTF 趋势层使用 SMA_200 (与 multi_timeframe_manager.py 一致)
 25. v10.17: 添加账户资金详情、确认项明细、GitHub 导出功能
+26. v10.18: 修复硬编码阈值 (从配置读取)、RSI 逻辑错误
+27. v10.19: 修复 Judge RSI 确认逻辑 (< 55 = bullish, > 65 = bearish)
+28. v10.20: 对齐 TradingAgents 架构 (方向性权限替代 RISK_OFF)
+29. v10.21: 系统架构修复同步
+    - 添加 on_timer 并发锁保护说明 (I38)
+    - 添加决策快照保存功能说明 (C16/J43)
+    - 添加订单拒单 Telegram 报警说明 (G34)
+    - 更新 MTF 硬风控注释 (E21)
+    - Coinalyze 数据质量标记 (B8)
+    - Technical data timeframe 标记 (A4)
 26. v10.18: 修复硬编码回退值，改为从配置读取 SMA 周期
 27. v10.19: 修复硬编码阈值违规 + RSI 确认逻辑错误
 28. v10.20: 对齐 TradingAgents 架构 - 方向性权限替代 RISK_OFF 二元开关
@@ -197,6 +207,10 @@ v5.0:
     python3 scripts/diagnose_realtime.py --summary    # 快速诊断（仅显示关键结果）
     python3 scripts/diagnose_realtime.py --export     # 导出到 logs/diagnosis_*.txt
     python3 scripts/diagnose_realtime.py --push       # 导出并推送到 GitHub
+
+
+注: v10.21 同步系统架构修复，诊断脚本本身已完整模拟所有功能，无需修改。
+    主系统新增功能 (决策快照、订单拒单报警) 在诊断脚本中通过模拟实现。
 """
 
 import os

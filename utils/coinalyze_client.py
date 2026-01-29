@@ -227,11 +227,25 @@ class CoinalyzeClient:
                 "enabled": False,
             }
 
+        # Fetch all data
+        oi = self.get_open_interest(symbol)
+        liq = self.get_liquidations(symbol)
+        fr = self.get_funding_rate(symbol)
+
+        # 🔍 Fix B8: Add data quality marker if any data is missing
+        missing_count = sum([oi is None, liq is None, fr is None])
+        data_quality = "COMPLETE" if missing_count == 0 else "PARTIAL" if missing_count < 3 else "MISSING"
+
         return {
-            "open_interest": self.get_open_interest(symbol),
-            "liquidations": self.get_liquidations(symbol),
-            "funding_rate": self.get_funding_rate(symbol),
+            "open_interest": oi,
+            "liquidations": liq,
+            "funding_rate": fr,
             "enabled": True,
+            "_data_quality": data_quality,  # Fix B8: Quality marker
+            "_missing_fields": [
+                field for field, value in [("OI", oi), ("Liq", liq), ("FR", fr)]
+                if value is None
+            ],
         }
 
     def is_enabled(self) -> bool:

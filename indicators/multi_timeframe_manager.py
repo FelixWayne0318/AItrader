@@ -354,10 +354,11 @@ class MultiTimeframeManager:
         """
         评估方向性权限 (替代二元 RISK_ON/OFF 开关)
 
-        符合 TradingAgents 设计意图：
+        🔒 Fix E21: 工业化实盘系统的硬风控边界
         - 本地提供市场特征 (SMA, MACD)
-        - AI 负责决策交易方向
-        - 本地仅作为方向性建议，不强制覆盖 AI
+        - AI 负责战术决策 (具体信号和信心度)
+        - 本地硬风控保护资金安全 (熊市禁止做多，牛市可选禁做空)
+        - 与 TradingAgents 研究框架略有不同 (实盘需要 24/7 自动化硬边界)
 
         Parameters
         ----------
