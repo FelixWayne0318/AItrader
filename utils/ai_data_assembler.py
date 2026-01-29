@@ -165,27 +165,96 @@ class AIDataAssembler:
             except Exception as e:
                 self.logger.warning(f"⚠️ OI parse error: {e}")
 
-        # Funding 转换
+        # Funding 转换 (v2.1: 添加 Binance 直接对比)
+        # 先获取 Binance 直接的 Funding Rate
+        binance_funding = None
+        try:
+            binance_funding = self.binance_klines.get_funding_rate()
+        except Exception as e:
+            self.logger.debug(f"⚠️ Binance funding rate fetch error: {e}")
+
         if funding_raw:
             try:
-                funding_value = float(funding_raw.get('value', 0))
+                coinalyze_value = float(funding_raw.get('value', 0))
+                coinalyze_pct = round(coinalyze_value * 100, 4)
+
+                # 决定使用哪个数据源
+                # 如果 Coinalyze 值异常高 (>0.1%) 且 Binance 数据可用，优先使用 Binance
+                use_binance = False
+                binance_pct = None
+                if binance_funding:
+                    binance_pct = binance_funding.get('funding_rate_pct', 0)
+                    # 如果 Coinalyze 和 Binance 差异超过 10 倍，记录警告
+                    if binance_pct > 0 and coinalyze_pct > 0:
+                        ratio = coinalyze_pct / binance_pct
+                        if ratio > 10 or ratio < 0.1:
+                            self.logger.warning(
+                                f"⚠️ Funding rate 数据差异大: "
+                                f"Coinalyze={coinalyze_pct:.4f}%, Binance={binance_pct:.4f}%"
+                            )
+                            # Coinalyze 异常时使用 Binance
+                            use_binance = True
+
+                # 选择最终使用的值
+                if use_binance and binance_funding:
+                    final_value = binance_funding['funding_rate']
+                    final_pct = binance_pct
+                    source = "binance_direct"
+                else:
+                    final_value = coinalyze_value
+                    final_pct = coinalyze_pct
+                    source = "coinalyze"
+
                 result["funding_rate"] = {
-                    "value": funding_value,
-                    "current": funding_value,
-                    "current_pct": round(funding_value * 100, 4),  # 转为百分比
-                    "interpretation": self._interpret_funding(funding_value),
+                    "value": final_value,
+                    "current": final_value,
+                    "current_pct": final_pct,
+                    "interpretation": self._interpret_funding(final_value),
+                    "source": source,
+                    # 保留两个数据源供对比
+                    "coinalyze_pct": coinalyze_pct,
+                    "binance_pct": binance_pct,
                 }
             except Exception as e:
                 self.logger.warning(f"⚠️ Funding parse error: {e}")
+        elif binance_funding:
+            # Coinalyze 无数据，使用 Binance
+            result["funding_rate"] = {
+                "value": binance_funding['funding_rate'],
+                "current": binance_funding['funding_rate'],
+                "current_pct": binance_funding['funding_rate_pct'],
+                "interpretation": self._interpret_funding(binance_funding['funding_rate']),
+                "source": "binance_direct",
+                "coinalyze_pct": None,
+                "binance_pct": binance_funding['funding_rate_pct'],
+            }
 
         # Liquidation 转换 (嵌套结构)
+        # v2.1: 即使 history 为空也返回结构 (区分"无爆仓"和"数据缺失")
         if liq_raw:
             try:
                 history = liq_raw.get('history', [])
+
+                # 计算总爆仓量 (BTC → USD)
+                long_liq_btc = 0.0
+                short_liq_btc = 0.0
                 if history:
-                    result["liquidations"] = {
-                        "history": history
-                    }
+                    for item in history:
+                        long_liq_btc += float(item.get('l', 0))
+                        short_liq_btc += float(item.get('s', 0))
+
+                long_liq_usd = long_liq_btc * current_price if current_price > 0 else 0
+                short_liq_usd = short_liq_btc * current_price if current_price > 0 else 0
+
+                result["liquidations"] = {
+                    "history": history,
+                    "has_data": len(history) > 0,  # 明确标记数据状态
+                    "long_btc": round(long_liq_btc, 4),
+                    "short_btc": round(short_liq_btc, 4),
+                    "long_usd": round(long_liq_usd, 2),
+                    "short_usd": round(short_liq_usd, 2),
+                    "total_usd": round(long_liq_usd + short_liq_usd, 2),
+                }
             except Exception as e:
                 self.logger.warning(f"⚠️ Liquidation parse error: {e}")
 

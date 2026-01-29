@@ -57,6 +57,10 @@ class OrderFlowProcessor:
     def _process_binance_format(self, klines: List[List]) -> Dict[str, Any]:
         """
         处理 Binance 原始 12 列格式 (完整订单流数据)
+
+        v2.1 更新:
+        - buy_ratio 改用 10 根 K 线平均值 (更稳定，减少噪声)
+        - 保留 latest_buy_ratio 供参考
         """
         latest = klines[-1]
 
@@ -65,8 +69,8 @@ class OrderFlowProcessor:
         quote_volume = float(latest[7])
         trades_count = int(latest[8])
 
-        # 计算买盘占比
-        buy_ratio = taker_buy_volume / volume if volume > 0 else 0.5
+        # 计算最新 K 线的买盘占比 (保留供参考)
+        latest_buy_ratio = taker_buy_volume / volume if volume > 0 else 0.5
 
         # 计算平均成交额
         avg_trade_usdt = quote_volume / trades_count if trades_count > 0 else 0
@@ -89,16 +93,23 @@ class OrderFlowProcessor:
             bar_volume = float(bar[5])
             bar_buy = float(bar[9])
             bar_ratio = bar_buy / bar_volume if bar_volume > 0 else 0.5
-            recent_10_bars.append(round(bar_ratio, 3))
+            recent_10_bars.append(round(bar_ratio, 4))
+
+        # v2.1: 使用 10 根 K 线平均值作为主 buy_ratio (更稳定)
+        # 之前只用最新一根 K 线，波动太大
+        avg_buy_ratio = sum(recent_10_bars) / len(recent_10_bars) if recent_10_bars else 0.5
 
         return {
-            "buy_ratio": round(buy_ratio, 4),
+            "buy_ratio": round(avg_buy_ratio, 4),  # 使用 10 bar 平均值
+            "latest_buy_ratio": round(latest_buy_ratio, 4),  # 保留最新 K 线值供参考
             "avg_trade_usdt": round(avg_trade_usdt, 2),
             "volume_usdt": round(quote_volume, 2),
             "trades_count": trades_count,
             "cvd_trend": cvd_trend,
             "recent_10_bars": recent_10_bars,
+            "recent_10_bars_avg": round(avg_buy_ratio, 4),  # 明确标记这是平均值
             "data_source": "binance_raw",
+            "bars_count": len(klines),  # v2.1: 添加采样窗口大小，便于诊断
         }
 
     def _process_dict_format(self, klines: List[Dict]) -> Dict[str, Any]:
@@ -124,6 +135,7 @@ class OrderFlowProcessor:
             "cvd_trend": "NEUTRAL",
             "recent_10_bars": [],
             "data_source": "local_dict",  # 标记为降级模式
+            "bars_count": len(klines),  # v2.1: 添加采样窗口大小
             "_warning": "Dict format has no order flow data, using neutral values",
         }
 

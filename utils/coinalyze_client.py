@@ -163,14 +163,15 @@ class CoinalyzeClient:
             {
                 "symbol": "...",
                 "history": [
-                    {"t": 1769418000, "l": 123456.78, "s": 98765.43}
+                    {"t": 1769418000, "l": 0.002, "s": 0.028}
                 ]
             }
 
         注意:
         - t 是秒时间戳 (10位)
-        - l = long liquidations (USD)
-        - s = short liquidations (USD)
+        - l = long liquidations (BTC 单位，需乘以价格转换为 USD)
+        - s = short liquidations (BTC 单位，需乘以价格转换为 USD)
+        - 例: l=0.002, 当前价格=$88000 → Long Liq = $176
         """
         if not self._enabled:
             return None
@@ -226,11 +227,25 @@ class CoinalyzeClient:
                 "enabled": False,
             }
 
+        # Fetch all data
+        oi = self.get_open_interest(symbol)
+        liq = self.get_liquidations(symbol)
+        fr = self.get_funding_rate(symbol)
+
+        # 🔍 Fix B8: Add data quality marker if any data is missing
+        missing_count = sum([oi is None, liq is None, fr is None])
+        data_quality = "COMPLETE" if missing_count == 0 else "PARTIAL" if missing_count < 3 else "MISSING"
+
         return {
-            "open_interest": self.get_open_interest(symbol),
-            "liquidations": self.get_liquidations(symbol),
-            "funding_rate": self.get_funding_rate(symbol),
+            "open_interest": oi,
+            "liquidations": liq,
+            "funding_rate": fr,
             "enabled": True,
+            "_data_quality": data_quality,  # Fix B8: Quality marker
+            "_missing_fields": [
+                field for field, value in [("OI", oi), ("Liq", liq), ("FR", fr)]
+                if value is None
+            ],
         }
 
     def is_enabled(self) -> bool:

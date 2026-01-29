@@ -265,10 +265,11 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         enable_telegram=config_manager.get('telegram', 'enabled', default=False),
         telegram_bot_token=get_env_str('TELEGRAM_BOT_TOKEN', ''),
         telegram_chat_id=get_env_str('TELEGRAM_CHAT_ID', ''),
-        telegram_notify_signals=config_manager.get('telegram', 'notify_signals', default=True),
-        telegram_notify_fills=config_manager.get('telegram', 'notify_fills', default=True),
-        telegram_notify_positions=config_manager.get('telegram', 'notify_positions', default=True),
-        telegram_notify_errors=config_manager.get('telegram', 'notify_errors', default=True),
+        telegram_notify_signals=config_manager.get('telegram', 'notify', 'signals', default=True),
+        telegram_notify_fills=config_manager.get('telegram', 'notify', 'fills', default=True),
+        telegram_notify_positions=config_manager.get('telegram', 'notify', 'positions', default=True),
+        telegram_notify_errors=config_manager.get('telegram', 'notify', 'errors', default=True),
+        telegram_notify_heartbeat=config_manager.get('telegram', 'notify', 'heartbeat', default=True),  # v2.1
 
         # Network configuration
         network_telegram_startup_delay=config_manager.get('network', 'telegram', 'startup_delay', default=5.0),

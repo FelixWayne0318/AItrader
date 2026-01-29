@@ -372,6 +372,51 @@ cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && g
 | 显示提交 | `git log --oneline -5` | 核对 commit hash 确认版本 |
 | 实时诊断 | `scripts/diagnose_realtime.py` | 调用真实 API，验证完整数据流 |
 
+### 实时诊断工具 (diagnose_realtime.py)
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+
+# 完整诊断 (详细输出)
+python3 scripts/diagnose_realtime.py
+
+# 仅显示关键结果 (跳过详细分析)
+python3 scripts/diagnose_realtime.py --summary
+
+# 导出到本地文件
+python3 scripts/diagnose_realtime.py --export
+
+# 导出并推送到 GitHub (远程查看)
+python3 scripts/diagnose_realtime.py --export --push
+```
+
+| 参数 | 说明 |
+|------|------|
+| (无参数) | 完整诊断，详细输出所有数据 |
+| `--summary` | 仅显示关键结果，跳过中间分析 |
+| `--export` | 保存到 `logs/diagnosis_YYYYMMDD_HHMMSS.txt` |
+| `--push` | 配合 `--export` 推送到 GitHub 仓库 |
+
+**GitHub 推送前提条件**：
+- 服务器已配置 SSH Key 用于 GitHub 推送
+- 远程仓库 URL 已设置为 SSH 格式: `git@github.com:FelixWayne0318/AItrader.git`
+
+**配置 SSH Key (如需)**：
+```bash
+# 1. 生成 SSH Key (如果没有)
+ssh-keygen -t ed25519 -C "your_email@example.com"
+
+# 2. 复制公钥到 GitHub Settings > SSH Keys
+cat ~/.ssh/id_ed25519.pub
+
+# 3. 修改远程 URL 为 SSH 格式
+git remote set-url origin git@github.com:FelixWayne0318/AItrader.git
+
+# 4. 测试连接
+ssh -T git@github.com
+```
+
 ## systemd 服务配置
 
 ```ini
@@ -830,7 +875,7 @@ MTF (Multi-Timeframe) 框架使用三层时间周期协同决策，结合订单�
 |------|--------|------|
 | **Open Interest** | Coinalyze API | 持仓量变化，确认趋势强度 (+5% = 强趋势) |
 | **Funding Rate** | Coinalyze API | 资金费率，判断多空情绪 (>0.01% 多头过热) |
-| **Liquidations (1h)** | Coinalyze API | 爆仓数据，极端行情信号 |
+| **Liquidations (1h)** | Coinalyze API | 爆仓数据，极端行情信号 (单位: BTC，需乘价格转 USD) |
 
 **注意**: Coinalyze 数据需要 API Key，失败时自动降级到中性值。
 

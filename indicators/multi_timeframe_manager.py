@@ -350,6 +350,90 @@ class MultiTimeframeManager:
         """获取当前风险状态 (带缓存)"""
         return self._risk_state
 
+    def evaluate_directional_permissions(self, current_price: float) -> Dict[str, Any]:
+        """
+        评估方向性权限 (替代二元 RISK_ON/OFF 开关)
+
+        🔒 Fix E21: 工业化实盘系统的硬风控边界
+        - 本地提供市场特征 (SMA, MACD)
+        - AI 负责战术决策 (具体信号和信心度)
+        - 本地硬风控保护资金安全 (熊市禁止做多，牛市可选禁做空)
+        - 与 TradingAgents 研究框架略有不同 (实盘需要 24/7 自动化硬边界)
+
+        Parameters
+        ----------
+        current_price : float
+            当前价格
+
+        Returns
+        -------
+        Dict[str, Any]
+            {
+                "allow_long": bool,      # 是否允许做多
+                "allow_short": bool,     # 是否允许做空
+                "regime": str,           # 市场状态 (BULL/BEAR/SIDEWAYS)
+                "position_multiplier": float,  # 仓位乘数 (0.5-1.5)
+                "reason": str            # 判断理由
+            }
+        """
+        if not self.trend_manager or not self.trend_manager.is_initialized():
+            self.logger.warning("趋势层未初始化，返回保守权限")
+            return {
+                "allow_long": False,
+                "allow_short": False,
+                "regime": "UNKNOWN",
+                "position_multiplier": 0.0,
+                "reason": "趋势层数据不足"
+            }
+
+        trend_config = self.config.get('trend_layer', {})
+        tech_data = self.trend_manager.get_technical_data(current_price)
+
+        # 获取技术指标
+        sma_period = trend_config.get('sma_period', 200)
+        sma_value = tech_data.get(f'sma_{sma_period}', current_price)
+        macd_value = tech_data.get('macd', 0)
+
+        price_above_sma = current_price > sma_value
+        macd_positive = macd_value > 0
+
+        # 方向性权限判断
+        if price_above_sma and macd_positive:
+            # 牛市：价格在 SMA 上方，MACD 为正
+            permissions = {
+                "allow_long": True,
+                "allow_short": True,  # 允许短线做空
+                "regime": "BULL",
+                "position_multiplier": 1.2,  # 牛市增加仓位
+                "reason": f"牛市 (价格 {current_price:.2f} > SMA{sma_period} {sma_value:.2f}, MACD {macd_value:.2f} > 0)"
+            }
+        elif not price_above_sma and not macd_positive:
+            # 熊市：价格在 SMA 下方，MACD 为负
+            permissions = {
+                "allow_long": False,  # 禁止做多
+                "allow_short": True,  # ✅ 允许做空（核心修复）
+                "regime": "BEAR",
+                "position_multiplier": 1.0,  # 熊市做空正常仓位
+                "reason": f"熊市 (价格 {current_price:.2f} < SMA{sma_period} {sma_value:.2f}, MACD {macd_value:.2f} < 0)"
+            }
+        else:
+            # 震荡：价格和 MACD 方向不一致
+            permissions = {
+                "allow_long": True,   # 震荡市允许双向
+                "allow_short": True,
+                "regime": "SIDEWAYS",
+                "position_multiplier": 0.7,  # 震荡市降低仓位
+                "reason": f"震荡 (价格与 SMA/MACD 方向不一致)"
+            }
+
+        self.logger.info(
+            f"[1D] 方向性权限评估: {permissions['regime']} | "
+            f"做多={permissions['allow_long']}, 做空={permissions['allow_short']} | "
+            f"仓位乘数={permissions['position_multiplier']:.1f}"
+        )
+
+        return permissions
+
     def get_decision_state(self) -> DecisionState:
         """获取当前决策状态"""
         return self._decision_state

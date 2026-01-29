@@ -258,12 +258,17 @@ class MultiAgentAnalyzer:
             tech_summary = self._format_technical_report(technical_report)
             sent_summary = self._format_sentiment_report(sentiment_report)
 
+            # Get current price for calculations (确保是数值类型)
+            # 注意: 需要在 _format_derivatives_report 之前计算，用于 Liquidations BTC→USD 转换
+            raw_price = price_data.get('price', 0) if price_data else technical_report.get('price', 0)
+            try:
+                current_price = float(raw_price) if raw_price is not None else 0.0
+            except (ValueError, TypeError):
+                current_price = 0.0
+
             # MTF v2.1: Format order flow and derivatives for prompts
             order_flow_summary = self._format_order_flow_report(order_flow_report)
-            derivatives_summary = self._format_derivatives_report(derivatives_report)
-
-            # Get current price for calculations
-            current_price = price_data.get('price', 0) if price_data else technical_report.get('price', 0)
+            derivatives_summary = self._format_derivatives_report(derivatives_report, current_price)
 
             # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
@@ -476,18 +481,24 @@ FULL DEBATE TRANSCRIPT:
 You MUST count how many of these specific confirmations each side presented:
 
 BULLISH Confirmations (count in Bull's arguments):
-1. Price above SMA20 OR Price above SMA50
-2. RSI < 60 (not overbought, has room to rise)
+1. Price above SMA20 OR Price above SMA50 (clear trend support)
+2. RSI < 55 (not overbought, has room to rise) - NOTE: RSI 40-55 is neutral, not bearish
 3. MACD > Signal (bullish crossover) OR MACD histogram > 0
-4. Price near support level OR Price near BB lower band
-5. Increasing volume OR bullish volume pattern mentioned
+4. Price within 1% of support level OR within 1% of BB lower band
+5. Volume ratio > 1.0 (above average) OR bullish volume pattern mentioned
 
 BEARISH Confirmations (count in Bear's arguments):
-1. Price below SMA20 OR Price below SMA50
-2. RSI > 40 (showing weakness or overbought)
+1. Price below SMA20 AND Price below SMA50 (both must be true for stronger signal)
+2. RSI > 65 (showing overbought condition) - NOTE: RSI 45-65 is neutral, not bearish weakness
 3. MACD < Signal (bearish crossover) OR MACD histogram < 0
-4. Price near resistance level OR Price near BB upper band
-5. Decreasing volume OR bearish volume pattern mentioned
+4. Price within 1% of resistance level OR within 1% of BB upper band
+5. Volume ratio < 0.8 (clearly below average) OR bearish volume pattern mentioned
+
+QUANTITATIVE THRESHOLDS (v2.1 - use these exact numbers):
+- "Near support/resistance": within 1% of the level
+- "RSI showing weakness": RSI > 65 (not just > 40)
+- "Volume decreasing": volume < 80% of average (volume_ratio < 0.8)
+- "Volume increasing": volume > average (volume_ratio > 1.0)
 
 IMPORTANT: Each confirmation is worth 1 point if ANY of the conditions in that item are true.
 Example: If price is above SMA50 but below SMA20, confirmation #1 STILL COUNTS as 1.
@@ -682,14 +693,28 @@ JSON response only:"""
 
     def _validate_sl_tp(self, decision: Dict[str, Any], current_price: float) -> Dict[str, Any]:
         """Validate and fix stop loss / take profit values."""
+        # 修复: 确保 current_price 是数值类型
+        try:
+            current_price = float(current_price) if current_price is not None else 0.0
+        except (ValueError, TypeError):
+            current_price = 0.0
         # Defensive check: ensure current_price is valid before calculations
         if current_price is None or current_price <= 0:
             self.logger.warning(f"Invalid current_price ({current_price}) for SL/TP validation, skipping")
             return decision
 
         signal = decision.get("signal", "HOLD")
-        sl = decision.get("stop_loss", 0) or 0  # Handle None
-        tp = decision.get("take_profit", 0) or 0  # Handle None
+        # 修复: 确保 sl/tp 是数值类型 (AI 可能返回字符串)
+        sl_raw = decision.get("stop_loss", 0)
+        tp_raw = decision.get("take_profit", 0)
+        try:
+            sl = float(sl_raw) if sl_raw is not None else 0.0
+        except (ValueError, TypeError):
+            sl = 0.0
+        try:
+            tp = float(tp_raw) if tp_raw is not None else 0.0
+        except (ValueError, TypeError):
+            tp = 0.0
 
         # Get configuration values (Phase 3: migrated to ConfigManager)
         min_sl_distance = get_min_sl_distance_pct()
@@ -968,7 +993,7 @@ INTERPRETATION:
 - CVD FALLING: Distribution phase, potential breakdown
 """
 
-    def _format_derivatives_report(self, data: Optional[Dict[str, Any]]) -> str:
+    def _format_derivatives_report(self, data: Optional[Dict[str, Any]], current_price: float = 0.0) -> str:
         """
         Format derivatives data for AI prompts.
 
@@ -978,6 +1003,8 @@ INTERPRETATION:
         ----------
         data : Dict, optional
             Derivatives data (OI, funding rate, liquidations)
+        current_price : float
+            Current BTC price for converting liquidations from BTC to USD
 
         Returns
         -------
@@ -1025,23 +1052,30 @@ INTERPRETATION:
         else:
             parts.append("- Funding Rate: N/A")
 
-        # Liquidations
+        # Liquidations (注意: Coinalyze API 返回的是 BTC 单位，需要转换为 USD)
         liq = data.get('liquidations')
         if liq:
             history = liq.get('history', [])
             if history:
                 item = history[-1]
-                long_liq = float(item.get('l', 0))
-                short_liq = float(item.get('s', 0))
-                total = long_liq + short_liq
+                # API 返回的是 BTC 单位
+                long_liq_btc = float(item.get('l', 0))
+                short_liq_btc = float(item.get('s', 0))
+                total_btc = long_liq_btc + short_liq_btc
 
-                parts.append(f"- Liquidations (1h): ${total/1e6:.1f}M total")
-                if total > 0:
-                    long_ratio = long_liq / total
-                    parts.append(f"  → Long Liq: ${long_liq/1e6:.1f}M ({long_ratio:.0%})")
-                    parts.append(f"  → Short Liq: ${short_liq/1e6:.1f}M ({1-long_ratio:.0%})")
+                # 转换为 USD (使用传入的 current_price)
+                price_for_conversion = current_price if current_price > 0 else 88000  # fallback
+                long_liq_usd = long_liq_btc * price_for_conversion
+                short_liq_usd = short_liq_btc * price_for_conversion
+                total_usd = total_btc * price_for_conversion
 
-                    if total > 50_000_000:  # > $50M
+                parts.append(f"- Liquidations (1h): {total_btc:.4f} BTC (${total_usd:,.0f})")
+                if total_btc > 0:
+                    long_ratio = long_liq_btc / total_btc
+                    parts.append(f"  → Long Liq: {long_liq_btc:.4f} BTC (${long_liq_usd:,.0f}) ({long_ratio:.0%})")
+                    parts.append(f"  → Short Liq: {short_liq_btc:.4f} BTC (${short_liq_usd:,.0f}) ({1-long_ratio:.0%})")
+
+                    if total_usd > 50_000_000:  # > $50M USD
                         parts.append("  → ⚠️ HIGH liquidations: Extreme volatility, be cautious")
             else:
                 parts.append("- Liquidations (1h): N/A")

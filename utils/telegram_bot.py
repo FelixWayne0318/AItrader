@@ -401,7 +401,65 @@ class TelegramBot:
 
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
 """
-    
+
+    def format_heartbeat_message(self, heartbeat_data: Dict[str, Any]) -> str:
+        """
+        Format heartbeat status message (v2.3 - Simplified).
+
+        统一格式，无论是否有持仓都显示相同结构，只是数据不同。
+        """
+        # 安全获取所有值，确保不为 None
+        signal = heartbeat_data.get('signal') or 'PENDING'
+        confidence = heartbeat_data.get('confidence') or 'N/A'
+        price = heartbeat_data.get('price') or 0
+        rsi = heartbeat_data.get('rsi') or 0
+        timer_count = heartbeat_data.get('timer_count') or 0
+        equity = heartbeat_data.get('equity') or 0
+        trend_status = heartbeat_data.get('trend_status') or 'N/A'
+        uptime_str = heartbeat_data.get('uptime_str') or 'N/A'
+
+        # 持仓信息（统一显示，无则显示 0 或 无）
+        position_side = heartbeat_data.get('position_side') or '无'
+        entry_price = heartbeat_data.get('entry_price') or 0
+        position_size = heartbeat_data.get('position_size') or 0
+        position_pnl_pct = heartbeat_data.get('position_pnl_pct') or 0
+
+        # Signal emoji
+        signal_emoji = {'BUY': '🟢', 'SELL': '🔴', 'HOLD': '⚪'}.get(signal, '❓')
+
+        # Trend emoji
+        trend_emoji = {'RISK_ON': '🟢', 'RISK_OFF': '🔴'}.get(trend_status, '⚪')
+
+        # Position emoji
+        if position_side == 'LONG':
+            pos_emoji = '🟢 LONG'
+        elif position_side == 'SHORT':
+            pos_emoji = '🔴 SHORT'
+        else:
+            pos_emoji = '⚪ 无'
+
+        # PnL emoji
+        pnl_emoji = '📈' if position_pnl_pct > 0 else '📉' if position_pnl_pct < 0 else '➖'
+
+        # 构建消息 - 统一格式
+        msg = f"💓 *Heartbeat #{timer_count}*\n"
+        msg += f"━━━━━━━━━━━━━━━━\n"
+        msg += f"💵 价格: ${price:,.2f}\n"
+        msg += f"📊 趋势: {trend_emoji} {trend_status}\n"
+        msg += f"📈 RSI: {rsi:.1f}\n"
+        msg += f"🎯 信号: {signal_emoji} {signal} ({confidence})\n"
+        msg += f"━━━━━━━━━━━━━━━━\n"
+        msg += f"💰 持仓: {pos_emoji}\n"
+        msg += f"📍 入场: ${entry_price:,.2f}\n"
+        msg += f"📦 数量: {position_size:.4f}\n"
+        msg += f"💹 盈亏: {pnl_emoji} {position_pnl_pct:+.2f}%\n"
+        msg += f"━━━━━━━━━━━━━━━━\n"
+        msg += f"🏦 余额: ${equity:,.2f}\n"
+        msg += f"⏱ 运行: {uptime_str}\n"
+        msg += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
+
+        return msg
+
     async def test_connection(self) -> bool:
         """
         Test Telegram bot connection.
