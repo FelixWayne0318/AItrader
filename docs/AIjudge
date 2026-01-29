@@ -1,493 +1,483 @@
-# ✅ 完整执行改造方案（伪代码/架构方案）——TradingAgents 风格：本地只算数据，判断交给 DeepSeek（Judge + RiskManager）
-# 说明：以下包含【设计意图】【调研结论/为什么这么改】【改造目标】【落地步骤】【伪代码改动点】【提示词模板】【回滚/风控】
-# ⚠️ 重要：下面的代码块里包含大量“伪代码”，Claude Code 必须按你项目真实文件/类名/方法名改写落地。
+# AIjudge 改进提案 v2.0 - 符合 TradingAgents 设计意图
 
-================================================================================
-0) 你当前系统的核心问题（必须先统一认知）
-================================================================================
-你现在的 MTF（1D/4H/15M）架构本身没错，错的是“风险层执行粒度”和“裁决位置”。
+> **修订版本**: 2.0 (修正架构误解)
+> **日期**: 2026-01-29
+> **目的**: 改进 MTF 风控逻辑，使其真正符合 TradingAgents "AI 决策 + 本地硬风控" 的架构
 
-当前逻辑等价于：
-- 本地：1D < SMA200 => RISK_OFF => 禁止新开仓
-- 但仍允许持仓管理（止损/反向/平仓）
-结果变成：
-- “不让你赚钱，但允许你亏钱”
-- 且没区分 RISK_OFF_FOR_LONG / RISK_OFF_FOR_SHORT
-- 熊市中做空胜率高，但你的系统会把“熊市=不交易”当成默认答案
+---
 
-更糟糕的是：
-- 你现在是 15m 执行系统，但用 1D SMA200 当开关
-- SMA200 一年穿越 2~3 次，作为 15m 系统的 gating 过于粗糙
-- 你会错过熊市的反弹/震荡收益，并且错过熊市做空主趋势收益
+## 0. 前言：修正原提案的关键误解
 
-================================================================================
-1) “调研结论”与 TradingAgents 设计意图（你问的关键）
-================================================================================
-你问：本地只计算数据，判断交给 deepseek，这是否符合 TradingAgents？
+**原提案 v1.0 的主要问题**：
+1. ❌ **误判当前架构** - 声称系统"没有 AI 裁决"，实际上 `agents/multi_agent_analyzer.py` 已完整实现 Bull/Bear/Judge 辩论
+2. ❌ **建议删除硬风控** - 提议"删除 1D SMA200 gating"，这在实盘系统中极度危险
+3. ❌ **过度工程化** - 提议新增 Permission/RiskControl 数据结构，与现有 signal/confidence/risk_level 重复
 
-结论：✅ 更符合 TradingAgents 的设计意图（尤其是“多代理辩论 + Judge 统一裁决 + 风险角色参与”）。
+**本次修订 v2.0 的核心修正**：
+- ✅ 保留 1D SMA200 风控层，但从"二元开关"升级为"方向性权限"
+- ✅ 不新增重复结构，扩展现有 AIDecision 返回值
+- ✅ 明确区分"AI 职责"和"本地硬风控职责"
 
-原因（TradingAgents 设计哲学可抽象为 3 层职责分离）：
-A) 本地系统（执行引擎）职责：
-   - 数据获取/指标计算/状态缓存
-   - 风控硬约束（杠杆、仓位、最大回撤、最小下单量、精度、幂等）
-   - 订单执行、仓位管理、异常兜底
-   - 任何“不可逆损失”的事情必须本地可控
+---
 
-B) AI 系统（TradingAgents 多角色）职责：
-   - 用“多视角”对市场状态做解释与推理
-   - 输出“可交易方向权限”（allow_long / allow_short）
-   - 输出风险档位（risk_tier / position_multiplier）
-   - 输出交易动作（BUY/SELL/HOLD）与理由
+## 1. 当前系统的真实状态（必须先统一认知）
 
-C) 最终合规原则（工业化落地必须满足）：
-   - AI 只能“建议/裁决策略层”，不能绕过本地硬风控
-   - 本地必须能在 AI 输出异常时安全退化为 HOLD
+### 1.1 当前架构已实现的部分
 
-为什么这比“本地硬编码 1D gating”更好？
-- 1D gating 是静态规则，对熊市做空极不友好
-- AI 可以动态区分：熊市允许做空、禁止做多；或允许轻仓反弹多
-- 更接近“策略研究/组合经理”的角色分工（TradingAgents 论文风格）
+**✅ 已完整实现 TradingAgents 风格的 AI 决策**：
 
-================================================================================
-2) 改造目标（明确你要得到什么）
-================================================================================
-你要的不是“删掉本地判断”，而是把它升级成“AI 裁决 + 本地硬风控”的混合架构。
+| 模块 | TradingAgents 对应角色 | 实现文件 | 状态 |
+|------|----------------------|---------|------|
+| Bull Analyst | Bullish Researcher | `agents/multi_agent_analyzer.py:273-305` | ✅ 已实现 |
+| Bear Analyst | Bearish Researcher | `agents/multi_agent_analyzer.py:273-305` | ✅ 已实现 |
+| Judge | Portfolio Manager | `agents/multi_agent_analyzer.py:452-596` | ✅ 已实现 (确认计数算法) |
+| Risk Manager | Risk Evaluator | `agents/multi_agent_analyzer.py:598-693` | ✅ 已实现 |
 
-目标输出必须满足：
-(1) 任何时刻都明确：是否允许新开多？是否允许新开空？
-(2) 熊市阶段：默认允许做空（高胜率阶段），并可限制做多
-(3) 震荡阶段：允许双向，但降杠杆/降仓位
-(4) 牛市阶段：允许做多为主，但仍允许短线做空（可选）
-(5) 执行层 15m 必须能持续交易，不被 1D “开关”卡死
-(6) AI 输出必须结构化 JSON，可解析、可回放、可审计
-(7) 出现 AI 超时/格式错 => 自动 HOLD + 告警（Telegram）
+**当前 AI 调用链**：
+```
+on_timer (15分钟)
+  ↓
+AIDataAssembler (聚合数据)
+  ├─ 技术指标 (15M/4H/1D)
+  ├─ 订单流 (Buy Ratio, CVD)
+  ├─ 衍生品 (OI, Funding Rate)
+  └─ 情绪 (多空比)
+  ↓
+MultiAgentAnalyzer (4 AI calls)
+  ├─ Bull Analyst (temperature=0.3)
+  ├─ Bear Analyst (temperature=0.3)
+  ├─ Judge (确认计数, temperature=0.1)
+  └─ Risk Manager (温度=0.2)
+  ↓
+返回: signal, confidence, risk_level, sl, tp, reason
+```
 
-================================================================================
-3) 新架构：把 “RiskState” 从二元开关升级为 “Permission + RiskTier”
-================================================================================
-你现在：
-- RiskState: RISK_ON / RISK_OFF
-- DecisionState: ALLOW_LONG / ALLOW_SHORT / WAIT
+**这已经是 TradingAgents 架构！问题不在这里。**
 
-建议升级为（核心）：
-- PermissionState:
-    allow_new_long: bool
-    allow_new_short: bool
-    allow_add_long: bool        # 是否允许加仓（可选）
-    allow_add_short: bool
-    allow_flip: bool            # 是否允许反手（可选）
-- RiskTier:
-    tier: LOW / MEDIUM / HIGH / EXTREME
-    position_multiplier: 0.0 ~ 2.0
-    max_leverage: int
-- Regime:
-    regime_1d: BULL / BEAR / SIDEWAYS / TRANSITION
-    bias: LONG_BIAS / SHORT_BIAS / NEUTRAL
-- Action:
-    signal: BUY / SELL / HOLD
-    confidence: LOW/MEDIUM/HIGH
-    sl/tp: float
-    reason: string
+### 1.2 核心问题：MTF 风控层的粗糙实现
 
-注意：Permission 是“能不能开仓”，Action 是“要不要开仓”
-Permission 是风险层输出，Action 是策略层输出
-两者缺一不可
+**真正的问题在于 `indicators/multi_timeframe_manager.py:335-338`**：
 
-================================================================================
-4) 最小可落地改造路径（强烈推荐按这个顺序做）
-================================================================================
-Phase 0（不改策略，只改输出结构）：
-- 让 AI 输出 JSON schema（包含 permission + risk_tier + signal）
-- 本地解析并打印，不影响下单逻辑
-目的：验证 AI 输出稳定性
-
-Phase 1（替换 1D SMA200 gating）：
-- 删除/禁用本地 1D < SMA200 => 禁止新开仓 的一票否决
-- 改为：AI permission 决定是否允许新开多/新开空
-
-Phase 2（执行层接入 permission）：
-- _execute_trade() 下单前强制检查 permission
-- BUY 但 allow_new_long=false => HOLD（并说明原因）
-- SELL 但 allow_new_short=false => HOLD
-
-Phase 3（仓位与杠杆动态化）：
-- position_size = base_usdt * confidence_mult * AI.position_multiplier
-- leverage = min(config_leverage, AI.max_leverage)
-
-Phase 4（修复 Telegram 先发信号后不交易的问题）：
-- 改为：只有“真正下单成功”才发“交易执行通知”
-- AI 产生信号时发“策略信号通知”（可选），但必须标注“未执行/待执行”
-
-================================================================================
-5) 你要 Claude Code 做的具体改造点（伪代码级别）
-================================================================================
-
---------------------------------------------
-5.1 新增统一的 AI 输出结构（强制 JSON）
---------------------------------------------
-文件：utils/ai_schema.py  （伪代码，需要你项目落地）
 ```python
-# PSEUDOCODE
-from dataclasses import dataclass
-from typing import Optional, Literal
+# 当前逻辑 (二元开关)
+if price < sma_200 and macd < 0:
+    return RiskState.RISK_OFF  # ❌ 完全禁止新仓
+else:
+    return RiskState.RISK_ON
+```
 
-Signal = Literal["BUY", "SELL", "HOLD"]
-Confidence = Literal["LOW", "MEDIUM", "HIGH"]
-RiskTier = Literal["LOW", "MEDIUM", "HIGH", "EXTREME"]
-Regime = Literal["BULL", "BEAR", "SIDEWAYS", "TRANSITION"]
+**导致的致命缺陷**：
+- 熊市 (price < SMA200) → RISK_OFF → **禁止所有新仓**（包括做空）
+- 结果：AI 判断 "SELL (HIGH信心)"，但被本地规则强制改为 HOLD
+- 影响：错过熊市做空的高胜率机会
 
+**日志证据** (logs/diagnosis_20260129_023432.txt):
+```
+AI 输出: SELL (HIGH信心, Bearish 3/5)
+MTF 过滤: RISK_OFF (price < SMA200) → 信号改为 HOLD
+```
+
+---
+
+## 2. TradingAgents 设计意图的正确理解
+
+### 2.1 TradingAgents 的职责分层
+
+**TradingAgents 论文的核心理念**：
+
+| 层级 | TradingAgents 职责 | AItrader 对应 | 实现状态 |
+|------|-------------------|--------------|---------|
+| **数据层** | API 调用，指标计算 (本地) | AIDataAssembler | ✅ 已实现 |
+| **分析层** | Bull/Bear/Judge 辩论 (AI) | MultiAgentAnalyzer | ✅ 已实现 |
+| **风控层** | Portfolio Manager (AI + 人工确认) | MultiTimeframeManager | ⚠️ **过于粗糙** |
+| **执行层** | Signal Processor (本地) | _execute_trade() | ✅ 已实现 |
+
+**关键区别**：
+- TradingAgents 的 Portfolio Manager 是 **AI 角色**（可选人工确认）
+- 当前系统在 AI 之后又加了 **硬编码规则**（1D 二元开关）
+
+### 2.2 工业化系统必须保留的硬风控
+
+**⚠️ 重要**: TradingAgents 是研究框架，AItrader 是实盘系统，必须有硬边界：
+
+| 硬风控项 | 必须本地保留 | 原因 |
+|---------|-------------|------|
+| max_position_ratio (30%) | ✅ 本地 | 防止过度集中 |
+| max_daily_drawdown (5%) | ✅ 本地 | 熔断机制 |
+| AI 超时/解析失败 | ✅ 本地 → HOLD | 异常兜底 |
+| 交易所规则 (min_notional) | ✅ 本地 | API 强制要求 |
+| 1D 趋势过滤 | ⚠️ **需升级** | 当前太粗糙 |
+
+**正确的工业化架构**：
+```
+┌─────────────────────────────────────────┐
+│  硬风控层 (本地，不可绕过)               │
+│  ├─ max_daily_drawdown: 5%              │
+│  ├─ max_position_ratio: 30%             │
+│  ├─ circuit_breaker: 5 连亏停止         │
+│  └─ AI_timeout => HOLD                  │
+└─────────────────────────────────────────┘
+              ↓ (通过硬风控后)
+┌─────────────────────────────────────────┐
+│  趋势过滤层 (本地特征 + AI 权限判断)     │
+│  ├─ 1D 特征: SMA200, MACD               │
+│  ├─ AI 输出: allow_long / allow_short   │
+│  └─ 不再是二元开关 ✅                    │
+└─────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────┐
+│  AI 决策层 (TradingAgents 风格)         │
+│  ├─ Bull/Bear 辩论 (4H 数据)            │
+│  ├─ Judge 决策 (信号 + 信心度)          │
+│  └─ Risk Manager (止损/止盈/仓位建议)   │
+└─────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────┐
+│  执行层 (本地)                          │
+│  ├─ 交易所规则检查                      │
+│  ├─ 精度处理                            │
+│  └─ 订单幂等性                          │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## 3. 改进方案：升级 MTF 为方向性权限（不是删除）
+
+### 3.1 目标
+
+**不要删除 1D SMA200 风控，而是让它更智能**：
+
+| 当前 (二元开关) | 改进后 (方向性权限) |
+|----------------|-------------------|
+| 熊市 → RISK_OFF → 禁止所有新仓 | 熊市 → allow_long=False, allow_short=True |
+| 牛市 → RISK_ON → 允许所有新仓 | 牛市 → allow_long=True, allow_short=True (可选限制) |
+| 震荡 → ? | 震荡 → 双向允许，但降低仓位 |
+
+### 3.2 实现方案
+
+**修改文件**: `indicators/multi_timeframe_manager.py`
+
+**新增方法** (替代 `evaluate_risk_state`):
+
+```python
+def evaluate_directional_permissions(self, current_price: float) -> Dict[str, Any]:
+    """
+    评估多空两个方向的权限 (替代二元 RISK_ON/OFF)
+
+    Returns
+    -------
+    dict
+        {
+            "allow_long": bool,
+            "allow_short": bool,
+            "regime": "BULL" | "BEAR" | "SIDEWAYS",
+            "position_multiplier": float,  # 0.5 ~ 1.5
+            "reason": str
+        }
+    """
+    if not self.trend_manager or not self.trend_manager.is_initialized():
+        self.logger.warning("趋势层未初始化，返回保守权限")
+        return {
+            "allow_long": False,
+            "allow_short": False,
+            "regime": "UNKNOWN",
+            "position_multiplier": 0.0,
+            "reason": "趋势数据不足"
+        }
+
+    trend_config = self.config.get('trend_layer', {})
+    tech_data = self.trend_manager.get_technical_data(current_price)
+
+    sma_200 = tech_data.get('sma_200', current_price)
+    macd = tech_data.get('macd', 0)
+
+    # 牛市判定：价格在 SMA200 上方 + MACD > 0
+    if current_price > sma_200 and macd > 0:
+        return {
+            "allow_long": True,
+            "allow_short": True,  # 可选：允许短线做空
+            "regime": "BULL",
+            "position_multiplier": 1.2,  # 牛市可适度增加仓位
+            "reason": f"牛市 (price {current_price:.0f} > SMA200 {sma_200:.0f}, MACD {macd:.1f} > 0)"
+        }
+
+    # 熊市判定：价格在 SMA200 下方 + MACD < 0
+    elif current_price < sma_200 and macd < 0:
+        return {
+            "allow_long": False,  # ✅ 核心修复：熊市禁止做多
+            "allow_short": True,  # ✅ 核心修复：熊市允许做空
+            "regime": "BEAR",
+            "position_multiplier": 1.0,  # 熊市做空用正常仓位
+            "reason": f"熊市 (price {current_price:.0f} < SMA200 {sma_200:.0f}, MACD {macd:.1f} < 0)"
+        }
+
+    # 震荡/转换期：MACD 与 SMA200 信号不一致
+    else:
+        return {
+            "allow_long": True,
+            "allow_short": True,
+            "regime": "SIDEWAYS",
+            "position_multiplier": 0.7,  # ✅ 震荡市降低仓位
+            "reason": f"震荡市 (price {current_price:.0f}, SMA200 {sma_200:.0f}, MACD {macd:.1f})"
+        }
+```
+
+**优势**：
+- ✅ 保留了 1D 趋势过滤（不是删除）
+- ✅ 熊市允许做空，牛市允许做多
+- ✅ 震荡市降低仓位，而非完全禁止
+- ✅ 不新增复杂数据结构，直接返回 dict
+
+### 3.3 策略层接入
+
+**修改文件**: `strategy/deepseek_strategy.py`
+
+**在 `_execute_trade()` 前增加权限检查**：
+
+```python
+def on_timer(self, event):
+    # ... (现有数据聚合逻辑)
+
+    # AI 分析 (已有逻辑，不变)
+    signal_data = self.multi_agent.analyze(...)
+
+    # ✅ 新增：获取方向性权限
+    permissions = self.mtf_manager.evaluate_directional_permissions(current_price)
+
+    # ✅ 新增：权限 gating
+    if signal_data['signal'] == 'BUY' and not permissions['allow_long']:
+        self.log.info(f"⏸️ HOLD: AI 建议 BUY，但趋势层禁止做多 ({permissions['reason']})")
+        return  # 不执行
+
+    if signal_data['signal'] == 'SELL' and not permissions['allow_short']:
+        self.log.info(f"⏸️ HOLD: AI 建议 SELL，但趋势层禁止做空 ({permissions['reason']})")
+        return  # 不执行
+
+    # ✅ 新增：动态调整仓位
+    base_usdt = self.config.position['base_usdt_amount']
+    confidence_mult = self._get_confidence_multiplier(signal_data['confidence'])
+    regime_mult = permissions['position_multiplier']
+
+    target_usdt = base_usdt * confidence_mult * regime_mult
+
+    # 执行交易 (已有逻辑，不变)
+    self._execute_trade(signal_data, target_usdt)
+```
+
+---
+
+## 4. 必须立即修复的问题
+
+### 4.1 Telegram 通知时机错误 ⚠️
+
+**当前问题** (strategy/deepseek_strategy.py:1566-1590):
+
+```python
+# ❌ 错误流程
+signal_data = multi_agent.analyze(...)
+telegram_bot.send_message_sync(signal_notification)  # 过早！
+_execute_trade(signal_data)  # 可能被 MTF 阻止
+```
+
+**问题**：用户收到 "SELL" 通知，但实际没有交易（被 MTF 过滤）
+
+**修复方案**：
+
+```python
+# ✅ 正确流程
+signal_data = multi_agent.analyze(...)
+
+# 执行交易
+execution_result = _execute_trade(signal_data)
+
+# 根据执行结果通知
+if execution_result and execution_result.executed:
+    telegram_bot.send_message_sync(
+        f"✅ EXECUTED: {signal_data['signal']} @ {price} | "
+        f"Confidence: {signal_data['confidence']} | "
+        f"Reason: {signal_data['reason'][:50]}"
+    )
+else:
+    telegram_bot.send_message_sync(
+        f"⏸️ SKIPPED: {signal_data['signal']} | "
+        f"Reason: {execution_result.reason if execution_result else 'Unknown'}"
+    )
+```
+
+### 4.2 增加决策审计日志
+
+**新增文件**: `utils/decision_logger.py`
+
+```python
+import json
+from pathlib import Path
+from datetime import datetime
+
+class DecisionLogger:
+    def __init__(self, log_dir="logs/decisions"):
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+
+    def log_decision(self, **kwargs):
+        """记录完整决策链"""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "price": kwargs.get('price'),
+            "ai_signal": kwargs.get('ai_signal'),
+            "ai_confidence": kwargs.get('ai_confidence'),
+            "mtf_regime": kwargs.get('mtf_regime'),
+            "allow_long": kwargs.get('allow_long'),
+            "allow_short": kwargs.get('allow_short'),
+            "final_signal": kwargs.get('final_signal'),
+            "executed": kwargs.get('executed', False),
+            "skip_reason": kwargs.get('skip_reason'),
+        }
+
+        # 按天保存
+        date_str = datetime.now().strftime("%Y%m%d")
+        log_file = self.log_dir / f"decisions_{date_str}.jsonl"
+
+        with open(log_file, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+```
+
+**作用**：可以追踪 "AI 建议做空，但 MTF 阻止" 的频率
+
+---
+
+## 5. 不应该实施的建议（避免过度工程化）
+
+### 5.1 ❌ 不要新增重复数据结构
+
+**原提案建议**：
+```python
 @dataclass
 class Permission:
     allow_new_long: bool
     allow_new_short: bool
-    allow_add_long: bool = True
-    allow_add_short: bool = True
-    allow_flip: bool = True
+    allow_add_long: bool
+    allow_add_short: bool
+    allow_flip: bool
 
 @dataclass
 class RiskControl:
     tier: RiskTier
-    position_multiplier: float  # 0.0 ~ 2.0
-    max_leverage: int           # 1 ~ 20 (example)
-
-@dataclass
-class AIDecision:
-    signal: Signal
-    confidence: Confidence
-    permission: Permission
-    risk: RiskControl
-    regime_1d: Regime
-    sl: Optional[float] = None
-    tp: Optional[float] = None
-    reason: str = ""
-    debug: dict = None
-
-⸻
-
-5.2 修改 AI 调用层：强制 JSON 输出 + 解析
-
-文件：deepseek_client.py / multi_agent_runner.py（按你项目实际）
-
-
-# PSEUDOCODE
-import json
-from utils.ai_schema import AIDecision
-
-def call_deepseek_judge(ai_input: dict) -> AIDecision:
-    prompt = build_prompt(ai_input)  # 下面给你模板
-    raw = deepseek_chat(prompt)
-
-    # 强制提取 JSON（避免模型输出自然语言）
-    json_text = extract_json_block(raw)  # 你要实现：找到第一个 {...} 解析
-    obj = json.loads(json_text)
-
-    # 字段校验（缺字段直接 fallback HOLD）
-    return validate_or_fallback(obj)
-
-def validate_or_fallback(obj: dict) -> AIDecision:
-    try:
-        # 必填字段
-        signal = obj["signal"]
-        confidence = obj["confidence"]
-        permission = obj["permission"]
-        risk = obj["risk"]
-        regime_1d = obj["regime_1d"]
-
-        # 关键字段存在性
-        assert "allow_new_long" in permission
-        assert "allow_new_short" in permission
-        assert "position_multiplier" in risk
-        assert "max_leverage" in risk
-
-        # 返回结构体（略）
-        return AIDecision(...)
-    except Exception as e:
-        return AIDecision(
-            signal="HOLD",
-            confidence="LOW",
-            permission=Permission(False, False, False, False, False),
-            risk=RiskControl("EXTREME", 0.0, 1),
-            regime_1d="TRANSITION",
-            reason=f"AI_OUTPUT_INVALID: {e}",
-            debug={"raw_obj": obj},
-        )
-
-⸻
-
-5.3 修改 MultiTimeframeManager：从“本地裁决”改为“本地只算 + 交给 AI”
-
-文件：multi_timeframe_manager.py（按你项目）
-目标：保留 1D/4H/15M 指标计算，但不在这里输出 RISK_OFF 一票否决
-
-现在你可能有：
-	•	evaluate_risk_state() => RISK_ON/OFF（本地算）
-建议改成：
-	•	get_trend_features() => 输出 1D 特征（给 AI）
-	•	get_decision_features() => 输出 4H 特征（给 AI）
-	•	get_execution_features() => 输出 15M 特征（给 AI）
-
-# PSEUDOCODE
-class MultiTimeframeManager:
-    def get_features(self) -> dict:
-        return {
-            "trend_1d": {
-                "close": self.trend.close,
-                "sma200": self.trend.sma200,
-                "macd_hist": self.trend.macd_hist,
-                "slope_sma200": self.trend.sma200_slope,   # 可选：增强
-                "distance_to_sma200_pct": pct(self.trend.close, self.trend.sma200),
-            },
-            "decision_4h": {
-                "close": self.decision.close,
-                "rsi": self.decision.rsi,
-                "macd_hist": self.decision.macd_hist,
-                "sma50": self.decision.sma50,
-            },
-            "execution_15m": {
-                "close": self.exec.close,
-                "rsi": self.exec.rsi,
-                "macd_hist": self.exec.macd_hist,
-                "sma20": self.exec.sma20,
-                "bb_pos": self.exec.bb_pos,
-            }
-        }
+    position_multiplier: float
+    max_leverage: int
+```
 
-⚠️ 关键点：
-	•	不要在这里输出 “RISK_OFF => 禁止交易”
-	•	只输出特征，让 AI Judge/RiskManager 决定 permission
+**为什么不应该**：
+- 当前系统已有 `signal` (BUY/SELL/HOLD)、`confidence` (HIGH/MEDIUM/LOW)、`risk_level`
+- 新增 `allow_new_long` 和 `signal="BUY"` 是平行结构，会造成逻辑冲突
+- 例：如果 AI 输出 `allow_new_long=True` 但 `signal="HOLD"`，本地如何处理？
 
-⸻
+**正确做法**：
+- 直接在 `MultiTimeframeManager` 返回 `allow_long`/`allow_short`
+- 不需要新的 dataclass
 
-5.4 修改策略主流程：AI 决策 = 最终策略裁决，但本地保留硬风控
+### 5.2 ❌ 不要删除 1D SMA200 风控
 
-文件：deepseek_strategy.py（你的核心）
-你现在流程大概是：
-	•	assemble data
-	•	multi-agent => signal/sl/tp
-	•	MTF filter => pass/fail
-	•	_execute_trade()
+**原提案建议**：
+> "Phase 1: 删除/禁用本地 1D < SMA200 => 禁止新开仓 的一票否决"
 
-你要改成：
-	•	assemble data（含 1D/4H/15M features）
-	•	AI Judge 输出：signal + permission + risk_multiplier
-	•	本地执行前检查：
-	•	交易所规则
-	•	风控硬限制
-	•	permission gating
-
-伪代码如下：
-
-# PSEUDOCODE
-def on_timer():
-    ai_input = assemble_ai_input()  # 本地算完所有指标 + orderflow + derivatives + sentiment
-
-    decision: AIDecision = call_deepseek_judge(ai_input)
-
-    # 本地硬风控（永远保留）
-    if not risk_hard_limits_ok():
-        return HOLD("HARD_RISK_LIMIT")
-
-    # permission gating（替代原 1D SMA200 开关）
-    if decision.signal == "BUY" and not decision.permission.allow_new_long:
-        return HOLD("AI_PERMISSION_BLOCK_LONG")
-
-    if decision.signal == "SELL" and not decision.permission.allow_new_short:
-        return HOLD("AI_PERMISSION_BLOCK_SHORT")
-
-    # 计算动态仓位（AI 给 multiplier）
-    target_usdt = base_usdt * confidence_mult(decision.confidence) * decision.risk.position_multiplier
-    leverage = min(config.leverage, decision.risk.max_leverage)
-
-    # 执行层 RSI/滑点/手续费过滤（可保留，但不要再做“趋势方向裁决”）
-    if not execution_sanity_ok():
-        return HOLD("EXECUTION_SANITY_FAIL")
-
-    # 下单
-    place_order(decision.signal, target_usdt, leverage, decision.sl, decision.tp)
-
-    # 通知：下单成功后再发“执行通知”
-    telegram_notify_executed(decision)
-
-⸻
-
-5.5 修复 “Telegram 先发信号后不交易”的一致性问题（必须改）
-
-你日志明确：
-	•	Step 2 先发 Telegram
-	•	Step 3 执行时被持仓管理阻止
-
-建议改成 2 类通知：
-A) Strategy Signal（策略信号）——可选
-B) Execution Result（执行结果）——必须
-
-伪代码：
-
-# PSEUDOCODE
-def notify_strategy_signal(decision):
-    # 可选：只在 debug 或 paper 模式发
-    send("STRATEGY_SIGNAL: BUY ... (not executed yet)")
-
-def notify_execution_result(result):
-    if result.executed:
-        send("EXECUTED: BUY qty=... sl=... tp=...")
-    else:
-        send(f"SKIPPED: reason={result.reason}")
-
-================================================================================
-6) DeepSeek / Judge 提示词模板（你直接复制给 Claude Code 接入）
-
-目标：强制输出 JSON，且必须包含 permission + risk
-
-⸻
-
-6.1 系统提示词（System）
-
-你是一个量化交易系统的 “Portfolio Manager (Judge) + Risk Manager” 组合角色。
-你必须输出严格 JSON，不能输出任何解释性文本。
-你必须基于输入的多时间框架特征(1D/4H/15M)、订单流、衍生品、情绪，决定：
-	1.	signal: BUY/SELL/HOLD
-	2.	confidence: LOW/MEDIUM/HIGH
-	3.	permission: 是否允许新开多/新开空（必须区分）
-	4.	risk: position_multiplier 与 max_leverage
-	5.	regime_1d: BULL/BEAR/SIDEWAYS/TRANSITION
-	6.	sl/tp: 若 signal=BUY/SELL 必须给出
-
-⸻
-
-6.2 用户提示词（User）
-
-输入数据如下（JSON）：
-{AI_INPUT}
-
-你必须返回以下 JSON schema（严格匹配字段名）：
-{
-“signal”: “BUY|SELL|HOLD”,
-“confidence”: “LOW|MEDIUM|HIGH”,
-“regime_1d”: “BULL|BEAR|SIDEWAYS|TRANSITION”,
-“permission”: {
-“allow_new_long”: true|false,
-“allow_new_short”: true|false,
-“allow_add_long”: true|false,
-“allow_add_short”: true|false,
-“allow_flip”: true|false
-},
-“risk”: {
-“tier”: “LOW|MEDIUM|HIGH|EXTREME”,
-“position_multiplier”: 0.0,
-“max_leverage”: 1
-},
-“sl”: 0.0,
-“tp”: 0.0,
-“reason”: “一句话解释（必须短）”,
-“debug”: {
-“key_factors”: [”…”,”…”],
-“blockers”: [”…”],
-“notes”: “…”
-}
-}
-
-规则（非常重要）：
-	•	你必须区分熊市做空权限：
-	•	regime_1d=BEAR 时，默认 allow_new_short=true，allow_new_long=false
-	•	只有在“明确反转结构 + 风险可控”时才允许熊市做多（allow_new_long=true）
-	•	牛市 regime_1d=BULL 时，默认 allow_new_long=true，allow_new_short=true（允许短空但可降低仓位）
-	•	SIDEWAYS 时，允许双向但 position_multiplier <= 0.8，max_leverage <= 3
-	•	TRANSITION（不确定）时，signal=HOLD 或 position_multiplier<=0.3
-	•	如果信号=HOLD，则 sl/tp 允许为 null 或 0.0
-	•	position_multiplier 范围 [0.0, 2.0]
-	•	max_leverage 范围 [1, 10]
-	•	禁止输出任何非 JSON 内容
-
-================================================================================
-7) 为什么这种改法能解决你提出的“RISK_OFF 粒度错误”？
-
-旧系统的问题是：
-	•	1D SMA200 是“交易开关”，且只有 ON/OFF
-	•	你无法在熊市做空，也无法在熊市抓反弹（除非你允许开仓）
-	•	一旦 OFF，你 15m 系统变成“只会止损，不会赚钱”
-
-新系统的核心改动是：
-	•	1D 不再是“开关”，而是“特征”
-	•	AI 输出 permission：
-	•	熊市：allow_short=true，allow_long=false（解决你最致命的问题）
-	•	牛市：allow_long=true
-	•	震荡：双向允许但降仓位（position_multiplier）
-	•	这样 15m 执行系统仍然能在熊市持续交易（主要做空）
-	•	你不会被 SMA200 的低频穿越锁死一年
-
-================================================================================
-8) 风控底线（必须本地硬编码保留，不可交给 AI）
-
-Claude Code 必须保留/加强这些本地硬风控：
-	•	max_position_ratio（例如 30% equity）
-	•	单笔最大亏损（例如 0.5% equity）
-	•	日内最大亏损（例如 2% equity）
-	•	连续亏损熔断（例如 5 连亏暂停 4 小时）
-	•	AI 超时/解析失败 => HOLD + Telegram 告警
-	•	数据缺失/NaN => HOLD
-	•	Funding 极端（例如 >0.05%/8h）=> 禁止追多或降低仓位
-	•	滑点过大 => 不下单
-
-================================================================================
-9) 回测/实盘验证清单（你上线前必须跑）
-
-你要 Claude Code 加一个“Decision Audit Log”，每次 on_timer 输出：
-	•	ai_decision.signal
-	•	permission.allow_new_long/short
-	•	risk.position_multiplier
-	•	本地最终是否执行 executed=true/false
-	•	如果没执行，reason 是什么
-
-你至少要验证 4 种场景：
-	1.	1D < SMA200 且 4H 下跌：应允许做空、禁止做多
-	2.	1D < SMA200 但 4H 强反弹：允许轻仓多 or HOLD（看你策略偏好）
-	3.	1D > SMA200 且趋势强：允许做多
-	4.	震荡：双向允许但降仓位
-
-================================================================================
-10) 给 Claude Code 的最终执行指令（你直接复制粘贴）
-
-你可以把下面这段原样发给 Claude Code：
-
-【Claude Code 执行任务】
-	1.	在现有项目中新增 AIDecision schema（permission + risk + regime_1d）。
-	2.	修改 deepseek Judge 调用：强制输出 JSON，解析失败则 fallback HOLD。
-	3.	MultiTimeframeManager 保留指标计算，但移除/禁用本地 “1D SMA200 => RISK_OFF 禁止新开仓” 一票否决逻辑，改为只提供 features 给 AI。
-	4.	在 _execute_trade 前增加 permission gating：
-	•	BUY 但 allow_new_long=false => 不开多
-	•	SELL 但 allow_new_short=false => 不开空
-	5.	用 AI 输出的 risk.position_multiplier 动态调整仓位；用 risk.max_leverage 限制杠杆。
-	6.	修复 Telegram：区分“策略信号”和“执行结果”，只有真实下单成功才发 EXECUTED 通知。
-	7.	增加 Decision Audit Log，保证每个周期可追踪：AI 输出 -> 本地 gating -> 是否执行。
-	8.	全部改动必须保持 backward compatible（可通过 config 开关回滚到旧逻辑）。
-
-================================================================================
-11) 你现在最可能踩的坑（提前告诉你，避免浪费 2 天）
-
-坑1：只改提示词不改 permission gating
-	•	结果：AI 说允许做空，但本地仍然不让下单（旧逻辑残留）
-
-坑2：AI 输出不稳定（自然语言夹杂）
-	•	结果：解析失败，频繁 HOLD
-	•	解决：强制 JSON + extract_json_block + fallback
-
-坑3：本地把硬风控也删了
-	•	结果：AI 一次错误输出就爆仓
-	•	解决：硬风控必须本地保留
-
-坑4：仍然把 1D 当开关，只是换了名字
-	•	结果：本质没变
-	•	解决：1D 只做“特征输入”，permission 由 AI 决定
-
-================================================================================
-12) 你问的“是不是只要删本地判断 + 改提示词就行”的最终答案
-
-接近正确，但必须补齐：
-	•	AI 输出 permission/risk 的结构化 schema
-	•	执行层按 permission 做最终 gating
-	•	本地硬风控保留
-	•	Telegram 通知一致性修复
-
-做到这些，你的系统才真正符合 TradingAgents 的设计意图：
-“本地做数据与执行，AI 做推理与裁决，风控边界永远在本地”。
+**为什么不应该**：
+- 删除硬风控 = 100% 信任 AI，这在实盘系统中极度危险
+- TradingAgents 论文仍保留 Portfolio Manager 作为最后门槛
+- 正确做法：**升级**风控逻辑，而非删除
+
+### 5.3 ❌ 不要让 AI 完全控制杠杆
+
+**原提案建议**：
+```python
+leverage = min(config.leverage, AI.max_leverage)
+```
+
+**为什么不应该**：
+- 杠杆必须有本地硬上限（例如 max_leverage = 10）
+- AI 可以建议降低杠杆（震荡市用 3x），但不能建议突破上限
+- 正确做法：
+  ```python
+  leverage = min(config.max_leverage, ai_suggested_leverage)
+  ```
+
+---
+
+## 6. 实施路线图
+
+### Phase 1: 修复 Telegram 通知 (立即, 1小时)
+- [x] 改为执行后通知
+- [x] 文件: `strategy/deepseek_strategy.py:1566-1590`
+
+### Phase 2: 改进 MTF 方向性权限 (核心, 半天)
+- [ ] 新增 `evaluate_directional_permissions()` 方法
+- [ ] 移除 `RiskState.RISK_OFF` 一刀切逻辑
+- [ ] 文件: `indicators/multi_timeframe_manager.py:307-348`
+
+### Phase 3: 增加决策审计日志 (调试工具, 1小时)
+- [ ] 新增 `utils/decision_logger.py`
+- [ ] 在 `on_timer` 中记录完整决策链
+
+### Phase 4: 回测验证 (必须, 1天)
+- [ ] 验证熊市做空逻辑
+- [ ] 确保震荡市不会频繁换向
+- [ ] 测试 4 种场景（见下）
+
+**必须验证的 4 种场景**：
+
+| 场景 | 1D 状态 | 4H 状态 | 预期行为 |
+|------|---------|---------|---------|
+| 1 | 熊市 (< SMA200, MACD < 0) | 下跌 | allow_short=True, allow_long=False |
+| 2 | 熊市 | 强反弹 | HOLD 或轻仓多（由 AI 判断） |
+| 3 | 牛市 (> SMA200, MACD > 0) | 上涨 | allow_long=True |
+| 4 | 震荡 (MACD 与 SMA200 不一致) | 震荡 | 双向允许，position_multiplier=0.7 |
+
+---
+
+## 7. 与 TradingAgents 对齐性总结
+
+| 方面 | TradingAgents 原则 | 改进前 | 改进后 |
+|------|-------------------|-------|-------|
+| **数据层** | 本地计算 | ✅ 已符合 | ✅ 保持 |
+| **AI 分析** | 多代理辩论 | ✅ 已符合 | ✅ 保持 |
+| **风控层** | Portfolio Manager (AI + 人工) | ❌ 硬编码开关 | ✅ 方向性权限 |
+| **执行层** | Signal Processor | ✅ 已符合 | ✅ 保持 |
+| **熊市策略** | 允许做空 | ❌ 被阻止 | ✅ 允许 |
+
+**改进后的系统将真正符合 TradingAgents 设计意图，同时保留工业化系统必需的硬风控。**
+
+---
+
+## 8. 相关文件
+
+| 改进项 | 文件 | 行号 |
+|--------|------|------|
+| **Telegram 通知修复** | `strategy/deepseek_strategy.py` | 1566-1590 |
+| **MTF 方向性权限** | `indicators/multi_timeframe_manager.py` | 307-348 |
+| **策略执行逻辑** | `strategy/deepseek_strategy.py` | 1472-1543 |
+| **决策审计日志** | 新增 `utils/decision_logger.py` | - |
+
+---
+
+## 9. 最终结论
+
+**AIjudge 提案 v1.0 的价值评估**：
+
+| 方面 | 评分 | 说明 |
+|------|------|------|
+| **理念理解** | ✅ A | 正确理解 TradingAgents 的 AI 驱动架构 |
+| **问题诊断** | ✅ B+ | 准确识别熊市做空和通知时机问题 |
+| **架构认知** | ❌ D | 误判当前系统已实现 TradingAgents 风格 |
+| **实现方案** | ❌ F | 建议删除硬风控、新增重复结构 |
+
+**AIjudge 提案 v2.0（本修订版）**：
+
+| 改进 | 状态 |
+|------|------|
+| **保留 1D 风控** | ✅ 升级为方向性权限 |
+| **避免重复结构** | ✅ 直接扩展现有返回值 |
+| **修复通知时机** | ✅ 执行后通知 |
+| **增加审计日志** | ✅ 可追踪决策链 |
+| **符合 TradingAgents** | ✅ AI 决策 + 本地硬风控 |
+
+**推荐立即实施 Phase 1-3，Phase 4 回测验证后再上线。**
