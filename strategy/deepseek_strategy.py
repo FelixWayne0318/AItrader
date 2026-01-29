@@ -1473,9 +1473,20 @@ class DeepSeekAIStrategy(Strategy):
             original_signal = signal_data['signal']
 
             if self.mtf_enabled and self.mtf_manager:
-                # 规则 1: RISK_OFF 时禁止新开仓
-                if not mtf_allows_new_position and signal_data['signal'] in ['BUY', 'SELL']:
-                    # 检查是否是开新仓 (无现有仓位或反转)
+                # 规则 1: 方向性权限检查 (替代 RISK_OFF 二元开关)
+                # 符合 TradingAgents: 本地提供建议，不强制覆盖 AI
+                try:
+                    permissions = self.mtf_manager.evaluate_directional_permissions(current_price)
+
+                    # 记录方向性权限
+                    self.log.info(
+                        f"[MTF] 方向性权限: {permissions['regime']} | "
+                        f"allow_long={permissions['allow_long']}, "
+                        f"allow_short={permissions['allow_short']} | "
+                        f"乘数={permissions['position_multiplier']:.1f}"
+                    )
+
+                    # 检查是否是开新仓
                     is_opening_new = (
                         current_position is None or
                         current_position.get('side') == 'FLAT' or
@@ -1483,13 +1494,46 @@ class DeepSeekAIStrategy(Strategy):
                         (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
                     )
 
-                    if is_opening_new:
-                        self.log.warning(
-                            f"[MTF] 🚫 RISK_OFF 过滤: {signal_data['signal']} → HOLD "
-                            f"(市场结构恶化，禁止新开仓)"
+                    # 仅在开新仓时检查方向性权限
+                    if is_opening_new and signal_data['signal'] in ['BUY', 'SELL']:
+                        if signal_data['signal'] == 'BUY' and not permissions['allow_long']:
+                            self.log.warning(
+                                f"[MTF] 🚫 方向性过滤: BUY → HOLD "
+                                f"({permissions['reason']})"
+                            )
+                            signal_data['signal'] = 'HOLD'
+                            signal_data['reason'] = f"[MTF 禁止做多] {signal_data.get('reason', '')}"
+                        elif signal_data['signal'] == 'SELL' and not permissions['allow_short']:
+                            self.log.warning(
+                                f"[MTF] 🚫 方向性过滤: SELL → HOLD "
+                                f"({permissions['reason']})"
+                            )
+                            signal_data['signal'] = 'HOLD'
+                            signal_data['reason'] = f"[MTF 禁止做空] {signal_data.get('reason', '')}"
+                        else:
+                            # 权限允许，应用仓位乘数
+                            if 'position_multiplier' in signal_data:
+                                signal_data['position_multiplier'] *= permissions['position_multiplier']
+                                self.log.info(
+                                    f"[MTF] 应用 {permissions['regime']} 仓位乘数: "
+                                    f"{permissions['position_multiplier']:.1f}"
+                                )
+                except Exception as e:
+                    self.log.warning(f"[MTF] 方向性权限检查失败: {e}")
+                    # 失败时保守处理
+                    if not mtf_allows_new_position and signal_data['signal'] in ['BUY', 'SELL']:
+                        is_opening_new = (
+                            current_position is None or
+                            current_position.get('side') == 'FLAT' or
+                            (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
+                            (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
                         )
-                        signal_data['signal'] = 'HOLD'
-                        signal_data['reason'] = f"[MTF RISK_OFF] {signal_data.get('reason', '')}"
+                        if is_opening_new:
+                            self.log.warning(
+                                f"[MTF] 🚫 RISK_OFF 过滤 (后备): {signal_data['signal']} → HOLD"
+                            )
+                            signal_data['signal'] = 'HOLD'
+                            signal_data['reason'] = f"[MTF RISK_OFF] {signal_data.get('reason', '')}"
 
                 # 规则 2: 决策层方向匹配检查 (确保信号与决策层状态一致)
                 if signal_data['signal'] in ['BUY', 'SELL']:
@@ -1562,32 +1606,8 @@ class DeepSeekAIStrategy(Strategy):
                 if key_reasons:
                     self.log.info(f"📌 Key Reasons: {', '.join(key_reasons[:3])}")
 
-            # Send Telegram signal notification (only for actionable signals)
-            if self.telegram_bot and self.enable_telegram and self.telegram_notify_signals:
-                if signal_data['signal'] in ['BUY', 'SELL']:
-                    try:
-                        # Include Judge decision details in notification
-                        judge_info = signal_data.get('judge_decision', {})
-                        winning_side = judge_info.get('winning_side', 'N/A')
-                        debate_summary = signal_data.get('debate_summary', '')
-
-                        signal_notification = self.telegram_bot.format_trade_signal({
-                            'signal': signal_data['signal'],
-                            'confidence': signal_data['confidence'],
-                            'price': price_data['price'],
-                            'timestamp': price_data['timestamp'],
-                            'rsi': technical_data.get('rsi', 0),
-                            'macd': technical_data.get('macd', 0),
-                            'support': technical_data.get('support', 0),
-                            'resistance': technical_data.get('resistance', 0),
-                            'reasoning': signal_data.get('reason', ''),
-                            # Hierarchical architecture additional fields
-                            'winning_side': winning_side,
-                            'debate_summary': debate_summary[:100] if debate_summary else '',
-                        })
-                        self.telegram_bot.send_message_sync(signal_notification)
-                    except Exception as e:
-                        self.log.warning(f"Failed to send Telegram signal notification: {e}")
+            # Telegram notification moved to after execution (see _execute_trade)
+            # This prevents "signal sent but not executed" confusion
                         
         except Exception as e:
             self.log.error(f"Multi-Agent analysis failed: {e}", exc_info=True)
@@ -1863,6 +1883,32 @@ class DeepSeekAIStrategy(Strategy):
             )
         else:
             self._open_new_position(target_side, target_quantity)
+
+        # Send Telegram notification AFTER execution (符合 TradingAgents 意图)
+        # This prevents "signal sent but not executed" confusion
+        if self.telegram_bot and self.enable_telegram and self.telegram_notify_signals:
+            try:
+                judge_info = signal_data.get('judge_decision', {})
+                winning_side = judge_info.get('winning_side', 'N/A')
+                debate_summary = signal_data.get('debate_summary', '')
+
+                signal_notification = self.telegram_bot.format_trade_signal({
+                    'signal': signal,
+                    'confidence': confidence,
+                    'price': price_data['price'],
+                    'timestamp': price_data['timestamp'],
+                    'rsi': technical_data.get('rsi', 0),
+                    'macd': technical_data.get('macd', 0),
+                    'support': technical_data.get('support', 0),
+                    'resistance': technical_data.get('resistance', 0),
+                    'reasoning': signal_data.get('reason', ''),
+                    'winning_side': winning_side,
+                    'debate_summary': debate_summary[:100] if debate_summary else '',
+                })
+                self.telegram_bot.send_message_sync(signal_notification)
+                self.log.info("✅ Telegram notification sent after execution")
+            except Exception as e:
+                self.log.warning(f"Failed to send Telegram signal notification: {e}")
 
     def _calculate_position_size(
         self,
