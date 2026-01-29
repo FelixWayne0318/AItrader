@@ -351,21 +351,13 @@ class MultiAgentAnalyzer:
         Generate bull analyst's argument.
 
         Borrowed from: TradingAgents/agents/researchers/bull_researcher.py
-        MTF v2.1: Added order flow and derivatives data
+        Simplified v3.0: Let AI autonomously analyze data without hardcoded rules
         """
         prompt = f"""You are a Bull Analyst advocating for LONG position on {symbol}.
 Your task is to build a strong, evidence-based case for going LONG.
 
-Key points to focus on:
-- BULLISH Technical Signals: Price above SMAs, RSI recovering from oversold, MACD bullish crossover
-- Order Flow Confirmation: Buy ratio > 50%, CVD rising (accumulation)
-- Derivatives Support: OI rising with price, neutral/negative funding (not overheated)
-- Growth Momentum: Breakout patterns, increasing volume, support holding
-- Counter Bear Arguments: Use specific numbers to refute bearish concerns
+AVAILABLE DATA:
 
-Resources Available:
-
-TECHNICAL ANALYSIS:
 {technical_report}
 
 {order_flow_report}
@@ -381,15 +373,15 @@ Last Bear Argument:
 {bear_argument if bear_argument else "No bear argument yet - make your opening case."}
 
 INSTRUCTIONS:
-1. Present 2-3 compelling reasons for LONG
-2. Use specific numbers from ALL data sources (technical, order flow, derivatives)
-3. If bear made arguments, directly counter them with data
+1. Analyze ALL data sources and identify BULLISH signals
+2. Present 2-3 compelling reasons with specific numbers from the data
+3. If bear made arguments, counter them with evidence
 4. Be persuasive but factual
 
-Deliver your argument now (2-3 paragraphs):"""
+Deliver your argument (2-3 paragraphs):"""
 
         return self._call_api_with_retry([
-            {"role": "system", "content": "You are a professional Bull Analyst. Use order flow and derivatives data to strengthen your arguments."},
+            {"role": "system", "content": "You are a professional Bull Analyst. Analyze the provided data and build the strongest possible case for going LONG."},
             {"role": "user", "content": prompt}
         ])
 
@@ -407,21 +399,13 @@ Deliver your argument now (2-3 paragraphs):"""
         Generate bear analyst's argument.
 
         Borrowed from: TradingAgents/agents/researchers/bear_researcher.py
-        MTF v2.1: Added order flow and derivatives data
+        Simplified v3.0: Let AI autonomously analyze data without hardcoded rules
         """
         prompt = f"""You are a Bear Analyst making the case AGAINST going LONG on {symbol}.
 Your goal is to present well-reasoned arguments for SHORT or staying FLAT.
 
-Key points to focus on:
-- BEARISH Technical Signals: Price below SMAs, overbought RSI, MACD bearish divergence
-- Order Flow Warning: Buy ratio < 50%, CVD falling (distribution)
-- Derivatives Risk: High funding rate (squeeze risk), OI falling (trend weakening)
-- Downside Risks: Resistance levels, decreasing volume, support breaking
-- Counter Bull Arguments: Expose over-optimistic assumptions with specific data
+AVAILABLE DATA:
 
-Resources Available:
-
-TECHNICAL ANALYSIS:
 {technical_report}
 
 {order_flow_report}
@@ -437,15 +421,15 @@ Last Bull Argument:
 {bull_argument}
 
 INSTRUCTIONS:
-1. Present 2-3 compelling reasons AGAINST long / FOR short
-2. Use specific numbers from ALL data sources (technical, order flow, derivatives)
-3. Directly counter the bull's arguments with data
-4. Highlight risks the bull is ignoring
+1. Analyze ALL data sources and identify BEARISH signals or risks
+2. Present 2-3 compelling reasons with specific numbers from the data
+3. Counter the bull's arguments with evidence
+4. Highlight risks being ignored
 
-Deliver your argument now (2-3 paragraphs):"""
+Deliver your argument (2-3 paragraphs):"""
 
         return self._call_api_with_retry([
-            {"role": "system", "content": "You are a professional Bear Analyst. Use order flow and derivatives data to highlight risks."},
+            {"role": "system", "content": "You are a professional Bear Analyst. Analyze the provided data and build the strongest possible case AGAINST going LONG."},
             {"role": "user", "content": prompt}
         ])
 
@@ -458,162 +442,50 @@ Deliver your argument now (2-3 paragraphs):"""
         Judge evaluates the debate and makes decision.
 
         Borrowed from: TradingAgents/agents/managers/research_manager.py
-        Optimized with prescriptive prompt engineering to reduce HOLD bias.
+        Simplified v3.0: Let AI autonomously evaluate without hardcoded rules
         """
-        prompt = f"""You are the Portfolio Manager and Debate Judge.
-Your role is to evaluate the Bull vs Bear debate and make a DEFINITIVE trading decision.
+        prompt = f"""You are the Portfolio Manager evaluating the Bull vs Bear debate.
+Your role is to make a DEFINITIVE trading decision based on the debate's strongest arguments.
 
-=== MANDATORY RULES (YOU MUST FOLLOW EXACTLY) ===
-
-1. ⚠️ YOU MUST COUNT TECHNICAL CONFIRMATIONS BEFORE DECIDING
-2. ⚠️ YOU MUST FOLLOW THE DECISION RULES ALGORITHMICALLY - NO SUBJECTIVE INTERPRETATION
-3. ⚠️ DO NOT DEFAULT TO HOLD - It causes missed opportunities
-4. ⚠️ One side almost always has stronger evidence - FIND IT and COMMIT TO IT
+DEBATE TRANSCRIPT:
+{debate_history}
 
 Past Trading Mistakes to AVOID:
 {past_memories if past_memories else "No past data - this is a fresh start."}
 
-FULL DEBATE TRANSCRIPT:
-{debate_history}
+YOUR TASK:
+1. Summarize the key points from both sides, focusing on the most compelling evidence
+2. Determine which side presented stronger, more data-backed arguments
+3. Make a DEFINITIVE decision - LONG, SHORT, or HOLD
 
-=== STEP 1: COUNT TECHNICAL CONFIRMATIONS (MANDATORY) ===
+DECISION GUIDELINES:
+- Focus on evidence quality, not argument quantity
+- Consider the overall market context and risk/reward
+- One side almost always has an edge - find it and commit
+- HOLD is only for genuine uncertainty, not a safe default
+- Be decisive - missed opportunities cost money too
 
-You MUST count how many of these specific confirmations each side presented:
-
-BULLISH Confirmations (count in Bull's arguments):
-1. Price above SMA20 OR Price above SMA50 (clear trend support)
-2. RSI < 55 (not overbought, has room to rise) - NOTE: RSI 40-55 is neutral, not bearish
-3. MACD > Signal (bullish crossover) OR MACD histogram > 0
-4. Price within 1% of support level OR within 1% of BB lower band
-5. Volume ratio > 1.0 (above average) OR bullish volume pattern mentioned
-
-BEARISH Confirmations (count in Bear's arguments):
-1. Price below SMA20 AND Price below SMA50 (both must be true for stronger signal)
-2. RSI > 65 (showing overbought condition) - NOTE: RSI 45-65 is neutral, not bearish weakness
-3. MACD < Signal (bearish crossover) OR MACD histogram < 0
-4. Price within 1% of resistance level OR within 1% of BB upper band
-5. Volume ratio < 0.8 (clearly below average) OR bearish volume pattern mentioned
-
-QUANTITATIVE THRESHOLDS (v2.2 - use these exact numbers):
-- "Near support/resistance": within 1% of the level
-- "RSI showing weakness": RSI > 65 (not just > 40)
-- "Volume decreasing": volume < 80% of average (volume_ratio < 0.8)
-- "Volume increasing": volume > average (volume_ratio > 1.0)
-
-IMPORTANT: Each confirmation is worth 1 point if ANY of the conditions in that item are true.
-Example: If price is above SMA50 but below SMA20, confirmation #1 STILL COUNTS as 1.
-
-=== 🚨 STEP 1.5: EXTREME CONDITION OVERRIDES (CRITICAL) ===
-
-BEFORE applying decision rules, check these OVERRIDE conditions:
-
-🔴 EXTREME OVERSOLD (RSI < 25):
-   - This is a STRONG reversal signal
-   - DO NOT choose SHORT when RSI < 25
-   - Even if Bearish count >= 3, override to HOLD or LONG
-   - Reason: Shorting at extreme oversold often leads to losses from sharp rebounds
-
-🔴 EXTREME OVERBOUGHT (RSI > 75):
-   - This is a STRONG reversal signal
-   - DO NOT choose LONG when RSI > 75
-   - Even if Bullish count >= 3, override to HOLD or SHORT
-   - Reason: Buying at extreme overbought often leads to losses from sharp pullbacks
-
-🔴 PRICE AT SUPPORT (within 1% of support):
-   - DO NOT choose SHORT when price is within 1% of support level
-   - Support levels often cause bounces
-   - If Bearish count >= 3 but price is at support → HOLD instead of SHORT
-
-🔴 PRICE AT RESISTANCE (within 1% of resistance):
-   - DO NOT choose LONG when price is within 1% of resistance level
-   - Resistance levels often cause rejections
-   - If Bullish count >= 3 but price is at resistance → HOLD instead of LONG
-
-=== STEP 2: APPLY DECISION RULES (MANDATORY - NO EXCEPTIONS) ===
-
-FIRST check the OVERRIDE conditions above. If any override applies, follow it.
-
-THEN, if no override applies, follow these rules EXACTLY:
-
-IF Bullish count >= 3:
-    → decision = "LONG"
-    → confidence = "HIGH"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE IF Bearish count >= 3:
-    → decision = "SHORT"
-    → confidence = "HIGH"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE IF Bullish count == 2 AND Bullish count > Bearish count:
-    → decision = "LONG"
-    → confidence = "MEDIUM"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE IF Bearish count == 2 AND Bearish count > Bullish count:
-    → decision = "SHORT"
-    → confidence = "MEDIUM"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE IF Bullish count >= 2 AND Bull's argument quality is clearly superior:
-    → decision = "LONG"
-    → confidence = "MEDIUM"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE IF Bearish count >= 2 AND Bear's argument quality is clearly superior:
-    → decision = "SHORT"
-    → confidence = "MEDIUM"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE:
-    → decision = "HOLD"
-    → confidence = "LOW"
-    (This should be RARE - only when both sides have < 2 confirmations AND are truly balanced)
-
-=== STEP 3: VERIFICATION CHECKLIST (BEFORE RESPONDING) ===
-
-Before you provide your JSON response, verify:
-✓ Did you count all 5 bullish confirmations? (Write the count)
-✓ Did you count all 5 bearish confirmations? (Write the count)
-✓ Did you check the EXTREME CONDITION OVERRIDES?
-✓ If RSI < 25, did you avoid choosing SHORT?
-✓ If RSI > 75, did you avoid choosing LONG?
-✓ If price is at support (within 1%), did you avoid choosing SHORT?
-✓ If price is at resistance (within 1%), did you avoid choosing LONG?
-✓ Did you apply the decision rules EXACTLY as written above?
-✓ Did you avoid using HOLD as a default safe choice?
-
-=== OUTPUT FORMAT ===
-
-Provide your decision in this EXACT JSON format (no additional text):
+OUTPUT FORMAT (JSON only, no other text):
 {{
     "decision": "LONG|SHORT|HOLD",
     "winning_side": "BULL|BEAR|TIE",
     "confidence": "HIGH|MEDIUM|LOW",
-    "bullish_count": <number 0-5>,
-    "bearish_count": <number 0-5>,
-    "override_applied": "<none|extreme_rsi|at_support|at_resistance>",
     "key_reasons": ["reason1", "reason2", "reason3"],
     "acknowledged_risks": ["risk1", "risk2"]
-}}
-
-JSON response only (no preamble, no explanation):"""
+}}"""
 
         # Use JSON retry mechanism to improve reliability
         decision = self._extract_json_with_retry(
             messages=[
-                {"role": "system", "content": "You are a Portfolio Manager. You MUST follow the quantitative decision rules EXACTLY. Do NOT use subjective judgment to override the rules. Count confirmations accurately and apply the decision logic algorithmically."},
+                {"role": "system", "content": "You are a Portfolio Manager. Evaluate the debate objectively and make a decisive trading recommendation. Avoid defaulting to HOLD - commit to the side with stronger evidence."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,  # Lower temperature for more consistent output
+            temperature=0.3,  # Slightly higher for more nuanced judgment
             max_json_retries=2,
         )
 
         if decision:
-            # Log the confirmation counts for transparency
-            bullish = decision.get('bullish_count', 'N/A')
-            bearish = decision.get('bearish_count', 'N/A')
-            self.logger.info(f"📊 Judge counted: Bullish {bullish}/5, Bearish {bearish}/5")
+            self.logger.info(f"📊 Judge decision: {decision.get('decision')} ({decision.get('confidence')})")
             return decision
 
         # Fallback decision if all retries failed
@@ -622,8 +494,6 @@ JSON response only (no preamble, no explanation):"""
             "decision": "HOLD",
             "winning_side": "TIE",
             "confidence": "LOW",
-            "bullish_count": 0,
-            "bearish_count": 0,
             "key_reasons": ["JSON parse error - defaulting to HOLD"],
             "acknowledged_risks": ["Parse failure"]
         }
@@ -640,6 +510,7 @@ JSON response only (no preamble, no explanation):"""
         Final risk evaluation and position sizing.
 
         Borrowed from: TradingAgents/agents/risk_mgmt/conservative_debator.py
+        Simplified v3.0: Let AI determine SL/TP based on market structure
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
@@ -664,49 +535,39 @@ CURRENT POSITION:
 
 CURRENT PRICE: ${current_price:,.2f}
 
-RISK RULES:
-1. Position sizing based on confidence:
-   - HIGH confidence + clear trend → 100% of base position
-   - MEDIUM confidence → 50% of base position
-   - LOW confidence → 25% or skip trade
+YOUR TASK:
+1. Evaluate if the proposed trade makes sense given the market data
+2. Set stop loss based on market structure (support/resistance levels)
+3. Set take profit based on confidence level and potential targets
+4. Determine appropriate position size based on risk assessment
 
-2. Stop Loss (CRITICAL - minimum 1% distance required):
-   - LONG: Place SL 1.5-2% BELOW entry price
-     * Can reference support level, but SL must be AT LEAST 1% below entry
-     * If support is too close (<1% from entry), use default 2% below
-   - SHORT: Place SL 1.5-2% ABOVE entry price
-     * Can reference resistance level, but SL must be AT LEAST 1% above entry
-     * If resistance is too close (<1% from entry), use default 2% above
-   - NEVER place SL closer than 1% from entry price
+GUIDELINES:
+- Stop loss should be placed at logical market structure levels
+- Higher confidence = larger position size, wider targets
+- Lower confidence = smaller position size, tighter stops
+- Consider the acknowledged risks when setting parameters
 
-3. Take Profit:
-   - HIGH confidence: 2-3% target
-   - MEDIUM confidence: 1.5-2% target
-   - LOW confidence: 1% target
-
-Provide final recommendation in this exact JSON format:
+OUTPUT FORMAT (JSON only, no other text):
 {{
     "signal": "BUY|SELL|HOLD",
     "confidence": "HIGH|MEDIUM|LOW",
     "risk_level": "LOW|MEDIUM|HIGH",
-    "position_size_pct": 25|50|100,
+    "position_size_pct": <number 25-100>,
     "stop_loss": <price_number>,
     "take_profit": <price_number>,
     "reason": "<one sentence explaining the final decision>",
     "debate_summary": "<brief summary of bull vs bear debate>"
 }}
 
-MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD
-
-JSON response only:"""
+MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
 
         # Use JSON retry mechanism to improve reliability
         decision = self._extract_json_with_retry(
             messages=[
-                {"role": "system", "content": "You are a Risk Manager. Provide precise trade parameters with specific price levels."},
+                {"role": "system", "content": "You are a Risk Manager. Analyze the market data and set appropriate trade parameters based on market structure and risk/reward."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
+            temperature=0.2,
             max_json_retries=2,
         )
 
