@@ -673,10 +673,10 @@ MOVING AVERAGES (15M):
 - SMA 50: ${safe_get('sma_50'):,.2f}
 
 MOMENTUM (15M):
-- RSI: {safe_get('rsi'):.1f} ({'Overbought >70' if safe_get('rsi') > 70 else 'Oversold <30' if safe_get('rsi') < 30 else 'Neutral 30-70'})
+- RSI: {safe_get('rsi'):.1f}
 - MACD: {safe_get('macd'):.4f}
 - MACD Signal: {safe_get('macd_signal'):.4f}
-- MACD Histogram: {safe_get('macd_histogram'):.4f} ({'Bullish' if safe_get('macd_histogram') > 0 else 'Bearish'})
+- MACD Histogram: {safe_get('macd_histogram'):.4f}
 
 VOLATILITY (Bollinger Bands 15M):
 - Upper: ${safe_get('bb_upper'):,.2f}
@@ -707,8 +707,8 @@ VOLUME:
 This is the medium-term view for directional bias. Weight this heavily in your analysis.
 
 MOMENTUM (4H):
-- RSI: {mtf_rsi:.1f} ({'Overbought >70' if mtf_rsi > 70 else 'Oversold <30' if mtf_rsi < 30 else 'Neutral 30-70'})
-- MACD: {mtf_macd:.4f} ({'Bullish' if mtf_macd > 0 else 'Bearish'})
+- RSI: {mtf_rsi:.1f}
+- MACD: {mtf_macd:.4f}
 - MACD Signal: {mtf_safe_get('macd_signal'):.4f}
 
 MOVING AVERAGES (4H):
@@ -861,30 +861,17 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
         trades_count = data.get('trades_count', 0)
         recent_bars = data.get('recent_10_bars', [])
 
-        # Interpret buy/sell ratio
-        if buy_ratio > 0.55:
-            buy_interpretation = "BULLISH (buyers dominating)"
-        elif buy_ratio < 0.45:
-            buy_interpretation = "BEARISH (sellers dominating)"
-        else:
-            buy_interpretation = "NEUTRAL (balanced)"
-
-        # Format recent bars
+        # Format recent bars (raw data only)
         recent_str = ", ".join([f"{r:.1%}" for r in recent_bars[-5:]]) if recent_bars else "N/A"
 
+        # v3.0: Pass raw data only, let AI interpret
         return f"""
 ORDER FLOW ANALYSIS (Binance Taker Data):
-- Buy Ratio: {buy_ratio:.1%} ({buy_interpretation})
-- CVD Trend: {cvd_trend} ({'Accumulation' if cvd_trend == 'RISING' else 'Distribution' if cvd_trend == 'FALLING' else 'Sideways'})
+- Buy Ratio: {buy_ratio:.1%}
+- CVD Trend: {cvd_trend}
 - Avg Trade Size: ${avg_trade:,.0f} USDT
 - Trade Count: {trades_count:,}
 - Recent 5 Bars Buy Ratio: [{recent_str}]
-
-INTERPRETATION:
-- Buy Ratio > 55%: Strong buying pressure, confirms bullish momentum
-- Buy Ratio < 45%: Strong selling pressure, confirms bearish momentum
-- CVD RISING: Smart money accumulating, potential breakout
-- CVD FALLING: Distribution phase, potential breakdown
 """
 
     def _format_derivatives_report(self, data: Optional[Dict[str, Any]], current_price: float = 0.0) -> str:
@@ -908,69 +895,45 @@ INTERPRETATION:
         if not data or not data.get('enabled', True):
             return "DERIVATIVES: Data not available (Coinalyze API disabled or unavailable)"
 
+        # v3.0: Pass raw data only, let AI interpret
         parts = ["DERIVATIVES MARKET DATA:"]
 
-        # Open Interest
+        # Open Interest (raw value only)
         oi = data.get('open_interest')
         if oi:
             oi_btc = oi.get('value', 0)
             parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
-            parts.append("  → OI Rising + Price Rising: Trend strengthening (bullish confirmation)")
-            parts.append("  → OI Falling: Positions closing, trend may be weakening")
         else:
             parts.append("- Open Interest: N/A")
 
-        # Funding Rate
+        # Funding Rate (raw value only, no interpretation)
         funding = data.get('funding_rate')
         if funding:
             rate = funding.get('value', 0)
             rate_pct = rate * 100
-
-            if rate > 0.001:
-                interp = "VERY_BULLISH (longs paying shorts, potential squeeze risk)"
-            elif rate > 0.0005:
-                interp = "BULLISH"
-            elif rate < -0.001:
-                interp = "VERY_BEARISH (shorts paying longs, potential short squeeze)"
-            elif rate < -0.0005:
-                interp = "BEARISH"
-            else:
-                interp = "NEUTRAL"
-
-            parts.append(f"- Funding Rate: {rate_pct:.4f}% ({interp})")
-
-            if rate > 0.001:
-                parts.append("  → ⚠️ HIGH Funding: Market overheated, long squeeze risk")
-            elif rate < -0.001:
-                parts.append("  → NEGATIVE Funding: Shorts paying longs, potential short squeeze")
+            parts.append(f"- Funding Rate: {rate_pct:.4f}%")
         else:
             parts.append("- Funding Rate: N/A")
 
-        # Liquidations (注意: Coinalyze API 返回的是 BTC 单位，需要转换为 USD)
+        # Liquidations (raw values only)
         liq = data.get('liquidations')
         if liq:
             history = liq.get('history', [])
             if history:
                 item = history[-1]
-                # API 返回的是 BTC 单位
                 long_liq_btc = float(item.get('l', 0))
                 short_liq_btc = float(item.get('s', 0))
                 total_btc = long_liq_btc + short_liq_btc
 
-                # 转换为 USD (使用传入的 current_price)
-                price_for_conversion = current_price if current_price > 0 else 88000  # fallback
-                long_liq_usd = long_liq_btc * price_for_conversion
-                short_liq_usd = short_liq_btc * price_for_conversion
+                # Convert to USD
+                price_for_conversion = current_price if current_price > 0 else 88000
                 total_usd = total_btc * price_for_conversion
 
                 parts.append(f"- Liquidations (1h): {total_btc:.4f} BTC (${total_usd:,.0f})")
                 if total_btc > 0:
                     long_ratio = long_liq_btc / total_btc
-                    parts.append(f"  → Long Liq: {long_liq_btc:.4f} BTC (${long_liq_usd:,.0f}) ({long_ratio:.0%})")
-                    parts.append(f"  → Short Liq: {short_liq_btc:.4f} BTC (${short_liq_usd:,.0f}) ({1-long_ratio:.0%})")
-
-                    if total_usd > 50_000_000:  # > $50M USD
-                        parts.append("  → ⚠️ HIGH liquidations: Extreme volatility, be cautious")
+                    parts.append(f"  - Long Liq: {long_liq_btc:.4f} BTC ({long_ratio:.0%})")
+                    parts.append(f"  - Short Liq: {short_liq_btc:.4f} BTC ({1-long_ratio:.0%})")
             else:
                 parts.append("- Liquidations (1h): N/A")
         else:
