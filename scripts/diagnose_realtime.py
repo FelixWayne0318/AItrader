@@ -1,60 +1,39 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.21 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.0 (与实盘 100% 一致)
+
+v11.0 重大更新 - 对齐 TradingAgents 简化架构:
+- AI 提示词完全简化，移除所有硬编码规则和阈值
+- Judge 不再使用确认计数框架 (bullish_count/bearish_count 已移除)
+- AI 完全自主分析和决策，本地只提供原始数据
+- 数据格式化移除预解读标签 (BULLISH/BEARISH/Overbought 等)
+- 本地判断仅保留支撑/阻力位 1% 硬风控
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
-3. 使用 TradingAgents 层级决策架构，与 deepseek_strategy.py 100% 一致
+3. 使用 TradingAgents 层级决策架构 (v3.0 简化版)
 4. 检查 Binance 真实持仓
-5. 模拟完整的 _execute_trade 流程（包括完整的 SL/TP 验证逻辑）
+5. 模拟完整的 _execute_trade 流程
 6. 输出实盘环境下会产生的真实结果
-7. 检查可能导致不能下单的关键配置
-8. v10.0: 多时间框架 (MTF) 三层架构支持
-9. v10.1: MTF 详细配置验证、初始化配置、Order Flow 检查
-10. v10.2: Order Flow 实际数据获取测试、Telegram 命令处理验证、MTF 预取验证
-11. v10.3: Post-Trade 生命周期测试、情绪 fallback 完整字段、从配置读取 Symbol
-12. v10.4: MTF v2.1 完整组件测试、AIDataAssembler 集成、更新 MultiAgent 接口
-13. v10.5: 修复 Coinalyze 数据解析 (funding_rate.value, liquidations.history 结构)
-14. v10.6: 添加 MTF 信号过滤模拟 (Step 7.5) - 100% 流程覆盖
-15. v10.7: 修复 SentimentDataFetcher 初始化参数错误
-16. v10.8: 修复 Step 9.3 Coinalyze 配置路径 (order_flow.coinalyze)
-17. v10.9: 添加完整数据流覆盖 (on_bar 路由、仓位计算、订单提交、数据汇总)
-18. v10.10: 添加 Liquidations 调试输出 (原始响应、history 类型和长度)
-19. v10.11: 修复 Liquidations 单位问题 (BTC → USD 转换)
-20. v10.12: 修复情绪/持仓数据字段名不匹配问题
-21. v10.13: 修复未实现PnL显示0的问题 (自动计算)
-22. v10.14: 修复 AI 收到价格 $0.00 的问题 (添加 price 到 technical_data)
-23. v10.15: 添加完整数据流追踪 (AI 输入数据验证、Judge 计数、辩论记录)
-24. v10.16: 修复 MTF 趋势层使用 SMA_200 (与 multi_timeframe_manager.py 一致)
-25. v10.17: 添加账户资金详情、确认项明细、GitHub 导出功能
-26. v10.18: 修复硬编码阈值 (从配置读取)、RSI 逻辑错误
-27. v10.19: 修复 Judge RSI 确认逻辑 (< 55 = bullish, > 65 = bearish)
-28. v10.20: 对齐 TradingAgents 架构 (方向性权限替代 RISK_OFF)
-29. v10.21: 系统架构修复同步
-    - 添加 on_timer 并发锁保护说明 (I38)
-    - 添加决策快照保存功能说明 (C16/J43)
-    - 添加订单拒单 Telegram 报警说明 (G34)
-    - 更新 MTF 硬风控注释 (E21)
-    - Coinalyze 数据质量标记 (B8)
-    - Technical data timeframe 标记 (A4)
-26. v10.18: 修复硬编码回退值，改为从配置读取 SMA 周期
-27. v10.19: 修复硬编码阈值违规 + RSI 确认逻辑错误
-28. v10.20: 对齐 TradingAgents 架构 - 方向性权限替代 RISK_OFF 二元开关
 
-当前架构 (TradingAgents Judge-based Decision):
-- Phase 1: Bull/Bear 辩论 (2 AI calls)
-- Phase 2: Judge 决策 (1 AI call with optimized prompt)
-- Phase 3: Risk 评估 (1 AI call)
-- Judge 决策即最终决策，不需要信号合并
+当前架构 (TradingAgents v3.0 - AI 完全自主决策):
+- Phase 1: Bull/Bear 辩论 (2 AI calls) - AI 自主分析数据
+- Phase 2: Judge 决策 (1 AI call) - AI 自主评估辩论，做出决策
+- Phase 3: Risk 评估 (1 AI call) - AI 自主设定 SL/TP/仓位
+- 本地执行层: 仅支撑/阻力位 1% 硬风控
+- 设计理念: "Autonomy is non-negotiable" - AI 应像人类分析师思考
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
-MTF 三层架构 (v10.0+, v10.20 升级):
-- 趋势层 (1D): SMA_200 + MACD → 方向性权限 (allow_long/allow_short)
-- 决策层 (4H): 技术分析 + 情绪分析 → Decision State
-- 执行层 (15M): 精确入场时机
-- v10.20: 替代 RISK_ON/OFF 二元开关，熊市允许做空
-- 参考: docs/AIjudge, indicators/multi_timeframe_manager.py:353-434
+数据层职责 (本地):
+- 收集原始技术指标、订单流、衍生品数据
+- 不做任何预解读或标签 (如 BULLISH/BEARISH)
+- AI 看到原始数值，自行判断含义
+
+MTF 三层架构:
+- 趋势层 (1D): SMA_200 + MACD → 方向性权限
+- 决策层 (4H): AI 自主分析 → Decision State
+- 执行层 (15M): 精确入场 + 支撑/阻力位硬风控
 
 历史更新:
 v10.20:
@@ -1344,70 +1323,18 @@ try:
     print(f"     Stop Loss: ${signal_data.get('stop_loss', 0):,.2f}" if signal_data.get('stop_loss') else "     Stop Loss: None")
     print(f"     Take Profit: ${signal_data.get('take_profit', 0):,.2f}" if signal_data.get('take_profit') else "     Take Profit: None")
 
-    # 显示 Judge 详细决策 (包括关键计数)
+    # 显示 Judge 详细决策 (v3.0 简化版 - AI 完全自主决策)
     judge_decision = signal_data.get('judge_decision', {})
     if judge_decision:
         winning_side = judge_decision.get('winning_side', 'N/A')
-        # ⭐ 关键数据: 确认计数 (决策的核心依据)
-        bullish_count = judge_decision.get('bullish_count', 'N/A')
-        bearish_count = judge_decision.get('bearish_count', 'N/A')
         print(f"     Winning Side: {winning_side}")
-        print(f"     📊 Bullish Count: {bullish_count}/5")
-        print(f"     📊 Bearish Count: {bearish_count}/5")
 
-        # ========== 新增: 显示 5 个确认项明细 (与 multi_agent_analyzer.py:483-495 一致) ==========
+        # v3.0: 移除确认计数框架，AI 完全自主评估
         print()
-        print("     📋 确认项明细 (Judge 计数依据):")
-        print()
-        # 获取当前技术数据用于显示
-        _price = technical_data.get('price', current_price)
-        _sma20 = technical_data.get('sma_20', 0)
-        _sma50 = technical_data.get('sma_50', 0)
-        _rsi = technical_data.get('rsi', 50)
-        _macd = technical_data.get('macd', 0)
-        _macd_signal = technical_data.get('macd_signal', 0)
-        _macd_hist = technical_data.get('macd_histogram', 0)
-        _bb_upper = technical_data.get('bb_upper', 0)
-        _bb_lower = technical_data.get('bb_lower', 0)
-        _support = technical_data.get('support', 0)
-        _resistance = technical_data.get('resistance', 0)
-
-        # Bullish 确认项 (5 项) - v2.1 量化阈值
-        print("     🟢 Bullish 确认项:")
-        bull_1 = _price > _sma20 or _price > _sma50
-        bull_2 = _rsi < 55  # v2.1: 改为 55 (40-55 是中性区)
-        bull_3 = _macd > _macd_signal or _macd_hist > 0
-        # v2.1: "近" 定义为 1% 以内
-        near_support = abs(_price - _support) / _price < 0.01 if _price > 0 else False
-        near_bb_lower = abs(_price - _bb_lower) / _price < 0.01 if _price > 0 else False
-        bull_4 = near_support or near_bb_lower
-        bull_5 = technical_data.get('volume_ratio', 1) > 1.0
-        print(f"        {'✅' if bull_1 else '❌'} 1. 价格在 SMA20/50 上方: price=${_price:,.0f}, SMA20=${_sma20:,.0f}, SMA50=${_sma50:,.0f}")
-        print(f"        {'✅' if bull_2 else '❌'} 2. RSI < 55 (未超买): RSI={_rsi:.1f}")
-        print(f"        {'✅' if bull_3 else '❌'} 3. MACD 金叉或柱状图>0: MACD={_macd:.2f}, Signal={_macd_signal:.2f}, Hist={_macd_hist:.2f}")
-        print(f"        {'✅' if bull_4 else '❌'} 4. 价格近支撑/BB下轨 (1%内): Support=${_support:,.0f}, BBLower=${_bb_lower:,.0f}")
-        print(f"        {'✅' if bull_5 else '❌'} 5. 成交量放大 (>1.0): VolumeRatio={technical_data.get('volume_ratio', 'N/A')}")
-        local_bull_count = sum([bull_1, bull_2, bull_3, bull_4, bull_5])
-        print(f"        → 本地计算: {local_bull_count}/5 (AI 计数: {bullish_count}/5)")
-
-        print()
-        # Bearish 确认项 (5 项) - v2.1 量化阈值
-        print("     🔴 Bearish 确认项:")
-        bear_1 = _price < _sma20 and _price < _sma50  # v2.1: 改为 AND (更严格)
-        bear_2 = _rsi > 65  # v2.1: 改为 65 (45-65 是中性区)
-        bear_3 = _macd < _macd_signal or _macd_hist < 0
-        # v2.1: "近" 定义为 1% 以内
-        near_resistance = abs(_price - _resistance) / _price < 0.01 if _price > 0 else False
-        near_bb_upper = abs(_price - _bb_upper) / _price < 0.01 if _price > 0 else False
-        bear_4 = near_resistance or near_bb_upper
-        bear_5 = technical_data.get('volume_ratio', 1) < 0.8  # v2.1: 改为 0.8 (更明确的萎缩)
-        print(f"        {'✅' if bear_1 else '❌'} 1. 价格在 SMA20 AND SMA50 下方: price=${_price:,.0f}, SMA20=${_sma20:,.0f}, SMA50=${_sma50:,.0f}")
-        print(f"        {'✅' if bear_2 else '❌'} 2. RSI > 65 (超买): RSI={_rsi:.1f}")
-        print(f"        {'✅' if bear_3 else '❌'} 3. MACD 死叉或柱状图<0: MACD={_macd:.2f}, Signal={_macd_signal:.2f}, Hist={_macd_hist:.2f}")
-        print(f"        {'✅' if bear_4 else '❌'} 4. 价格近阻力/BB上轨 (1%内): Resistance=${_resistance:,.0f}, BBUpper=${_bb_upper:,.0f}")
-        print(f"        {'✅' if bear_5 else '❌'} 5. 成交量萎缩 (<0.8): VolumeRatio={technical_data.get('volume_ratio', 'N/A')}")
-        local_bear_count = sum([bear_1, bear_2, bear_3, bear_4, bear_5])
-        print(f"        → 本地计算: {local_bear_count}/5 (AI 计数: {bearish_count}/5)")
+        print("     📋 Judge 决策 (v3.0 AI 完全自主):")
+        print("        - AI 自主分析 Bull/Bear 辩论")
+        print("        - AI 自主判断证据强度")
+        print("        - 无硬编码规则或阈值")
         print()
 
         key_reasons = judge_decision.get('key_reasons', [])
@@ -1585,118 +1512,51 @@ if mtf_enabled:
 
     print()
 
-    # ========== 规则 2: 决策层方向匹配检查 ==========
-    print("  [规则2] 决策层方向匹配检查:")
+    # ========== 规则 2: 执行层支撑/阻力位硬风控 (v3.0 简化版) ==========
+    print("  [规则2] 执行层支撑/阻力位硬风控 (v3.0):")
+    print("     设计理念: AI 负责所有交易决策，本地仅做必要的边界检查")
 
     if signal_data.get('signal') in ['BUY', 'SELL']:
         try:
-            # 模拟决策层评估 (基于 4H 技术指标规则)
-            # 参考 deepseek_strategy.py:954-1019
+            support = technical_data.get('support', 0)
+            resistance = technical_data.get('resistance', float('inf'))
+            proximity_threshold = 0.01  # 1% 距离阈值
 
-            # 由于没有真正的 4H 数据，我们用 15M 数据近似
-            macd = technical_data.get('macd', 0)
-            macd_signal_val = technical_data.get('macd_signal', 0)
-            rsi = technical_data.get('rsi', 50)
-            sma_20 = technical_data.get('sma_20', current_price)
-            sma_50 = technical_data.get('sma_50', current_price)
+            print(f"     当前价格: ${current_price:,.2f}")
+            print(f"     支撑位: ${support:,.2f}")
+            print(f"     阻力位: ${resistance:,.2f}")
+            print(f"     距离阈值: {proximity_threshold:.0%}")
 
-            bullish_signals = 0
-            bearish_signals = 0
+            # 计算距离
+            distance_to_support = (current_price - support) / current_price if support > 0 else float('inf')
+            distance_to_resistance = (resistance - current_price) / current_price if resistance < float('inf') else float('inf')
 
-            # 规则 1: MACD 方向
-            if macd > macd_signal_val and macd > 0:
-                bullish_signals += 2
-            elif macd > macd_signal_val:
-                bullish_signals += 1
-            elif macd < macd_signal_val and macd < 0:
-                bearish_signals += 2
-            elif macd < macd_signal_val:
-                bearish_signals += 1
+            print(f"     距支撑位: {distance_to_support*100:.2f}%")
+            print(f"     距阻力位: {distance_to_resistance*100:.2f}%")
 
-            # 规则 2: RSI 区间 (v10.19: 修复错误逻辑，与 multi_agent_analyzer.py:485,492 一致)
-            # Bullish: RSI < 55 (未超买，有上升空间)
-            # Bearish: RSI > 65 (超买状态)
-            if rsi < 55:
-                bullish_signals += 1
-            elif rsi > 65:
-                bearish_signals += 1
-
-            # 规则 3: 价格与均线关系
-            if current_price > sma_20 and sma_20 > sma_50:
-                bullish_signals += 1
-            elif current_price < sma_20 and sma_20 < sma_50:
-                bearish_signals += 1
-
-            # 确定决策层方向
-            if bullish_signals >= 3 and bullish_signals > bearish_signals:
-                decision_state = "ALLOW_LONG"
-                decision_confidence = "HIGH" if bullish_signals >= 4 else "MEDIUM"
-            elif bearish_signals >= 3 and bearish_signals > bullish_signals:
-                decision_state = "ALLOW_SHORT"
-                decision_confidence = "HIGH" if bearish_signals >= 4 else "MEDIUM"
-            else:
-                decision_state = "WAIT"
-                decision_confidence = "LOW"
-
-            print(f"     决策层状态: {decision_state} ({decision_confidence})")
-            print(f"     多头信号: {bullish_signals}, 空头信号: {bearish_signals}")
-
-            # 检查方向冲突 (与 deepseek_strategy.py:1482-1501 一致)
-            direction_mismatch = False
-            if signal_data.get('signal') == 'BUY' and decision_state == "ALLOW_SHORT":
-                direction_mismatch = True
-                print(f"     🚫 方向冲突: BUY 信号但决策层为 ALLOW_SHORT → HOLD")
-            elif signal_data.get('signal') == 'SELL' and decision_state == "ALLOW_LONG":
-                direction_mismatch = True
-                print(f"     🚫 方向冲突: SELL 信号但决策层为 ALLOW_LONG → HOLD")
-            elif decision_state == "WAIT":
-                direction_mismatch = True
-                print(f"     🚫 决策层为 WAIT 状态，暂不交易 → HOLD")
-            else:
-                print(f"     ✅ 方向匹配: {signal_data.get('signal')} 与 {decision_state} 一致")
-
-            if direction_mismatch and not mtf_filtered:
-                signal_data['signal'] = 'HOLD'
-                signal_data['reason'] = f"[MTF 方向检查] {signal_data.get('reason', '')}"
-                mtf_filtered = True
-                mtf_filter_reason = f"决策层方向冲突 ({decision_state})"
-
-        except Exception as e:
-            print(f"     ⚠️ 决策层检查异常: {e}")
-
-    else:
-        print(f"     ⏭️ 跳过 (信号为 {signal_data.get('signal')})")
-
-    print()
-
-    # ========== 规则 3: 执行层 RSI 确认 ==========
-    print("  [规则3] 执行层 RSI 入场确认:")
-
-    if signal_data.get('signal') in ['BUY', 'SELL']:
-        try:
-            # 读取执行层 RSI 范围配置
-            exec_layer_cfg = base_config.get('multi_timeframe', {}).get('execution_layer', {})
-            rsi_entry_min = exec_layer_cfg.get('rsi_entry_min', 35)
-            rsi_entry_max = exec_layer_cfg.get('rsi_entry_max', 65)
-
-            current_rsi = technical_data.get('rsi', 50)
-            print(f"     当前 RSI: {current_rsi:.1f}")
-            print(f"     入场范围: {rsi_entry_min} - {rsi_entry_max}")
-
-            rsi_confirmed = rsi_entry_min <= current_rsi <= rsi_entry_max
-
-            if rsi_confirmed:
-                print(f"     ✅ RSI 在入场范围内")
-            else:
-                print(f"     🚫 RSI 不在入场范围: {signal_data.get('signal')} → HOLD")
+            # 规则: 离支撑位太近 (1% 内) 不做空
+            if signal_data.get('signal') == 'SELL' and distance_to_support < proximity_threshold:
+                print(f"     🚫 支撑位保护: SELL → HOLD (距支撑位仅 {distance_to_support*100:.2f}%)")
                 if not mtf_filtered:
                     signal_data['signal'] = 'HOLD'
-                    signal_data['reason'] = f"[MTF RSI] {signal_data.get('reason', '')}"
+                    signal_data['reason'] = f"[支撑位保护] 价格距支撑位过近 ({distance_to_support*100:.2f}% < 1%)"
                     mtf_filtered = True
-                    mtf_filter_reason = f"RSI={current_rsi:.1f} 不在 {rsi_entry_min}-{rsi_entry_max} 范围"
+                    mtf_filter_reason = f"支撑位保护 (距离 {distance_to_support*100:.2f}%)"
+
+            # 规则: 离阻力位太近 (1% 内) 不做多
+            elif signal_data.get('signal') == 'BUY' and distance_to_resistance < proximity_threshold:
+                print(f"     🚫 阻力位保护: BUY → HOLD (距阻力位仅 {distance_to_resistance*100:.2f}%)")
+                if not mtf_filtered:
+                    signal_data['signal'] = 'HOLD'
+                    signal_data['reason'] = f"[阻力位保护] 价格距阻力位过近 ({distance_to_resistance*100:.2f}% < 1%)"
+                    mtf_filtered = True
+                    mtf_filter_reason = f"阻力位保护 (距离 {distance_to_resistance*100:.2f}%)"
+
+            else:
+                print(f"     ✅ 支撑/阻力位检查通过")
 
         except Exception as e:
-            print(f"     ⚠️ RSI 确认检查异常: {e}")
+            print(f"     ⚠️ 支撑/阻力位检查异常: {e}")
     else:
         print(f"     ⏭️ 跳过 (信号为 {signal_data.get('signal')})")
 
@@ -2984,11 +2844,7 @@ if not SUMMARY_MODE:
     print(f"  风险等级: {signal_data.get('risk_level', 'N/A')}")
     judge_decision = signal_data.get('judge_decision', {})
     print(f"  胜出方:   {judge_decision.get('winning_side', 'N/A')}")
-    # ⭐ 关键数据: 确认计数
-    print()
-    print(f"  📊 Judge 确认计数 (决策核心):")
-    print(f"    Bullish 确认: {judge_decision.get('bullish_count', 'N/A')}/5")
-    print(f"    Bearish 确认: {judge_decision.get('bearish_count', 'N/A')}/5")
+    # v3.0: AI 完全自主决策，无确认计数框架
     print()
     print(f"  AI 止损: ${signal_data.get('stop_loss', 0):,.2f}" if signal_data.get('stop_loss') else "  AI 止损: N/A")
     print(f"  AI 止盈: ${signal_data.get('take_profit', 0):,.2f}" if signal_data.get('take_profit') else "  AI 止盈: N/A")
