@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v10.17 (与实盘 100% 一致)
+实盘信号诊断脚本 v10.18 (与实盘 100% 一致)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
@@ -28,6 +28,7 @@
 23. v10.15: 添加完整数据流追踪 (AI 输入数据验证、Judge 计数、辩论记录)
 24. v10.16: 修复 MTF 趋势层使用 SMA_200 (与 multi_timeframe_manager.py 一致)
 25. v10.17: 添加账户资金详情、确认项明细、GitHub 导出功能
+26. v10.18: 修复硬编码回退值，改为从配置读取 SMA 周期
 
 当前架构 (TradingAgents Judge-based Decision):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
@@ -43,6 +44,12 @@ MTF 三层架构 (v10.0+):
 - 参考: docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md
 
 历史更新:
+v10.18:
+- 修复 SMA 回退值硬编码问题 (line 1438: sma_period = 50)
+- 改为从 configs/base.yaml 读取 indicators.sma_periods 列表
+- 按降序尝试所有配置的 SMA 周期作为回退
+- 符合 CLAUDE.md 配置管理规范 (禁止硬编码)
+
 v10.17:
 - 添加账户资金详情 (使用实盘组件 BinanceAccountFetcher.get_balance())
   * 显示: 总余额、可用余额、已用保证金、保证金率、总未实现PnL
@@ -1432,11 +1439,21 @@ if mtf_enabled:
         sma_period = trend_layer_cfg.get('sma_period', 200)
         sma_for_risk = technical_data.get(f'sma_{sma_period}', 0)
 
-        # 如果没有 SMA_200 (历史数据不足)，回退到 SMA_50
+        # 如果没有 SMA_200 (历史数据不足)，回退到配置的其他 SMA 周期
         if sma_for_risk == 0:
-            sma_for_risk = technical_data.get('sma_50', 0)
-            sma_period = 50
-            print(f"     ℹ️ SMA_200 不可用 (需要 200 根 K线)，使用 SMA_50 作为后备")
+            # 从配置读取 SMA 周期列表，按降序尝试
+            sma_periods_list = base_config.get('indicators', {}).get('sma_periods', [200, 50, 20, 5])
+            for fallback_period in sorted([p for p in sma_periods_list if p < sma_period], reverse=True):
+                fallback_sma = technical_data.get(f'sma_{fallback_period}', 0)
+                if fallback_sma > 0:
+                    sma_for_risk = fallback_sma
+                    sma_period = fallback_period
+                    print(f"     ℹ️ SMA_{trend_layer_cfg.get('sma_period', 200)} 不可用，使用 SMA_{sma_period} 作为后备")
+                    break
+
+            # 如果所有 SMA 都不可用，输出警告
+            if sma_for_risk == 0:
+                print(f"     ⚠️ 所有 SMA 指标均不可用，历史数据不足")
 
         require_above_sma = trend_layer_cfg.get('require_above_sma', True)
 
@@ -2913,9 +2930,16 @@ if not SUMMARY_MODE:
         trend_layer_cfg = base_config.get('multi_timeframe', {}).get('trend_layer', {})
         sma_period_summary = trend_layer_cfg.get('sma_period', 200)
         sma_for_summary = technical_data.get(f'sma_{sma_period_summary}', 0)
+
+        # 如果主 SMA 不可用，从配置读取回退周期
         if sma_for_summary == 0:
-            sma_for_summary = technical_data.get('sma_50', 0)
-            sma_period_summary = 50
+            sma_periods_list = base_config.get('indicators', {}).get('sma_periods', [200, 50, 20, 5])
+            for fallback_period in sorted([p for p in sma_periods_list if p < sma_period_summary], reverse=True):
+                fallback_sma = technical_data.get(f'sma_{fallback_period}', 0)
+                if fallback_sma > 0:
+                    sma_for_summary = fallback_sma
+                    sma_period_summary = fallback_period
+                    break
         if current_price < sma_for_summary:
             print(f"  趋势层: RISK_OFF (价格 ${current_price:,.2f} < SMA_{sma_period_summary} ${sma_for_summary:,.2f})")
         else:
