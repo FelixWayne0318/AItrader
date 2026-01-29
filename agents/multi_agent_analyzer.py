@@ -494,7 +494,7 @@ BEARISH Confirmations (count in Bear's arguments):
 4. Price within 1% of resistance level OR within 1% of BB upper band
 5. Volume ratio < 0.8 (clearly below average) OR bearish volume pattern mentioned
 
-QUANTITATIVE THRESHOLDS (v2.1 - use these exact numbers):
+QUANTITATIVE THRESHOLDS (v2.2 - use these exact numbers):
 - "Near support/resistance": within 1% of the level
 - "RSI showing weakness": RSI > 65 (not just > 40)
 - "Volume decreasing": volume < 80% of average (volume_ratio < 0.8)
@@ -503,9 +503,37 @@ QUANTITATIVE THRESHOLDS (v2.1 - use these exact numbers):
 IMPORTANT: Each confirmation is worth 1 point if ANY of the conditions in that item are true.
 Example: If price is above SMA50 but below SMA20, confirmation #1 STILL COUNTS as 1.
 
+=== 🚨 STEP 1.5: EXTREME CONDITION OVERRIDES (CRITICAL) ===
+
+BEFORE applying decision rules, check these OVERRIDE conditions:
+
+🔴 EXTREME OVERSOLD (RSI < 25):
+   - This is a STRONG reversal signal
+   - DO NOT choose SHORT when RSI < 25
+   - Even if Bearish count >= 3, override to HOLD or LONG
+   - Reason: Shorting at extreme oversold often leads to losses from sharp rebounds
+
+🔴 EXTREME OVERBOUGHT (RSI > 75):
+   - This is a STRONG reversal signal
+   - DO NOT choose LONG when RSI > 75
+   - Even if Bullish count >= 3, override to HOLD or SHORT
+   - Reason: Buying at extreme overbought often leads to losses from sharp pullbacks
+
+🔴 PRICE AT SUPPORT (within 1% of support):
+   - DO NOT choose SHORT when price is within 1% of support level
+   - Support levels often cause bounces
+   - If Bearish count >= 3 but price is at support → HOLD instead of SHORT
+
+🔴 PRICE AT RESISTANCE (within 1% of resistance):
+   - DO NOT choose LONG when price is within 1% of resistance level
+   - Resistance levels often cause rejections
+   - If Bullish count >= 3 but price is at resistance → HOLD instead of LONG
+
 === STEP 2: APPLY DECISION RULES (MANDATORY - NO EXCEPTIONS) ===
 
-You MUST follow these rules EXACTLY as written:
+FIRST check the OVERRIDE conditions above. If any override applies, follow it.
+
+THEN, if no override applies, follow these rules EXACTLY:
 
 IF Bullish count >= 3:
     → decision = "LONG"
@@ -547,9 +575,13 @@ ELSE:
 Before you provide your JSON response, verify:
 ✓ Did you count all 5 bullish confirmations? (Write the count)
 ✓ Did you count all 5 bearish confirmations? (Write the count)
+✓ Did you check the EXTREME CONDITION OVERRIDES?
+✓ If RSI < 25, did you avoid choosing SHORT?
+✓ If RSI > 75, did you avoid choosing LONG?
+✓ If price is at support (within 1%), did you avoid choosing SHORT?
+✓ If price is at resistance (within 1%), did you avoid choosing LONG?
 ✓ Did you apply the decision rules EXACTLY as written above?
 ✓ Did you avoid using HOLD as a default safe choice?
-✓ If you chose HOLD, are BOTH counts < 2 AND truly balanced?
 
 === OUTPUT FORMAT ===
 
@@ -560,6 +592,7 @@ Provide your decision in this EXACT JSON format (no additional text):
     "confidence": "HIGH|MEDIUM|LOW",
     "bullish_count": <number 0-5>,
     "bearish_count": <number 0-5>,
+    "override_applied": "<none|extreme_rsi|at_support|at_resistance>",
     "key_reasons": ["reason1", "reason2", "reason3"],
     "acknowledged_risks": ["risk1", "risk2"]
 }}
