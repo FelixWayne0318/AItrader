@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import useSWR from "swr";
 import {
   Menu,
@@ -27,32 +27,50 @@ interface HeaderProps {
 
 export function Header({ locale, t }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const router = useRouter();
 
-  // Fetch market data
-  const { data: status } = useSWR("/api/public/system-status", fetcher, {
-    refreshInterval: 30000,
-  });
+  // Fix hydration mismatch - only render dynamic content after mount
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
-  const { data: sentiment } = useSWR("/api/trading/long-short-ratio/BTCUSDT", fetcher, {
-    refreshInterval: 60000,
-  });
+  // Fetch market data - only after mounted to avoid hydration issues
+  const { data: status } = useSWR(
+    mounted ? "/api/public/system-status" : null,
+    fetcher,
+    { refreshInterval: 30000 }
+  );
 
-  const { data: markPrice } = useSWR("/api/trading/mark-price/BTCUSDT", fetcher, {
-    refreshInterval: 30000,
-  });
+  const { data: sentiment } = useSWR(
+    mounted ? "/api/trading/long-short-ratio/BTCUSDT" : null,
+    fetcher,
+    { refreshInterval: 60000 }
+  );
 
-  const { data: openInterest } = useSWR("/api/trading/open-interest/BTCUSDT", fetcher, {
-    refreshInterval: 60000,
-  });
+  const { data: markPrice } = useSWR(
+    mounted ? "/api/trading/mark-price/BTCUSDT" : null,
+    fetcher,
+    { refreshInterval: 30000 }
+  );
 
-  const { data: ticker } = useSWR("/api/trading/ticker/BTCUSDT", fetcher, {
-    refreshInterval: 10000,
-  });
+  const { data: openInterest } = useSWR(
+    mounted ? "/api/trading/open-interest/BTCUSDT" : null,
+    fetcher,
+    { refreshInterval: 60000 }
+  );
 
-  const { data: latestSignal } = useSWR("/api/public/latest-signal", fetcher, {
-    refreshInterval: 30000,
-  });
+  const { data: ticker } = useSWR(
+    mounted ? "/api/trading/ticker/BTCUSDT" : null,
+    fetcher,
+    { refreshInterval: 10000 }
+  );
+
+  const { data: latestSignal } = useSWR(
+    mounted ? "/api/public/latest-signal" : null,
+    fetcher,
+    { refreshInterval: 30000 }
+  );
 
   const toggleLocale = () => {
     const newLocale = locale === "en" ? "zh" : "en";
@@ -66,7 +84,7 @@ export function Header({ locale, t }: HeaderProps) {
     { href: "/copy", label: t("nav.copy") },
   ];
 
-  // Calculate metrics
+  // Calculate metrics (safe defaults for SSR)
   const longShortRatio = sentiment?.data?.[0]?.long_short_ratio || sentiment?.longShortRatio || 1;
   const longPercent = longShortRatio > 0 ? (longShortRatio / (longShortRatio + 1)) * 100 : 50;
 
@@ -91,15 +109,9 @@ export function Header({ locale, t }: HeaderProps) {
   };
 
   const signal = latestSignal?.signal || "HOLD";
-  const getSignalType = (s: string): "positive" | "negative" | "neutral" => {
-    if (s === "BUY" || s === "LONG") return "positive";
-    if (s === "SELL" || s === "SHORT") return "negative";
-    return "neutral";
-  };
-
-  const getSignalColor = (type: "positive" | "negative" | "neutral") => {
-    if (type === "positive") return "text-green-500";
-    if (type === "negative") return "text-red-500";
+  const getSignalColor = (s: string) => {
+    if (s === "BUY" || s === "LONG") return "text-green-500";
+    if (s === "SELL" || s === "SHORT") return "text-red-500";
     return "text-foreground";
   };
 
@@ -128,48 +140,50 @@ export function Header({ locale, t }: HeaderProps) {
             ))}
           </nav>
 
-          {/* Market Metrics - Only on lg+ screens */}
-          <div className="hidden lg:flex items-center gap-2">
-            {/* Bot Status */}
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
-              <Bot className={`h-3.5 w-3.5 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
-              <span className={`text-xs font-medium ${status?.trading_active ? "text-green-500" : ""}`}>
-                {status?.trading_active ? "Active" : "Offline"}
-              </span>
-            </div>
+          {/* Market Metrics - Only on lg+ screens, only after mounted */}
+          {mounted && (
+            <div className="hidden lg:flex items-center gap-2">
+              {/* Bot Status */}
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+                <Bot className={`h-3.5 w-3.5 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
+                <span className={`text-xs font-medium ${status?.trading_active ? "text-green-500" : ""}`}>
+                  {status?.trading_active ? "Active" : "Offline"}
+                </span>
+              </div>
 
-            {/* Long/Short */}
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
-              <Users className={`h-3.5 w-3.5 ${longPercent > 50 ? "text-green-500" : "text-red-500"}`} />
-              <span className="text-xs font-medium">{longPercent.toFixed(0)}% L</span>
-            </div>
+              {/* Long/Short */}
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+                <Users className={`h-3.5 w-3.5 ${longPercent > 50 ? "text-green-500" : "text-red-500"}`} />
+                <span className="text-xs font-medium">{longPercent.toFixed(0)}% L</span>
+              </div>
 
-            {/* Funding Rate */}
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
-              <Percent className={`h-3.5 w-3.5 ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`} />
-              <span className={`text-xs font-medium ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`}>
-                {fundingRate >= 0 ? "+" : ""}{fundingRate.toFixed(4)}%
-              </span>
-            </div>
+              {/* Funding Rate */}
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+                <Percent className={`h-3.5 w-3.5 ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`} />
+                <span className={`text-xs font-medium ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`}>
+                  {fundingRate >= 0 ? "+" : ""}{fundingRate.toFixed(4)}%
+                </span>
+              </div>
 
-            {/* Open Interest - Only on xl+ */}
-            <div className="hidden xl:flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
-              <BarChart3 className="h-3.5 w-3.5 text-blue-500" />
-              <span className="text-xs font-medium">OI {formatOI(oiValue)}</span>
-            </div>
+              {/* Open Interest - Only on xl+ */}
+              <div className="hidden xl:flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+                <BarChart3 className="h-3.5 w-3.5 text-blue-500" />
+                <span className="text-xs font-medium">OI {formatOI(oiValue)}</span>
+              </div>
 
-            {/* 24h Volume - Only on xl+ */}
-            <div className="hidden xl:flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
-              <Activity className="h-3.5 w-3.5 text-purple-500" />
-              <span className="text-xs font-medium">{formatVolume(volume24h)}</span>
-            </div>
+              {/* 24h Volume - Only on xl+ */}
+              <div className="hidden xl:flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+                <Activity className="h-3.5 w-3.5 text-purple-500" />
+                <span className="text-xs font-medium">{formatVolume(volume24h)}</span>
+              </div>
 
-            {/* AI Signal */}
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
-              <Brain className={`h-3.5 w-3.5 ${getSignalColor(getSignalType(signal))}`} />
-              <span className={`text-xs font-medium ${getSignalColor(getSignalType(signal))}`}>{signal}</span>
+              {/* AI Signal */}
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+                <Brain className={`h-3.5 w-3.5 ${getSignalColor(signal)}`} />
+                <span className={`text-xs font-medium ${getSignalColor(signal)}`}>{signal}</span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Right side - Desktop */}
           <div className="hidden lg:flex items-center gap-3">
@@ -210,28 +224,30 @@ export function Header({ locale, t }: HeaderProps) {
               ))}
             </nav>
 
-            {/* Market Metrics in Mobile Menu */}
-            <div className="border-t border-border pt-4 mb-4">
-              <p className="text-xs text-muted-foreground px-3 mb-2">Market Data</p>
-              <div className="grid grid-cols-2 gap-2 px-3">
-                <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
-                  <Bot className={`h-4 w-4 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
-                  <span className="text-sm">{status?.trading_active ? "Active" : "Offline"}</span>
-                </div>
-                <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
-                  <Users className="h-4 w-4" />
-                  <span className="text-sm">{longPercent.toFixed(0)}% Long</span>
-                </div>
-                <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
-                  <Percent className="h-4 w-4" />
-                  <span className="text-sm">{fundingRate >= 0 ? "+" : ""}{fundingRate.toFixed(4)}%</span>
-                </div>
-                <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
-                  <Brain className={`h-4 w-4 ${getSignalColor(getSignalType(signal))}`} />
-                  <span className={`text-sm ${getSignalColor(getSignalType(signal))}`}>{signal}</span>
+            {/* Market Metrics in Mobile Menu - Only show after mounted */}
+            {mounted && (
+              <div className="border-t border-border pt-4 mb-4">
+                <p className="text-xs text-muted-foreground px-3 mb-2">Market Data</p>
+                <div className="grid grid-cols-2 gap-2 px-3">
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                    <Bot className={`h-4 w-4 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
+                    <span className="text-sm">{status?.trading_active ? "Active" : "Offline"}</span>
+                  </div>
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                    <Users className="h-4 w-4" />
+                    <span className="text-sm">{longPercent.toFixed(0)}% Long</span>
+                  </div>
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                    <Percent className="h-4 w-4" />
+                    <span className="text-sm">{fundingRate >= 0 ? "+" : ""}{fundingRate.toFixed(4)}%</span>
+                  </div>
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                    <Brain className={`h-4 w-4 ${getSignalColor(signal)}`} />
+                    <span className={`text-sm ${getSignalColor(signal)}`}>{signal}</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Bottom Actions */}
             <div className="flex items-center justify-between px-3 pt-4 border-t border-border">
