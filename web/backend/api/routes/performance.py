@@ -12,6 +12,21 @@ router = APIRouter(prefix="/api/performance", tags=["Performance"])
 
 
 # ============================================================================
+# Diagnostic Endpoint
+# ============================================================================
+
+@router.get("/diagnostic")
+async def check_api_connection():
+    """Diagnostic: Check Binance API connectivity and credentials"""
+    try:
+        service = get_performance_service()
+        result = await service.check_connection()
+        return {"success": True, "data": result}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
 # Performance Stats Endpoints
 # ============================================================================
 

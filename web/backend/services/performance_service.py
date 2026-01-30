@@ -5,21 +5,35 @@ Calculates trading statistics, risk metrics, and performance data
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 import hmac
 import hashlib
 import time
 import httpx
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from dotenv import load_dotenv
 
-# Load environment variables
-env_path = os.path.expanduser("~/.env.aitrader")
-if os.path.exists(env_path):
-    load_dotenv(env_path)
+# Load environment variables from multiple possible locations
+env_paths = [
+    os.path.expanduser("~/.env.aitrader"),
+    "/home/linuxuser/.env.aitrader",
+    os.path.join(os.path.dirname(__file__), "../../../.env"),
+    ".env"
+]
+
+for env_path in env_paths:
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        logger.info(f"Loaded env from: {env_path}")
+        break
 
 
 class PerformanceService:
@@ -29,6 +43,63 @@ class PerformanceService:
         self.api_key = os.getenv("BINANCE_API_KEY", "")
         self.api_secret = os.getenv("BINANCE_API_SECRET", "")
         self.base_url = "https://fapi.binance.com"
+
+        # Log credential status (without revealing actual keys)
+        if self.api_key:
+            logger.info(f"API Key loaded: {self.api_key[:8]}...{self.api_key[-4:]}")
+        else:
+            logger.warning("BINANCE_API_KEY not found!")
+        if self.api_secret:
+            logger.info(f"API Secret loaded: {self.api_secret[:4]}...{self.api_secret[-4:]}")
+        else:
+            logger.warning("BINANCE_API_SECRET not found!")
+
+    async def check_connection(self) -> dict:
+        """Diagnostic: Check API connectivity and credentials"""
+        result = {
+            "api_key_loaded": bool(self.api_key),
+            "api_secret_loaded": bool(self.api_secret),
+            "api_key_preview": f"{self.api_key[:8]}...{self.api_key[-4:]}" if self.api_key else None,
+            "connection_ok": False,
+            "account_accessible": False,
+            "balance": 0,
+            "error": None
+        }
+
+        if not self.api_key or not self.api_secret:
+            result["error"] = "API credentials not loaded"
+            return result
+
+        try:
+            # Test connection with account balance
+            params = self._sign_request({})
+            headers = {"X-MBX-APIKEY": self.api_key}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}/fapi/v2/balance",
+                    params=params,
+                    headers=headers,
+                    timeout=10.0
+                )
+
+                result["connection_ok"] = True
+
+                if response.status_code == 200:
+                    balances = response.json()
+                    result["account_accessible"] = True
+                    # Find USDT balance
+                    for b in balances:
+                        if b.get("asset") == "USDT":
+                            result["balance"] = float(b.get("balance", 0))
+                            break
+                else:
+                    result["error"] = f"HTTP {response.status_code}: {response.text[:200]}"
+        except Exception as e:
+            result["error"] = str(e)
+            logger.error(f"Connection check failed: {e}")
+
+        return result
 
     def _sign_request(self, params: dict) -> dict:
         """Sign request with HMAC SHA256"""
@@ -42,39 +113,95 @@ class PerformanceService:
         params["signature"] = signature
         return params
 
-    async def get_trade_history(self, symbol: str = "BTCUSDT", limit: int = 100) -> list:
-        """Get trade history from Binance Futures"""
+    async def get_all_traded_symbols(self) -> List[str]:
+        """Get all symbols with positions or recent trades"""
         if not self.api_key or not self.api_secret:
-            return []
+            return ["BTCUSDT"]
 
+        symbols = set()
         try:
-            params = self._sign_request({"symbol": symbol, "limit": limit})
+            # Get current positions
+            params = self._sign_request({})
             headers = {"X-MBX-APIKEY": self.api_key}
 
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    f"{self.base_url}/fapi/v1/userTrades",
+                    f"{self.base_url}/fapi/v2/positionRisk",
                     params=params,
                     headers=headers,
                     timeout=10.0
                 )
 
                 if response.status_code == 200:
-                    return response.json()
-                return []
+                    positions = response.json()
+                    for pos in positions:
+                        if float(pos.get("positionAmt", 0)) != 0:
+                            symbols.add(pos.get("symbol"))
         except Exception as e:
-            print(f"Error fetching trade history: {e}")
+            logger.error(f"Error fetching positions: {e}")
+
+        # Always include BTCUSDT as fallback
+        if not symbols:
+            symbols.add("BTCUSDT")
+
+        return list(symbols)
+
+    async def get_trade_history(self, symbol: Optional[str] = None, limit: int = 100) -> list:
+        """Get trade history from Binance Futures (all symbols if none specified)"""
+        if not self.api_key or not self.api_secret:
+            logger.warning("API credentials missing, cannot fetch trade history")
             return []
 
-    async def get_income_history(self, income_type: Optional[str] = None, limit: int = 100) -> list:
-        """Get income history (PnL, funding fees, etc.)"""
+        all_trades = []
+
+        # If no symbol specified, get trades for common symbols
+        symbols_to_query = [symbol] if symbol else ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
+
+        try:
+            headers = {"X-MBX-APIKEY": self.api_key}
+
+            async with httpx.AsyncClient() as client:
+                for sym in symbols_to_query:
+                    params = self._sign_request({"symbol": sym, "limit": limit})
+                    response = await client.get(
+                        f"{self.base_url}/fapi/v1/userTrades",
+                        params=params,
+                        headers=headers,
+                        timeout=10.0
+                    )
+
+                    if response.status_code == 200:
+                        trades = response.json()
+                        logger.info(f"Fetched {len(trades)} trades for {sym}")
+                        all_trades.extend(trades)
+                    else:
+                        logger.warning(f"Failed to get trades for {sym}: {response.status_code}")
+
+            # Sort by time descending
+            all_trades.sort(key=lambda x: x.get("time", 0), reverse=True)
+            return all_trades[:limit]
+
+        except Exception as e:
+            logger.error(f"Error fetching trade history: {e}")
+            return []
+
+    async def get_income_history(self, income_type: Optional[str] = None, limit: int = 1000, days: int = 30) -> list:
+        """Get income history (PnL, funding fees, etc.) - NO symbol filter to get ALL trades"""
         if not self.api_key or not self.api_secret:
+            logger.warning("API credentials missing, cannot fetch income history")
             return []
 
         try:
-            params = {"limit": limit}
+            # Calculate start time (30 days ago by default)
+            start_time = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
+
+            params = {
+                "limit": limit,
+                "startTime": start_time
+            }
             if income_type:
                 params["incomeType"] = income_type
+
             params = self._sign_request(params)
             headers = {"X-MBX-APIKEY": self.api_key}
 
@@ -83,25 +210,44 @@ class PerformanceService:
                     f"{self.base_url}/fapi/v1/income",
                     params=params,
                     headers=headers,
-                    timeout=10.0
+                    timeout=15.0
                 )
 
                 if response.status_code == 200:
-                    return response.json()
-                return []
+                    data = response.json()
+                    logger.info(f"Fetched {len(data)} income records (type={income_type}, days={days})")
+                    return data
+                else:
+                    logger.error(f"Income history failed: {response.status_code} - {response.text[:200]}")
+                    return []
         except Exception as e:
-            print(f"Error fetching income history: {e}")
+            logger.error(f"Error fetching income history: {e}")
             return []
 
     async def get_performance_stats(self) -> dict:
         """Calculate comprehensive performance statistics"""
         trades = await self.get_trade_history(limit=500)
-        income = await self.get_income_history(income_type="REALIZED_PNL", limit=500)
+
+        # Fetch ALL income types first to see what's available
+        all_income = await self.get_income_history(income_type=None, limit=1000, days=90)
+        logger.info(f"Total income records: {len(all_income)}")
+
+        # Filter to only REALIZED_PNL for calculations
+        income = [i for i in all_income if i.get("incomeType") == "REALIZED_PNL"]
+        logger.info(f"REALIZED_PNL records: {len(income)}")
+
+        # Log income types breakdown
+        income_types = {}
+        for i in all_income:
+            t = i.get("incomeType", "UNKNOWN")
+            income_types[t] = income_types.get(t, 0) + 1
+        logger.info(f"Income types breakdown: {income_types}")
 
         # Calculate basic stats
         total_trades = len(trades)
 
         if not income:
+            logger.warning("No REALIZED_PNL records found!")
             return {
                 "total_trades": total_trades,
                 "winning_trades": 0,
@@ -121,7 +267,12 @@ class PerformanceService:
                 "today_pnl": 0,
                 "week_pnl": 0,
                 "month_pnl": 0,
-                "equity_curve": []
+                "equity_curve": [],
+                "_debug": {
+                    "api_key_loaded": bool(self.api_key),
+                    "total_income_records": len(all_income),
+                    "income_types": income_types
+                }
             }
 
         # Parse PnL values
@@ -237,12 +388,18 @@ class PerformanceService:
             "today_pnl": round(today_pnl, 2),
             "week_pnl": round(week_pnl, 2),
             "month_pnl": round(month_pnl, 2),
-            "equity_curve": equity_curve
+            "equity_curve": equity_curve,
+            "_debug": {
+                "api_key_loaded": bool(self.api_key),
+                "total_income_records": len(all_income),
+                "realized_pnl_count": len(income),
+                "income_types": income_types
+            }
         }
 
     async def get_recent_trades_formatted(self, limit: int = 20) -> list:
         """Get recent trades formatted for timeline display"""
-        income = await self.get_income_history(income_type="REALIZED_PNL", limit=limit)
+        income = await self.get_income_history(income_type="REALIZED_PNL", limit=limit, days=90)
 
         formatted_trades = []
         for i in income:
