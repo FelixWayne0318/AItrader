@@ -109,6 +109,8 @@ app = FastAPI(
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
+    same_site="lax",
+    https_only=False,  # Allow cookies over HTTP for proxy setup
 )
 
 # CORS middleware
