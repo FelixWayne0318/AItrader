@@ -26,7 +26,7 @@ import { Footer } from "@/components/layout/footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useTranslation, type Locale } from "@/lib/i18n";
-import { TickerTapeWidget, MiniChartWidget } from "@/components/charts/tradingview-widget";
+import { MarketIntelligenceBar } from "@/components/trading/market-intelligence-bar";
 
 // Dynamic import with SSR disabled
 const HeroAnimatedCandlestick = dynamic(
@@ -256,9 +256,9 @@ export default function HomePage() {
       <div className="min-h-screen gradient-bg noise-overlay">
         <Header locale={locale} t={t} />
 
-        {/* Ticker Tape */}
-        <div className="pt-16 border-b border-border/50 bg-background/50">
-          <TickerTapeWidget />
+        {/* Market Intelligence Bar - Transparent with key metrics */}
+        <div className="pt-16 border-b border-border/30 bg-transparent backdrop-blur-sm">
+          <MarketIntelligenceBar />
         </div>
 
         {/* Hero Section */}
