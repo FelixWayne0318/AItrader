@@ -355,7 +355,10 @@ export default function HomePage() {
               </div>
 
               {/* Animated Candlestick Chart */}
-              <HeroAnimatedCandlestick />
+              <HeroAnimatedCandlestick
+                basePrice={ticker?.price ? Number(ticker.price) : undefined}
+                priceChangePercent={ticker?.price_change_percent}
+              />
             </div>
           </div>
         </section>

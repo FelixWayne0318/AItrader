@@ -19,6 +19,7 @@ interface AnimatedCandlestickProps {
   volatility?: number;
   showVolume?: boolean;
   title?: string;
+  basePrice?: number;
 }
 
 function generateInitialCandles(count: number, basePrice: number = 105000): Candle[] {
@@ -76,9 +77,10 @@ export function AnimatedCandlestick({
   volatility = 500,
   showVolume = true,
   title = 'BTC/USDT',
+  basePrice = 105000,
 }: AnimatedCandlestickProps) {
   const [candles, setCandles] = useState<Candle[]>([]);
-  const [currentPrice, setCurrentPrice] = useState(105000);
+  const [currentPrice, setCurrentPrice] = useState(basePrice);
   const [priceChange, setPriceChange] = useState(0);
   const [isClient, setIsClient] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -86,8 +88,8 @@ export function AnimatedCandlestick({
   // Initialize on client only to avoid hydration mismatch
   useEffect(() => {
     setIsClient(true);
-    setCandles(generateInitialCandles(candleCount));
-  }, [candleCount]);
+    setCandles(generateInitialCandles(candleCount, basePrice));
+  }, [candleCount, basePrice]);
 
   // Update current price display
   useEffect(() => {
@@ -364,7 +366,12 @@ export function AnimatedCandlestick({
 }
 
 // Hero version with larger size and outer glow
-export function HeroAnimatedCandlestick() {
+interface HeroAnimatedCandlestickProps {
+  basePrice?: number;
+  priceChangePercent?: number;
+}
+
+export function HeroAnimatedCandlestick({ basePrice, priceChangePercent }: HeroAnimatedCandlestickProps) {
   return (
     <div className="relative w-full max-w-3xl mx-auto px-2 sm:px-0">
       {/* Outer glow */}
@@ -374,9 +381,10 @@ export function HeroAnimatedCandlestick() {
         height={280}
         candleCount={25}
         animationSpeed={1800}
-        volatility={500}
+        volatility={basePrice ? basePrice * 0.005 : 500}
         showVolume={true}
         title="BTC/USDT"
+        basePrice={basePrice}
       />
     </div>
   );
