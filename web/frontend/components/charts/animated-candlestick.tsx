@@ -206,29 +206,31 @@ export function AnimatedCandlestick({
                 className="relative"
                 style={{ width: `${candleWidth}%`, height: '100%' }}
               >
-                {/* Wick */}
+                {/* Wick - rounded ends */}
                 <div
                   className="absolute left-1/2 -translate-x-1/2"
                   style={{
                     top: `${highPercent}%`,
                     height: `${lowPercent - highPercent}%`,
-                    width: '1px',
+                    width: '2px',
+                    borderRadius: '1px',
                     backgroundColor: `hsl(var(--primary) / ${wickOpacity})`,
                   }}
                 />
-                {/* Body */}
+                {/* Body - Rounded Rectangle */}
                 <div
-                  className="absolute left-1/2 -translate-x-1/2 rounded-[1px]"
+                  className="absolute left-1/2 -translate-x-1/2"
                   style={{
                     top: `${bodyTopPercent}%`,
                     height: `${bodyHeightPercent}%`,
                     width: candleCount > 40 ? '55%' : '70%',
-                    minHeight: '2px',
+                    minHeight: '4px',
+                    borderRadius: '4px',
                     backgroundColor: isUp
-                      ? `hsl(var(--primary) / ${bodyOpacity * 0.3})`
+                      ? `hsl(var(--primary) / ${bodyOpacity * 0.25})`
                       : `hsl(var(--primary) / ${bodyOpacity})`,
-                    border: `1px solid hsl(var(--primary) / ${bodyOpacity})`,
-                    boxShadow: isLatest ? '0 0 8px hsl(var(--primary) / 0.4)' : 'none',
+                    border: `1.5px solid hsl(var(--primary) / ${bodyOpacity})`,
+                    boxShadow: isLatest ? '0 0 10px hsl(var(--primary) / 0.4)' : 'none',
                   }}
                 />
               </div>
@@ -254,10 +256,11 @@ export function AnimatedCandlestick({
                   style={{ height: '100%' }}
                 >
                   <div
-                    className="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-t-[1px]"
+                    className="absolute bottom-0 left-1/2 -translate-x-1/2"
                     style={{
                       width: '75%',
                       height: `${Math.max(barHeightPercent, 2)}%`,
+                      borderRadius: '3px 3px 0 0',
                       backgroundColor: isUp
                         ? `hsl(var(--primary) / ${isLatest ? 0.25 : 0.15})`
                         : `hsl(var(--primary) / ${isLatest ? 0.35 : 0.25})`,
