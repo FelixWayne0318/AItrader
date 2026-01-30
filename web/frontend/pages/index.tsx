@@ -4,6 +4,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import useSWR from "swr";
+import dynamic from "next/dynamic";
 import {
   ArrowRight,
   TrendingUp,
@@ -26,7 +27,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useTranslation, type Locale } from "@/lib/i18n";
 import { TickerTapeWidget, MiniChartWidget } from "@/components/charts/tradingview-widget";
-import { HeroAnimatedCandlestick } from "@/components/charts/animated-candlestick";
+
+// Dynamic import with SSR disabled to avoid hydration mismatch (random data generation)
+const HeroAnimatedCandlestick = dynamic(
+  () => import("@/components/charts/animated-candlestick").then(mod => mod.HeroAnimatedCandlestick),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="relative w-full max-w-3xl mx-auto px-2 sm:px-0">
+        <div className="h-[280px] rounded-xl border border-border/50 bg-card/50 flex items-center justify-center">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+            <span className="text-sm">Loading chart...</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+);
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
