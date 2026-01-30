@@ -25,29 +25,6 @@ interface HeaderProps {
   t: (key: string) => string;
 }
 
-function MetricChip({
-  icon,
-  value,
-  type = "neutral",
-}: {
-  icon: React.ReactNode;
-  value: string;
-  type?: "positive" | "negative" | "neutral";
-}) {
-  const colorClass = {
-    positive: "text-[hsl(var(--profit))]",
-    negative: "text-[hsl(var(--loss))]",
-    neutral: "text-foreground",
-  }[type];
-
-  return (
-    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors">
-      {icon}
-      <span className={`text-xs font-medium ${colorClass}`}>{value}</span>
-    </div>
-  );
-}
-
 export function Header({ locale, t }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const router = useRouter();
@@ -120,20 +97,26 @@ export function Header({ locale, t }: HeaderProps) {
     return "neutral";
   };
 
+  const getSignalColor = (type: "positive" | "negative" | "neutral") => {
+    if (type === "positive") return "text-green-500";
+    if (type === "negative") return "text-red-500";
+    return "text-foreground";
+  };
+
   return (
     <header className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-lg">
       <div className="container mx-auto px-4">
-        <div className="flex h-14 items-center justify-between gap-4">
-          {/* Logo */}
-          <Link href="/" className="flex items-center space-x-2 flex-shrink-0">
+        <div className="flex h-14 items-center justify-between">
+          {/* Logo - Always visible */}
+          <Link href="/" className="flex items-center gap-2">
             <div className="h-7 w-7 rounded-lg bg-primary flex items-center justify-center">
               <span className="text-primary-foreground font-bold text-sm">A</span>
             </div>
-            <span className="text-lg font-bold hidden sm:inline">Algvex</span>
+            <span className="text-lg font-bold">Algvex</span>
           </Link>
 
-          {/* Desktop Navigation */}
-          <nav className="hidden lg:flex items-center space-x-6">
+          {/* Desktop Navigation - Only on lg+ screens */}
+          <nav className="hidden lg:flex items-center gap-6">
             {navItems.map((item) => (
               <Link
                 key={item.href}
@@ -145,126 +128,81 @@ export function Header({ locale, t }: HeaderProps) {
             ))}
           </nav>
 
-          {/* Market Metrics - Desktop */}
-          <div className="hidden md:flex items-center gap-2 flex-1 justify-center">
+          {/* Market Metrics - Only on lg+ screens */}
+          <div className="hidden lg:flex items-center gap-2">
             {/* Bot Status */}
-            <MetricChip
-              icon={
-                <Bot
-                  className={`h-3.5 w-3.5 ${
-                    status?.trading_active ? "text-[hsl(var(--profit))]" : "text-muted-foreground"
-                  }`}
-                />
-              }
-              value={status?.trading_active ? "Active" : "Offline"}
-              type={status?.trading_active ? "positive" : "neutral"}
-            />
-
-            {/* Long/Short */}
-            <MetricChip
-              icon={
-                <Users
-                  className={`h-3.5 w-3.5 ${
-                    longPercent > 50 ? "text-[hsl(var(--profit))]" : "text-[hsl(var(--loss))]"
-                  }`}
-                />
-              }
-              value={`${longPercent.toFixed(0)}% L`}
-              type={longPercent > 55 ? "positive" : longPercent < 45 ? "negative" : "neutral"}
-            />
-
-            {/* Funding Rate */}
-            <MetricChip
-              icon={
-                <Percent
-                  className={`h-3.5 w-3.5 ${
-                    fundingRate >= 0 ? "text-[hsl(var(--profit))]" : "text-[hsl(var(--loss))]"
-                  }`}
-                />
-              }
-              value={`${fundingRate >= 0 ? "+" : ""}${fundingRate.toFixed(4)}%`}
-              type={fundingRate >= 0 ? "positive" : "negative"}
-            />
-
-            {/* Open Interest - Hidden on smaller screens */}
-            <div className="hidden xl:block">
-              <MetricChip
-                icon={<BarChart3 className="h-3.5 w-3.5 text-blue-500" />}
-                value={`OI ${formatOI(oiValue)}`}
-                type="neutral"
-              />
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+              <Bot className={`h-3.5 w-3.5 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
+              <span className={`text-xs font-medium ${status?.trading_active ? "text-green-500" : ""}`}>
+                {status?.trading_active ? "Active" : "Offline"}
+              </span>
             </div>
 
-            {/* 24h Volume - Hidden on smaller screens */}
-            <div className="hidden xl:block">
-              <MetricChip
-                icon={<Activity className="h-3.5 w-3.5 text-purple-500" />}
-                value={formatVolume(volume24h)}
-                type="neutral"
-              />
+            {/* Long/Short */}
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+              <Users className={`h-3.5 w-3.5 ${longPercent > 50 ? "text-green-500" : "text-red-500"}`} />
+              <span className="text-xs font-medium">{longPercent.toFixed(0)}% L</span>
+            </div>
+
+            {/* Funding Rate */}
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+              <Percent className={`h-3.5 w-3.5 ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`} />
+              <span className={`text-xs font-medium ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`}>
+                {fundingRate >= 0 ? "+" : ""}{fundingRate.toFixed(4)}%
+              </span>
+            </div>
+
+            {/* Open Interest - Only on xl+ */}
+            <div className="hidden xl:flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+              <BarChart3 className="h-3.5 w-3.5 text-blue-500" />
+              <span className="text-xs font-medium">OI {formatOI(oiValue)}</span>
+            </div>
+
+            {/* 24h Volume - Only on xl+ */}
+            <div className="hidden xl:flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+              <Activity className="h-3.5 w-3.5 text-purple-500" />
+              <span className="text-xs font-medium">{formatVolume(volume24h)}</span>
             </div>
 
             {/* AI Signal */}
-            <MetricChip
-              icon={
-                <Brain
-                  className={`h-3.5 w-3.5 ${
-                    getSignalType(signal) === "positive"
-                      ? "text-[hsl(var(--profit))]"
-                      : getSignalType(signal) === "negative"
-                      ? "text-[hsl(var(--loss))]"
-                      : "text-foreground"
-                  }`}
-                />
-              }
-              value={signal}
-              type={getSignalType(signal)}
-            />
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+              <Brain className={`h-3.5 w-3.5 ${getSignalColor(getSignalType(signal))}`} />
+              <span className={`text-xs font-medium ${getSignalColor(getSignalType(signal))}`}>{signal}</span>
+            </div>
           </div>
 
-          {/* Right side */}
-          <div className="flex items-center space-x-3 flex-shrink-0">
-            {/* Language toggle */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleLocale}
-              className="hidden md:flex h-8 px-2"
-            >
+          {/* Right side - Desktop */}
+          <div className="hidden lg:flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={toggleLocale} className="h-8 px-2">
               <Globe className="h-4 w-4" />
               <span className="ml-1 text-xs">{locale.toUpperCase()}</span>
             </Button>
-
-            {/* CTA Button */}
-            <Link href="/copy" className="hidden md:block">
+            <Link href="/copy">
               <Button size="sm" className="h-8">{t("hero.cta")}</Button>
             </Link>
-
-            {/* Mobile menu button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="lg:hidden h-8 w-8"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            >
-              {mobileMenuOpen ? (
-                <X className="h-5 w-5" />
-              ) : (
-                <Menu className="h-5 w-5" />
-              )}
-            </Button>
           </div>
+
+          {/* Mobile menu button - Only on mobile */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="lg:hidden h-9 w-9"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          >
+            {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </Button>
         </div>
 
-        {/* Mobile Navigation */}
+        {/* Mobile Navigation Menu */}
         {mobileMenuOpen && (
           <div className="lg:hidden py-4 border-t border-border">
-            <nav className="flex flex-col space-y-3">
+            {/* Navigation Links */}
+            <nav className="flex flex-col gap-1 mb-4">
               {navItems.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className="text-muted-foreground hover:text-foreground transition-colors px-2 py-1"
+                  className="px-3 py-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   {item.label}
@@ -272,37 +210,31 @@ export function Header({ locale, t }: HeaderProps) {
               ))}
             </nav>
 
-            {/* Mobile Metrics */}
-            <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-border">
-              <MetricChip
-                icon={
-                  <Bot
-                    className={`h-3.5 w-3.5 ${
-                      status?.trading_active ? "text-[hsl(var(--profit))]" : "text-muted-foreground"
-                    }`}
-                  />
-                }
-                value={status?.trading_active ? "Active" : "Offline"}
-                type={status?.trading_active ? "positive" : "neutral"}
-              />
-              <MetricChip
-                icon={<Users className="h-3.5 w-3.5" />}
-                value={`${longPercent.toFixed(0)}% L`}
-                type={longPercent > 55 ? "positive" : longPercent < 45 ? "negative" : "neutral"}
-              />
-              <MetricChip
-                icon={<Percent className="h-3.5 w-3.5" />}
-                value={`${fundingRate >= 0 ? "+" : ""}${fundingRate.toFixed(4)}%`}
-                type={fundingRate >= 0 ? "positive" : "negative"}
-              />
-              <MetricChip
-                icon={<Brain className="h-3.5 w-3.5" />}
-                value={signal}
-                type={getSignalType(signal)}
-              />
+            {/* Market Metrics in Mobile Menu */}
+            <div className="border-t border-border pt-4 mb-4">
+              <p className="text-xs text-muted-foreground px-3 mb-2">Market Data</p>
+              <div className="grid grid-cols-2 gap-2 px-3">
+                <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                  <Bot className={`h-4 w-4 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
+                  <span className="text-sm">{status?.trading_active ? "Active" : "Offline"}</span>
+                </div>
+                <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                  <Users className="h-4 w-4" />
+                  <span className="text-sm">{longPercent.toFixed(0)}% Long</span>
+                </div>
+                <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                  <Percent className="h-4 w-4" />
+                  <span className="text-sm">{fundingRate >= 0 ? "+" : ""}{fundingRate.toFixed(4)}%</span>
+                </div>
+                <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30">
+                  <Brain className={`h-4 w-4 ${getSignalColor(getSignalType(signal))}`} />
+                  <span className={`text-sm ${getSignalColor(getSignalType(signal))}`}>{signal}</span>
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center justify-between px-2 pt-4 mt-4 border-t border-border">
+            {/* Bottom Actions */}
+            <div className="flex items-center justify-between px-3 pt-4 border-t border-border">
               <Button variant="ghost" size="sm" onClick={toggleLocale}>
                 <Globe className="h-4 w-4 mr-2" />
                 {locale === "en" ? "中文" : "English"}
