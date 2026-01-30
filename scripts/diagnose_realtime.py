@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.1 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.2 (与实盘 100% 一致)
 
-v11.1 更新 - 完全符合 TradingAgents 职责划分:
-- 移除规则1 (趋势方向权限检查) - AI 自主判断趋势方向
-- 本地仅保留支撑/阻力位 1% 边界检查
+v11.2 更新 - 完全符合 TradingAgents 设计:
+- 移除所有本地硬编码规则 (趋势方向、支撑阻力位检查)
+- AI 完全自主决策，无本地过滤
 - 符合 TradingAgents 核心原则: "Autonomy is non-negotiable"
+- 参考: https://github.com/TauricResearch/TradingAgents
 
 v11.0 重大更新 - 对齐 TradingAgents 简化架构:
 - AI 提示词完全简化，移除所有硬编码规则和阈值
@@ -21,17 +22,17 @@ v11.0 重大更新 - 对齐 TradingAgents 简化架构:
 5. 模拟完整的 _execute_trade 流程
 6. 输出实盘环境下会产生的真实结果
 
-当前架构 (TradingAgents v3.1 - AI 完全自主决策):
+当前架构 (TradingAgents v3.2 - AI 完全自主决策):
 - Phase 1: Bull/Bear 辩论 (2 AI calls) - AI 自主分析数据
 - Phase 2: Judge 决策 (1 AI call) - AI 自主评估辩论，做出决策
 - Phase 3: Risk 评估 (1 AI call) - AI 自主设定 SL/TP/仓位
-- 本地风控: 仅支撑/阻力位 1% 边界检查
+- 本地风控: 无 (完全由 AI 决策)
 - 设计理念: "Autonomy is non-negotiable" - AI 应像人类分析师思考
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
-职责划分 (v3.1):
-- AI 职责: 信号方向、信心等级、止损止盈、趋势判断 (全部)
-- 本地职责: 仅支撑/阻力位 1% 边界检查 (无其他硬编码规则)
+职责划分 (v3.2):
+- AI 职责: 信号方向、信心等级、止损止盈、趋势判断、支撑阻力判断 (全部)
+- 本地职责: 无硬编码规则 (AI 看到所有数据，自主判断)
 
 数据层职责 (本地):
 - 收集原始技术指标、订单流、衍生品数据
@@ -39,13 +40,16 @@ v11.0 重大更新 - 对齐 TradingAgents 简化架构:
 - AI 看到原始数值，自行判断含义
 
 历史更新:
+v11.2:
+- 移除所有本地硬编码规则 - 完全符合 TradingAgents 设计
+  * 删除趋势方向权限检查 (allow_long/allow_short)
+  * 删除支撑/阻力位边界检查 (proximity_threshold)
+  * AI 看到 support/resistance 数据，自主判断是否参考
+  * 参考: TradingAgents 不计算支撑阻力位，由 AI 从 SMA/BB 推断
+  * 核心原则: "Autonomy is non-negotiable"
+
 v11.1:
-- 移除规则1 (趋势方向权限检查) - 完全符合 TradingAgents 职责划分
-  * 删除 allow_long/allow_short 本地判断
-  * 删除 position_multiplier 本地调整
-  * AI 现在完全自主判断趋势方向
-  * 本地仅保留支撑/阻力位 1% 边界检查
-  * 参考: TradingAgents "Autonomy is non-negotiable"
+- 移除趋势方向权限检查 (部分符合 TradingAgents)
 
 v11.0:
 - AI 提示词完全简化，移除所有硬编码规则和阈值
@@ -482,7 +486,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.1 (TradingAgents v3.1 - AI 完全自主){mode_str}")
+print(f"  实盘信号诊断工具 v11.2 (TradingAgents v3.2 - AI 完全自主){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1396,86 +1400,44 @@ except (KeyboardInterrupt, SystemExit):
 print()
 
 # =============================================================================
-# 7.5 MTF 信号过滤模拟 (与 deepseek_strategy.py:1454-1525 100% 一致)
+# 7.5 TradingAgents v3.2: AI 完全自主决策 (无本地风控)
 # =============================================================================
-print("[7.5/10] MTF 信号过滤模拟 (与 on_timer:1454-1525 一致)...")
+print("[7.5/10] TradingAgents v3.2 架构验证...")
 print("-" * 70)
 
 original_signal = signal_data.get('signal', 'HOLD')
 mtf_filtered = False
 mtf_filter_reason = None
 
-if mtf_enabled:
-    print("  📊 本地风控检查 (TradingAgents v3.1):")
-    print("     设计理念: AI 负责所有交易决策，本地仅做支撑/阻力位边界检查")
-    print("     移除了: 趋势方向权限检查 (AI 自主判断趋势)")
-    print()
-
-    # ========== 唯一规则: 执行层支撑/阻力位硬风控 ==========
-    print("  [本地风控] 支撑/阻力位边界检查:")
-
-    if signal_data.get('signal') in ['BUY', 'SELL']:
-        try:
-            support = technical_data.get('support', 0)
-            resistance = technical_data.get('resistance', float('inf'))
-            proximity_threshold = 0.01  # 1% 距离阈值
-
-            print(f"     当前价格: ${current_price:,.2f}")
-            print(f"     支撑位: ${support:,.2f}")
-            print(f"     阻力位: ${resistance:,.2f}")
-            print(f"     距离阈值: {proximity_threshold:.0%}")
-
-            # 计算距离
-            distance_to_support = (current_price - support) / current_price if support > 0 else float('inf')
-            distance_to_resistance = (resistance - current_price) / current_price if resistance < float('inf') else float('inf')
-
-            print(f"     距支撑位: {distance_to_support*100:.2f}%")
-            print(f"     距阻力位: {distance_to_resistance*100:.2f}%")
-
-            # 规则: 离支撑位太近 (1% 内) 不做空
-            if signal_data.get('signal') == 'SELL' and distance_to_support < proximity_threshold:
-                print(f"     🚫 支撑位保护: SELL → HOLD (距支撑位仅 {distance_to_support*100:.2f}%)")
-                if not mtf_filtered:
-                    signal_data['signal'] = 'HOLD'
-                    signal_data['reason'] = f"[支撑位保护] 价格距支撑位过近 ({distance_to_support*100:.2f}% < 1%)"
-                    mtf_filtered = True
-                    mtf_filter_reason = f"支撑位保护 (距离 {distance_to_support*100:.2f}%)"
-
-            # 规则: 离阻力位太近 (1% 内) 不做多
-            elif signal_data.get('signal') == 'BUY' and distance_to_resistance < proximity_threshold:
-                print(f"     🚫 阻力位保护: BUY → HOLD (距阻力位仅 {distance_to_resistance*100:.2f}%)")
-                if not mtf_filtered:
-                    signal_data['signal'] = 'HOLD'
-                    signal_data['reason'] = f"[阻力位保护] 价格距阻力位过近 ({distance_to_resistance*100:.2f}% < 1%)"
-                    mtf_filtered = True
-                    mtf_filter_reason = f"阻力位保护 (距离 {distance_to_resistance*100:.2f}%)"
-
-            else:
-                print(f"     ✅ 支撑/阻力位检查通过")
-
-        except Exception as e:
-            print(f"     ⚠️ 支撑/阻力位检查异常: {e}")
-    else:
-        print(f"     ⏭️ 跳过 (信号为 {signal_data.get('signal')})")
-
-    print()
-
-    # ========== MTF 过滤总结 ==========
-    print("  📋 MTF 过滤结果:")
-    if mtf_filtered:
-        print(f"     🔴 信号被过滤: {original_signal} → {signal_data.get('signal')}")
-        print(f"     原因: {mtf_filter_reason}")
-    else:
-        if original_signal in ['BUY', 'SELL']:
-            print(f"     🟢 信号通过所有 MTF 检查: {original_signal}")
-        else:
-            print(f"     ⚪ 原始信号为 {original_signal}，无需过滤")
-
-else:
-    print("  ℹ️ MTF 未启用，跳过信号过滤")
-
+print("  📊 TradingAgents v3.2 设计理念:")
+print("     \"Autonomy is non-negotiable\" - AI 像人类分析师一样思考")
 print()
-print("  ✅ MTF 信号过滤模拟完成")
+print("  ✅ 已移除的本地硬编码规则:")
+print("     ❌ 趋势方向权限检查 (allow_long/allow_short)")
+print("     ❌ 支撑/阻力位边界检查 (proximity_threshold)")
+print("     ❌ RSI 入场范围限制")
+print("     ❌ 确认计数框架 (bullish_count/bearish_count)")
+print()
+print("  📋 AI 能看到的数据 (由 AI 自主判断如何使用):")
+
+# 显示 AI 看到的支撑/阻力位数据
+support = technical_data.get('support', 0)
+resistance = technical_data.get('resistance', float('inf'))
+if support > 0:
+    distance_to_support = (current_price - support) / current_price
+    print(f"     - Support: ${support:,.2f} (距当前价格 {distance_to_support*100:.2f}%)")
+if resistance < float('inf'):
+    distance_to_resistance = (resistance - current_price) / current_price
+    print(f"     - Resistance: ${resistance:,.2f} (距当前价格 {distance_to_resistance*100:.2f}%)")
+print(f"     - RSI: {technical_data.get('rsi', 0):.1f}")
+print(f"     - MACD: {technical_data.get('macd', 0):.4f}")
+print(f"     - Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
+print()
+print("  🎯 AI 决策结果 (无本地过滤):")
+print(f"     Signal: {signal_data.get('signal')}")
+print(f"     Confidence: {signal_data.get('confidence')}")
+print()
+print("  ✅ TradingAgents v3.2 架构验证完成")
 print()
 
 # =============================================================================
@@ -1725,26 +1687,18 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents v3.1 - AI 完全自主决策)")
+print("  诊断总结 (TradingAgents v3.2 - AI 完全自主决策)")
 print("=" * 70)
 print()
 
-# 显示 MTF 状态 (v3.1: 本地仅做支撑/阻力位检查)
-if mtf_enabled:
-    print(f"  📊 MTF Status: ✅ 已启用 (v3.1 - AI 完全自主)")
-    print(f"     本地风控: 仅支撑/阻力位 1% 边界检查")
-    # 显示本地风控结果
-    if mtf_filtered:
-        print(f"     🔴 本地风控: {original_signal} → {signal_data.get('signal')} ({mtf_filter_reason})")
-    elif original_signal in ['BUY', 'SELL']:
-        print(f"     🟢 本地风控: 通过边界检查")
-else:
-    print(f"  📊 MTF Status: ❌ 未启用")
+# 显示架构状态 (v3.2: 无本地风控)
+print(f"  📊 架构: TradingAgents v3.2 - AI 完全自主决策")
+print(f"     本地风控: 无 (已移除所有硬编码规则)")
 print()
 
-# TradingAgents: Judge 决策即最终决策，无需共识检查
-print(f"  📊 Original Signal: {original_signal}")
-print(f"  📊 Final Signal: {final_signal} {'(MTF 过滤后)' if mtf_filtered else ''}")
+# TradingAgents: Judge 决策即最终决策
+print(f"  📊 AI Signal: {original_signal}")
+print(f"  📊 Final Signal: {final_signal}")
 print(f"  📊 Confidence: {confidence}")
 judge_decision = signal_data.get('judge_decision', {})
 winning_side = judge_decision.get('winning_side', 'N/A')
@@ -2766,52 +2720,11 @@ if not SUMMARY_MODE:
     print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
     print()
 
-    mtf_enabled = base_config.get('multi_timeframe', {}).get('enabled', False) if 'base_config' in dir() else False
-    if mtf_enabled:
-        print(f"  MTF 状态: 已启用 (v3.1 - AI 完全自主)")
-        # 显示趋势参考信息 (仅供参考，AI 自主判断)
-        trend_layer_cfg = base_config.get('multi_timeframe', {}).get('trend_layer', {})
-        sma_period_summary = trend_layer_cfg.get('sma_period', 200)
-        sma_for_summary = technical_data.get(f'sma_{sma_period_summary}', 0)
-
-        # 如果主 SMA 不可用，从配置读取回退周期
-        if sma_for_summary == 0:
-            sma_periods_list = base_config.get('indicators', {}).get('sma_periods', [200, 50, 20, 5])
-            for fallback_period in sorted([p for p in sma_periods_list if p < sma_period_summary], reverse=True):
-                fallback_sma = technical_data.get(f'sma_{fallback_period}', 0)
-                if fallback_sma > 0:
-                    sma_for_summary = fallback_sma
-                    sma_period_summary = fallback_period
-                    break
-
-        # 显示趋势参考信息 (v3.1: 本地不做方向性判断，仅供参考)
-        if sma_for_summary > 0:
-            macd_value = technical_data.get('macd', 0)
-            price_above_sma = current_price > sma_for_summary
-            macd_positive = macd_value > 0
-
-            if price_above_sma and macd_positive:
-                regime_summary = "BULL (牛市参考)"
-            elif not price_above_sma and not macd_positive:
-                regime_summary = "BEAR (熊市参考)"
-            else:
-                regime_summary = "SIDEWAYS (震荡参考)"
-
-            print(f"  趋势参考: {regime_summary}")
-            print(f"    - 价格 ${current_price:,.2f} vs SMA_{sma_period_summary} ${sma_for_summary:,.2f}")
-            print(f"    - MACD: {macd_value:.2f}")
-            print(f"    - ℹ️ 趋势方向由 AI 自主判断，本地不做限制")
-        else:
-            print(f"  趋势参考: 数据不足 (SMA 不可用)")
-
-        # 本地风控结果
-        original_signal = signal_data.get('signal', 'HOLD')
-        if final_signal != original_signal:
-            print(f"  本地风控: {original_signal} → {final_signal} (支撑/阻力位保护)")
-        else:
-            print(f"  本地风控: 信号未被过滤")
-    else:
-        print(f"  MTF 状态: 未启用")
+    print(f"  架构: TradingAgents v3.2 - AI 完全自主决策")
+    print(f"  本地风控: 无 (已移除所有硬编码规则)")
+    print()
+    print(f"  AI 决策: {signal_data.get('signal')} (Confidence: {signal_data.get('confidence')})")
+    print(f"  Winning Side: {signal_data.get('judge_decision', {}).get('winning_side', 'N/A')}")
 
     print()
     print("  ✅ 完整数据流汇总完成")

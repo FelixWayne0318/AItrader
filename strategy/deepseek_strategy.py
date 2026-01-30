@@ -1458,60 +1458,12 @@ class DeepSeekAIStrategy(Strategy):
                     derivatives_report=derivatives_data,
                 )
 
-                # ========== 执行层硬风控 (仅支撑/阻力位检测) ==========
-                # 设计理念: AI 负责所有交易决策，本地仅做必要的风控边界检查
-                # 参考: TradingAgents 框架 - "autonomy is non-negotiable"
-                original_signal = signal_data['signal']
-
-                if signal_data['signal'] in ['BUY', 'SELL']:
-                    # 获取支撑/阻力位
-                    support = technical_data.get('support', 0)
-                    resistance = technical_data.get('resistance', float('inf'))
-                    proximity_threshold = 0.01  # 1% 距离阈值
-
-                    # 检查是否是开新仓
-                    is_opening_new = (
-                        current_position is None or
-                        current_position.get('side') == 'FLAT' or
-                        (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
-                        (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
-                    )
-
-                    # 仅在开新仓时检查支撑/阻力位
-                    if is_opening_new:
-                        # 计算距离支撑/阻力位的百分比
-                        distance_to_support = (current_price - support) / current_price if support > 0 else float('inf')
-                        distance_to_resistance = (resistance - current_price) / current_price if resistance < float('inf') else float('inf')
-
-                        # 规则: 离支撑位太近 (1% 内) 不做空
-                        if signal_data['signal'] == 'SELL' and distance_to_support < proximity_threshold:
-                            self.log.warning(
-                                f"[执行层] 🚫 支撑位保护: SELL → HOLD "
-                                f"(价格 ${current_price:,.2f} 距支撑 ${support:,.2f} 仅 {distance_to_support*100:.2f}%)"
-                            )
-                            signal_data['signal'] = 'HOLD'
-                            signal_data['reason'] = f"[支撑位保护] 价格距支撑位过近 ({distance_to_support*100:.2f}% < 1%)"
-
-                        # 规则: 离阻力位太近 (1% 内) 不做多
-                        elif signal_data['signal'] == 'BUY' and distance_to_resistance < proximity_threshold:
-                            self.log.warning(
-                                f"[执行层] 🚫 阻力位保护: BUY → HOLD "
-                                f"(价格 ${current_price:,.2f} 距阻力 ${resistance:,.2f} 仅 {distance_to_resistance*100:.2f}%)"
-                            )
-                            signal_data['signal'] = 'HOLD'
-                            signal_data['reason'] = f"[阻力位保护] 价格距阻力位过近 ({distance_to_resistance*100:.2f}% < 1%)"
-
-                        else:
-                            self.log.info(
-                                f"[执行层] ✅ 支撑/阻力检查通过 "
-                                f"(距支撑 {distance_to_support*100:.2f}%, 距阻力 {distance_to_resistance*100:.2f}%)"
-                            )
-
-                # 记录过滤结果
-                if original_signal != signal_data['signal']:
-                    self.log.info(
-                        f"[执行层] 信号被过滤: {original_signal} → {signal_data['signal']}"
-                    )
+                # ========== TradingAgents v3.1: AI 完全自主决策 ==========
+                # 设计理念: "Autonomy is non-negotiable" - AI 像人类分析师一样思考
+                # 移除了所有本地硬编码规则:
+                #   - 趋势方向权限检查 (allow_long/allow_short) - AI 自主判断
+                #   - 支撑/阻力位边界检查 - AI 从数据中自己理解
+                # AI 看到的数据包含 support/resistance，由 AI 自己决定是否参考
 
                 # Log Judge's final decision
                 self.log.info(
