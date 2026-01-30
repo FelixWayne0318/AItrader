@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.6 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.7 (与实盘 100% 一致)
+
+v11.7 更新 - 修复 validate_multiagent_sltp 调用签名:
+- 参数顺序: (side, multi_sl, multi_tp, entry_price)
+- 返回值: (is_valid, sl, tp, reason) 四元组
+- 与 deepseek_strategy.py:2127 完全一致
 
 v11.6 更新 - 修复 calculate_technical_sltp 调用签名:
 - 调用签名与实盘代码 deepseek_strategy.py:2152 完全一致
@@ -69,6 +74,12 @@ Prompt 结构 (v3.4):
 - 本地职责: 只收集原始数据，不做预解读
 
 历史更新:
+v11.7:
+- 修复 validate_multiagent_sltp 调用签名
+  * 参数顺序: (side, multi_sl, multi_tp, entry_price)
+  * 返回值: (is_valid, sl, tp, reason) 四元组
+  * 与 deepseek_strategy.py:2127 完全一致
+
 v11.6:
 - 修复 calculate_technical_sltp 调用签名
   * 参数: side, entry_price, support, resistance, confidence, use_support_resistance, sl_buffer_pct
@@ -293,7 +304,7 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.6')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.7')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -538,7 +549,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.6 (TradingAgents v3.4 - 修复 SL/TP 调用签名){mode_str}")
+print(f"  实盘信号诊断工具 v11.7 (TradingAgents v3.4 - 修复所有函数签名){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -2681,21 +2692,26 @@ if not SUMMARY_MODE:
 
             # 验证 AI 提供的 SL/TP
             if multi_sl and multi_tp:
-                sl_valid, tp_valid = validate_multiagent_sltp(
-                    current_price, multi_sl, multi_tp, signal
+                # 调用签名与实盘代码一致: (side, multi_sl, multi_tp, entry_price) -> (is_valid, sl, tp, reason)
+                is_valid, validated_sl, validated_tp, validation_reason = validate_multiagent_sltp(
+                    side=signal,
+                    multi_sl=multi_sl,
+                    multi_tp=multi_tp,
+                    entry_price=current_price,
                 )
                 print(f"     SL 验证 (validate_multiagent_sltp):")
                 if signal == 'BUY':
-                    print(f"       BUY 要求: SL < 入场价 → {multi_sl:,.2f} < {current_price:,.2f} = {sl_valid}")
-                    print(f"       BUY 要求: TP > 入场价 → {multi_tp:,.2f} > {current_price:,.2f} = {tp_valid}")
+                    print(f"       BUY 要求: SL < 入场价 → {multi_sl:,.2f} < {current_price:,.2f}")
+                    print(f"       BUY 要求: TP > 入场价 → {multi_tp:,.2f} > {current_price:,.2f}")
                 else:
-                    print(f"       SELL 要求: SL > 入场价 → {multi_sl:,.2f} > {current_price:,.2f} = {sl_valid}")
-                    print(f"       SELL 要求: TP < 入场价 → {multi_tp:,.2f} < {current_price:,.2f} = {tp_valid}")
+                    print(f"       SELL 要求: SL > 入场价 → {multi_sl:,.2f} > {current_price:,.2f}")
+                    print(f"       SELL 要求: TP < 入场价 → {multi_tp:,.2f} < {current_price:,.2f}")
+                print(f"       验证结果: {'✅ 通过' if is_valid else '❌ 失败'} - {validation_reason}")
                 print()
 
-                if sl_valid and tp_valid:
+                if is_valid:
                     print("     ✅ AI SL/TP 验证通过，使用 AI 价位")
-                    final_sl, final_tp = multi_sl, multi_tp
+                    final_sl, final_tp = validated_sl, validated_tp
                     calc_method = "AI Judge"
                 else:
                     print("     ⚠️ AI SL/TP 验证失败，回退到技术分析")
