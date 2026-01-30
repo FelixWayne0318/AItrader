@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
 import useSWR from "swr";
+import dynamic from "next/dynamic";
 import {
   Settings,
   Shield,
@@ -45,8 +46,23 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
-// New Performance Components
-import { EquityCurve } from "@/components/charts/equity-curve";
+// Dynamic import for EquityCurve - lightweight-charts requires browser window object
+const EquityCurve = dynamic(
+  () => import("@/components/charts/equity-curve").then((mod) => mod.EquityCurve),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center bg-card/50 rounded-xl border border-border" style={{ height: 350 }}>
+        <div className="text-center text-muted-foreground">
+          <div className="w-8 h-8 mx-auto mb-2 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm">Loading chart...</p>
+        </div>
+      </div>
+    )
+  }
+);
+
+// Performance Components
 import { TradeTimeline } from "@/components/trading/trade-timeline";
 import { RiskMetrics } from "@/components/trading/risk-metrics";
 import { AISignalLog } from "@/components/trading/ai-signal-log";
