@@ -361,7 +361,7 @@ export default function AdminDashboard() {
   return (
     <>
       <Head>
-        <title>Admin Dashboard - AlgVex</title>
+        <title>Admin Dashboard - {siteSettings.site_name || "AlgVex"}</title>
       </Head>
 
       <div className="min-h-screen gradient-bg">
@@ -370,10 +370,18 @@ export default function AdminDashboard() {
           <div className="container mx-auto px-4">
             <div className="flex h-16 items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-                  <span className="text-primary-foreground font-bold">A</span>
-                </div>
-                <span className="font-semibold">AlgVex Admin</span>
+                {siteSettings.logo_url ? (
+                  <img
+                    src={siteSettings.logo_url}
+                    alt={siteSettings.site_name || "AlgVex"}
+                    className="h-8 w-8 rounded-lg object-contain"
+                  />
+                ) : (
+                  <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
+                    <span className="text-primary-foreground font-bold">A</span>
+                  </div>
+                )}
+                <span className="font-semibold">{siteSettings.site_name || "AlgVex"} Admin</span>
                 {serviceStatus?.running && (
                   <span className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-500/10 text-green-500 text-xs">
                     <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />

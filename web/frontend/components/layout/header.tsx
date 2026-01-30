@@ -138,7 +138,7 @@ export function Header({ locale, t }: HeaderProps) {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 px-4 pt-3">
+    <header className="fixed top-3 left-4 right-4 z-50">
       {/* Floating rounded container - DipSway inspired */}
       <div className="container mx-auto">
         <div className="bg-background/70 backdrop-blur-xl border border-border/40 rounded-2xl shadow-lg shadow-black/5">
@@ -185,16 +185,17 @@ export function Header({ locale, t }: HeaderProps) {
             {/* Market Metrics - Condensed with expandable dropdown */}
             {mounted && (
               <div ref={metricsRef} className="hidden lg:flex items-center gap-2 relative">
-                {/* Primary metrics always visible */}
-                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
+                {/* Bot Status - Full display */}
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
                   <div className={`h-2 w-2 rounded-full ${status?.trading_active ? "bg-green-500 animate-pulse" : "bg-muted-foreground"}`} />
+                  <span className="text-xs text-muted-foreground">Bot:</span>
                   <span className={`text-xs font-medium ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`}>
-                    {status?.trading_active ? "Live" : "Offline"}
+                    {status?.trading_active ? "Running" : "Offline"}
                   </span>
                 </div>
 
-                {/* AI Signal - Primary metric */}
-                <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors ${
+                {/* AI Signal - Full display */}
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors ${
                   signal === "BUY" || signal === "LONG"
                     ? "bg-green-500/10 hover:bg-green-500/20"
                     : signal === "SELL" || signal === "SHORT"
@@ -202,6 +203,7 @@ export function Header({ locale, t }: HeaderProps) {
                     : "bg-muted/40 hover:bg-muted/60"
                 }`}>
                   <Brain className={`h-3.5 w-3.5 ${getSignalColor(signal)}`} />
+                  <span className="text-xs text-muted-foreground">Signal:</span>
                   <span className={`text-xs font-semibold ${getSignalColor(signal)}`}>{signal}</span>
                 </div>
 
