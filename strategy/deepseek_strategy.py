@@ -1395,6 +1395,7 @@ class DeepSeekAIStrategy(Strategy):
                 ai_technical_data['price'] = current_price
                 if decision_layer_data and decision_layer_data.get('_initialized', True):
                     # 添加 4H 数据作为决策层信息
+                    # TradingAgents v3.3: 只传原始数据，不传 overall_trend 预判断
                     ai_technical_data['mtf_decision_layer'] = {
                         'timeframe': '4H',
                         'rsi': decision_layer_data.get('rsi', 50),
@@ -1405,7 +1406,7 @@ class DeepSeekAIStrategy(Strategy):
                         'bb_upper': decision_layer_data.get('bb_upper', 0),
                         'bb_middle': decision_layer_data.get('bb_middle', 0),
                         'bb_lower': decision_layer_data.get('bb_lower', 0),
-                        'overall_trend': decision_layer_data.get('overall_trend', 'NEUTRAL'),
+                        # 'overall_trend' 已移除 - AI 使用 INDICATOR_DEFINITIONS 自己判断
                     }
                     self.log.info(f"[MTF] AI 分析使用 4H 决策层数据: RSI={ai_technical_data['mtf_decision_layer']['rsi']:.1f}")
 
