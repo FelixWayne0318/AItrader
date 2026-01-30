@@ -1,5 +1,8 @@
 # MULTI_TIMEFRAME_IMPLEMENTATION_PLAN v3.2.8 专家评估请求
 
+> ⚠️ **过时文档**: 此文档为 v3.2.8 评估请求，当前版本为 **v3.6**。
+> 最新文档请参考 `docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md`。
+
 你是一位资深的量化交易系统架构师，精通 NautilusTrader 框架和 TradingAgents 多代理架构。请对 `docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md` v3.2.8 进行全面评估。
 
 ## 版本演进

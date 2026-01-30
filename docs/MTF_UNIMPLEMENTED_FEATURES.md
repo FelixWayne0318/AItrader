@@ -1,14 +1,17 @@
 # MTF 方案未实现功能清单
 
+> **版本说明**: 此清单创建于 v3.2.9 时期。当前实现版本为 **v3.6**。
+> v3.6 已完成：完整数据覆盖 (period_high/low/change_pct, volume_usdt)、diagnose_realtime.py v11.10。
+
 ## 文档信息
 
 | 项目 | 值 |
 |------|-----|
 | 创建日期 | 2026-01-27 |
-| 最后更新 | 2026-01-27 |
-| 基于文档 | docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md v3.2.9 |
-| 当前完成度 | ~70% |
-| 版本 | v2.1 (补充完整修改差异) |
+| 最后更新 | 2026-01-30 |
+| 基于文档 | docs/MULTI_TIMEFRAME_IMPLEMENTATION_PLAN.md v3.6 |
+| 当前完成度 | ~85% |
+| 版本 | v2.2 (更新至 v3.6 完整数据覆盖) |
 
 ---
 
