@@ -4,10 +4,11 @@ import { useState } from "react";
 import Head from "next/head";
 import Link from "next/link";
 import useSWR from "swr";
+import { useRouter } from "next/router";
 import { TradingViewWidget } from "@/components/charts/tradingview-widget";
-import { MarketIntelligenceBar } from "@/components/trading/market-intelligence-bar";
+import { Header } from "@/components/layout/header";
+import { useTranslation, type Locale } from "@/lib/i18n";
 import {
-  ArrowLeft,
   TrendingUp,
   TrendingDown,
   BarChart3,
@@ -45,6 +46,10 @@ const formatTime = (isoString: string) => {
 };
 
 export default function ChartPage() {
+  const router = useRouter();
+  const locale = (router.locale || "en") as Locale;
+  const { t } = useTranslation(locale);
+
   const [interval, setInterval] = useState("15");
   const [symbol, setSymbol] = useState("BINANCE:BTCUSDT.P");
 
@@ -117,50 +122,32 @@ export default function ChartPage() {
       </Head>
 
       <div className="min-h-screen gradient-bg">
-        {/* Market Intelligence Bar */}
-        <div className="border-b border-border/30 bg-background/60 backdrop-blur-sm">
-          <MarketIntelligenceBar />
-        </div>
+        <Header locale={locale} t={t} />
 
-        {/* Header */}
-        <header className="border-b border-border/50 bg-background/80 backdrop-blur-lg">
-          <div className="container mx-auto px-4">
-            <div className="flex h-16 items-center justify-between">
-              <div className="flex items-center gap-4">
-                <Link href="/">
-                  <Button variant="ghost" size="sm">
-                    <ArrowLeft className="h-4 w-4 mr-2" />
-                    Back
-                  </Button>
-                </Link>
-                <div className="h-6 w-px bg-border" />
-                <div className="flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center">
-                    <Brain className="h-4 w-4 text-primary-foreground" />
-                  </div>
-                  <span className="font-semibold">AI Trading View</span>
-                </div>
+        {/* pt-20 accounts for single-row unified header (56px) */}
+        <main className="container mx-auto px-4 pt-20 pb-6">
+          {/* Sub-header with symbol selector */}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center">
+                <Brain className="h-4 w-4 text-primary-foreground" />
               </div>
-
-              {/* Symbol selector */}
-              <div className="flex items-center gap-3">
-                <select
-                  value={symbol}
-                  onChange={(e) => setSymbol(e.target.value)}
-                  className="px-3 py-2 rounded-lg bg-muted border border-border text-sm"
-                >
-                  {symbols.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <span className="font-semibold">AI Trading View</span>
             </div>
-          </div>
-        </header>
 
-        <main className="container mx-auto px-4 py-6">
+            {/* Symbol selector */}
+            <select
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value)}
+              className="px-3 py-2 rounded-lg bg-muted border border-border text-sm"
+            >
+              {symbols.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
           {/* Price Stats - Simplified */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <Card className="border-border/50">

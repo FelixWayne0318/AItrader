@@ -230,14 +230,6 @@ export default function HomePage() {
     { refreshInterval: 60000 }
   );
 
-  const { data: status } = useSWR("/api/public/system-status", fetcher, {
-    refreshInterval: 30000,
-  });
-
-  const { data: ticker } = useSWR("/api/trading/ticker/BTCUSDT", fetcher, {
-    refreshInterval: 10000,
-  });
-
   const isLoading = !performance && !perfError;
   const pnlType = (performance?.total_pnl || 0) >= 0 ? "profit" : ("loss" as const);
 
@@ -255,35 +247,14 @@ export default function HomePage() {
       <div className="min-h-screen gradient-bg noise-overlay">
         <Header locale={locale} t={t} />
 
-        {/* Hero Section - pt-28 accounts for header (64px) + intelligence bar (48px) */}
-        <section className="relative pt-28 sm:pt-32 lg:pt-36 pb-12 sm:pb-16 lg:pb-24 px-4 overflow-hidden">
+        {/* Hero Section - pt-20 accounts for single-row header (56px) */}
+        <section className="relative pt-20 sm:pt-24 lg:pt-28 pb-12 sm:pb-16 lg:pb-24 px-4 overflow-hidden">
           {/* Background effects */}
           <div className="absolute inset-0 grid-pattern opacity-30" />
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] sm:w-[600px] lg:w-[800px] h-[400px] sm:h-[600px] lg:h-[800px] bg-primary/5 rounded-full blur-3xl" />
 
           <div className="container mx-auto relative z-10">
             <div className="max-w-4xl mx-auto text-center">
-              {/* Status Badge */}
-              <div className="inline-flex items-center gap-2 sm:gap-2.5 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full glass mb-6 sm:mb-8 lg:mb-10">
-                <span className={`status-dot ${status?.trading_active ? "active" : "inactive"}`} />
-                <span className="text-xs sm:text-sm font-medium">
-                  {status?.trading_active ? "Bot Active" : "Bot Offline"}
-                </span>
-                {ticker?.price && (
-                  <>
-                    <span className="text-muted-foreground hidden sm:inline">|</span>
-                    <span className="text-xs sm:text-sm hidden sm:inline">
-                      BTC <span className="font-mono font-semibold">${Number(ticker.price).toLocaleString()}</span>
-                    </span>
-                    <span className={`text-xs hidden sm:inline ${
-                      ticker.price_change_percent >= 0 ? "text-[hsl(var(--profit))]" : "text-[hsl(var(--loss))]"
-                    }`}>
-                      {formatPercent(ticker.price_change_percent)}
-                    </span>
-                  </>
-                )}
-              </div>
-
               {/* Main Title */}
               <h1 className="text-3xl sm:text-5xl lg:text-7xl font-bold mb-4 sm:mb-6 leading-tight">
                 <span className="text-primary text-glow">AI-Powered</span>
