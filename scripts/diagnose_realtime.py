@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.2 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.3 (与实盘 100% 一致)
+
+v11.3 更新 - TradingAgents v3.3 数据标准化:
+- AI 只接收原始数值，不接收任何预计算的判断标签
+- 移除传给 AI 的数据:
+  * support/resistance (改用 SMA/BB 作为动态支撑阻力)
+  * cvd_trend (AI 从 recent_10_bars 自己推断趋势)
+  * overall_trend, short_term_trend, macd_trend (AI 从原始值推断)
+- 添加 INDICATOR_DEFINITIONS 教 AI 如何解读原始数据
+- 参考: https://github.com/TauricResearch/TradingAgents
 
 v11.2 更新 - 完全符合 TradingAgents 设计:
 - 移除所有本地硬编码规则 (趋势方向、支撑阻力位检查)
 - AI 完全自主决策，无本地过滤
 - 符合 TradingAgents 核心原则: "Autonomy is non-negotiable"
-- 参考: https://github.com/TauricResearch/TradingAgents
-
-v11.0 重大更新 - 对齐 TradingAgents 简化架构:
-- AI 提示词完全简化，移除所有硬编码规则和阈值
-- Judge 不再使用确认计数框架 (bullish_count/bearish_count 已移除)
-- AI 完全自主分析和决策，本地只提供原始数据
-- 数据格式化移除预解读标签 (BULLISH/BEARISH/Overbought 等)
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
-3. 使用 TradingAgents 层级决策架构 (v3.1)
+3. 使用 TradingAgents 层级决策架构 (v3.3)
 4. 检查 Binance 真实持仓
 5. 模拟完整的 _execute_trade 流程
 6. 输出实盘环境下会产生的真实结果
 
-当前架构 (TradingAgents v3.2 - AI 完全自主决策):
+当前架构 (TradingAgents v3.3 - 原始数据 + AI 自主解读):
+- 数据层: 只传原始数值，不传预计算标签
+- INDICATOR_DEFINITIONS: 教 AI 如何解读 RSI/MACD/SMA 等
 - Phase 1: Bull/Bear 辩论 (2 AI calls) - AI 自主分析数据
 - Phase 2: Judge 决策 (1 AI call) - AI 自主评估辩论，做出决策
 - Phase 3: Risk 评估 (1 AI call) - AI 自主设定 SL/TP/仓位
@@ -30,22 +34,28 @@ v11.0 重大更新 - 对齐 TradingAgents 简化架构:
 - 设计理念: "Autonomy is non-negotiable" - AI 应像人类分析师思考
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
-职责划分 (v3.2):
-- AI 职责: 信号方向、信心等级、止损止盈、趋势判断、支撑阻力判断 (全部)
-- 本地职责: 无硬编码规则 (AI 看到所有数据，自主判断)
+传给 AI 的数据 (v3.3):
+- 技术指标: price, SMA 5/20/50, RSI, MACD, BB (原始数值)
+- 订单流: buy_ratio, recent_10_bars (原始数值，无 cvd_trend)
+- 衍生品: OI, funding_rate, liquidations (原始数值)
+- 情绪: long/short ratio (原始数值，无 Interpretation)
+- 不再传: support/resistance, overall_trend, cvd_trend 等标签
 
-数据层职责 (本地):
-- 收集原始技术指标、订单流、衍生品数据
-- 不做任何预解读或标签 (如 BULLISH/BEARISH)
-- AI 看到原始数值，自行判断含义
+职责划分 (v3.3):
+- AI 职责: 所有判断 (趋势、支撑阻力、信号方向、SL/TP)
+- 本地职责: 只收集原始数据，不做预解读
 
 历史更新:
+v11.3:
+- 数据格式改为 TradingAgents v3.3 标准
+  * 移除 support/resistance (AI 用 SMA_50/BB 作动态支撑阻力)
+  * 移除 cvd_trend (AI 从 recent_10_bars 推断)
+  * 添加 INDICATOR_DEFINITIONS 教 AI 解读数据
+
 v11.2:
 - 移除所有本地硬编码规则 - 完全符合 TradingAgents 设计
   * 删除趋势方向权限检查 (allow_long/allow_short)
   * 删除支撑/阻力位边界检查 (proximity_threshold)
-  * AI 看到 support/resistance 数据，自主判断是否参考
-  * 参考: TradingAgents 不计算支撑阻力位，由 AI 从 SMA/BB 推断
   * 核心原则: "Autonomy is non-negotiable"
 
 v11.1:
@@ -1072,10 +1082,12 @@ try:
     print(f"  MACD Histogram: {technical_data.get('macd_histogram', 0):.4f}")
     print(f"  BB Upper: ${technical_data.get('bb_upper', 0):,.2f}")
     print(f"  BB Lower: ${technical_data.get('bb_lower', 0):,.2f}")
-    print(f"  Support: ${technical_data.get('support', 0):,.2f}")
-    print(f"  Resistance: ${technical_data.get('resistance', 0):,.2f}")
-    print(f"  Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
+    # v3.3: 以下数据仅用于诊断，不传给 AI
+    print(f"  [诊断用] Support: ${technical_data.get('support', 0):,.2f}")
+    print(f"  [诊断用] Resistance: ${technical_data.get('resistance', 0):,.2f}")
+    print(f"  [诊断用] Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
     print("  ✅ 技术数据获取成功")
+    print("  📝 v3.3: AI 只接收原始数值 (SMA/RSI/MACD/BB)，不接收 support/resistance/trend 标签")
 
 except (AttributeError, KeyError, TypeError, ValueError) as e:
     print(f"  ❌ 技术数据获取失败: {e}")
@@ -1269,7 +1281,7 @@ try:
     print(f"      rsi:             {technical_data.get('rsi', 0):.2f}")
     print(f"      macd:            {technical_data.get('macd', 0):.4f}")
     print(f"      macd_histogram:  {technical_data.get('macd_histogram', 0):.4f}")
-    print(f"      overall_trend:   {technical_data.get('overall_trend', 'N/A')}")
+    print(f"      [诊断用] overall_trend: {technical_data.get('overall_trend', 'N/A')}")
     print()
     print("  [2] sentiment_data (情绪数据):")
     print(f"      positive_ratio:  {sentiment_data.get('positive_ratio', 0):.4f} ({sentiment_data.get('positive_ratio', 0)*100:.2f}%)")
@@ -1283,7 +1295,7 @@ try:
     if order_flow_report:
         print("  [4] order_flow_report (订单流):")
         print(f"      buy_ratio:       {order_flow_report.get('buy_ratio', 0):.4f} ({order_flow_report.get('buy_ratio', 0)*100:.2f}%)")
-        print(f"      cvd_trend:       {order_flow_report.get('cvd_trend', 'N/A')}")
+        print(f"      [诊断用] cvd_trend: {order_flow_report.get('cvd_trend', 'N/A')}")
         print(f"      avg_trade_usdt:  ${order_flow_report.get('avg_trade_usdt', 0):,.2f}")
         print(f"      data_source:     {order_flow_report.get('data_source', 'N/A')}")
     else:
@@ -1400,17 +1412,18 @@ except (KeyboardInterrupt, SystemExit):
 print()
 
 # =============================================================================
-# 7.5 TradingAgents v3.2: AI 完全自主决策 (无本地风控)
+# 7.5 TradingAgents v3.3: 原始数据 + AI 自主解读
 # =============================================================================
-print("[7.5/10] TradingAgents v3.2 架构验证...")
+print("[7.5/10] TradingAgents v3.3 架构验证...")
 print("-" * 70)
 
 original_signal = signal_data.get('signal', 'HOLD')
 mtf_filtered = False
 mtf_filter_reason = None
 
-print("  📊 TradingAgents v3.2 设计理念:")
+print("  📊 TradingAgents v3.3 设计理念:")
 print("     \"Autonomy is non-negotiable\" - AI 像人类分析师一样思考")
+print("     AI 接收原始数值 + INDICATOR_DEFINITIONS 自主解读")
 print()
 print("  ✅ 已移除的本地硬编码规则:")
 print("     ❌ 趋势方向权限检查 (allow_long/allow_short)")
@@ -1418,26 +1431,26 @@ print("     ❌ 支撑/阻力位边界检查 (proximity_threshold)")
 print("     ❌ RSI 入场范围限制")
 print("     ❌ 确认计数框架 (bullish_count/bearish_count)")
 print()
-print("  📋 AI 能看到的数据 (由 AI 自主判断如何使用):")
-
-# 显示 AI 看到的支撑/阻力位数据
-support = technical_data.get('support', 0)
-resistance = technical_data.get('resistance', float('inf'))
-if support > 0:
-    distance_to_support = (current_price - support) / current_price
-    print(f"     - Support: ${support:,.2f} (距当前价格 {distance_to_support*100:.2f}%)")
-if resistance < float('inf'):
-    distance_to_resistance = (resistance - current_price) / current_price
-    print(f"     - Resistance: ${resistance:,.2f} (距当前价格 {distance_to_resistance*100:.2f}%)")
+print("  ✅ 不再传给 AI 的预计算标签 (v3.3 移除):")
+print("     ❌ support/resistance - AI 用 SMA_50/BB 作动态支撑阻力")
+print("     ❌ cvd_trend - AI 从 recent_10_bars 推断")
+print("     ❌ overall_trend - AI 从 SMA 关系推断")
+print("     ❌ Interpretation: Bullish/Bearish - AI 从原始比例推断")
+print()
+print("  📋 AI 接收的数据 (原始数值，由 AI 自主解读):")
+print(f"     - Price: ${current_price:,.2f}")
+print(f"     - SMA_5/20/50: ${technical_data.get('sma_5', 0):,.2f} / ${technical_data.get('sma_20', 0):,.2f} / ${technical_data.get('sma_50', 0):,.2f}")
 print(f"     - RSI: {technical_data.get('rsi', 0):.1f}")
-print(f"     - MACD: {technical_data.get('macd', 0):.4f}")
-print(f"     - Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
+print(f"     - MACD/Signal: {technical_data.get('macd', 0):.4f} / {technical_data.get('macd_signal', 0):.4f}")
+print(f"     - BB: ${technical_data.get('bb_lower', 0):,.2f} - ${technical_data.get('bb_upper', 0):,.2f}")
+if order_flow_report:
+    print(f"     - Buy Ratio: {order_flow_report.get('buy_ratio', 0)*100:.1f}%")
 print()
 print("  🎯 AI 决策结果 (无本地过滤):")
 print(f"     Signal: {signal_data.get('signal')}")
 print(f"     Confidence: {signal_data.get('confidence')}")
 print()
-print("  ✅ TradingAgents v3.2 架构验证完成")
+print("  ✅ TradingAgents v3.3 架构验证完成")
 print()
 
 # =============================================================================

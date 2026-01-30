@@ -68,12 +68,7 @@ BOLLINGER BANDS:
 - Price at Middle Band = Fair value / consolidation
 - Band squeeze (narrow) = Low volatility, breakout coming
 - Band expansion (wide) = High volatility
-
-SUPPORT/RESISTANCE:
-- Support = Recent low, potential bounce zone
-- Resistance = Recent high, potential rejection zone
-- Price near support = Risky to short, good for long entry
-- Price near resistance = Risky to long, good for short entry
+- SMA_50 and BB Middle can serve as dynamic support/resistance
 
 VOLUME:
 - Volume Ratio > 1.5x = High interest, confirms move
@@ -83,6 +78,7 @@ ORDER FLOW (Buy Ratio):
 - >55% = Buyers dominating (bullish)
 - <45% = Sellers dominating (bearish)
 - 45-55% = Balanced
+- Recent 10 Bars: Look at trend direction (rising = bullish, falling = bearish)
 
 FUNDING RATE (Derivatives):
 - Positive (>0.01%) = Longs paying shorts, crowded long
@@ -762,10 +758,6 @@ VOLATILITY (Bollinger Bands):
 - Middle: ${safe_get('bb_middle'):,.2f}
 - Lower: ${safe_get('bb_lower'):,.2f}
 
-KEY LEVELS (20-bar high/low):
-- Resistance: ${safe_get('resistance'):,.2f}
-- Support: ${safe_get('support'):,.2f}
-
 VOLUME:
 - Volume Ratio: {safe_get('volume_ratio'):.2f}x average
 """
@@ -930,22 +922,20 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
             return "ORDER FLOW: Data not available (using neutral assumptions)"
 
         buy_ratio = data.get('buy_ratio', 0.5)
-        cvd_trend = data.get('cvd_trend', 'NEUTRAL')
         avg_trade = data.get('avg_trade_usdt', 0)
         trades_count = data.get('trades_count', 0)
         recent_bars = data.get('recent_10_bars', [])
 
-        # Format recent bars (raw data only)
-        recent_str = ", ".join([f"{r:.1%}" for r in recent_bars[-5:]]) if recent_bars else "N/A"
+        # Format recent bars (raw data only, AI infers trend)
+        recent_str = ", ".join([f"{r:.1%}" for r in recent_bars]) if recent_bars else "N/A"
 
-        # v3.0: Pass raw data only, let AI interpret
+        # TradingAgents v3.3: Raw data only, removed cvd_trend label
         return f"""
-ORDER FLOW ANALYSIS (Binance Taker Data):
-- Buy Ratio: {buy_ratio:.1%}
-- CVD Trend: {cvd_trend}
+ORDER FLOW (Binance Taker Data):
+- Buy Ratio (10-bar avg): {buy_ratio:.1%}
 - Avg Trade Size: ${avg_trade:,.0f} USDT
 - Trade Count: {trades_count:,}
-- Recent 5 Bars Buy Ratio: [{recent_str}]
+- Recent 10 Bars: [{recent_str}]
 """
 
     def _format_derivatives_report(self, data: Optional[Dict[str, Any]], current_price: float = 0.0) -> str:
