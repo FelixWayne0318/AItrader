@@ -146,6 +146,9 @@ class MultiAgentAnalyzer:
         # Track debate history for debugging
         self.last_debate_transcript: str = ""
 
+        # Track last prompts for diagnosis (v11.4)
+        self.last_prompts: Dict[str, Dict[str, str]] = {}
+
         # Retry configuration (same as DeepSeekAnalyzer)
         self.max_retries = 2
         self.retry_delay = 1.0
@@ -446,6 +449,12 @@ Your role is to analyze raw market data and build the strongest possible case fo
 Use the indicator definitions above to interpret the numbers correctly.
 Focus on evidence from the data, not assumptions."""
 
+        # Store prompts for diagnosis (v11.4)
+        self.last_prompts["bull"] = {
+            "system": system_prompt,
+            "user": prompt,
+        }
+
         return self._call_api_with_retry([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
@@ -500,6 +509,12 @@ Your role is to analyze raw market data and build the strongest possible case AG
 Use the indicator definitions above to interpret the numbers correctly.
 Focus on risks and bearish signals in the data."""
 
+        # Store prompts for diagnosis (v11.4)
+        self.last_prompts["bear"] = {
+            "system": system_prompt,
+            "user": prompt,
+        }
+
         return self._call_api_with_retry([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
@@ -546,10 +561,18 @@ OUTPUT FORMAT (JSON only, no other text):
     "acknowledged_risks": ["risk1", "risk2"]
 }}"""
 
+        system_prompt = "You are a Portfolio Manager. Evaluate the debate objectively and make a decisive trading recommendation. Avoid defaulting to HOLD - commit to the side with stronger evidence."
+
+        # Store prompts for diagnosis (v11.4)
+        self.last_prompts["judge"] = {
+            "system": system_prompt,
+            "user": prompt,
+        }
+
         # Use JSON retry mechanism to improve reliability
         decision = self._extract_json_with_retry(
             messages=[
-                {"role": "system", "content": "You are a Portfolio Manager. Evaluate the debate objectively and make a decisive trading recommendation. Avoid defaulting to HOLD - commit to the side with stronger evidence."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,  # Slightly higher for more nuanced judgment
@@ -633,10 +656,18 @@ OUTPUT FORMAT (JSON only, no other text):
 
 MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
 
+        system_prompt = "You are a Risk Manager. Analyze the market data and set appropriate trade parameters based on market structure and risk/reward."
+
+        # Store prompts for diagnosis (v11.4)
+        self.last_prompts["risk"] = {
+            "system": system_prompt,
+            "user": prompt,
+        }
+
         # Use JSON retry mechanism to improve reliability
         decision = self._extract_json_with_retry(
             messages=[
-                {"role": "system", "content": "You are a Risk Manager. Analyze the market data and set appropriate trade parameters based on market structure and risk/reward."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2,
@@ -897,6 +928,22 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
     def get_last_debate(self) -> str:
         """Return the last debate transcript for debugging/logging."""
         return self.last_debate_transcript
+
+    def get_last_prompts(self) -> Dict[str, Dict[str, str]]:
+        """
+        Return the last prompts sent to each agent (v11.4 diagnostic feature).
+
+        Returns
+        -------
+        Dict[str, Dict[str, str]]
+            {
+                "bull": {"system": "...", "user": "..."},
+                "bear": {"system": "...", "user": "..."},
+                "judge": {"system": "...", "user": "..."},
+                "risk": {"system": "...", "user": "..."},
+            }
+        """
+        return self.last_prompts
 
     def _format_order_flow_report(self, data: Optional[Dict[str, Any]]) -> str:
         """
