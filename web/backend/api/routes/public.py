@@ -105,3 +105,42 @@ async def get_system_status():
         "trading_active": status["running"],
         "status": "Running" if status["running"] else "Stopped",
     }
+
+
+@router.get("/latest-signal")
+async def get_latest_signal():
+    """Get the latest AI trading signal"""
+    import os
+    import json
+    from datetime import datetime
+
+    # Try to read from the bot's signal state file
+    signal_file_paths = [
+        "/home/linuxuser/nautilus_AItrader/logs/latest_signal.json",
+        "/home/linuxuser/nautilus_AItrader/state/latest_signal.json",
+        os.path.expanduser("~/nautilus_AItrader/logs/latest_signal.json"),
+    ]
+
+    for signal_file in signal_file_paths:
+        if os.path.exists(signal_file):
+            try:
+                with open(signal_file, 'r') as f:
+                    data = json.load(f)
+                    return {
+                        "signal": data.get("signal", "HOLD"),
+                        "confidence": data.get("confidence", "MEDIUM"),
+                        "reason": data.get("reason", ""),
+                        "symbol": data.get("symbol", "BTCUSDT"),
+                        "timestamp": data.get("timestamp", datetime.now().isoformat()),
+                    }
+            except Exception:
+                pass
+
+    # Default response if no signal file found
+    return {
+        "signal": "HOLD",
+        "confidence": "MEDIUM",
+        "reason": "Waiting for next analysis cycle",
+        "symbol": "BTCUSDT",
+        "timestamp": datetime.now().isoformat(),
+    }

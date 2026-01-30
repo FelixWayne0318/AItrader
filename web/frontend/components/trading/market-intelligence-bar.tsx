@@ -1,7 +1,16 @@
 'use client';
 
 import useSWR from 'swr';
-import { Bot, TrendingUp, TrendingDown, Activity, Percent, DollarSign, Users } from 'lucide-react';
+import {
+  Bot,
+  Users,
+  Percent,
+  Activity,
+  BarChart3,
+  Brain,
+  TrendingUp,
+  TrendingDown,
+} from 'lucide-react';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
@@ -51,18 +60,22 @@ function MetricItem({ icon, label, value, subValue, type = 'neutral', isLoading 
   );
 }
 
+function Divider() {
+  return <div className="w-px h-8 bg-border/50 mx-1 hidden sm:block" />;
+}
+
 export function MarketIntelligenceBar() {
   // Fetch bot status
   const { data: status, error: statusError } = useSWR('/api/public/system-status', fetcher, {
     refreshInterval: 30000,
   });
 
-  // Fetch BTC ticker
-  const { data: ticker, error: tickerError } = useSWR('/api/trading/ticker/BTCUSDT', fetcher, {
+  // Fetch BTC ticker (for volume)
+  const { data: ticker } = useSWR('/api/trading/ticker/BTCUSDT', fetcher, {
     refreshInterval: 10000,
   });
 
-  // Fetch long/short ratio (market sentiment)
+  // Fetch long/short ratio
   const { data: sentiment } = useSWR('/api/trading/long-short-ratio/BTCUSDT', fetcher, {
     refreshInterval: 60000,
   });
@@ -72,29 +85,68 @@ export function MarketIntelligenceBar() {
     refreshInterval: 30000,
   });
 
-  // Fetch latest AI signal stats
+  // Fetch open interest
+  const { data: openInterest } = useSWR('/api/trading/open-interest/BTCUSDT', fetcher, {
+    refreshInterval: 60000,
+  });
+
+  // Fetch performance stats
   const { data: performance } = useSWR('/api/public/performance?days=7', fetcher, {
     refreshInterval: 60000,
   });
 
+  // Fetch latest AI signal
+  const { data: latestSignal } = useSWR('/api/public/latest-signal', fetcher, {
+    refreshInterval: 30000,
+  });
+
   const isLoading = !status && !statusError;
-  const btcPrice = ticker?.price ? parseFloat(ticker.price) : 0;
-  const priceChange = ticker?.price_change_percent ? parseFloat(ticker.price_change_percent) : 0;
 
   // Long/Short ratio - values > 1 means more longs
-  const longShortRatio = sentiment?.longShortRatio ? parseFloat(sentiment.longShortRatio) : 1;
+  const longShortRatio = sentiment?.data?.[0]?.long_short_ratio || sentiment?.longShortRatio || 1;
   const longPercent = longShortRatio > 0 ? (longShortRatio / (longShortRatio + 1)) * 100 : 50;
 
   // Funding rate (typically shown as percentage)
-  const fundingRate = markPrice?.lastFundingRate ? parseFloat(markPrice.lastFundingRate) * 100 : 0;
+  const fundingRate = markPrice?.funding_rate
+    ? markPrice.funding_rate * 100
+    : markPrice?.lastFundingRate
+    ? parseFloat(markPrice.lastFundingRate) * 100
+    : 0;
+
+  // Open Interest
+  const oiValue = openInterest?.value || 0;
+  const oiChange = openInterest?.change_24h || 0;
+  const formatOI = (value: number) => {
+    if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+    if (value >= 1e6) return `$${(value / 1e6).toFixed(0)}M`;
+    return `$${value.toLocaleString()}`;
+  };
+
+  // 24h Volume
+  const volume24h = ticker?.quote_volume_24h || 0;
+  const formatVolume = (value: number) => {
+    if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+    if (value >= 1e6) return `$${(value / 1e6).toFixed(0)}M`;
+    return `$${value.toLocaleString()}`;
+  };
 
   // Win rate from performance
   const winRate = performance?.win_rate || 0;
+  const totalTrades = performance?.total_trades || 0;
+
+  // Latest signal
+  const signal = latestSignal?.signal || 'HOLD';
+  const confidence = latestSignal?.confidence || 'MEDIUM';
+  const getSignalType = (s: string): 'positive' | 'negative' | 'neutral' => {
+    if (s === 'BUY' || s === 'LONG') return 'positive';
+    if (s === 'SELL' || s === 'SHORT') return 'negative';
+    return 'neutral';
+  };
 
   return (
     <div className="w-full overflow-x-auto scrollbar-hide">
       <div className="flex items-center justify-center gap-1 sm:gap-2 min-w-max px-4 py-1">
-        {/* Bot Status */}
+        {/* Bot Status - First Item */}
         <MetricItem
           icon={
             <Bot className={`h-3 w-3 sm:h-4 sm:w-4 ${status?.trading_active ? 'text-[hsl(var(--profit))]' : 'text-muted-foreground'}`} />
@@ -105,23 +157,7 @@ export function MarketIntelligenceBar() {
           isLoading={isLoading}
         />
 
-        {/* Divider */}
-        <div className="w-px h-8 bg-border/50 mx-1 hidden sm:block" />
-
-        {/* BTC Price */}
-        <MetricItem
-          icon={
-            <DollarSign className={`h-3 w-3 sm:h-4 sm:w-4 ${priceChange >= 0 ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'}`} />
-          }
-          label="BTC Price"
-          value={btcPrice > 0 ? `$${btcPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '--'}
-          subValue={priceChange !== 0 ? `${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%` : undefined}
-          type={priceChange >= 0 ? 'positive' : 'negative'}
-          isLoading={!ticker && !tickerError}
-        />
-
-        {/* Divider */}
-        <div className="w-px h-8 bg-border/50 mx-1 hidden sm:block" />
+        <Divider />
 
         {/* Long/Short Ratio */}
         <MetricItem
@@ -130,12 +166,11 @@ export function MarketIntelligenceBar() {
           }
           label="Long/Short"
           value={`${longPercent.toFixed(0)}% L`}
-          subValue={longShortRatio > 0 ? `(${longShortRatio.toFixed(2)})` : undefined}
+          subValue={`(${parseFloat(String(longShortRatio)).toFixed(2)})`}
           type={longPercent > 55 ? 'positive' : longPercent < 45 ? 'negative' : 'neutral'}
         />
 
-        {/* Divider */}
-        <div className="w-px h-8 bg-border/50 mx-1 hidden sm:block" />
+        <Divider />
 
         {/* Funding Rate */}
         <MetricItem
@@ -148,36 +183,70 @@ export function MarketIntelligenceBar() {
           type={Math.abs(fundingRate) > 0.05 ? 'warning' : fundingRate >= 0 ? 'positive' : 'negative'}
         />
 
-        {/* Divider */}
-        <div className="w-px h-8 bg-border/50 mx-1 hidden sm:block" />
+        <Divider />
+
+        {/* Open Interest */}
+        <MetricItem
+          icon={
+            <BarChart3 className={`h-3 w-3 sm:h-4 sm:w-4 ${oiChange >= 0 ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'}`} />
+          }
+          label="Open Interest"
+          value={oiValue > 0 ? formatOI(oiValue) : '--'}
+          subValue={oiChange !== 0 ? `${oiChange >= 0 ? '+' : ''}${oiChange.toFixed(1)}%` : undefined}
+          type={oiChange > 3 ? 'positive' : oiChange < -3 ? 'negative' : 'neutral'}
+          isLoading={!openInterest}
+        />
+
+        <Divider />
+
+        {/* 24h Volume */}
+        <MetricItem
+          icon={
+            <Activity className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
+          }
+          label="24h Volume"
+          value={volume24h > 0 ? formatVolume(volume24h) : '--'}
+          type="neutral"
+          isLoading={!ticker}
+        />
+
+        <Divider />
 
         {/* Win Rate */}
         <MetricItem
           icon={
-            <Activity className={`h-3 w-3 sm:h-4 sm:w-4 ${winRate >= 50 ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'}`} />
+            totalTrades > 0 ? (
+              winRate >= 50 ? (
+                <TrendingUp className="h-3 w-3 sm:h-4 sm:w-4 text-[hsl(var(--profit))]" />
+              ) : (
+                <TrendingDown className="h-3 w-3 sm:h-4 sm:w-4 text-[hsl(var(--loss))]" />
+              )
+            ) : (
+              <Activity className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
+            )
           }
-          label="Win Rate"
-          value={winRate > 0 ? `${winRate.toFixed(0)}%` : '--'}
-          subValue="7 days"
-          type={winRate >= 55 ? 'positive' : winRate >= 45 ? 'neutral' : 'negative'}
+          label="7D Win Rate"
+          value={totalTrades > 0 ? `${winRate.toFixed(0)}%` : '--'}
+          subValue={totalTrades > 0 ? `${totalTrades} trades` : undefined}
+          type={winRate >= 55 ? 'positive' : winRate >= 45 ? 'neutral' : winRate > 0 ? 'negative' : 'neutral'}
           isLoading={!performance}
         />
 
-        {/* Divider */}
-        <div className="w-px h-8 bg-border/50 mx-1 hidden sm:block" />
+        <Divider />
 
-        {/* 24h Volume or Last Signal */}
+        {/* AI Signal */}
         <MetricItem
           icon={
-            priceChange >= 0 ? (
-              <TrendingUp className="h-3 w-3 sm:h-4 sm:w-4 text-[hsl(var(--profit))]" />
-            ) : (
-              <TrendingDown className="h-3 w-3 sm:h-4 sm:w-4 text-[hsl(var(--loss))]" />
-            )
+            <Brain className={`h-3 w-3 sm:h-4 sm:w-4 ${
+              getSignalType(signal) === 'positive' ? 'text-[hsl(var(--profit))]' :
+              getSignalType(signal) === 'negative' ? 'text-[hsl(var(--loss))]' : 'text-foreground'
+            }`} />
           }
-          label="24h Trend"
-          value={priceChange >= 0 ? 'Bullish' : 'Bearish'}
-          type={priceChange >= 0 ? 'positive' : 'negative'}
+          label="AI Signal"
+          value={signal}
+          subValue={confidence}
+          type={getSignalType(signal)}
+          isLoading={!latestSignal}
         />
       </div>
     </div>
