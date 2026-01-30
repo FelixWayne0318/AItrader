@@ -1,0 +1,805 @@
+[PATCH] apply_all_patches() starting...
+[PATCH] Step 1: Importing binance_positions module...
+[PATCH] Loading binance_positions.py patch module...
+[PATCH] aiohttp version 3.13.3 is available
+[PATCH] apply_position_filter_patch() called
+[PATCH] Patching aiohttp.ClientResponse.read...
+[PATCH] Original read method: <function ClientResponse.read at 0x7f110300f880>
+[PATCH] ✅ Successfully patched aiohttp.ClientResponse.read
+[PATCH] New read method: <function ClientResponse.read at 0x7f1103b68220>
+[PATCH] ✅ Position filter patch applied successfully
+[PATCH] Step 2: Applying BinanceSymbolFilterType patch...
+[PATCH] apply_all_patches() completed, success=True
+======================================================================
+  实盘信号诊断工具 v11.2 (TradingAgents v3.2 - AI 完全自主)
+======================================================================
+  时间: 2026-01-30 02:44:53
+======================================================================
+
+[0/10] 关键配置检查 (检测可能导致不能下单的问题)...
+----------------------------------------------------------------------
+  ✅ load_all=True
+  ✅ reconciliation=True
+  ✅ SL/TP 字段名正确
+  ✅ 所有关键配置检查通过
+
+[0.5/10] MTF 多时间框架配置检查 (v10.1 详细验证)...
+----------------------------------------------------------------------
+  ✅ MTF 多时间框架: 已启用
+     趋势层 (Trend): 1d (SMA_200)
+       require_above_sma: True
+       require_macd_positive: True
+     决策层 (Decision): 4h
+       debate_rounds: 2
+       include_trend_context: True
+     执行层 (Execution): 15m
+       RSI 入场范围: 35-65
+       高波动周期: 5m
+  ✅ MTF 初始化配置存在
+     trend_min_bars: 220
+     decision_min_bars: 60
+     execution_min_bars: 40
+     request_timeout: 300s
+  ✅ MultiTimeframeManager 模块存在
+  ✅ MultiTimeframeManager 导入成功
+     RiskState: ['RISK_ON', 'RISK_OFF']
+     DecisionState: ['ALLOW_LONG', 'ALLOW_SHORT', 'WAIT']
+
+  ✅ Order Flow: 已启用
+     Binance enabled: False
+     Coinalyze enabled: True
+     ✅ Coinalyze API key 已配置
+
+[0.6/10] MTF 历史数据预取验证...
+----------------------------------------------------------------------
+  ✅ MultiTimeframeManager 关键方法完整
+     方法列表: route_bar, is_initialized, get_risk_state, get_decision_state, evaluate_risk_state
+
+  📋 MTF 初始化标志属性检查:
+     → 这些标志在 deepseek_strategy.py 中维护:
+       _mtf_trend_initialized: 趋势层 (1D) 初始化状态
+       _mtf_decision_initialized: 决策层 (4H) 初始化状态
+       _mtf_execution_initialized: 执行层 (15M) 初始化状态
+
+     → 查看服务日志检查初始化状态:
+       journalctl -u nautilus-trader | grep -i 'mtf\|timeframe\|initialized'
+
+  📋 MTF 状态枚举检查:
+     RiskState 值: ['RISK_ON', 'RISK_OFF']
+     DecisionState 值: ['ALLOW_LONG', 'ALLOW_SHORT', 'WAIT']
+
+  📋 MTF 预取配置:
+     趋势层 (1D) 需要 220 根 K线
+     决策层 (4H) 需要 60 根 K线
+     执行层 (15M) 需要 40 根 K线
+
+  📋 预取数据量估算:
+     趋势层: 220 天 ≈ 0.6 年历史数据
+     决策层: 240 小时 ≈ 10.0 天历史数据
+     执行层: 600 分钟 ≈ 10.0 小时历史数据
+
+  📋 MTF 数据预取测试 (实际 API 调用):
+     ✅ 趋势层 (1D): 成功获取 10 根 K线 (测试 limit=10)
+     ✅ 决策层 (4H): 成功获取 10 根 K线 (测试 limit=10)
+     ✅ 执行层 (15M): 成功获取 10 根 K线 (测试 limit=10)
+
+  ✅ MTF 预取配置验证完成
+
+[1/10] 从 main_live.py 加载真实配置...
+[PATCH] apply_all_patches() starting...
+[PATCH] Step 1: Importing binance_positions module...
+[PATCH] apply_position_filter_patch() called
+[PATCH] Already applied, skipping
+[PATCH] ✅ Position filter patch applied successfully
+[PATCH] Step 2: Applying BinanceSymbolFilterType patch...
+[PATCH] apply_all_patches() completed, success=True
+[CONFIG] Loaded environment from /home/linuxuser/.env.aitrader
+[CONFIG] Equity: 1000
+[CONFIG] Base Position: 100
+[CONFIG] Timeframe: 15m
+  instrument_id: BTCUSDT-PERP.BINANCE
+  bar_type: BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL
+  equity: $1000
+  base_usdt_amount: $100
+  leverage: 5x
+  min_confidence_to_trade: MEDIUM
+  timer_interval_sec: 900s (15.0分钟)
+  sma_periods: [5, 20, 50, 200]
+  rsi_period: 14
+  macd_fast/slow: 12/26
+  debate_rounds: 2
+  ✅ 配置加载成功 (与实盘完全一致)
+
+  ⏰ 注意: 实盘每 15 分钟分析一次
+     如果刚启动服务，需等待第一个周期触发
+
+[2/10] 获取市场数据 (Binance Futures)...
+  交易对: BTCUSDT
+  时间周期: 15m (从 bar_type 解析)
+  K线数量: 100
+  最新价格: $81,960.30 (快照时间: 02:44:55)
+  ✅ 市场数据获取成功
+
+[3/10] 初始化 TechnicalIndicatorManager (使用实盘配置)...
+  sma_periods: [5, 20, 50, 200]
+  ema_periods: [12, 26]
+  rsi_period: 14
+  macd: 12/26/9
+  bb_period: 20
+  ✅ TechnicalIndicatorManager 初始化成功
+  ✅ 指标已初始化 (100 根K线)
+
+[3.5/10] 检查 Binance 真实持仓...
+----------------------------------------------------------------------
+  ✅ 无持仓
+
+  📊 账户资金详情:
+     总余额:       $1,003.25
+     可用余额:     $1,003.25
+     已用保证金:   $0.00
+     保证金率:     100.0%
+     总未实现PnL:  $0.00
+
+[4/10] 获取技术数据 (模拟 on_timer 流程)...
+  SMA_20: $83,763.50
+  SMA_200: $86,212.28
+  SMA_5: $81,939.40
+  SMA_50: $84,333.67
+  EMA_12: $82,922.98
+  EMA_26: $83,637.92
+  RSI: 29.57
+  MACD: -714.9356
+  MACD Signal: -459.5983
+  MACD Histogram: -255.3374
+  BB Upper: $85,928.44
+  BB Lower: $81,598.56
+  [诊断用] Support: $81,000.00
+  [诊断用] Resistance: $84,699.90
+  [诊断用] Overall Trend: 强势下跌
+  ✅ 技术数据获取成功
+  📝 v3.3: AI 只接收原始数值 (SMA/RSI/MACD/BB)，不接收 support/resistance/trend 标签
+
+[5/10] 获取情绪数据 (使用实盘配置)...
+  lookback_hours: 4
+  timeframe: 15m
+✅ Using Binance sentiment data from: 2026-01-30 02:30:00 UTC (delay: 14 minutes)
+  Long/Short Ratio: 2.9277
+  Long Account %: 74.54%
+  Short Account %: 25.46%
+  Source: binance
+  ✅ 情绪数据获取成功
+
+[6/10] 构建价格数据...
+  Current Price: $81,960.30
+  High: $82,094.30
+  Low: $81,116.00
+  Price Change: 0.64%
+  K-line Count: 10
+  ✅ 价格数据构建成功
+
+[7/10] MultiAgent 层级决策 (TradingAgents 架构)...
+----------------------------------------------------------------------
+  📋 决策流程:
+     Phase 1: Bull/Bear Debate (辩论)
+     Phase 2: Judge (Portfolio Manager) Decision
+     Phase 3: Risk Evaluation
+
+  Model: deepseek-chat
+  Temperature: 0.3
+  Debate Rounds: 2
+
+  🐂 Bull Agent 分析中...
+  🐻 Bear Agent 分析中...
+  ⚖️ Judge Agent 判断中...
+  🛡️ Risk Manager 评估中...
+✅ Using Binance sentiment data from: 2026-01-30 02:30:00 UTC (delay: 14 minutes)
+  📊 MTF Order Flow 数据已加载
+  📊 MTF Derivatives 数据已加载
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │              AI 输入数据验证 (传给 MultiAgent)                   │
+  └─────────────────────────────────────────────────────────────────┘
+
+  [1] technical_data (技术指标):
+      price:           $81,960.30
+      sma_5:           $81,939.40
+      sma_20:          $83,763.50
+      sma_50:          $84,333.67
+      rsi:             29.57
+      macd:            -714.9356
+      macd_histogram:  -255.3374
+      [诊断用] overall_trend: 强势下跌
+
+  [2] sentiment_data (情绪数据):
+      positive_ratio:  0.7454 (74.54%)
+      negative_ratio:  0.2546 (25.46%)
+      net_sentiment:   0.4908
+
+  [3] price_data (价格数据):
+      price:           $81,960.30
+      price_change:    0.64%
+
+  [4] order_flow_report (订单流):
+      buy_ratio:       0.4452 (44.52%)
+      [诊断用] cvd_trend: NEUTRAL
+      avg_trade_usdt:  $3,170.33
+      data_source:     binance_raw
+
+  [5] derivatives_report (衍生品数据):
+      OI value (BTC):  103,880.70
+      Funding rate:    0.000021 (0.0021%)
+      Liq history[-1]:  l=11.742 BTC, s=6.467 BTC
+
+  [6] current_position: None (无持仓)
+
+  ────────────────────────────────────────────────────────────────
+
+  🎯 Judge 最终决策:
+     Signal: SELL
+     Confidence: HIGH
+     Risk Level: MEDIUM
+     Stop Loss: $83,500.00
+     Take Profit: $79,500.00
+     Winning Side: BEAR
+
+     📋 Judge 决策 (v3.0 AI 完全自主):
+        - AI 自主分析 Bull/Bear 辩论
+        - AI 自主判断证据强度
+        - 无硬编码规则或阈值
+
+     Key Reasons: Price has broken decisively below all key moving averages (SMA_5, SMA_20, SMA_50) with SMA_5 < SMA_20 < SMA_50 confirming a strong, organized downtrend structure, High volume (1.84x) on the breakdown indicates distribution and selling conviction, not accumulation - strong hands are exiting, not buying, Derivatives data shows a dangerously crowded long position (74.5% long ratio) with positive funding rates (0.0021%) creating ongoing selling pressure and liquidation risk
+     Acknowledged Risks: RSI at 29.6 is deeply oversold and could trigger a technical bounce, though oversold conditions can persist in strong downtrends, Recent bar showed 59.6% buy ratio indicating some buying interest at current levels, though 10-bar average remains bearish at 44.5%
+     Debate Summary: Bulls: Oversold RSI (29.6) and recent 59.6% buy ratio suggest potential bounce. Bears: Organized downtrend (SMA_5<SMA_20<SMA_50), high-volume breakdow...
+     Reason: Strong downtrend structure with high-volume breakdown and crowded long positioning creates favorable short opportunity despite oversold conditions.
+
+  📜 辩论记录 (Bull/Bear Debate):
+     
+
+=== ROUND 1 ===
+
+BULL ANALYST:
+### **Bull Case: Oversold Rebound & Strong Accumulation Signal**
+
+The data reveals a market primed for a significant long entry. First, the **RSI at 29.6** is deeply oversold, indicating extreme short-term selling exhaustion and a high-probability technical bounce. This is occurring as price ($81,960.30) is trading **above the critical Bollinger Lower Band support at $81,598.56**, showing resilience at a key level. The **volume ratio of 1.84x** confirms this move...
+     [截断, 完整长度: 11545 字符]
+  ✅ MultiAgent 层级决策成功
+
+[7.5/10] TradingAgents v3.3 架构验证...
+----------------------------------------------------------------------
+  📊 TradingAgents v3.3 设计理念:
+     "Autonomy is non-negotiable" - AI 像人类分析师一样思考
+     AI 接收原始数值 + INDICATOR_DEFINITIONS 自主解读
+
+  ✅ 已移除的本地硬编码规则:
+     ❌ 趋势方向权限检查 (allow_long/allow_short)
+     ❌ 支撑/阻力位边界检查 (proximity_threshold)
+     ❌ RSI 入场范围限制
+     ❌ 确认计数框架 (bullish_count/bearish_count)
+
+  ✅ 不再传给 AI 的预计算标签 (v3.3 移除):
+     ❌ support/resistance - AI 用 SMA_50/BB 作动态支撑阻力
+     ❌ cvd_trend - AI 从 recent_10_bars 推断
+     ❌ overall_trend - AI 从 SMA 关系推断
+     ❌ Interpretation: Bullish/Bearish - AI 从原始比例推断
+
+  📋 AI 接收的数据 (原始数值，由 AI 自主解读):
+     - Price: $81,960.30
+     - SMA_5/20/50: $81,939.40 / $83,763.50 / $84,333.67
+     - RSI: 29.6
+     - MACD/Signal: -714.9356 / -459.5983
+     - BB: $81,598.56 - $85,928.44
+     - Buy Ratio: 44.5%
+
+  🎯 AI 决策结果 (无本地过滤):
+     Signal: SELL
+     Confidence: HIGH
+
+  ✅ TradingAgents v3.3 架构验证完成
+
+[8/10] 交易决策 (TradingAgents - Judge 决策即最终决策)...
+----------------------------------------------------------------------
+  🎯 Final Signal: SELL
+  📊 Confidence: HIGH
+
+  📊 SL/TP 验证 (模拟 _submit_bracket_order 逻辑):
+----------------------------------------------------------------------
+     MultiAgent 返回: SL=$83,500.00, TP=$79,500.00
+     ✅ MultiAgent SL/TP 验证通过: Valid (SL: 1.88%, TP: 3.00%)
+
+  🎯 最终 SL/TP (实盘会使用的值):
+     Entry: ~$81,960.30
+     Stop Loss: $83,500.00 (+1.88%)
+     Take Profit: $79,500.00 (-3.00%)
+     来源: MultiAgent (Judge)
+
+  模拟 _execute_trade 检查:
+  ⚠️ is_trading_paused: 无法检测 (需查看服务日志)
+  ✅ Confidence HIGH >= minimum MEDIUM
+  ✅ Signal is SELL → Actionable
+
+  模拟仓位计算 (调用共享 calculate_position_size):
+     Base: $100
+     × Confidence Mult: 1.5
+     × Trend Mult: 1.2 (trend=强势下跌)
+     × RSI Mult: 0.7 (RSI=29.6)
+     = $126.00
+     Max allowed: $300.00
+     Final: $126.00
+     BTC Quantity: 0.0020 BTC
+     Notional: $163.92
+
+  模拟持仓管理检查:
+     无现有持仓 → 将开新 SHORT 仓位 0.0020 BTC
+
+======================================================================
+  诊断总结 (TradingAgents v3.2 - AI 完全自主决策)
+======================================================================
+
+  📊 架构: TradingAgents v3.2 - AI 完全自主决策
+     本地风控: 无 (已移除所有硬编码规则)
+
+  📊 AI Signal: SELL
+  📊 Final Signal: SELL
+  📊 Confidence: HIGH
+  📊 Winning Side: BEAR
+  📊 Risk Level: MEDIUM
+
+  📊 Current Position: None
+
+  🟢 WOULD EXECUTE: SELL 0.0020 BTC @ $81,960.30
+     Notional: $163.92
+     Stop Loss: $83,500.00
+     Take Profit: $79,500.00
+     SL/TP 来源: MultiAgent (Judge)
+
+----------------------------------------------------------------------
+  📱 实盘执行流程:
+----------------------------------------------------------------------
+
+  Step 1: AI 分析完成 → Signal = SELL
+  Step 2: 📱 发送 Telegram 信号通知
+          → 此时你会收到交易信号消息
+  Step 3: 调用 _execute_trade()
+          → ✅ 所有检查通过
+          → 📊 提交订单到 Binance
+
+  💡 关键点: Telegram 通知在 _execute_trade 之前发送!
+     如果收到信号但无交易，检查服务日志查看 _execute_trade 输出
+
+[8.5/10] Post-Trade 生命周期测试...
+----------------------------------------------------------------------
+  📋 OCO 孤儿订单清理 (_cleanup_oco_orphans):
+     ✅ enable_oco = True
+        → 实盘会在每次 on_timer 后调用 _cleanup_oco_orphans()
+        → 清理无持仓时的 reduce-only 订单
+
+  📋 移动止损更新 (_update_trailing_stops):
+     ✅ enable_trailing_stop = True
+        → 激活条件: 盈利 >= 1.00%
+        → 跟踪距离: 0.50%
+        → 实盘会在每次 on_timer 后调用 _update_trailing_stops()
+
+  ✅ Post-Trade 生命周期测试完成
+
+[9/10] MTF v2.1 组件集成测试...
+----------------------------------------------------------------------
+  ✅ Order Flow 已启用，开始测试 MTF 组件...
+
+  [9.1] 测试 BinanceKlineClient...
+     ✅ BinanceKlineClient 导入成功
+     📊 获取 BTCUSDT 15M K线 (最近 50 根)...
+     ✅ 成功获取 50 根 K线
+        最新 K线:
+          - Close: 82029.60
+          - Volume: 471.973
+          - Taker Buy Volume: 289.575 (订单流关键数据)
+          - Quote Volume: 38719410.59980 USDT
+          - Trades Count: 12807
+     ✅ 实时价格: $82,037.30 (vs 快照 $81,960.30, 差值: $+77.00)
+
+  [9.2] 测试 OrderFlowProcessor...
+     ✅ OrderFlowProcessor 导入成功
+     📊 计算订单流指标 (测试: 50 bars, AI输入: 10 bars)...
+     ✅ 订单流指标计算完成 [测试窗口: 50 bars]:
+        - Buy Ratio: 0.4774 (空头主导)
+        - CVD Trend: NEUTRAL
+        - Avg Trade Size: $3,023.30
+        - Volume (USDT): $38,719,411
+        - Trades Count: 12,807
+        - Data Source: binance_raw
+        ℹ️ 注: 以上数据来自 50 根 K线，AI 输入仅使用最近 10 根
+        - Recent 10 Bars Avg Buy Ratio: 0.4774
+
+  [9.3] 测试 CoinalyzeClient...
+     ✅ CoinalyzeClient 导入成功
+     📊 Coinalyze API 测试 (API Key: 8be2c53d...)
+        测试 Open Interest...
+        ✅ OI (BTC): 103,873.44
+        测试 Funding Rate...
+        ✅ Coinalyze Funding: 0.004478 (0.4478%)
+        ✅ Binance Funding:  0.000022 (0.0022%)
+        ⚠️ 差异 203.0x - Coinalyze 可能是聚合/累计值
+        ℹ️ AI 输入将使用 Binance 8h funding rate
+        测试 Liquidations (1h)...
+        ✅ Long Liq: 11.7420 BTC ($962,378)
+        ✅ Short Liq: 6.4730 BTC ($530,529)
+        测试 fetch_all (完整数据)...
+        ✅ fetch_all 成功:
+           - OI: True
+           - Funding: True
+           - Liquidations: True
+
+  [9.4] 测试 AIDataAssembler...
+     ✅ AIDataAssembler 导入成功
+     📊 组装完整 AI 输入数据...
+✅ Using Binance sentiment data from: 2026-01-30 02:45:00 UTC (delay: 1 minutes)
+     ✅ 数据组装完成:
+        - 技术指标: True
+        - 订单流: True
+        - 衍生品: True
+        - 情绪数据: True
+        - Order Flow Buy Ratio: 0.4777
+        - Derivatives OI Change: N/A (首次)%
+        - Derivatives Funding Rate: 0.0022%
+
+  ✅ MTF v2.1 组件集成测试完成
+
+[9.5/10] Telegram 命令处理验证...
+----------------------------------------------------------------------
+  ✅ Telegram 配置已加载
+     Bot Token: 8425370596...JGc3g
+     Chat ID: 6134611414
+
+  📋 Telegram 模块检查:
+     ✅ utils/telegram_bot.py 存在
+     ✅ TelegramBot 类可导入
+     ✅ TelegramBot.send_message_sync 方法存在
+
+  📤 Telegram API 连通性测试:
+     ✅ Bot Token 有效
+        Bot 名称: @AlgVex_Bot
+        Bot ID: 8425370596
+     ✅ utils/telegram_command_handler.py 存在
+     ✅ TelegramCommandHandler 类可导入
+        ✅ cmd_status 方法存在
+        ✅ cmd_position 方法存在
+        ✅ cmd_pause 方法存在
+        ✅ cmd_resume 方法存在
+        ✅ cmd_close 方法存在
+        ✅ cmd_orders 方法存在
+        ✅ cmd_history 方法存在
+
+  📋 线程安全机制检查:
+     → _cached_current_price: 用于跨线程安全访问当前价格
+     → send_message_sync: 使用 requests 直接调用 API (线程安全)
+     → 避免在后台线程访问 indicator_manager (Rust 指标不可跨线程)
+
+  ✅ Telegram 验证完成
+
+[10/13] on_bar MTF 路由逻辑模拟...
+----------------------------------------------------------------------
+  📊 MTF Bar 路由逻辑 (与 deepseek_strategy.py:on_bar 一致):
+
+  [路由规则] Bar 类型 → 处理层:
+     • 1D bar → 趋势层 (_handle_trend_bar)
+       - 更新 SMA_200, MACD
+       - 计算 RISK_ON/RISK_OFF 状态
+       - 设置 _mtf_trend_initialized = True
+
+     • 4H bar → 决策层 (_handle_decision_bar)
+       - 更新决策层技术指标
+       - 计算 ALLOW_LONG/ALLOW_SHORT/WAIT 状态
+       - 设置 _mtf_decision_initialized = True
+
+     • 15M bar → 执行层 (_handle_execution_bar)
+       - 更新执行层指标 (RSI, MACD 等)
+       - 更新 _cached_current_price (线程安全)
+       - 设置 _mtf_execution_initialized = True
+
+  [模拟路由] 当前诊断使用的 bar_type:
+     bar_type: BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL
+     → 路由到: 执行层 (15M) - 主分析周期
+
+  [指标更新] 本次 bar 更新的指标值:
+     indicator_manager.update(bar) 后:
+     • 价格: $81,960.30
+     • SMA_5: $81,939.40
+     • SMA_20: $83,763.50
+     • SMA_50: $84,333.67
+     • RSI: 29.57
+     • MACD: -714.9356
+     • MACD Signal: -459.5983
+     • Support: $81,000.00
+     • Resistance: $84,699.90
+
+  ✅ on_bar MTF 路由模拟完成
+
+[11/13] 仓位计算函数测试 (calculate_position_size)...
+----------------------------------------------------------------------
+  📋 仓位计算配置:
+     base_usdt: $100
+     equity: $1000
+     max_position_ratio: 30%
+     min_trade_amount: 0.001 BTC
+
+  📋 信心乘数配置:
+     HIGH: 1.5x → $150
+     MEDIUM: 1.0x → $100
+     LOW: 0.5x → $50
+
+  📋 风险调整乘数:
+     趋势强度乘数: 1.2x (强趋势时放大)
+     RSI 极值乘数: 0.7x (RSI>70.0 或 <30.0 时缩小)
+
+  📊 当前信号仓位计算:
+     输入信号: SELL
+     输入信心: HIGH
+     当前价格: $81,960.30
+     当前趋势: 强势下跌
+     当前 RSI: 29.57
+
+     计算结果:
+     • 目标仓位: 0.002000 BTC
+     • 等值 USDT: $163.92
+     • 占 equity 比例: 16.39%
+
+     计算详情:
+     • base_usdt: 100
+     • conf_mult: 1.5000
+     • trend_mult: 1.2000
+     • trend: 强势下跌
+     • rsi_mult: 0.7000
+     • rsi: 29.5664
+     • suggested_usdt: 126.0000
+     • max_usdt: 300.0000
+     • final_usdt: 126.0000
+     • btc_quantity: 0.0020
+     • notional: 163.9206
+     • adjusted: False
+
+  📊 不同信心级别仓位对比:
+     HIGH: 0.002000 BTC ($163.92)
+     MEDIUM: 0.002000 BTC ($163.92)
+     LOW: 0.002000 BTC ($163.92)
+
+  ✅ 仓位计算测试完成
+
+[12/13] 订单提交流程模拟 (_submit_bracket_order)...
+----------------------------------------------------------------------
+  📋 订单提交前提检查:
+     信号: SELL
+     信心: HIGH
+     当前价格: $81,960.30
+
+  📋 SL/TP 验证流程:
+     AI Judge SL: $83,500.00
+     AI Judge TP: $79,500.00
+
+  ❌ 订单提交模拟失败: unsupported operand type(s) for -: 'int' and 'str'
+
+[13/13] 完整数据流汇总...
+----------------------------------------------------------------------
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                        技术指标数据                                  ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  价格数据:
+    当前价格: $81,960.30
+    24H 最高: $82,094.30
+    24H 最低: $81,116.00
+    价格变化: 0.64%
+
+  移动平均线:
+    SMA_5:  $81,939.40
+    SMA_20: $83,763.50
+    SMA_50: $84,333.67
+    EMA_12: $82,922.98
+    EMA_26: $83,637.92
+
+  震荡指标:
+    RSI:           29.57
+    MACD:          -714.9356
+    MACD Signal:   -459.5983
+    MACD Histogram:-255.3374
+
+  布林带:
+    BB Upper: $85,928.44
+    BB Middle: $83,763.50
+    BB Lower: $81,598.56
+
+  支撑/阻力:
+    支撑位: $81,000.00
+    阻力位: $84,699.90
+
+  趋势判断: 强势下跌
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                        情绪数据                                     ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  Binance 多空比:
+    Long/Short Ratio: 2.9277
+    Long Account %:   74.54%
+    Short Account %:  25.46%
+    Net Sentiment:    0.4908
+    数据来源: binance
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                        订单流数据                                   ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  Binance Taker 数据 [采样窗口: 50 bars]:
+    Buy Ratio:      0.4452 (44.52%)
+    CVD Trend:      NEUTRAL
+    Avg Trade Size: $3,170.33
+    Volume (USDT):  $543,831,530
+    Trades Count:   171,538
+    数据来源: binance_raw
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                        衍生品数据 (Coinalyze)                       ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  Open Interest:
+    OI (BTC):    103,880.70
+    OI (USD):    $8,514,083,276
+    OI Change:   None
+
+  Funding Rate:
+    Current:     0.000021 (0.0021%)
+    Interpret:   NEUTRAL
+    Source:      binance_direct
+    [对比] Binance 8h: 0.0021%, Coinalyze: 0.4478%
+
+  Liquidations (1h):
+    [原始] Long:   11.7420 BTC
+    [原始] Short:  6.4670 BTC
+    [原始] Total:  18.2090 BTC
+    [转换] Long:   $962,378
+    [转换] Short:  $530,037
+    [转换] Total:  $1,492,415
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                        当前持仓                                     ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  持仓状态: 无持仓 (FLAT)
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                        AI 决策结果                                  ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  原始信号: SELL
+  最终信号: SELL
+  信心等级: HIGH
+  风险等级: MEDIUM
+  胜出方:   BEAR
+
+  AI 止损: $83,500.00
+  AI 止盈: $79,500.00
+
+  关键理由:
+    1. Price has broken decisively below all key moving averages (SMA_5, SMA_...
+    2. High volume (1.84x) on the breakdown indicates distribution and sellin...
+    3. Derivatives data shows a dangerously crowded long position (74.5% long...
+
+  确认风险:
+    1. RSI at 29.6 is deeply oversold and could trigger a technical bounce, t...
+    2. Recent bar showed 59.6% buy ratio indicating some buying interest at c...
+
+  决策理由: Strong downtrend structure with high-volume breakdown and crowded long positioning creates favorable...
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                        MTF 过滤状态                                 ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  架构: TradingAgents v3.2 - AI 完全自主决策
+  本地风控: 无 (已移除所有硬编码规则)
+
+  AI 决策: SELL (Confidence: HIGH)
+  Winning Side: BEAR
+
+  ✅ 完整数据流汇总完成
+
+======================================================================
+  诊断完成 - 使用共享模块，与实盘逻辑 100% 一致
+======================================================================
+
+======================================================================
+  📋 深入分析: 信号产生条件
+======================================================================
+
+[分析1] 技术指标阈值检查
+--------------------------------------------------
+  RSI: 29.57
+    配置阈值: 超卖<30.0, 超买>70.0
+    → 🟢 超卖区 (<30.0) - 可能触发 BUY
+
+  MACD: -714.9356
+  MACD Signal: -459.5983
+  MACD Histogram: -255.3374
+    → 🔴 MACD 在信号线下方 - 看跌
+    → 🔴 柱状图为负 (-255.3374) - 下跌动能
+
+  SMA_5: $81,939.40
+  SMA_20: $83,763.50
+  SMA_50: $84,333.67
+  当前价格: $81,960.30
+    → ⚪ 无明确趋势排列
+       价格在 SMA20 下方 (-2.15%)
+
+  BB Upper: $85,928.44
+  BB Lower: $81,598.56
+  BB Width: $4,329.88 (5.28%)
+  价格在带内位置: 8.4%
+    → 🟢 接近下轨 (<20%, 可能超卖)
+
+[分析2] 趋势强度分析
+--------------------------------------------------
+  整体趋势判断: 强势下跌
+  近10根K线变化: -2.82%
+  近20根K线变化: -3.00%
+
+[分析3] 市场情绪分析
+--------------------------------------------------
+  多空比: 2.9277
+    → 🔴 极度看多 (>2.0, 逆向指标: 可能下跌)
+
+[分析4] Judge 决策原因分析 (TradingAgents)
+--------------------------------------------------
+  ⚖️ Judge 最终决策: SELL
+
+  Winning Side: BEAR
+  Key Reasons:
+    • Price has broken decisively below all key moving averages (SMA_5, SMA_20, SMA_50) with SMA_5 < SMA_20 < SMA_50 confirming a strong, organized downtrend structure
+    • High volume (1.84x) on the breakdown indicates distribution and selling conviction, not accumulation - strong hands are exiting, not buying
+    • Derivatives data shows a dangerously crowded long position (74.5% long ratio) with positive funding rates (0.0021%) creating ongoing selling pressure and liquidation risk
+  Acknowledged Risks:
+    • RSI at 29.6 is deeply oversold and could trigger a technical bounce, though oversold conditions can persist in strong downtrends
+    • Recent bar showed 59.6% buy ratio indicating some buying interest at current levels, though 10-bar average remains bearish at 44.5%
+
+  📋 Judge 完整理由:
+    Strong downtrend structure with high-volume breakdown and crowded long positioni
+    ng creates favorable short opportunity despite oversold conditions.
+
+  🗣️ 辩论摘要:
+    Bulls: Oversold RSI (29.6) and recent 59.6% buy ratio suggest potential bounce. 
+    Bears: Organized downtrend (SMA_5<SMA_20<SMA_50), high-volume breakdown (1.84x),
+     and dangerously crowded longs (74.5%) with positive funding create significant 
+    downside pressure and liquidation risk.
+
+[分析5] 触发交易所需条件 (最新提示词)
+--------------------------------------------------
+  要触发 BUY 信号 (ANY 2 of these is sufficient):
+    • 价格在 SMA5/SMA20 上方 (当前: ❌)
+    • RSI < 60 且不超买 (当前: 29.57, ✅)
+    • MACD 金叉或柱状图为正 (当前: ❌)
+    • 价格接近支撑或 BB 下轨 (当前位置: 8.4%)
+
+  要触发 SELL 信号 (ANY 2 of these is sufficient):
+    • 价格在 SMA5/SMA20 下方 (当前: ❌)
+    • RSI > 40 且显示弱势 (当前: 29.57, ❌)
+    • MACD 死叉或柱状图为负 (当前: ✅)
+    • 价格接近阻力或 BB 上轨 (当前位置: 8.4%)
+
+  📌 提示词更新后，HOLD 仅在信号真正冲突时使用
+     当前 min_confidence_to_trade: MEDIUM
+
+[分析6] 诊断建议
+--------------------------------------------------
+
+======================================================================
+  🔧 下一步建议
+======================================================================
+
+  📌 将执行交易: SELL 0.0020 BTC
+  SL: $83,500.00 (+1.88%)
+  TP: $79,500.00 (-3.00%)
+
+  💡 实盘状态:
+    • 检查服务是否运行: systemctl status nautilus-trader
+    • 查看日志: journalctl -u nautilus-trader -f --no-hostname
+
+  📖 详细分析: 运行 python3 diagnose_realtime.py (不加 --summary)
+
