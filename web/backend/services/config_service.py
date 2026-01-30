@@ -152,73 +152,154 @@ class ConfigService:
     # =========================================================================
     # Configuration Sections (for UI)
     # =========================================================================
-    def get_config_sections(self) -> Dict[str, Dict]:
-        """Get configuration organized by sections for admin UI"""
+    def get_config_sections(self) -> Dict[str, Any]:
+        """Get configuration organized by sections for admin UI with field metadata"""
         config = self.get_merged_config()
 
-        sections = {
-            "trading": {
-                "title": "Trading Configuration",
-                "description": "Core trading parameters",
-                "fields": self._extract_section(config, "trading"),
-            },
-            "capital": {
-                "title": "Capital & Leverage",
-                "description": "Account funding and leverage settings",
-                "fields": self._extract_section(config, "capital"),
-            },
-            "position": {
-                "title": "Position Management",
-                "description": "Position sizing and limits",
-                "fields": self._extract_section(config, "position"),
-            },
-            "risk": {
-                "title": "Risk Management",
-                "description": "Stop loss, take profit, and risk controls",
-                "fields": self._extract_section(config, "risk"),
-            },
-            "ai": {
-                "title": "AI Configuration",
-                "description": "DeepSeek and multi-agent settings",
-                "fields": self._extract_section(config, "ai"),
-            },
-            "indicators": {
-                "title": "Technical Indicators",
-                "description": "Indicator periods and parameters",
-                "fields": self._extract_section(config, "indicators"),
-            },
-            "telegram": {
-                "title": "Telegram Notifications",
-                "description": "Notification settings",
-                "fields": self._extract_section(config, "telegram"),
-            },
-            "timing": {
-                "title": "Timing",
-                "description": "Timer and interval settings",
-                "fields": self._extract_section(config, "timing"),
-            },
-            "logging": {
-                "title": "Logging",
-                "description": "Log levels and outputs",
-                "fields": self._extract_section(config, "logging"),
-            },
-            "multi_timeframe": {
-                "title": "Multi-Timeframe (MTF)",
-                "description": "Three-layer MTF framework settings",
-                "fields": self._extract_section(config, "multi_timeframe"),
-            },
-            "order_flow": {
-                "title": "Order Flow",
-                "description": "Order flow and derivatives data",
-                "fields": self._extract_section(config, "order_flow"),
-            },
+        # Field definitions with labels, types, and descriptions
+        field_definitions = {
+            "trading": [
+                {"path": "trading.instrument_id", "label": "Instrument ID", "type": "string", "description": "Trading pair identifier"},
+                {"path": "trading.timeframe", "label": "Timeframe", "type": "select", "options": ["1m", "5m", "15m", "1h", "4h", "1d"], "description": "K-line timeframe"},
+                {"path": "trading.historical_bars_limit", "label": "Historical Bars", "type": "number", "description": "Number of historical K-lines to fetch"},
+            ],
+            "capital": [
+                {"path": "capital.equity", "label": "Backup Equity", "type": "number", "description": "Fallback equity value (USDT)"},
+                {"path": "capital.leverage", "label": "Leverage", "type": "number", "description": "Trading leverage (3-10 recommended)"},
+                {"path": "capital.use_real_balance_as_equity", "label": "Use Real Balance", "type": "boolean", "description": "Auto-fetch real balance from Binance"},
+            ],
+            "position": [
+                {"path": "position.base_usdt_amount", "label": "Base Position (USDT)", "type": "number", "description": "Base position size in USDT (min: 100)"},
+                {"path": "position.high_confidence_multiplier", "label": "High Confidence Multiplier", "type": "number", "description": "Position multiplier for high confidence signals"},
+                {"path": "position.medium_confidence_multiplier", "label": "Medium Confidence Multiplier", "type": "number", "description": "Position multiplier for medium confidence signals"},
+                {"path": "position.low_confidence_multiplier", "label": "Low Confidence Multiplier", "type": "number", "description": "Position multiplier for low confidence signals"},
+                {"path": "position.max_position_ratio", "label": "Max Position Ratio", "type": "number", "description": "Maximum position as % of equity (0.30 = 30%)"},
+                {"path": "position.min_trade_amount", "label": "Min Trade Amount (BTC)", "type": "number", "description": "Minimum trade quantity"},
+            ],
+            "risk": [
+                {"path": "risk.min_confidence_to_trade", "label": "Min Confidence", "type": "select", "options": ["LOW", "MEDIUM", "HIGH"], "description": "Minimum confidence level to execute trades"},
+                {"path": "risk.allow_reversals", "label": "Allow Reversals", "type": "boolean", "description": "Allow position direction reversal"},
+                {"path": "risk.rsi_extreme_threshold_upper", "label": "RSI Overbought", "type": "number", "description": "RSI overbought threshold"},
+                {"path": "risk.rsi_extreme_threshold_lower", "label": "RSI Oversold", "type": "number", "description": "RSI oversold threshold"},
+                {"path": "risk.stop_loss.enabled", "label": "Stop Loss Enabled", "type": "boolean", "description": "Enable automatic stop loss"},
+                {"path": "risk.stop_loss.buffer_pct", "label": "SL Buffer %", "type": "number", "description": "Stop loss buffer percentage"},
+                {"path": "risk.take_profit.high_confidence_pct", "label": "TP High Confidence %", "type": "number", "description": "Take profit for high confidence (0.03 = 3%)"},
+                {"path": "risk.take_profit.medium_confidence_pct", "label": "TP Medium Confidence %", "type": "number", "description": "Take profit for medium confidence"},
+                {"path": "risk.take_profit.low_confidence_pct", "label": "TP Low Confidence %", "type": "number", "description": "Take profit for low confidence"},
+                {"path": "risk.trailing_stop.enabled", "label": "Trailing Stop Enabled", "type": "boolean", "description": "Enable trailing stop loss"},
+                {"path": "risk.trailing_stop.activation_pct", "label": "Trailing Activation %", "type": "number", "description": "Profit % to activate trailing stop"},
+                {"path": "risk.trailing_stop.distance_pct", "label": "Trailing Distance %", "type": "number", "description": "Trailing stop distance"},
+            ],
+            "ai": [
+                {"path": "ai.deepseek.model", "label": "DeepSeek Model", "type": "string", "description": "Model name (deepseek-chat)"},
+                {"path": "ai.deepseek.temperature", "label": "Temperature", "type": "number", "description": "AI temperature (0.1-1.0)"},
+                {"path": "ai.deepseek.max_retries", "label": "Max Retries", "type": "number", "description": "API retry count"},
+                {"path": "ai.multi_agent.debate_rounds", "label": "Debate Rounds", "type": "number", "description": "Bull/Bear debate rounds (1-3)"},
+            ],
+            "indicators": [
+                {"path": "indicators.rsi_period", "label": "RSI Period", "type": "number", "description": "RSI calculation period"},
+                {"path": "indicators.macd_fast", "label": "MACD Fast", "type": "number", "description": "MACD fast period"},
+                {"path": "indicators.macd_slow", "label": "MACD Slow", "type": "number", "description": "MACD slow period"},
+                {"path": "indicators.macd_signal", "label": "MACD Signal", "type": "number", "description": "MACD signal period"},
+                {"path": "indicators.bb_period", "label": "BB Period", "type": "number", "description": "Bollinger Bands period"},
+                {"path": "indicators.bb_std", "label": "BB Std Dev", "type": "number", "description": "Bollinger Bands standard deviation"},
+                {"path": "indicators.volume_ma_period", "label": "Volume MA Period", "type": "number", "description": "Volume moving average period"},
+            ],
+            "telegram": [
+                {"path": "telegram.enabled", "label": "Telegram Enabled", "type": "boolean", "description": "Enable Telegram notifications"},
+                {"path": "telegram.bot_token", "label": "Bot Token", "type": "string", "sensitive": True, "description": "Telegram bot token (from .env)"},
+                {"path": "telegram.chat_id", "label": "Chat ID", "type": "string", "description": "Your Telegram chat ID"},
+                {"path": "telegram.notify.signals", "label": "Notify Signals", "type": "boolean", "description": "Send signal notifications"},
+                {"path": "telegram.notify.fills", "label": "Notify Fills", "type": "boolean", "description": "Send order fill notifications"},
+                {"path": "telegram.notify.errors", "label": "Notify Errors", "type": "boolean", "description": "Send error notifications"},
+                {"path": "telegram.notify.heartbeat", "label": "Notify Heartbeat", "type": "boolean", "description": "Send periodic heartbeat status"},
+            ],
+            "timing": [
+                {"path": "timing.timer_interval_sec", "label": "Timer Interval (sec)", "type": "number", "description": "Analysis interval in seconds (900 = 15min)"},
+            ],
+            "logging": [
+                {"path": "logging.level", "label": "Log Level", "type": "select", "options": ["DEBUG", "INFO", "WARNING", "ERROR"], "description": "Logging verbosity"},
+                {"path": "logging.to_file", "label": "Log to File", "type": "boolean", "description": "Write logs to file"},
+                {"path": "logging.log_signals", "label": "Log Signals", "type": "boolean", "description": "Log trading signals"},
+                {"path": "logging.log_ai_responses", "label": "Log AI Responses", "type": "boolean", "description": "Log full AI responses"},
+            ],
+            "multi_timeframe": [
+                {"path": "multi_timeframe.enabled", "label": "MTF Enabled", "type": "boolean", "description": "Enable multi-timeframe analysis"},
+                {"path": "multi_timeframe.trend_layer.timeframe", "label": "Trend Layer TF", "type": "select", "options": ["1d", "4h", "1h"], "description": "Trend layer timeframe"},
+                {"path": "multi_timeframe.trend_layer.sma_period", "label": "Trend SMA Period", "type": "number", "description": "SMA period for trend detection"},
+                {"path": "multi_timeframe.decision_layer.timeframe", "label": "Decision Layer TF", "type": "select", "options": ["4h", "1h", "15m"], "description": "Decision layer timeframe"},
+                {"path": "multi_timeframe.decision_layer.debate_rounds", "label": "Decision Debate Rounds", "type": "number", "description": "AI debate rounds for decision"},
+                {"path": "multi_timeframe.execution_layer.default_timeframe", "label": "Execution TF", "type": "select", "options": ["15m", "5m", "1m"], "description": "Execution layer timeframe"},
+                {"path": "multi_timeframe.execution_layer.rsi_entry_min", "label": "RSI Entry Min", "type": "number", "description": "Minimum RSI for entry"},
+                {"path": "multi_timeframe.execution_layer.rsi_entry_max", "label": "RSI Entry Max", "type": "number", "description": "Maximum RSI for entry"},
+            ],
+            "order_flow": [
+                {"path": "order_flow.enabled", "label": "Order Flow Enabled", "type": "boolean", "description": "Enable order flow analysis"},
+                {"path": "order_flow.binance.use_taker_data", "label": "Use Taker Data", "type": "boolean", "description": "Use taker buy/sell volume"},
+                {"path": "order_flow.binance.bars_for_analysis", "label": "Bars for Analysis", "type": "number", "description": "Number of recent bars to analyze"},
+                {"path": "order_flow.buy_ratio.bullish_threshold", "label": "Bullish Threshold", "type": "number", "description": "Buy ratio above this is bullish (0.55 = 55%)"},
+                {"path": "order_flow.buy_ratio.bearish_threshold", "label": "Bearish Threshold", "type": "number", "description": "Buy ratio below this is bearish (0.45 = 45%)"},
+                {"path": "order_flow.coinalyze.enabled", "label": "Coinalyze Enabled", "type": "boolean", "description": "Enable Coinalyze derivatives data"},
+            ],
+            "sentiment": [
+                {"path": "sentiment.enabled", "label": "Sentiment Enabled", "type": "boolean", "description": "Enable sentiment analysis"},
+                {"path": "sentiment.weight", "label": "Sentiment Weight", "type": "number", "description": "Weight in decision (0.30 = 30%)"},
+                {"path": "sentiment.update_interval_minutes", "label": "Update Interval (min)", "type": "number", "description": "Sentiment data refresh interval"},
+            ],
+            "execution": [
+                {"path": "execution.order_type", "label": "Order Type", "type": "select", "options": ["MARKET", "LIMIT"], "description": "Default order type"},
+                {"path": "execution.reduce_only_for_closes", "label": "Reduce Only for Closes", "type": "boolean", "description": "Use reduce-only for close orders"},
+                {"path": "execution.position_adjustment_threshold", "label": "Position Adjust Threshold", "type": "number", "description": "Min BTC diff to adjust position"},
+            ],
+            "network": [
+                {"path": "network.binance.api_timeout", "label": "API Timeout (sec)", "type": "number", "description": "Binance API request timeout"},
+                {"path": "network.binance.balance_cache_ttl", "label": "Balance Cache TTL (sec)", "type": "number", "description": "Balance cache duration"},
+                {"path": "network.telegram.message_timeout", "label": "Telegram Timeout (sec)", "type": "number", "description": "Telegram message timeout"},
+            ],
         }
 
-        return sections
+        # Build sections list with populated values
+        sections = []
+        section_meta = {
+            "trading": ("Trading Configuration", "Core trading parameters"),
+            "capital": ("Capital & Leverage", "Account funding and leverage settings"),
+            "position": ("Position Management", "Position sizing and limits"),
+            "risk": ("Risk Management", "Stop loss, take profit, and risk controls"),
+            "ai": ("AI Configuration", "DeepSeek and multi-agent settings"),
+            "indicators": ("Technical Indicators", "Indicator periods and parameters"),
+            "telegram": ("Telegram Notifications", "Notification settings"),
+            "timing": ("Timing", "Timer and interval settings"),
+            "logging": ("Logging", "Log levels and outputs"),
+            "multi_timeframe": ("Multi-Timeframe (MTF)", "Three-layer MTF framework settings"),
+            "order_flow": ("Order Flow", "Order flow and derivatives data"),
+            "sentiment": ("Sentiment Analysis", "Market sentiment settings"),
+            "execution": ("Execution", "Order execution settings"),
+            "network": ("Network", "API and network settings"),
+        }
 
-    def _extract_section(self, config: Dict, section: str) -> Dict:
-        """Extract a section from config with metadata"""
-        return config.get(section, {})
+        for section_id, fields in field_definitions.items():
+            if section_id not in section_meta:
+                continue
+
+            title, description = section_meta[section_id]
+            populated_fields = []
+
+            for field in fields:
+                path = field["path"]
+                value = self.get_config_value(path)
+                populated_fields.append({
+                    **field,
+                    "value": value
+                })
+
+            sections.append({
+                "id": section_id,
+                "title": title,
+                "description": description,
+                "fields": populated_fields,
+            })
+
+        return {"sections": sections}
 
     # =========================================================================
     # Service Control
@@ -444,44 +525,158 @@ class ConfigService:
     # Diagnostics
     # =========================================================================
     def run_diagnostics(self) -> Dict:
-        """Run basic diagnostics"""
-        results = {
-            "config_valid": False,
-            "service_running": False,
-            "binance_configured": False,
-            "telegram_configured": False,
-            "deepseek_configured": False,
-            "errors": [],
-        }
+        """Run basic diagnostics and return checks in UI-friendly format"""
+        checks = []
 
         # Check config
+        config_valid = False
         try:
             config = self.get_merged_config()
             if config:
-                results["config_valid"] = True
+                config_valid = True
+                checks.append({
+                    "name": "Configuration",
+                    "status": "pass",
+                    "message": "configs/base.yaml loaded successfully"
+                })
+            else:
+                checks.append({
+                    "name": "Configuration",
+                    "status": "fail",
+                    "message": "Failed to load configuration"
+                })
         except Exception as e:
-            results["errors"].append(f"Config error: {e}")
+            checks.append({
+                "name": "Configuration",
+                "status": "fail",
+                "message": f"Config error: {e}"
+            })
 
         # Check service
         status = self.get_service_status()
-        results["service_running"] = status.get("running", False)
+        service_running = status.get("running", False)
+        if service_running:
+            checks.append({
+                "name": "Trading Service",
+                "status": "pass",
+                "message": f"nautilus-trader is running (PID: {status.get('pid', 'N/A')})"
+            })
+        else:
+            checks.append({
+                "name": "Trading Service",
+                "status": "fail",
+                "message": f"Service is not running (state: {status.get('state', 'unknown')})"
+            })
 
         # Check API keys (from env file)
         env_path = Path.home() / ".env.aitrader"
+        binance_configured = False
+        telegram_configured = False
+        deepseek_configured = False
+
         if env_path.exists():
             try:
                 with open(env_path) as f:
                     content = f.read()
                     if "BINANCE_API_KEY=" in content and "BINANCE_API_SECRET=" in content:
-                        results["binance_configured"] = True
+                        # Check if they have actual values (not empty)
+                        binance_configured = "BINANCE_API_KEY=\"\"" not in content and "BINANCE_API_KEY=''" not in content
                     if "TELEGRAM_BOT_TOKEN=" in content:
-                        results["telegram_configured"] = True
+                        telegram_configured = "TELEGRAM_BOT_TOKEN=\"\"" not in content
                     if "DEEPSEEK_API_KEY=" in content:
-                        results["deepseek_configured"] = True
-            except Exception as e:
-                results["errors"].append(f"Env file error: {e}")
+                        deepseek_configured = "DEEPSEEK_API_KEY=\"\"" not in content
 
-        return results
+                checks.append({
+                    "name": "Environment File",
+                    "status": "pass",
+                    "message": "~/.env.aitrader found"
+                })
+            except Exception as e:
+                checks.append({
+                    "name": "Environment File",
+                    "status": "fail",
+                    "message": f"Error reading env file: {e}"
+                })
+        else:
+            checks.append({
+                "name": "Environment File",
+                "status": "fail",
+                "message": "~/.env.aitrader not found"
+            })
+
+        # Binance API
+        if binance_configured:
+            checks.append({
+                "name": "Binance API",
+                "status": "pass",
+                "message": "API credentials configured"
+            })
+        else:
+            checks.append({
+                "name": "Binance API",
+                "status": "fail",
+                "message": "BINANCE_API_KEY or BINANCE_API_SECRET not set"
+            })
+
+        # DeepSeek API
+        if deepseek_configured:
+            checks.append({
+                "name": "DeepSeek AI",
+                "status": "pass",
+                "message": "API key configured"
+            })
+        else:
+            checks.append({
+                "name": "DeepSeek AI",
+                "status": "fail",
+                "message": "DEEPSEEK_API_KEY not set"
+            })
+
+        # Telegram
+        if telegram_configured:
+            checks.append({
+                "name": "Telegram Bot",
+                "status": "pass",
+                "message": "Bot token configured"
+            })
+        else:
+            checks.append({
+                "name": "Telegram Bot",
+                "status": "warn",
+                "message": "TELEGRAM_BOT_TOKEN not set (optional)"
+            })
+
+        # Check log directory
+        log_dir = self.aitrader_path / "logs"
+        if log_dir.exists():
+            checks.append({
+                "name": "Log Directory",
+                "status": "pass",
+                "message": f"{log_dir} exists"
+            })
+        else:
+            checks.append({
+                "name": "Log Directory",
+                "status": "warn",
+                "message": "logs/ directory not found"
+            })
+
+        # Check venv
+        venv_python = self.aitrader_path / "venv" / "bin" / "python"
+        if venv_python.exists():
+            checks.append({
+                "name": "Python Virtual Environment",
+                "status": "pass",
+                "message": "venv/bin/python exists"
+            })
+        else:
+            checks.append({
+                "name": "Python Virtual Environment",
+                "status": "fail",
+                "message": "venv not found - run setup.sh"
+            })
+
+        return {"checks": checks}
 
 
 # Singleton instance
