@@ -1406,9 +1406,26 @@ class DeepSeekAIStrategy(Strategy):
                         'bb_upper': decision_layer_data.get('bb_upper', 0),
                         'bb_middle': decision_layer_data.get('bb_middle', 0),
                         'bb_lower': decision_layer_data.get('bb_lower', 0),
+                        'bb_position': decision_layer_data.get('bb_position', 50),  # v3.5: 支撑/阻力距离
                         # 'overall_trend' 已移除 - AI 使用 INDICATOR_DEFINITIONS 自己判断
                     }
                     self.log.info(f"[MTF] AI 分析使用 4H 决策层数据: RSI={ai_technical_data['mtf_decision_layer']['rsi']:.1f}")
+
+                # ========== 获取 1D 趋势层数据 (MTF v3.5) ==========
+                trend_layer_data = None
+                if self.mtf_enabled and self.mtf_manager:
+                    try:
+                        trend_layer_data = self.mtf_manager.get_technical_data_for_layer("trend", current_price)
+                        if trend_layer_data and trend_layer_data.get('_initialized', True):
+                            ai_technical_data['mtf_trend_layer'] = {
+                                'timeframe': '1D',
+                                'sma_200': trend_layer_data.get('sma_200', 0),
+                                'macd': trend_layer_data.get('macd', 0),
+                                'macd_signal': trend_layer_data.get('macd_signal', 0),
+                            }
+                            self.log.info(f"[MTF] AI 分析使用 1D 趋势层数据: SMA_200=${ai_technical_data['mtf_trend_layer']['sma_200']:,.2f}")
+                    except Exception as e:
+                        self.log.warning(f"[MTF] 获取趋势层数据失败: {e}")
 
                 # ========== 获取订单流数据 (MTF v2.1) ==========
                 order_flow_data = None

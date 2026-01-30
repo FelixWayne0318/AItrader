@@ -806,6 +806,7 @@ VOLATILITY (Bollinger Bands):
 - Upper: ${safe_get('bb_upper'):,.2f}
 - Middle: ${safe_get('bb_middle'):,.2f}
 - Lower: ${safe_get('bb_lower'):,.2f}
+- Position: {safe_get('bb_position'):.1f}% (0%=Lower Band, 100%=Upper Band)
 
 VOLUME:
 - Volume Ratio: {safe_get('volume_ratio'):.2f}x average
@@ -838,6 +839,24 @@ BOLLINGER BANDS (4H):
 - Upper: ${mtf_safe_get('bb_upper'):,.2f}
 - Middle: ${mtf_safe_get('bb_middle'):,.2f}
 - Lower: ${mtf_safe_get('bb_lower'):,.2f}
+- Position: {mtf_safe_get('bb_position'):.1f}% (0%=Lower, 100%=Upper)
+"""
+
+        # Add 1D trend layer data if available (MTF v3.5)
+        mtf_trend = data.get('mtf_trend_layer')
+        if mtf_trend:
+            def trend_safe_get(key, default=0):
+                val = mtf_trend.get(key)
+                return float(val) if val is not None else default
+
+            report += f"""
+=== MARKET DATA (1D Timeframe - Macro Trend) ===
+
+TREND INDICATORS (1D):
+- SMA 200: ${trend_safe_get('sma_200'):,.2f}
+- Price vs SMA_200: {'+' if data.get('price', 0) > trend_safe_get('sma_200') else ''}{((data.get('price', 0) / trend_safe_get('sma_200') - 1) * 100) if trend_safe_get('sma_200') > 0 else 0:.2f}%
+- MACD: {trend_safe_get('macd'):.4f}
+- MACD Signal: {trend_safe_get('macd_signal'):.4f}
 """
 
         return report
