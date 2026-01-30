@@ -9,7 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from core.config import settings, load_aitrader_env
 from core.database import init_db
-from api import public_router, admin_router, auth_router
+from api import public_router, admin_router, auth_router, trading_router, websocket_router
 
 
 @asynccontextmanager
@@ -124,6 +124,8 @@ app.add_middleware(
 app.include_router(public_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
+app.include_router(trading_router, prefix="/api")
+app.include_router(websocket_router, prefix="/api")
 
 
 @app.get("/api/health")
