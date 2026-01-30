@@ -1523,6 +1523,13 @@ try:
     print()
     print("  ────────────────────────────────────────────────────────────────")
 
+    # v3.6: 添加价格统计数据到 technical_data (与 deepseek_strategy.py:1402-1407 一致)
+    technical_data['price_change'] = price_data.get('price_change', 0)
+    technical_data['period_high'] = price_data.get('period_high', 0)
+    technical_data['period_low'] = price_data.get('period_low', 0)
+    technical_data['period_change_pct'] = price_data.get('period_change_pct', 0)
+    technical_data['period_hours'] = price_data.get('period_hours', 0)
+
     signal_data = multi_agent.analyze(
         symbol="BTCUSDT",
         technical_report=technical_data,
