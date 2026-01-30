@@ -60,16 +60,12 @@ function TradingViewWidgetComponent({
       support_host: "https://www.tradingview.com",
       hide_top_toolbar: !showToolbar,
       hide_legend: !showDetails,
-      hide_side_toolbar: false,
+      hide_side_toolbar: true,  // Hide drawing tools - users view only
       withdateranges: true,
       save_image: false,
       details: showDetails,
       hotlist: false,
-      studies: [
-        "STD;Bollinger_Bands",
-        "STD;RSI",
-        "STD;MACD"
-      ],
+      studies: [],  // Clean chart - AI analysis shown in sidebar
       container_id: "tradingview_widget_container",
       backgroundColor: "rgba(10, 14, 23, 1)",
       gridColor: "rgba(30, 41, 59, 0.3)",

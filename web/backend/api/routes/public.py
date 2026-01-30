@@ -144,3 +144,96 @@ async def get_latest_signal():
         "symbol": "BTCUSDT",
         "timestamp": datetime.now().isoformat(),
     }
+
+
+@router.get("/signal-history")
+async def get_signal_history(limit: int = 10):
+    """Get recent AI signal history"""
+    import os
+    import json
+    from datetime import datetime
+
+    history_file_paths = [
+        "/home/linuxuser/nautilus_AItrader/logs/signal_history.json",
+        "/home/linuxuser/nautilus_AItrader/state/signal_history.json",
+        os.path.expanduser("~/nautilus_AItrader/logs/signal_history.json"),
+    ]
+
+    for history_file in history_file_paths:
+        if os.path.exists(history_file):
+            try:
+                with open(history_file, 'r') as f:
+                    data = json.load(f)
+                    signals = data if isinstance(data, list) else data.get("signals", [])
+                    return {
+                        "signals": signals[:limit],
+                        "total": len(signals),
+                    }
+            except Exception:
+                pass
+
+    # Demo data if no history file found
+    return {
+        "signals": [
+            {
+                "signal": "HOLD",
+                "confidence": "MEDIUM",
+                "reason": "Market consolidating, waiting for breakout",
+                "timestamp": datetime.now().isoformat(),
+                "result": None,
+            }
+        ],
+        "total": 1,
+    }
+
+
+@router.get("/ai-analysis")
+async def get_ai_analysis():
+    """Get detailed AI analysis including Bull/Bear debate"""
+    import os
+    import json
+    from datetime import datetime
+
+    analysis_file_paths = [
+        "/home/linuxuser/nautilus_AItrader/logs/latest_analysis.json",
+        "/home/linuxuser/nautilus_AItrader/state/latest_analysis.json",
+        os.path.expanduser("~/nautilus_AItrader/logs/latest_analysis.json"),
+    ]
+
+    for analysis_file in analysis_file_paths:
+        if os.path.exists(analysis_file):
+            try:
+                with open(analysis_file, 'r') as f:
+                    data = json.load(f)
+                    return {
+                        "signal": data.get("signal", "HOLD"),
+                        "confidence": data.get("confidence", "MEDIUM"),
+                        "confidence_score": data.get("confidence_score", 50),
+                        "bull_analysis": data.get("bull_analysis", ""),
+                        "bear_analysis": data.get("bear_analysis", ""),
+                        "judge_reasoning": data.get("judge_reasoning", ""),
+                        "entry_price": data.get("entry_price"),
+                        "stop_loss": data.get("stop_loss"),
+                        "take_profit": data.get("take_profit"),
+                        "technical_score": data.get("technical_score", 50),
+                        "sentiment_score": data.get("sentiment_score", 50),
+                        "timestamp": data.get("timestamp", datetime.now().isoformat()),
+                    }
+            except Exception:
+                pass
+
+    # Demo data if no analysis file found
+    return {
+        "signal": "HOLD",
+        "confidence": "MEDIUM",
+        "confidence_score": 55,
+        "bull_analysis": "RSI showing oversold conditions near key support. Volume increasing on bounces suggests accumulation phase.",
+        "bear_analysis": "Price below 200 SMA on daily. Resistance at $105,000 has rejected multiple times. Funding rate positive indicates crowded longs.",
+        "judge_reasoning": "Mixed signals warrant caution. Technical indicators suggest potential reversal but macro headwinds persist. Wait for confirmation.",
+        "entry_price": None,
+        "stop_loss": None,
+        "take_profit": None,
+        "technical_score": 60,
+        "sentiment_score": 45,
+        "timestamp": datetime.now().isoformat(),
+    }
