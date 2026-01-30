@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.5 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.6 (与实盘 100% 一致)
+
+v11.6 更新 - 修复 calculate_technical_sltp 调用签名:
+- 调用签名与实盘代码 deepseek_strategy.py:2152 完全一致
+- 提取 support/resistance 从 technical_data
+- 修复返回值: (sl, tp, calc_method) 三元组
 
 v11.5 更新 - 完整流程可视化:
 - 添加 AI Prompt 结构验证 (显示 System/User Prompt 内容)
@@ -64,6 +69,19 @@ Prompt 结构 (v3.4):
 - 本地职责: 只收集原始数据，不做预解读
 
 历史更新:
+v11.6:
+- 修复 calculate_technical_sltp 调用签名
+  * 参数: side, entry_price, support, resistance, confidence, use_support_resistance, sl_buffer_pct
+  * 返回值: (sl, tp, calc_method) 三元组
+  * 与 deepseek_strategy.py:2152 完全一致
+
+v11.5:
+- 添加 AI Prompt 结构验证 (System/User Prompt 分离检查)
+- 添加 MTF 状态估算 (RISK_ON/OFF, ALLOW_LONG/SHORT)
+- 添加 safe_float() 类型转换
+- 添加 Funding Rate 差异标注 (Binance 8h vs Coinalyze)
+- 添加错误恢复机制验证
+
 v11.4:
 - Prompt 结构优化为 TradingAgents v3.4 标准
   * INDICATOR_DEFINITIONS 移到 System Prompt
@@ -275,7 +293,7 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.5')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.6')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -520,7 +538,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.5 (TradingAgents v3.4 - 完整流程可视化){mode_str}")
+print(f"  实盘信号诊断工具 v11.6 (TradingAgents v3.4 - 修复 SL/TP 调用签名){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -2655,6 +2673,12 @@ if not SUMMARY_MODE:
             print(f"     AI Judge TP: ${multi_tp:,.2f}" if multi_tp else "     AI Judge TP: None")
             print()
 
+            # 获取支撑/阻力位 (用于技术分析回退)
+            support = technical_data.get('support', 0.0)
+            resistance = technical_data.get('resistance', 0.0)
+            use_support_resistance = getattr(strategy_config, 'sl_use_support_resistance', True)
+            sl_buffer_pct = getattr(strategy_config, 'sl_buffer_pct', 0.001)
+
             # 验证 AI 提供的 SL/TP
             if multi_sl and multi_tp:
                 sl_valid, tp_valid = validate_multiagent_sltp(
@@ -2672,30 +2696,33 @@ if not SUMMARY_MODE:
                 if sl_valid and tp_valid:
                     print("     ✅ AI SL/TP 验证通过，使用 AI 价位")
                     final_sl, final_tp = multi_sl, multi_tp
+                    calc_method = "AI Judge"
                 else:
                     print("     ⚠️ AI SL/TP 验证失败，回退到技术分析")
-                    sl_config = {
-                        'use_support_resistance': getattr(strategy_config, 'sl_use_support_resistance', True),
-                        'buffer_pct': getattr(strategy_config, 'sl_buffer_pct', 0.001),
-                        'tp_high_pct': getattr(strategy_config, 'tp_high_confidence_pct', 0.03),
-                        'tp_medium_pct': getattr(strategy_config, 'tp_medium_confidence_pct', 0.02),
-                        'tp_low_pct': getattr(strategy_config, 'tp_low_confidence_pct', 0.01),
-                    }
-                    final_sl, final_tp = calculate_technical_sltp(
-                        current_price, signal, confidence, technical_data, sl_config
+                    # 调用签名与实盘代码一致
+                    final_sl, final_tp, calc_method = calculate_technical_sltp(
+                        side=signal,
+                        entry_price=current_price,
+                        support=support,
+                        resistance=resistance,
+                        confidence=confidence,
+                        use_support_resistance=use_support_resistance,
+                        sl_buffer_pct=sl_buffer_pct,
                     )
+                    print(f"     计算方法: {calc_method}")
             else:
                 print("     ⚠️ AI 未提供 SL/TP，使用技术分析计算")
-                sl_config = {
-                    'use_support_resistance': getattr(strategy_config, 'sl_use_support_resistance', True),
-                    'buffer_pct': getattr(strategy_config, 'sl_buffer_pct', 0.001),
-                    'tp_high_pct': getattr(strategy_config, 'tp_high_confidence_pct', 0.03),
-                    'tp_medium_pct': getattr(strategy_config, 'tp_medium_confidence_pct', 0.02),
-                    'tp_low_pct': getattr(strategy_config, 'tp_low_confidence_pct', 0.01),
-                }
-                final_sl, final_tp = calculate_technical_sltp(
-                    current_price, signal, confidence, technical_data, sl_config
+                # 调用签名与实盘代码一致
+                final_sl, final_tp, calc_method = calculate_technical_sltp(
+                    side=signal,
+                    entry_price=current_price,
+                    support=support,
+                    resistance=resistance,
+                    confidence=confidence,
+                    use_support_resistance=use_support_resistance,
+                    sl_buffer_pct=sl_buffer_pct,
                 )
+                print(f"     计算方法: {calc_method}")
 
             # 确保 final_sl 和 final_tp 是数字类型
             final_sl = safe_float(final_sl) or 0.0
