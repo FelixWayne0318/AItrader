@@ -35,7 +35,7 @@ export default function CopyPage() {
   return (
     <>
       <Head>
-        <title>Copy Trading - Algvex</title>
+        <title>Copy Trading - AlgVex</title>
         <meta
           name="description"
           content="Follow my trades on major cryptocurrency exchanges"

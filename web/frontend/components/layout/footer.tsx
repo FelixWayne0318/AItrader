@@ -18,7 +18,7 @@ export function Footer({ t }: FooterProps) {
               <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
                 <span className="text-primary-foreground font-bold text-lg">A</span>
               </div>
-              <span className="text-xl font-bold">Algvex</span>
+              <span className="text-xl font-bold">AlgVex</span>
             </Link>
             <p className="text-sm text-muted-foreground max-w-md">
               AI-powered algorithmic trading system built on NautilusTrader
@@ -86,7 +86,7 @@ export function Footer({ t }: FooterProps) {
             {t("footer.disclaimer")}
           </p>
           <p className="text-xs text-muted-foreground text-center mt-2">
-            &copy; {new Date().getFullYear()} Algvex. {t("footer.rights")}.
+            &copy; {new Date().getFullYear()} AlgVex. {t("footer.rights")}.
           </p>
         </div>
       </div>

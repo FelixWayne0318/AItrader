@@ -18,6 +18,13 @@ import {
   Activity,
   BarChart3,
   Bell,
+  Palette,
+  Upload,
+  Image,
+  Type,
+  Globe,
+  Mail,
+  FileText,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -88,7 +95,9 @@ export default function AdminDashboard() {
   const [config, setConfig] = useState<any>(null);
   const [socialLinks, setSocialLinks] = useState<any[]>([]);
   const [copyLinks, setCopyLinks] = useState<any[]>([]);
+  const [siteSettings, setSiteSettings] = useState<Record<string, string>>({});
   const [pendingRestart, setPendingRestart] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Authentication check
@@ -173,6 +182,13 @@ export default function AdminDashboard() {
       })
         .then((r) => r.json())
         .then(setCopyLinks)
+        .catch(console.error);
+
+      fetch("/api/admin/settings", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((r) => r.json())
+        .then(setSiteSettings)
         .catch(console.error);
     }
   }, [token]);
@@ -262,6 +278,60 @@ export default function AdminDashboard() {
     setTimeout(() => setMessage(null), 5000);
   };
 
+  const handleSiteSettingSave = async (key: string, value: string) => {
+    if (!token) return;
+
+    try {
+      await fetch(`/api/admin/settings/${key}?value=${encodeURIComponent(value)}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      setSiteSettings((prev) => ({ ...prev, [key]: value }));
+      setMessage({ type: "success", text: `Updated ${key}` });
+    } catch (e: any) {
+      setMessage({ type: "error", text: e.message });
+    }
+
+    setTimeout(() => setMessage(null), 5000);
+  };
+
+  const handleFileUpload = async (type: "logo" | "favicon", file: File) => {
+    if (!token) return;
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`/api/admin/upload/${type}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setSiteSettings((prev) => ({
+          ...prev,
+          [`${type}_url`]: data.url,
+        }));
+        setMessage({ type: "success", text: `${type} uploaded successfully` });
+      } else {
+        setMessage({ type: "error", text: data.detail || "Upload failed" });
+      }
+    } catch (e: any) {
+      setMessage({ type: "error", text: e.message });
+    } finally {
+      setUploading(false);
+    }
+
+    setTimeout(() => setMessage(null), 5000);
+  };
+
   // Loading state
   if (isLoading) {
     return (
@@ -285,12 +355,13 @@ export default function AdminDashboard() {
     { id: "dashboard", label: "Dashboard", icon: Activity },
     { id: "strategy", label: "Strategy", icon: Settings },
     { id: "links", label: "Links", icon: LinkIcon },
+    { id: "site", label: "Site Settings", icon: Palette },
   ];
 
   return (
     <>
       <Head>
-        <title>Admin Dashboard - Algvex</title>
+        <title>Admin Dashboard - AlgVex</title>
       </Head>
 
       <div className="min-h-screen gradient-bg">
@@ -302,7 +373,7 @@ export default function AdminDashboard() {
                 <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
                   <span className="text-primary-foreground font-bold">A</span>
                 </div>
-                <span className="font-semibold">Algvex Admin</span>
+                <span className="font-semibold">AlgVex Admin</span>
                 {serviceStatus?.running && (
                   <span className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-500/10 text-green-500 text-xs">
                     <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
@@ -649,6 +720,227 @@ export default function AdminDashboard() {
                       />
                     </div>
                   ))}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Site Settings Tab */}
+          {activeTab === "site" && (
+            <div className="space-y-6">
+              {/* Logo & Branding */}
+              <Card className="border-border/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Image className="h-5 w-5" />
+                    Logo & Branding
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* Logo Upload */}
+                  <div>
+                    <label className="text-sm text-muted-foreground mb-2 block">Site Logo</label>
+                    <div className="flex items-start gap-4">
+                      <div className="w-24 h-24 rounded-lg border-2 border-dashed border-border flex items-center justify-center bg-muted/30 overflow-hidden">
+                        {siteSettings.logo_url ? (
+                          <img
+                            src={siteSettings.logo_url}
+                            alt="Logo"
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          <Image className="h-8 w-8 text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          id="logo-upload"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleFileUpload("logo", file);
+                          }}
+                        />
+                        <label htmlFor="logo-upload">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="cursor-pointer"
+                            disabled={uploading}
+                            asChild
+                          >
+                            <span>
+                              <Upload className="h-4 w-4 mr-2" />
+                              {uploading ? "Uploading..." : "Upload Logo"}
+                            </span>
+                          </Button>
+                        </label>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Recommended: 200x200px, PNG or SVG
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Favicon Upload */}
+                  <div>
+                    <label className="text-sm text-muted-foreground mb-2 block">Favicon</label>
+                    <div className="flex items-start gap-4">
+                      <div className="w-16 h-16 rounded-lg border-2 border-dashed border-border flex items-center justify-center bg-muted/30 overflow-hidden">
+                        {siteSettings.favicon_url ? (
+                          <img
+                            src={siteSettings.favicon_url}
+                            alt="Favicon"
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          <Globe className="h-6 w-6 text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <input
+                          type="file"
+                          accept="image/*,.ico"
+                          className="hidden"
+                          id="favicon-upload"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleFileUpload("favicon", file);
+                          }}
+                        />
+                        <label htmlFor="favicon-upload">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="cursor-pointer"
+                            disabled={uploading}
+                            asChild
+                          >
+                            <span>
+                              <Upload className="h-4 w-4 mr-2" />
+                              {uploading ? "Uploading..." : "Upload Favicon"}
+                            </span>
+                          </Button>
+                        </label>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Recommended: 32x32px or 64x64px, ICO or PNG
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Site Information */}
+              <Card className="border-border/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Type className="h-5 w-5" />
+                    Site Information
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm text-muted-foreground">Site Name</label>
+                      <input
+                        type="text"
+                        className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none"
+                        defaultValue={siteSettings.site_name || "AlgVex"}
+                        onBlur={(e) => handleSiteSettingSave("site_name", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-muted-foreground">Tagline</label>
+                      <input
+                        type="text"
+                        className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none"
+                        defaultValue={siteSettings.tagline || "AI-Powered Crypto Trading"}
+                        onBlur={(e) => handleSiteSettingSave("tagline", e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground">Site Description (SEO)</label>
+                    <textarea
+                      className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none resize-none"
+                      rows={3}
+                      defaultValue={
+                        siteSettings.site_description ||
+                        "Advanced algorithmic trading powered by DeepSeek AI and multi-agent decision system"
+                      }
+                      onBlur={(e) => handleSiteSettingSave("site_description", e.target.value)}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Contact Information */}
+              <Card className="border-border/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Mail className="h-5 w-5" />
+                    Contact Information
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm text-muted-foreground">Contact Email</label>
+                      <input
+                        type="email"
+                        className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none"
+                        defaultValue={siteSettings.contact_email || ""}
+                        placeholder="contact@algvex.com"
+                        onBlur={(e) => handleSiteSettingSave("contact_email", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-muted-foreground">Support Email</label>
+                      <input
+                        type="email"
+                        className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none"
+                        defaultValue={siteSettings.support_email || ""}
+                        placeholder="support@algvex.com"
+                        onBlur={(e) => handleSiteSettingSave("support_email", e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Legal */}
+              <Card className="border-border/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="h-5 w-5" />
+                    Legal & Disclaimers
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <label className="text-sm text-muted-foreground">Risk Disclaimer</label>
+                    <textarea
+                      className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none resize-none"
+                      rows={4}
+                      defaultValue={
+                        siteSettings.risk_disclaimer ||
+                        "Trading cryptocurrencies involves significant risk. Past performance does not guarantee future results. Trade responsibly."
+                      }
+                      onBlur={(e) => handleSiteSettingSave("risk_disclaimer", e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground">Copyright Text</label>
+                    <input
+                      type="text"
+                      className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none"
+                      defaultValue={siteSettings.copyright_text || "© 2025 AlgVex. All rights reserved."}
+                      onBlur={(e) => handleSiteSettingSave("copyright_text", e.target.value)}
+                    />
+                  </div>
                 </CardContent>
               </Card>
             </div>

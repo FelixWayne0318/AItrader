@@ -2,7 +2,11 @@
 Admin API Routes - Authentication required
 Comprehensive configuration and system management
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+import uuid
+import shutil
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
@@ -14,6 +18,10 @@ from services import config_service
 from api.deps import get_current_admin
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
+
+# Upload directory for logos and assets
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 # ============================================================================
@@ -406,3 +414,182 @@ async def update_site_setting(
 
     await db.commit()
     return {"success": True, "key": key}
+
+
+# ============================================================================
+# File Upload (Logo, Favicon, etc.)
+# ============================================================================
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/x-icon"}
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+
+
+@router.post("/upload/logo")
+async def upload_logo(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(get_current_admin)
+):
+    """Upload site logo"""
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Allowed: PNG, JPG, GIF, WebP, SVG, ICO"
+        )
+
+    # Check file size
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large (max 5MB)")
+
+    # Generate unique filename
+    ext = os.path.splitext(file.filename)[1] or ".png"
+    filename = f"logo_{uuid.uuid4().hex[:8]}{ext}"
+    filepath = os.path.join(UPLOAD_DIR, filename)
+
+    # Save file
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    # Save to database
+    logo_url = f"/api/uploads/{filename}"
+    result = await db.execute(
+        select(SiteSettings).where(SiteSettings.key == "logo_url")
+    )
+    setting = result.scalar_one_or_none()
+
+    if setting:
+        # Delete old logo file if exists
+        old_filename = setting.value.split("/")[-1] if setting.value else None
+        if old_filename:
+            old_path = os.path.join(UPLOAD_DIR, old_filename)
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        setting.value = logo_url
+    else:
+        setting = SiteSettings(key="logo_url", value=logo_url)
+        db.add(setting)
+
+    await db.commit()
+    return {"success": True, "url": logo_url, "filename": filename}
+
+
+@router.post("/upload/favicon")
+async def upload_favicon(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(get_current_admin)
+):
+    """Upload site favicon"""
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Allowed: PNG, JPG, GIF, WebP, SVG, ICO"
+        )
+
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large (max 5MB)")
+
+    ext = os.path.splitext(file.filename)[1] or ".ico"
+    filename = f"favicon_{uuid.uuid4().hex[:8]}{ext}"
+    filepath = os.path.join(UPLOAD_DIR, filename)
+
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    favicon_url = f"/api/uploads/{filename}"
+    result = await db.execute(
+        select(SiteSettings).where(SiteSettings.key == "favicon_url")
+    )
+    setting = result.scalar_one_or_none()
+
+    if setting:
+        old_filename = setting.value.split("/")[-1] if setting.value else None
+        if old_filename:
+            old_path = os.path.join(UPLOAD_DIR, old_filename)
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        setting.value = favicon_url
+    else:
+        setting = SiteSettings(key="favicon_url", value=favicon_url)
+        db.add(setting)
+
+    await db.commit()
+    return {"success": True, "url": favicon_url, "filename": filename}
+
+
+@router.get("/uploads/{filename}")
+async def get_uploaded_file(filename: str):
+    """Serve uploaded files"""
+    filepath = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(filepath)
+
+
+# ============================================================================
+# Performance & Trading Data (for dashboard)
+# ============================================================================
+@router.get("/performance")
+async def get_performance_data(admin=Depends(get_current_admin)):
+    """Get performance data for admin dashboard"""
+    from services import binance_service
+
+    stats = await binance_service.get_performance_stats(30)
+    return {
+        **stats,
+        "equity_history": stats.get("pnl_history", []),
+        "risk_metrics": {
+            "sharpe_ratio": stats.get("sharpe_ratio", 0),
+            "max_drawdown": stats.get("max_drawdown_percent", 0),
+            "win_rate": stats.get("win_rate", 0),
+            "profit_factor": stats.get("profit_factor", 0),
+        }
+    }
+
+
+@router.get("/trades/recent")
+async def get_recent_trades(
+    limit: int = 20,
+    admin=Depends(get_current_admin)
+):
+    """Get recent trades for admin dashboard"""
+    from services import binance_service
+
+    trades = await binance_service.get_recent_trades(limit)
+    return trades
+
+
+@router.get("/signals/recent")
+async def get_recent_signals(
+    limit: int = 20,
+    admin=Depends(get_current_admin)
+):
+    """Get recent AI signals for admin dashboard"""
+    import json
+    from datetime import datetime
+
+    signal_file_paths = [
+        "/home/linuxuser/nautilus_AItrader/logs/signal_history.json",
+        "/home/linuxuser/nautilus_AItrader/state/signal_history.json",
+    ]
+
+    for path in signal_file_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                    signals = data if isinstance(data, list) else data.get("signals", [])
+                    return signals[:limit]
+            except Exception:
+                pass
+
+    # Demo data
+    return [
+        {
+            "signal": "HOLD",
+            "confidence": "MEDIUM",
+            "reason": "Market consolidating",
+            "timestamp": datetime.now().isoformat(),
+        }
+    ]

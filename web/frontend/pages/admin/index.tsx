@@ -53,7 +53,7 @@ export default function AdminLoginPage() {
   return (
     <>
       <Head>
-        <title>Admin Login - Algvex</title>
+        <title>Admin Login - AlgVex</title>
       </Head>
       <div className="min-h-screen gradient-bg flex items-center justify-center px-4">
         <Card className="w-full max-w-md border-border/50">

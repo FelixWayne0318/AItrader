@@ -124,7 +124,7 @@ export function Header({ locale, t }: HeaderProps) {
             <div className="h-7 w-7 rounded-lg bg-primary flex items-center justify-center">
               <span className="text-primary-foreground font-bold text-sm">A</span>
             </div>
-            <span className="text-lg font-bold">Algvex</span>
+            <span className="text-lg font-bold">AlgVex</span>
           </Link>
 
           {/* Desktop Navigation - Only on lg+ screens */}

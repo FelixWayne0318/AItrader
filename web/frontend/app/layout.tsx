@@ -13,7 +13,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Algvex - AI-Powered Crypto Trading",
+  title: "AlgVex - AI-Powered Crypto Trading",
   description:
     "Advanced algorithmic trading powered by DeepSeek AI and multi-agent decision system. Follow my trades on major exchanges.",
   keywords: [
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
     "cryptocurrency",
   ],
   openGraph: {
-    title: "Algvex - AI-Powered Crypto Trading",
+    title: "AlgVex - AI-Powered Crypto Trading",
     description:
       "Advanced algorithmic trading powered by DeepSeek AI. Follow my trades on Binance, Bybit, and more.",
     type: "website",
@@ -33,7 +33,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Algvex - AI-Powered Crypto Trading",
+    title: "AlgVex - AI-Powered Crypto Trading",
     description: "Advanced algorithmic trading powered by DeepSeek AI",
   },
 };

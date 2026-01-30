@@ -40,7 +40,7 @@ export default function PerformancePage() {
   return (
     <>
       <Head>
-        <title>Performance - Algvex</title>
+        <title>Performance - AlgVex</title>
         <meta
           name="description"
           content="Real-time trading performance from Binance Futures"

@@ -236,7 +236,7 @@ export default function HomePage() {
   return (
     <>
       <Head>
-        <title>Algvex - AI-Powered Crypto Trading</title>
+        <title>AlgVex - AI-Powered Crypto Trading</title>
         <meta
           name="description"
           content="Advanced algorithmic trading powered by DeepSeek AI and multi-agent decision system"
@@ -375,7 +375,7 @@ export default function HomePage() {
           <div className="container mx-auto">
             <div className="text-center mb-10 sm:mb-12 lg:mb-16">
               <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-3 sm:mb-4">
-                Why Choose Algvex?
+                Why Choose AlgVex?
               </h2>
               <p className="text-sm sm:text-base lg:text-lg text-muted-foreground max-w-2xl mx-auto">
                 Powered by cutting-edge AI technology and institutional-grade risk management

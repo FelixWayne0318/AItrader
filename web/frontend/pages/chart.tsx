@@ -117,7 +117,7 @@ export default function ChartPage() {
   return (
     <>
       <Head>
-        <title>AI Trading Chart - Algvex</title>
+        <title>AI Trading Chart - AlgVex</title>
         <meta name="description" content="AI-powered cryptocurrency trading analysis" />
       </Head>
 

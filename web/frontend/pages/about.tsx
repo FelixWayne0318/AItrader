@@ -58,10 +58,10 @@ export default function AboutPage() {
   return (
     <>
       <Head>
-        <title>About - Algvex</title>
+        <title>About - AlgVex</title>
         <meta
           name="description"
-          content="Learn about Algvex AI-powered trading system"
+          content="Learn about AlgVex AI-powered trading system"
         />
       </Head>
 

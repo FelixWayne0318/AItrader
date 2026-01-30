@@ -44,7 +44,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "copy.disclaimer": "Trading involves risk. Past performance is not indicative of future results.",
 
     // About
-    "about.title": "About Algvex",
+    "about.title": "About AlgVex",
     "about.strategy": "AI Strategy",
     "about.strategyDesc": "Multi-agent system with Bull/Bear debate mechanism for comprehensive market analysis",
     "about.risk": "Risk Management",
@@ -104,7 +104,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "copy.disclaimer": "交易有风险，过往业绩不代表未来表现。",
 
     // About
-    "about.title": "关于 Algvex",
+    "about.title": "关于 AlgVex",
     "about.strategy": "AI 策略",
     "about.strategyDesc": "采用多头/空头辩论机制的多代理系统进行全面市场分析",
     "about.risk": "风险管理",

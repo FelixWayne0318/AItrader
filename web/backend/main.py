@@ -1,15 +1,21 @@
 """
-Algvex API - FastAPI Backend for AItrader Web Interface
+AlgVex API - FastAPI Backend for AItrader Web Interface
 """
+import os
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from core.config import settings, load_aitrader_env
 from core.database import init_db
 from api import public_router, admin_router, auth_router, trading_router, websocket_router, performance_router
+
+# Ensure uploads directory exists
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 @asynccontextmanager
@@ -129,6 +135,9 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(trading_router, prefix="/api")
 app.include_router(websocket_router, prefix="/api")
 app.include_router(performance_router)
+
+# Mount uploads directory for static files
+app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 @app.get("/api/health")
