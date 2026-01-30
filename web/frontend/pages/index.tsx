@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useTranslation, type Locale } from "@/lib/i18n";
 import { TickerTapeWidget, MiniChartWidget } from "@/components/charts/tradingview-widget";
+import { HeroAnimatedCandlestick } from "@/components/charts/animated-candlestick";
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
@@ -316,7 +317,7 @@ export default function HomePage() {
               </p>
 
               {/* CTA Buttons */}
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
                 <Link href="/copy">
                   <Button size="lg" className="glow-primary text-lg px-8 h-14">
                     Start Copy Trading
@@ -334,6 +335,9 @@ export default function HomePage() {
                   </Button>
                 </Link>
               </div>
+
+              {/* Animated Candlestick Chart */}
+              <HeroAnimatedCandlestick />
             </div>
           </div>
         </section>
