@@ -46,30 +46,54 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
-// Dynamic import for EquityCurve - lightweight-charts requires browser window object
+// Dynamic imports for components using framer-motion or browser APIs (ssr: false)
 const EquityCurve = dynamic(
   () => import("@/components/charts/equity-curve").then((mod) => mod.EquityCurve),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex items-center justify-center bg-card/50 rounded-xl border border-border" style={{ height: 350 }}>
-        <div className="text-center text-muted-foreground">
-          <div className="w-8 h-8 mx-auto mb-2 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm">Loading chart...</p>
-        </div>
-      </div>
-    )
-  }
+  { ssr: false }
 );
 
-// Performance Components
-import { TradeTimeline } from "@/components/trading/trade-timeline";
-import { RiskMetrics } from "@/components/trading/risk-metrics";
-import { AISignalLog } from "@/components/trading/ai-signal-log";
-import { NotificationCenter, NotificationBell } from "@/components/notifications/notification-center";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
+const TradeTimeline = dynamic(
+  () => import("@/components/trading/trade-timeline").then((mod) => mod.TradeTimeline),
+  { ssr: false }
+);
+
+const RiskMetrics = dynamic(
+  () => import("@/components/trading/risk-metrics").then((mod) => mod.RiskMetrics),
+  { ssr: false }
+);
+
+const AISignalLog = dynamic(
+  () => import("@/components/trading/ai-signal-log").then((mod) => mod.AISignalLog),
+  { ssr: false }
+);
+
+const NotificationCenter = dynamic(
+  () => import("@/components/notifications/notification-center").then((mod) => mod.NotificationCenter),
+  { ssr: false }
+);
+
+const NotificationBell = dynamic(
+  () => import("@/components/notifications/notification-center").then((mod) => mod.NotificationBell),
+  { ssr: false }
+);
+
+const ThemeToggle = dynamic(
+  () => import("@/components/ui/theme-toggle").then((mod) => mod.ThemeToggle),
+  { ssr: false }
+);
+
+const PerformanceStats = dynamic(
+  () => import("@/components/trading/stats-cards").then((mod) => mod.PerformanceStats),
+  { ssr: false }
+);
+
+const StatsCard = dynamic(
+  () => import("@/components/trading/stats-cards").then((mod) => mod.StatsCard),
+  { ssr: false }
+);
+
+// Non-framer-motion components (safe for SSR)
 import { BotStatus, BotStatusBadge } from "@/components/trading/bot-status";
-import { PerformanceStats, StatsCard } from "@/components/trading/stats-cards";
 
 // Fetcher for SWR
 const fetcher = (url: string, token: string) =>
