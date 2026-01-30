@@ -1,11 +1,12 @@
 """
 Admin API Routes - Authentication required
+Comprehensive configuration and system management
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List
 
 from core.database import get_db
 from models import SocialLink, CopyTradingLink, SiteSettings
@@ -15,8 +16,9 @@ from api.deps import get_current_admin
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
 
-# ============ Schemas ============
-
+# ============================================================================
+# Schemas
+# ============================================================================
 class SocialLinkUpdate(BaseModel):
     platform: str
     url: Optional[str] = None
@@ -47,13 +49,18 @@ class ConfigUpdate(BaseModel):
     value: Any
 
 
+class ConfigBatchUpdate(BaseModel):
+    updates: List[ConfigUpdate]
+
+
 class ServiceAction(BaseModel):
     action: str  # restart, stop, start
     confirm: bool = False
 
 
-# ============ Strategy Configuration ============
-
+# ============================================================================
+# Strategy Configuration
+# ============================================================================
 @router.get("/config")
 async def get_strategy_config(admin=Depends(get_current_admin)):
     """Get full strategy configuration"""
@@ -61,26 +68,83 @@ async def get_strategy_config(admin=Depends(get_current_admin)):
     return config
 
 
+@router.get("/config/sections")
+async def get_config_sections(admin=Depends(get_current_admin)):
+    """Get configuration organized by sections for UI"""
+    sections = config_service.get_config_sections()
+    return sections
+
+
+@router.get("/config/value")
+async def get_config_value(
+    path: str,
+    admin=Depends(get_current_admin)
+):
+    """Get a specific configuration value by path"""
+    value = config_service.get_config_value(path)
+    if value is None:
+        raise HTTPException(status_code=404, detail=f"Config path not found: {path}")
+    return {"path": path, "value": value}
+
+
 @router.put("/config")
-async def update_strategy_config(update: ConfigUpdate, admin=Depends(get_current_admin)):
+async def update_strategy_config(
+    update: ConfigUpdate,
+    admin=Depends(get_current_admin)
+):
     """Update a specific configuration value"""
     success = config_service.update_config_value(update.path, update.value)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update configuration")
-    return {"success": True, "message": f"Updated {update.path}"}
+    return {"success": True, "message": f"Updated {update.path}", "requires_restart": True}
+
+
+@router.put("/config/batch")
+async def update_config_batch(
+    batch: ConfigBatchUpdate,
+    admin=Depends(get_current_admin)
+):
+    """Update multiple configuration values at once"""
+    results = []
+    for update in batch.updates:
+        success = config_service.update_config_value(update.path, update.value)
+        results.append({
+            "path": update.path,
+            "success": success
+        })
+
+    failed = [r for r in results if not r["success"]]
+    if failed:
+        return {
+            "success": False,
+            "message": f"Some updates failed",
+            "results": results,
+            "requires_restart": True
+        }
+
+    return {
+        "success": True,
+        "message": f"Updated {len(results)} values",
+        "results": results,
+        "requires_restart": True
+    }
 
 
 @router.put("/config/full")
-async def update_full_config(config: dict, admin=Depends(get_current_admin)):
+async def update_full_config(
+    config: dict,
+    admin=Depends(get_current_admin)
+):
     """Update full strategy configuration"""
     success = config_service.write_strategy_config(config)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update configuration")
-    return {"success": True, "message": "Configuration updated"}
+    return {"success": True, "message": "Configuration updated", "requires_restart": True}
 
 
-# ============ Service Control ============
-
+# ============================================================================
+# Service Control
+# ============================================================================
 @router.get("/service/status")
 async def get_service_status(admin=Depends(get_current_admin)):
     """Get detailed service status"""
@@ -88,7 +152,10 @@ async def get_service_status(admin=Depends(get_current_admin)):
 
 
 @router.post("/service/control")
-async def control_service(action: ServiceAction, admin=Depends(get_current_admin)):
+async def control_service(
+    action: ServiceAction,
+    admin=Depends(get_current_admin)
+):
     """Control the trading service (restart/stop/start)"""
     if not action.confirm:
         raise HTTPException(
@@ -111,17 +178,49 @@ async def control_service(action: ServiceAction, admin=Depends(get_current_admin
     return {"success": True, "message": message}
 
 
+# ============================================================================
+# Logs
+# ============================================================================
 @router.get("/service/logs")
-async def get_service_logs(lines: int = 100, admin=Depends(get_current_admin)):
-    """Get recent service logs"""
+async def get_service_logs(
+    lines: int = 100,
+    source: str = "journalctl",
+    admin=Depends(get_current_admin)
+):
+    """
+    Get recent service logs
+
+    source: "journalctl" or "file"
+    """
     if lines > 1000:
         lines = 1000
-    logs = config_service.get_recent_logs(lines)
-    return {"logs": logs}
+
+    if source == "file":
+        logs = config_service.get_log_file_content(lines)
+    else:
+        logs = config_service.get_recent_logs(lines)
+
+    return {"logs": logs, "source": source, "lines": lines}
 
 
-# ============ Social Links ============
+# ============================================================================
+# System Info & Diagnostics
+# ============================================================================
+@router.get("/system/info")
+async def get_system_info(admin=Depends(get_current_admin)):
+    """Get system information"""
+    return config_service.get_system_info()
 
+
+@router.get("/system/diagnostics")
+async def run_diagnostics(admin=Depends(get_current_admin)):
+    """Run system diagnostics"""
+    return config_service.run_diagnostics()
+
+
+# ============================================================================
+# Social Links
+# ============================================================================
 @router.get("/social-links")
 async def list_social_links(
     db: AsyncSession = Depends(get_db),
@@ -169,8 +268,9 @@ async def update_social_link(
     return {"success": True, "platform": platform}
 
 
-# ============ Copy Trading Links ============
-
+# ============================================================================
+# Copy Trading Links
+# ============================================================================
 @router.get("/copy-trading")
 async def list_copy_trading_links(
     db: AsyncSession = Depends(get_db),
@@ -271,8 +371,9 @@ async def delete_copy_trading_link(
     return {"success": True}
 
 
-# ============ Site Settings ============
-
+# ============================================================================
+# Site Settings
+# ============================================================================
 @router.get("/settings")
 async def list_site_settings(
     db: AsyncSession = Depends(get_db),
@@ -280,8 +381,8 @@ async def list_site_settings(
 ):
     """List all site settings"""
     result = await db.execute(select(SiteSettings))
-    settings = result.scalars().all()
-    return {s.key: s.value for s in settings}
+    settings_list = result.scalars().all()
+    return {s.key: s.value for s in settings_list}
 
 
 @router.put("/settings/{key}")
