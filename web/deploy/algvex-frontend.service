@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=linuxuser
 Group=linuxuser
-WorkingDirectory=/home/linuxuser/algvex/frontend
+WorkingDirectory=/home/linuxuser/nautilus_AItrader/web/frontend
 Environment=NODE_ENV=production
 Environment=PORT=3000
 ExecStart=/usr/bin/npm start
@@ -19,7 +19,7 @@ StandardError=journal
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/linuxuser/algvex/frontend
+ReadWritePaths=/home/linuxuser/nautilus_AItrader/web/frontend
 PrivateTmp=true
 
 [Install]
