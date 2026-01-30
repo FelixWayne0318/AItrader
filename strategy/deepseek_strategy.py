@@ -1375,28 +1375,9 @@ class DeepSeekAIStrategy(Strategy):
                     f"{current_position['quantity']} @ ${current_position['avg_px']:.2f}"
                 )
 
-            # ========== MTF 优先级规则 (Phase 1: RISK_OFF 过滤) ==========
-            # 趋势层 (1D) 决定是否允许新开仓
-            mtf_risk_state = None
-            mtf_allows_new_position = True  # 默认允许
-
-            if self.mtf_enabled and self.mtf_manager:
-                try:
-                    # 评估趋势层风险状态
-                    mtf_risk_state = self.mtf_manager.evaluate_risk_state(current_price)
-                    self.log.info(f"[MTF] 趋势层 (1D) 风险状态: {mtf_risk_state.value}")
-
-                    # 如果 RISK_OFF，禁止新开仓（但允许平仓和管理现有仓位）
-                    if mtf_risk_state == self._RiskState.RISK_OFF:
-                        mtf_allows_new_position = False
-                        self.log.warning(
-                            f"[MTF] ⚠️ RISK_OFF - 市场结构恶化，禁止新开仓 "
-                            f"(价格低于 SMA_200 或 MACD 为负)"
-                        )
-                except Exception as e:
-                    self.log.warning(f"[MTF] 趋势层评估失败: {e}")
-
-            # ========== 层级决策架构 (TradingAgents) ==========
+            # ========== 层级决策架构 (TradingAgents v3.1) ==========
+            # 设计理念: AI 负责所有交易决策，本地仅做支撑/阻力位边界检查
+            # 移除了 RISK_OFF 趋势过滤 - AI 自主判断趋势方向
             # MultiAgent 的 Judge 作为最终决策者，不再与 DeepSeek 并行合并
             # 流程: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
             try:

@@ -1,48 +1,59 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.0 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.1 (与实盘 100% 一致)
+
+v11.1 更新 - 完全符合 TradingAgents 职责划分:
+- 移除规则1 (趋势方向权限检查) - AI 自主判断趋势方向
+- 本地仅保留支撑/阻力位 1% 边界检查
+- 符合 TradingAgents 核心原则: "Autonomy is non-negotiable"
 
 v11.0 重大更新 - 对齐 TradingAgents 简化架构:
 - AI 提示词完全简化，移除所有硬编码规则和阈值
 - Judge 不再使用确认计数框架 (bullish_count/bearish_count 已移除)
 - AI 完全自主分析和决策，本地只提供原始数据
 - 数据格式化移除预解读标签 (BULLISH/BEARISH/Overbought 等)
-- 本地判断仅保留支撑/阻力位 1% 硬风控
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
-3. 使用 TradingAgents 层级决策架构 (v3.0 简化版)
+3. 使用 TradingAgents 层级决策架构 (v3.1)
 4. 检查 Binance 真实持仓
 5. 模拟完整的 _execute_trade 流程
 6. 输出实盘环境下会产生的真实结果
 
-当前架构 (TradingAgents v3.0 - AI 完全自主决策):
+当前架构 (TradingAgents v3.1 - AI 完全自主决策):
 - Phase 1: Bull/Bear 辩论 (2 AI calls) - AI 自主分析数据
 - Phase 2: Judge 决策 (1 AI call) - AI 自主评估辩论，做出决策
 - Phase 3: Risk 评估 (1 AI call) - AI 自主设定 SL/TP/仓位
-- 本地执行层: 仅支撑/阻力位 1% 硬风控
+- 本地风控: 仅支撑/阻力位 1% 边界检查
 - 设计理念: "Autonomy is non-negotiable" - AI 应像人类分析师思考
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
+
+职责划分 (v3.1):
+- AI 职责: 信号方向、信心等级、止损止盈、趋势判断 (全部)
+- 本地职责: 仅支撑/阻力位 1% 边界检查 (无其他硬编码规则)
 
 数据层职责 (本地):
 - 收集原始技术指标、订单流、衍生品数据
 - 不做任何预解读或标签 (如 BULLISH/BEARISH)
 - AI 看到原始数值，自行判断含义
 
-MTF 三层架构:
-- 趋势层 (1D): SMA_200 + MACD → 方向性权限
-- 决策层 (4H): AI 自主分析 → Decision State
-- 执行层 (15M): 精确入场 + 支撑/阻力位硬风控
-
 历史更新:
-v10.20:
-- 对齐 TradingAgents 架构: 方向性权限替代 RISK_OFF 二元开关
-  * 规则1 改为调用 evaluate_directional_permissions() 逻辑 (lines 1450-1540)
-  * 返回 allow_long/allow_short 权限 (熊市允许做空)
-  * 应用 position_multiplier (牛市 1.2x, 熊市 1.0x, 震荡 0.7x)
-  * 结果汇总显示方向性权限状态 (lines 3009-3024)
-  * 符合 commit 9c17616 系统架构升级
+v11.1:
+- 移除规则1 (趋势方向权限检查) - 完全符合 TradingAgents 职责划分
+  * 删除 allow_long/allow_short 本地判断
+  * 删除 position_multiplier 本地调整
+  * AI 现在完全自主判断趋势方向
+  * 本地仅保留支撑/阻力位 1% 边界检查
+  * 参考: TradingAgents "Autonomy is non-negotiable"
+
+v11.0:
+- AI 提示词完全简化，移除所有硬编码规则和阈值
+- Judge 不再使用确认计数框架 (bullish_count/bearish_count 已移除)
+- 数据格式化移除预解读标签 (BULLISH/BEARISH/Overbought 等)
+
+v10.20 (已被 v11.1 取代):
+- 方向性权限检查 (已移除)
 
 v10.19:
 - 修复硬编码阈值违规 (lines 255-260)
@@ -226,7 +237,7 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v10.17')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.1')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -471,7 +482,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v10.9 (TradingAgents + MTF 100% 覆盖){mode_str}")
+print(f"  实盘信号诊断工具 v11.1 (TradingAgents v3.1 - AI 完全自主){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1395,126 +1406,13 @@ mtf_filtered = False
 mtf_filter_reason = None
 
 if mtf_enabled:
-    print("  📊 MTF 三层过滤检查:")
+    print("  📊 本地风控检查 (TradingAgents v3.1):")
+    print("     设计理念: AI 负责所有交易决策，本地仅做支撑/阻力位边界检查")
+    print("     移除了: 趋势方向权限检查 (AI 自主判断趋势)")
     print()
 
-    # ========== 规则 1: 方向性权限检查 (趋势层) ==========
-    print("  [规则1] 趋势层方向性权限检查:")
-
-    try:
-        # 尝试导入并检查趋势层状态
-        from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState
-
-        # 模拟方向性权限评估 (与 multi_timeframe_manager.py:353-434 一致)
-        trend_layer_cfg = base_config.get('multi_timeframe', {}).get('trend_layer', {})
-        sma_period = trend_layer_cfg.get('sma_period', 200)
-        sma_for_risk = technical_data.get(f'sma_{sma_period}', 0)
-
-        # 如果没有 SMA_200 (历史数据不足)，回退到配置的其他 SMA 周期
-        if sma_for_risk == 0:
-            # 从配置读取 SMA 周期列表，按降序尝试
-            sma_periods_list = base_config.get('indicators', {}).get('sma_periods', [200, 50, 20, 5])
-            for fallback_period in sorted([p for p in sma_periods_list if p < sma_period], reverse=True):
-                fallback_sma = technical_data.get(f'sma_{fallback_period}', 0)
-                if fallback_sma > 0:
-                    sma_for_risk = fallback_sma
-                    sma_period = fallback_period
-                    print(f"     ℹ️ SMA_{trend_layer_cfg.get('sma_period', 200)} 不可用，使用 SMA_{sma_period} 作为后备")
-                    break
-
-            # 如果所有 SMA 都不可用，输出警告
-            if sma_for_risk == 0:
-                print(f"     ⚠️ 所有 SMA 指标均不可用，历史数据不足")
-                permissions = {
-                    "allow_long": False,
-                    "allow_short": False,
-                    "regime": "UNKNOWN",
-                    "position_multiplier": 0.0,
-                    "reason": "趋势层数据不足"
-                }
-        else:
-            # 方向性权限判断 (与 multi_timeframe_manager.py:396-426 一致)
-            macd_value = technical_data.get('macd', 0)
-            price_above_sma = current_price > sma_for_risk
-            macd_positive = macd_value > 0
-
-            if price_above_sma and macd_positive:
-                # 牛市
-                permissions = {
-                    "allow_long": True,
-                    "allow_short": True,
-                    "regime": "BULL",
-                    "position_multiplier": 1.2,
-                    "reason": f"牛市 (价格 {current_price:.2f} > SMA{sma_period} {sma_for_risk:.2f}, MACD {macd_value:.2f} > 0)"
-                }
-            elif not price_above_sma and not macd_positive:
-                # 熊市
-                permissions = {
-                    "allow_long": False,
-                    "allow_short": True,  # ✅ 允许做空
-                    "regime": "BEAR",
-                    "position_multiplier": 1.0,
-                    "reason": f"熊市 (价格 {current_price:.2f} < SMA{sma_period} {sma_for_risk:.2f}, MACD {macd_value:.2f} < 0)"
-                }
-            else:
-                # 震荡
-                permissions = {
-                    "allow_long": True,
-                    "allow_short": True,
-                    "regime": "SIDEWAYS",
-                    "position_multiplier": 0.7,
-                    "reason": f"震荡 (价格与 SMA/MACD 方向不一致)"
-                }
-
-        # 显示方向性权限
-        print(f"     市场状态: {permissions['regime']}")
-        print(f"     允许做多: {'✅ 是' if permissions['allow_long'] else '❌ 否'}")
-        print(f"     允许做空: {'✅ 是' if permissions['allow_short'] else '❌ 否'}")
-        print(f"     仓位乘数: {permissions['position_multiplier']:.1f}x")
-        print(f"     理由: {permissions['reason']}")
-
-        # 检查是否是新开仓 (与 deepseek_strategy.py:1490-1495 一致)
-        if signal_data.get('signal') in ['BUY', 'SELL']:
-            is_opening_new = (
-                current_position is None or
-                current_position.get('side') == 'FLAT' or
-                (signal_data.get('signal') == 'BUY' and current_position.get('side') == 'short') or
-                (signal_data.get('signal') == 'SELL' and current_position.get('side') == 'long')
-            )
-
-            # 仅在开新仓时检查方向性权限
-            if is_opening_new:
-                if signal_data.get('signal') == 'BUY' and not permissions['allow_long']:
-                    print(f"     🚫 方向性过滤: BUY → HOLD (熊市禁止做多)")
-                    signal_data['signal'] = 'HOLD'
-                    signal_data['reason'] = f"[MTF 禁止做多] {signal_data.get('reason', '')}"
-                    mtf_filtered = True
-                    mtf_filter_reason = f"熊市禁止做多 ({permissions['regime']})"
-                elif signal_data.get('signal') == 'SELL' and not permissions['allow_short']:
-                    print(f"     🚫 方向性过滤: SELL → HOLD (禁止做空)")
-                    signal_data['signal'] = 'HOLD'
-                    signal_data['reason'] = f"[MTF 禁止做空] {signal_data.get('reason', '')}"
-                    mtf_filtered = True
-                    mtf_filter_reason = f"禁止做空 ({permissions['regime']})"
-                else:
-                    # 权限允许，应用仓位乘数
-                    print(f"     ✅ 方向性权限允许: {signal_data['signal']} (应用 {permissions['position_multiplier']:.1f}x 仓位乘数)")
-                    if 'position_multiplier' not in signal_data:
-                        signal_data['position_multiplier'] = 1.0
-                    signal_data['position_multiplier'] *= permissions['position_multiplier']
-
-    except ImportError as e:
-        print(f"     ⚠️ 无法导入 MTF 模块: {e}")
-        permissions = {"allow_long": True, "allow_short": True, "regime": "UNKNOWN", "position_multiplier": 1.0}
-    except Exception as e:
-        print(f"     ⚠️ 趋势层检查异常: {e}")
-        permissions = {"allow_long": True, "allow_short": True, "regime": "UNKNOWN", "position_multiplier": 1.0}
-
-    print()
-
-    # ========== 规则 2: 执行层支撑/阻力位硬风控 (v3.0 简化版) ==========
-    print("  [规则2] 执行层支撑/阻力位硬风控 (v3.0):")
-    print("     设计理念: AI 负责所有交易决策，本地仅做必要的边界检查")
+    # ========== 唯一规则: 执行层支撑/阻力位硬风控 ==========
+    print("  [本地风控] 支撑/阻力位边界检查:")
 
     if signal_data.get('signal') in ['BUY', 'SELL']:
         try:
@@ -1827,20 +1725,19 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents - Judge 层级决策 + MTF v10.9)")
+print("  诊断总结 (TradingAgents v3.1 - AI 完全自主决策)")
 print("=" * 70)
 print()
 
-# 显示 MTF 状态
+# 显示 MTF 状态 (v3.1: 本地仅做支撑/阻力位检查)
 if mtf_enabled:
-    print(f"  📊 MTF Status: ✅ 已启用 (1D/4H/15M 三层架构)")
-    if mtf_init_config:
-        print(f"     初始化: trend={mtf_init_config.get('trend_min_bars', 220)}, decision={mtf_init_config.get('decision_min_bars', 60)}, execution={mtf_init_config.get('execution_min_bars', 40)} bars")
-    # 显示 MTF 过滤结果
+    print(f"  📊 MTF Status: ✅ 已启用 (v3.1 - AI 完全自主)")
+    print(f"     本地风控: 仅支撑/阻力位 1% 边界检查")
+    # 显示本地风控结果
     if mtf_filtered:
-        print(f"     🔴 MTF 过滤: {original_signal} → {signal_data.get('signal')} ({mtf_filter_reason})")
+        print(f"     🔴 本地风控: {original_signal} → {signal_data.get('signal')} ({mtf_filter_reason})")
     elif original_signal in ['BUY', 'SELL']:
-        print(f"     🟢 MTF 过滤: 通过所有检查")
+        print(f"     🟢 本地风控: 通过边界检查")
 else:
     print(f"  📊 MTF Status: ❌ 未启用")
 print()
@@ -2871,8 +2768,8 @@ if not SUMMARY_MODE:
 
     mtf_enabled = base_config.get('multi_timeframe', {}).get('enabled', False) if 'base_config' in dir() else False
     if mtf_enabled:
-        print(f"  MTF 状态: 已启用")
-        # 使用配置中的 SMA 周期 (默认 200)，与规则1检查一致
+        print(f"  MTF 状态: 已启用 (v3.1 - AI 完全自主)")
+        # 显示趋势参考信息 (仅供参考，AI 自主判断)
         trend_layer_cfg = base_config.get('multi_timeframe', {}).get('trend_layer', {})
         sma_period_summary = trend_layer_cfg.get('sma_period', 200)
         sma_for_summary = technical_data.get(f'sma_{sma_period_summary}', 0)
@@ -2887,40 +2784,32 @@ if not SUMMARY_MODE:
                     sma_period_summary = fallback_period
                     break
 
-        # 显示方向性权限状态 (v10.20+)
+        # 显示趋势参考信息 (v3.1: 本地不做方向性判断，仅供参考)
         if sma_for_summary > 0:
             macd_value = technical_data.get('macd', 0)
             price_above_sma = current_price > sma_for_summary
             macd_positive = macd_value > 0
 
             if price_above_sma and macd_positive:
-                regime_summary = "BULL (牛市)"
-                allow_long_summary = "✅"
-                allow_short_summary = "✅"
-                multiplier_summary = "1.2x"
+                regime_summary = "BULL (牛市参考)"
             elif not price_above_sma and not macd_positive:
-                regime_summary = "BEAR (熊市)"
-                allow_long_summary = "❌"
-                allow_short_summary = "✅"
-                multiplier_summary = "1.0x"
+                regime_summary = "BEAR (熊市参考)"
             else:
-                regime_summary = "SIDEWAYS (震荡)"
-                allow_long_summary = "✅"
-                allow_short_summary = "✅"
-                multiplier_summary = "0.7x"
+                regime_summary = "SIDEWAYS (震荡参考)"
 
-            print(f"  趋势层: {regime_summary}")
+            print(f"  趋势参考: {regime_summary}")
             print(f"    - 价格 ${current_price:,.2f} vs SMA_{sma_period_summary} ${sma_for_summary:,.2f}")
             print(f"    - MACD: {macd_value:.2f}")
-            print(f"    - 允许做多: {allow_long_summary}  允许做空: {allow_short_summary}  仓位乘数: {multiplier_summary}")
+            print(f"    - ℹ️ 趋势方向由 AI 自主判断，本地不做限制")
         else:
-            print(f"  趋势层: 数据不足 (SMA 不可用)")
+            print(f"  趋势参考: 数据不足 (SMA 不可用)")
 
+        # 本地风控结果
         original_signal = signal_data.get('signal', 'HOLD')
         if final_signal != original_signal:
-            print(f"  过滤结果: {original_signal} → {final_signal}")
+            print(f"  本地风控: {original_signal} → {final_signal} (支撑/阻力位保护)")
         else:
-            print(f"  过滤结果: 信号未被过滤")
+            print(f"  本地风控: 信号未被过滤")
     else:
         print(f"  MTF 状态: 未启用")
 
