@@ -567,6 +567,13 @@ DECISION GUIDELINES:
 - HOLD is only for genuine uncertainty, not a safe default
 - Be decisive - missed opportunities cost money too
 
+SUPPORT/RESISTANCE RISK CHECK (IMPORTANT):
+- Before finalizing SHORT: Check if price is near support (BB Lower, within 2%)
+  → If yes, require VERY STRONG bearish evidence to proceed, otherwise HOLD
+- Before finalizing LONG: Check if price is near resistance (BB Upper, within 2%)
+  → If yes, require VERY STRONG bullish evidence to proceed, otherwise HOLD
+- Include this risk assessment in your "acknowledged_risks" if applicable
+
 OUTPUT FORMAT (JSON only, no other text):
 {{
     "decision": "LONG|SHORT|HOLD",
