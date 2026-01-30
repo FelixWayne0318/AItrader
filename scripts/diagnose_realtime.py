@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.3 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.4 (与实盘 100% 一致)
+
+v11.4 更新 - TradingAgents v3.4 Prompt 结构优化:
+- INDICATOR_DEFINITIONS 从 User Prompt 移到 System Prompt
+- 符合 TradingAgents 设计: System Prompt = 角色 + 知识背景
+- User Prompt 只包含: 原始数据 + 任务指令
+- 参考: https://github.com/TauricResearch/TradingAgents
 
 v11.3 更新 - TradingAgents v3.3 数据标准化:
 - AI 只接收原始数值，不接收任何预计算的判断标签
@@ -9,24 +15,18 @@ v11.3 更新 - TradingAgents v3.3 数据标准化:
   * cvd_trend (AI 从 recent_10_bars 自己推断趋势)
   * overall_trend, short_term_trend, macd_trend (AI 从原始值推断)
 - 添加 INDICATOR_DEFINITIONS 教 AI 如何解读原始数据
-- 参考: https://github.com/TauricResearch/TradingAgents
-
-v11.2 更新 - 完全符合 TradingAgents 设计:
-- 移除所有本地硬编码规则 (趋势方向、支撑阻力位检查)
-- AI 完全自主决策，无本地过滤
-- 符合 TradingAgents 核心原则: "Autonomy is non-negotiable"
 
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
-3. 使用 TradingAgents 层级决策架构 (v3.3)
+3. 使用 TradingAgents 层级决策架构 (v3.4)
 4. 检查 Binance 真实持仓
 5. 模拟完整的 _execute_trade 流程
 6. 输出实盘环境下会产生的真实结果
 
-当前架构 (TradingAgents v3.3 - 原始数据 + AI 自主解读):
-- 数据层: 只传原始数值，不传预计算标签
-- INDICATOR_DEFINITIONS: 教 AI 如何解读 RSI/MACD/SMA 等
+当前架构 (TradingAgents v3.4 - Prompt 结构优化):
+- System Prompt: 角色定义 + INDICATOR_DEFINITIONS (知识背景)
+- User Prompt: 原始数据 + 任务指令 (当前任务)
 - Phase 1: Bull/Bear 辩论 (2 AI calls) - AI 自主分析数据
 - Phase 2: Judge 决策 (1 AI call) - AI 自主评估辩论，做出决策
 - Phase 3: Risk 评估 (1 AI call) - AI 自主设定 SL/TP/仓位
@@ -34,18 +34,35 @@ v11.2 更新 - 完全符合 TradingAgents 设计:
 - 设计理念: "Autonomy is non-negotiable" - AI 应像人类分析师思考
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
-传给 AI 的数据 (v3.3):
-- 技术指标: price, SMA 5/20/50, RSI, MACD, BB (原始数值)
-- 订单流: buy_ratio, recent_10_bars (原始数值，无 cvd_trend)
-- 衍生品: OI, funding_rate, liquidations (原始数值)
-- 情绪: long/short ratio (原始数值，无 Interpretation)
-- 不再传: support/resistance, overall_trend, cvd_trend 等标签
+Prompt 结构 (v3.4):
+┌─────────────────────────────────────────┐
+│ System Prompt                           │
+│ ├─ 角色定义 (Bull/Bear/Judge Analyst)   │
+│ ├─ INDICATOR_DEFINITIONS (知识参考)     │
+│ └─ 使用说明                             │
+├─────────────────────────────────────────┤
+│ User Prompt                             │
+│ ├─ AVAILABLE DATA (原始数据)            │
+│ └─ TASK (任务指令)                      │
+└─────────────────────────────────────────┘
 
-职责划分 (v3.3):
+传给 AI 的数据 (v3.4):
+- 技术指标: price, SMA 5/20/50, RSI, MACD, BB (原始数值)
+- 订单流: buy_ratio, recent_10_bars (原始数值)
+- 衍生品: OI, funding_rate, liquidations (原始数值)
+- 情绪: long/short ratio (原始数值)
+
+职责划分 (v3.4):
 - AI 职责: 所有判断 (趋势、支撑阻力、信号方向、SL/TP)
 - 本地职责: 只收集原始数据，不做预解读
 
 历史更新:
+v11.4:
+- Prompt 结构优化为 TradingAgents v3.4 标准
+  * INDICATOR_DEFINITIONS 移到 System Prompt
+  * User Prompt 只包含数据和任务
+  * 符合 TradingAgents 设计理念
+
 v11.3:
 - 数据格式改为 TradingAgents v3.3 标准
   * 移除 support/resistance (AI 用 SMA_50/BB 作动态支撑阻力)
