@@ -411,14 +411,10 @@ class MultiAgentAnalyzer:
         Generate bull analyst's argument.
 
         Borrowed from: TradingAgents/agents/researchers/bull_researcher.py
-        TradingAgents v3.3: AI interprets raw data using indicator definitions
+        TradingAgents v3.3: Indicator definitions in system prompt (like TradingAgents)
         """
-        prompt = f"""You are a Bull Analyst advocating for LONG position on {symbol}.
-Your task is to build a strong, evidence-based case for going LONG.
-
-{INDICATOR_DEFINITIONS}
-
-AVAILABLE DATA:
+        # User prompt: Only data and task (no indicator definitions)
+        prompt = f"""AVAILABLE DATA:
 
 {technical_report}
 
@@ -434,18 +430,20 @@ Previous Debate:
 Last Bear Argument:
 {bear_argument if bear_argument else "No bear argument yet - make your opening case."}
 
-INSTRUCTIONS:
-1. Use the INDICATOR REFERENCE above to interpret the raw data
-2. Identify BULLISH signals with specific numbers
-3. Present 2-3 compelling reasons for going LONG
-4. If bear made arguments, counter them with evidence
+TASK:
+1. Identify BULLISH signals with specific numbers from the data
+2. Present 2-3 compelling reasons for going LONG
+3. If bear made arguments, counter them with evidence
 
 Deliver your argument (2-3 paragraphs):"""
 
-        # TradingAgents v3.3: Include indicator definitions in system prompt
+        # System prompt: Role + Indicator definitions (TradingAgents style)
         system_prompt = f"""You are a professional Bull Analyst for {symbol}.
 Your role is to analyze raw market data and build the strongest possible case for going LONG.
-Use the indicator definitions provided to interpret the numbers correctly.
+
+{INDICATOR_DEFINITIONS}
+
+Use the indicator definitions above to interpret the numbers correctly.
 Focus on evidence from the data, not assumptions."""
 
         return self._call_api_with_retry([
@@ -469,12 +467,8 @@ Focus on evidence from the data, not assumptions."""
         Borrowed from: TradingAgents/agents/researchers/bear_researcher.py
         TradingAgents v3.3: AI interprets raw data using indicator definitions
         """
-        prompt = f"""You are a Bear Analyst making the case AGAINST going LONG on {symbol}.
-Your goal is to present well-reasoned arguments for SHORT or staying FLAT.
-
-{INDICATOR_DEFINITIONS}
-
-AVAILABLE DATA:
+        # User prompt: Only data and task (no indicator definitions)
+        prompt = f"""AVAILABLE DATA:
 
 {technical_report}
 
@@ -490,18 +484,20 @@ Previous Debate:
 Last Bull Argument:
 {bull_argument}
 
-INSTRUCTIONS:
-1. Use the INDICATOR REFERENCE above to interpret the raw data
-2. Identify BEARISH signals or risks with specific numbers
-3. Present 2-3 compelling reasons AGAINST going LONG
-4. Counter the bull's arguments with evidence
+TASK:
+1. Identify BEARISH signals or risks with specific numbers from the data
+2. Present 2-3 compelling reasons AGAINST going LONG
+3. Counter the bull's arguments with evidence
 
 Deliver your argument (2-3 paragraphs):"""
 
-        # TradingAgents v3.3: Include indicator definitions in system prompt
+        # System prompt: Role + Indicator definitions (TradingAgents style)
         system_prompt = f"""You are a professional Bear Analyst for {symbol}.
 Your role is to analyze raw market data and build the strongest possible case AGAINST going LONG.
-Use the indicator definitions provided to interpret the numbers correctly.
+
+{INDICATOR_DEFINITIONS}
+
+Use the indicator definitions above to interpret the numbers correctly.
 Focus on risks and bearish signals in the data."""
 
         return self._call_api_with_retry([
