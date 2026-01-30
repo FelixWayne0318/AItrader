@@ -1351,7 +1351,8 @@ class DeepSeekAIStrategy(Strategy):
                 }
                 self.log.info("📊 Using neutral sentiment data (no data available)")
 
-            # Build price data for AI
+            # Build price data for AI (v3.6: 添加周期统计数据)
+            period_stats = self._calculate_period_statistics()
             price_data = {
                 'price': current_price,
                 'timestamp': self.clock.utc_now().isoformat(),
@@ -1360,6 +1361,11 @@ class DeepSeekAIStrategy(Strategy):
                 'volume': float(current_bar.volume),
                 'price_change': self._calculate_price_change(),
                 'kline_data': kline_data,
+                # v3.6: 周期统计 (基于可用 K 线历史)
+                'period_high': period_stats['period_high'],
+                'period_low': period_stats['period_low'],
+                'period_change_pct': period_stats['period_change_pct'],
+                'period_hours': period_stats['period_hours'],
             }
 
             # Get current position
@@ -1375,28 +1381,9 @@ class DeepSeekAIStrategy(Strategy):
                     f"{current_position['quantity']} @ ${current_position['avg_px']:.2f}"
                 )
 
-            # ========== MTF 优先级规则 (Phase 1: RISK_OFF 过滤) ==========
-            # 趋势层 (1D) 决定是否允许新开仓
-            mtf_risk_state = None
-            mtf_allows_new_position = True  # 默认允许
-
-            if self.mtf_enabled and self.mtf_manager:
-                try:
-                    # 评估趋势层风险状态
-                    mtf_risk_state = self.mtf_manager.evaluate_risk_state(current_price)
-                    self.log.info(f"[MTF] 趋势层 (1D) 风险状态: {mtf_risk_state.value}")
-
-                    # 如果 RISK_OFF，禁止新开仓（但允许平仓和管理现有仓位）
-                    if mtf_risk_state == self._RiskState.RISK_OFF:
-                        mtf_allows_new_position = False
-                        self.log.warning(
-                            f"[MTF] ⚠️ RISK_OFF - 市场结构恶化，禁止新开仓 "
-                            f"(价格低于 SMA_200 或 MACD 为负)"
-                        )
-                except Exception as e:
-                    self.log.warning(f"[MTF] 趋势层评估失败: {e}")
-
-            # ========== 层级决策架构 (TradingAgents) ==========
+            # ========== 层级决策架构 (TradingAgents v3.1) ==========
+            # 设计理念: AI 负责所有交易决策，本地仅做支撑/阻力位边界检查
+            # 移除了 RISK_OFF 趋势过滤 - AI 自主判断趋势方向
             # MultiAgent 的 Judge 作为最终决策者，不再与 DeepSeek 并行合并
             # 流程: Bull/Bear 辩论 → Judge 决策 → Risk 评估 → 最终信号
             try:
@@ -1412,8 +1399,15 @@ class DeepSeekAIStrategy(Strategy):
                 ai_technical_data['timeframe'] = '15M'
                 # 重要: 添加 price 到 technical_data (multi_agent_analyzer._format_technical_report 需要)
                 ai_technical_data['price'] = current_price
+                # v3.6: 添加价格统计数据 (周期高/低/变化)
+                ai_technical_data['price_change'] = price_data.get('price_change', 0)
+                ai_technical_data['period_high'] = price_data.get('period_high', 0)
+                ai_technical_data['period_low'] = price_data.get('period_low', 0)
+                ai_technical_data['period_change_pct'] = price_data.get('period_change_pct', 0)
+                ai_technical_data['period_hours'] = price_data.get('period_hours', 0)
                 if decision_layer_data and decision_layer_data.get('_initialized', True):
                     # 添加 4H 数据作为决策层信息
+                    # TradingAgents v3.3: 只传原始数据，不传 overall_trend 预判断
                     ai_technical_data['mtf_decision_layer'] = {
                         'timeframe': '4H',
                         'rsi': decision_layer_data.get('rsi', 50),
@@ -1424,9 +1418,26 @@ class DeepSeekAIStrategy(Strategy):
                         'bb_upper': decision_layer_data.get('bb_upper', 0),
                         'bb_middle': decision_layer_data.get('bb_middle', 0),
                         'bb_lower': decision_layer_data.get('bb_lower', 0),
-                        'overall_trend': decision_layer_data.get('overall_trend', 'NEUTRAL'),
+                        'bb_position': decision_layer_data.get('bb_position', 50),  # v3.5: 支撑/阻力距离
+                        # 'overall_trend' 已移除 - AI 使用 INDICATOR_DEFINITIONS 自己判断
                     }
                     self.log.info(f"[MTF] AI 分析使用 4H 决策层数据: RSI={ai_technical_data['mtf_decision_layer']['rsi']:.1f}")
+
+                # ========== 获取 1D 趋势层数据 (MTF v3.5) ==========
+                trend_layer_data = None
+                if self.mtf_enabled and self.mtf_manager:
+                    try:
+                        trend_layer_data = self.mtf_manager.get_technical_data_for_layer("trend", current_price)
+                        if trend_layer_data and trend_layer_data.get('_initialized', True):
+                            ai_technical_data['mtf_trend_layer'] = {
+                                'timeframe': '1D',
+                                'sma_200': trend_layer_data.get('sma_200', 0),
+                                'macd': trend_layer_data.get('macd', 0),
+                                'macd_signal': trend_layer_data.get('macd_signal', 0),
+                            }
+                            self.log.info(f"[MTF] AI 分析使用 1D 趋势层数据: SMA_200=${ai_technical_data['mtf_trend_layer']['sma_200']:,.2f}")
+                    except Exception as e:
+                        self.log.warning(f"[MTF] 获取趋势层数据失败: {e}")
 
                 # ========== 获取订单流数据 (MTF v2.1) ==========
                 order_flow_data = None
@@ -1477,127 +1488,12 @@ class DeepSeekAIStrategy(Strategy):
                     derivatives_report=derivatives_data,
                 )
 
-                # NOTE: 决策层状态 (ALLOW_LONG/SHORT/WAIT) 在 4H bar 收盘时更新
-                # (见 _evaluate_decision_layer_on_bar_close 方法)
-                # 这里不再更新，保持 4H 方向的稳定性
-
-                # ========== MTF 优先级规则 (Phase 2: 信号过滤) ==========
-                original_signal = signal_data['signal']
-
-                if self.mtf_enabled and self.mtf_manager:
-                    # 规则 1: 方向性权限检查 (替代 RISK_OFF 二元开关)
-                    # 🔒 Fix E21: 这是硬风控边界，作为 24/7 自动化系统的必需保护
-                    # 与 TradingAgents 研究框架略有不同 (TradingAgents 假设有人工监督)
-                    try:
-                        permissions = self.mtf_manager.evaluate_directional_permissions(current_price)
-
-                        # 记录方向性权限
-                        self.log.info(
-                            f"[MTF] 方向性权限: {permissions['regime']} | "
-                            f"allow_long={permissions['allow_long']}, "
-                            f"allow_short={permissions['allow_short']} | "
-                            f"乘数={permissions['position_multiplier']:.1f}"
-                        )
-
-                        # 检查是否是开新仓
-                        is_opening_new = (
-                            current_position is None or
-                            current_position.get('side') == 'FLAT' or
-                            (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
-                            (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
-                        )
-
-                        # 仅在开新仓时检查方向性权限
-                        if is_opening_new and signal_data['signal'] in ['BUY', 'SELL']:
-                            if signal_data['signal'] == 'BUY' and not permissions['allow_long']:
-                                self.log.warning(
-                                    f"[MTF] 🚫 方向性过滤: BUY → HOLD "
-                                    f"({permissions['reason']})"
-                                )
-                                signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF 禁止做多] {signal_data.get('reason', '')}"
-                            elif signal_data['signal'] == 'SELL' and not permissions['allow_short']:
-                                self.log.warning(
-                                    f"[MTF] 🚫 方向性过滤: SELL → HOLD "
-                                    f"({permissions['reason']})"
-                                )
-                                signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF 禁止做空] {signal_data.get('reason', '')}"
-                            else:
-                                # 权限允许，应用仓位乘数
-                                if 'position_multiplier' in signal_data:
-                                    signal_data['position_multiplier'] *= permissions['position_multiplier']
-                                    self.log.info(
-                                        f"[MTF] 应用 {permissions['regime']} 仓位乘数: "
-                                        f"{permissions['position_multiplier']:.1f}"
-                                    )
-                    except Exception as e:
-                        self.log.warning(f"[MTF] 方向性权限检查失败: {e}")
-                        # 失败时保守处理
-                        if not mtf_allows_new_position and signal_data['signal'] in ['BUY', 'SELL']:
-                            is_opening_new = (
-                                current_position is None or
-                                current_position.get('side') == 'FLAT' or
-                                (signal_data['signal'] == 'BUY' and current_position.get('side') == 'SHORT') or
-                                (signal_data['signal'] == 'SELL' and current_position.get('side') == 'LONG')
-                            )
-                            if is_opening_new:
-                                self.log.warning(
-                                    f"[MTF] 🚫 RISK_OFF 过滤 (后备): {signal_data['signal']} → HOLD"
-                                )
-                                signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF RISK_OFF] {signal_data.get('reason', '')}"
-
-                    # 规则 2: 决策层方向匹配检查 (确保信号与决策层状态一致)
-                    if signal_data['signal'] in ['BUY', 'SELL']:
-                        try:
-                            decision_state = self.mtf_manager.get_decision_state()
-                            self.log.info(f"[MTF] 决策层 (4H) 状态: {decision_state.value}")
-
-                            direction_mismatch = False
-                            if signal_data['signal'] == 'BUY' and decision_state == self._DecisionState.ALLOW_SHORT:
-                                direction_mismatch = True
-                                self.log.warning(
-                                    f"[MTF] 🚫 方向冲突: BUY 信号但决策层为 ALLOW_SHORT → HOLD"
-                                )
-                            elif signal_data['signal'] == 'SELL' and decision_state == self._DecisionState.ALLOW_LONG:
-                                direction_mismatch = True
-                                self.log.warning(
-                                    f"[MTF] 🚫 方向冲突: SELL 信号但决策层为 ALLOW_LONG → HOLD"
-                                )
-                            elif decision_state == self._DecisionState.WAIT:
-                                direction_mismatch = True
-                                self.log.warning(
-                                    f"[MTF] 🚫 决策层为 WAIT 状态，暂不交易 → HOLD"
-                                )
-
-                            if direction_mismatch:
-                                signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF 方向检查] {signal_data.get('reason', '')}"
-                        except Exception as e:
-                            self.log.warning(f"[MTF] 决策层方向检查失败: {e}")
-
-                    # 规则 3: 执行层 RSI 确认 (仅在 RISK_ON 且有交易信号时)
-                    if signal_data['signal'] in ['BUY', 'SELL']:
-                        try:
-                            exec_result = self.mtf_manager.check_execution_confirmation(current_price)
-                            self.log.info(f"[MTF] 执行层 (15M) RSI 确认: {exec_result['reason']}")
-
-                            if not exec_result['confirmed']:
-                                self.log.warning(
-                                    f"[MTF] ⏳ RSI 不在入场范围: {signal_data['signal']} → HOLD "
-                                    f"(RSI={exec_result.get('rsi', 0):.1f}, 范围={exec_result.get('rsi_range', [])})"
-                                )
-                                signal_data['signal'] = 'HOLD'
-                                signal_data['reason'] = f"[MTF RSI] {signal_data.get('reason', '')}"
-                        except Exception as e:
-                            self.log.warning(f"[MTF] 执行层确认失败: {e}")
-
-                # 记录 MTF 过滤结果
-                if original_signal != signal_data['signal']:
-                    self.log.info(
-                        f"[MTF] 信号被过滤: {original_signal} → {signal_data['signal']}"
-                    )
+                # ========== TradingAgents v3.1: AI 完全自主决策 ==========
+                # 设计理念: "Autonomy is non-negotiable" - AI 像人类分析师一样思考
+                # 移除了所有本地硬编码规则:
+                #   - 趋势方向权限检查 (allow_long/allow_short) - AI 自主判断
+                #   - 支撑/阻力位边界检查 - AI 从数据中自己理解
+                # AI 看到的数据包含 support/resistance，由 AI 自己决定是否参考
 
                 # Log Judge's final decision
                 self.log.info(
@@ -1836,7 +1732,7 @@ class DeepSeekAIStrategy(Strategy):
             self.log.warning(f"Failed to send Telegram heartbeat: {e}")
 
     def _calculate_price_change(self) -> float:
-        """Calculate price change percentage."""
+        """Calculate price change percentage (last bar only)."""
         bars = self.indicator_manager.recent_bars
         if len(bars) < 2:
             return 0.0
@@ -1845,6 +1741,50 @@ class DeepSeekAIStrategy(Strategy):
         previous = float(bars[-2].close)
 
         return ((current - previous) / previous) * 100
+
+    def _calculate_period_statistics(self) -> Dict[str, Any]:
+        """
+        Calculate price statistics from available K-line history.
+
+        Returns period high/low/change based on available bars.
+        With 15m K-lines: 50 bars ≈ 12.5h, 96 bars = 24h
+
+        Returns
+        -------
+        Dict with:
+            - period_high: Highest price in period
+            - period_low: Lowest price in period
+            - period_change_pct: Price change % from period start
+            - period_hours: Actual hours of data available
+        """
+        bars = self.indicator_manager.recent_bars
+        if not bars or len(bars) < 2:
+            return {
+                'period_high': 0,
+                'period_low': 0,
+                'period_change_pct': 0,
+                'period_hours': 0,
+            }
+
+        current_price = float(bars[-1].close)
+        period_start_price = float(bars[0].open)
+
+        # Calculate high/low from all available bars
+        period_high = max(float(bar.high) for bar in bars)
+        period_low = min(float(bar.low) for bar in bars)
+
+        # Calculate price change from period start
+        period_change_pct = ((current_price - period_start_price) / period_start_price) * 100 if period_start_price > 0 else 0
+
+        # Estimate hours based on bar count (assuming 15m bars)
+        period_hours = len(bars) * 15 / 60
+
+        return {
+            'period_high': period_high,
+            'period_low': period_low,
+            'period_change_pct': period_change_pct,
+            'period_hours': round(period_hours, 1),
+        }
 
     def _get_current_position_data(self, current_price: Optional[float] = None, from_telegram: bool = False) -> Optional[Dict[str, Any]]:
         """

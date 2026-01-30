@@ -32,6 +32,81 @@ from strategy.trading_logic import (
 )
 
 
+# =============================================================================
+# TradingAgents v3.3: Indicator Definitions for AI
+# Borrowed from: TradingAgents/agents/analysts/market_analyst.py
+#
+# These definitions teach AI how to interpret raw indicator values.
+# AI receives raw numbers and uses these definitions to form its own judgment.
+# =============================================================================
+INDICATOR_DEFINITIONS = """
+INDICATOR REFERENCE (How to interpret the data):
+
+MOVING AVERAGES:
+- SMA (Simple Moving Average): Trend direction indicator
+  * Price > SMA = Bullish bias
+  * Price < SMA = Bearish bias
+  * SMA_5 > SMA_20 > SMA_50 = Strong uptrend (aligned)
+  * SMA_5 < SMA_20 < SMA_50 = Strong downtrend (aligned)
+
+RSI (Relative Strength Index):
+- Range: 0-100
+- >70 = Overbought (potential reversal down or pullback)
+- <30 = Oversold (potential reversal up or bounce)
+- 40-60 = Neutral zone
+
+MACD (Moving Average Convergence Divergence):
+- MACD > Signal = Bullish momentum
+- MACD < Signal = Bearish momentum
+- Histogram growing = Momentum strengthening
+- Histogram shrinking = Momentum weakening
+- Zero line crossover = Trend change signal
+
+BOLLINGER BANDS:
+- Price near Upper Band = Potentially overbought / strong momentum
+- Price near Lower Band = Potentially oversold / weak momentum
+- Price at Middle Band = Fair value / consolidation
+- Band squeeze (narrow) = Low volatility, breakout coming
+- Band expansion (wide) = High volatility
+- SMA_50 and BB Middle can serve as dynamic support/resistance
+
+SUPPORT/RESISTANCE RISK (IMPORTANT):
+- BB Lower Band and recent swing lows act as SUPPORT
+- BB Upper Band and recent swing highs act as RESISTANCE
+- Risk consideration for trade direction:
+  * SHORT near support (BB Lower, within 2%): HIGH RISK - support may hold, causing bounce
+  * LONG near resistance (BB Upper, within 2%): HIGH RISK - resistance may hold, causing rejection
+- When price is near support/resistance:
+  * Require STRONGER evidence to trade against the level
+  * Consider tighter stop loss or reduced position size
+  * If evidence is weak, prefer HOLD over risky entry
+- BB Position interpretation:
+  * 0-15% = Very close to support (cautious on SHORT)
+  * 85-100% = Very close to resistance (cautious on LONG)
+  * 15-85% = Safe zone for directional trades
+
+VOLUME:
+- Volume Ratio > 1.5x = High interest, confirms move
+- Volume Ratio < 0.5x = Low interest, weak move
+
+ORDER FLOW (Buy Ratio):
+- >55% = Buyers dominating (bullish)
+- <45% = Sellers dominating (bearish)
+- 45-55% = Balanced
+- Recent 10 Bars: Look at trend direction (rising = bullish, falling = bearish)
+
+FUNDING RATE (Derivatives):
+- Positive (>0.01%) = Longs paying shorts, crowded long
+- Negative (<-0.01%) = Shorts paying longs, crowded short
+- Near zero = Balanced
+
+OPEN INTEREST:
+- Rising OI + Rising Price = New longs entering (bullish)
+- Rising OI + Falling Price = New shorts entering (bearish)
+- Falling OI = Positions closing, trend weakening
+"""
+
+
 class MultiAgentAnalyzer:
     """
     Multi-agent trading analysis system with Bull/Bear debate mechanism.
@@ -85,6 +160,9 @@ class MultiAgentAnalyzer:
 
         # Track debate history for debugging
         self.last_debate_transcript: str = ""
+
+        # Track last prompts for diagnosis (v11.4)
+        self.last_prompts: Dict[str, Dict[str, str]] = {}
 
         # Retry configuration (same as DeepSeekAnalyzer)
         self.max_retries = 2
@@ -351,21 +429,11 @@ class MultiAgentAnalyzer:
         Generate bull analyst's argument.
 
         Borrowed from: TradingAgents/agents/researchers/bull_researcher.py
-        MTF v2.1: Added order flow and derivatives data
+        TradingAgents v3.3: Indicator definitions in system prompt (like TradingAgents)
         """
-        prompt = f"""You are a Bull Analyst advocating for LONG position on {symbol}.
-Your task is to build a strong, evidence-based case for going LONG.
+        # User prompt: Only data and task (no indicator definitions)
+        prompt = f"""AVAILABLE DATA:
 
-Key points to focus on:
-- BULLISH Technical Signals: Price above SMAs, RSI recovering from oversold, MACD bullish crossover
-- Order Flow Confirmation: Buy ratio > 50%, CVD rising (accumulation)
-- Derivatives Support: OI rising with price, neutral/negative funding (not overheated)
-- Growth Momentum: Breakout patterns, increasing volume, support holding
-- Counter Bear Arguments: Use specific numbers to refute bearish concerns
-
-Resources Available:
-
-TECHNICAL ANALYSIS:
 {technical_report}
 
 {order_flow_report}
@@ -380,16 +448,30 @@ Previous Debate:
 Last Bear Argument:
 {bear_argument if bear_argument else "No bear argument yet - make your opening case."}
 
-INSTRUCTIONS:
-1. Present 2-3 compelling reasons for LONG
-2. Use specific numbers from ALL data sources (technical, order flow, derivatives)
-3. If bear made arguments, directly counter them with data
-4. Be persuasive but factual
+TASK:
+1. Identify BULLISH signals with specific numbers from the data
+2. Present 2-3 compelling reasons for going LONG
+3. If bear made arguments, counter them with evidence
 
-Deliver your argument now (2-3 paragraphs):"""
+Deliver your argument (2-3 paragraphs):"""
+
+        # System prompt: Role + Indicator definitions (TradingAgents style)
+        system_prompt = f"""You are a professional Bull Analyst for {symbol}.
+Your role is to analyze raw market data and build the strongest possible case for going LONG.
+
+{INDICATOR_DEFINITIONS}
+
+Use the indicator definitions above to interpret the numbers correctly.
+Focus on evidence from the data, not assumptions."""
+
+        # Store prompts for diagnosis (v11.4)
+        self.last_prompts["bull"] = {
+            "system": system_prompt,
+            "user": prompt,
+        }
 
         return self._call_api_with_retry([
-            {"role": "system", "content": "You are a professional Bull Analyst. Use order flow and derivatives data to strengthen your arguments."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
         ])
 
@@ -407,21 +489,11 @@ Deliver your argument now (2-3 paragraphs):"""
         Generate bear analyst's argument.
 
         Borrowed from: TradingAgents/agents/researchers/bear_researcher.py
-        MTF v2.1: Added order flow and derivatives data
+        TradingAgents v3.3: AI interprets raw data using indicator definitions
         """
-        prompt = f"""You are a Bear Analyst making the case AGAINST going LONG on {symbol}.
-Your goal is to present well-reasoned arguments for SHORT or staying FLAT.
+        # User prompt: Only data and task (no indicator definitions)
+        prompt = f"""AVAILABLE DATA:
 
-Key points to focus on:
-- BEARISH Technical Signals: Price below SMAs, overbought RSI, MACD bearish divergence
-- Order Flow Warning: Buy ratio < 50%, CVD falling (distribution)
-- Derivatives Risk: High funding rate (squeeze risk), OI falling (trend weakening)
-- Downside Risks: Resistance levels, decreasing volume, support breaking
-- Counter Bull Arguments: Expose over-optimistic assumptions with specific data
-
-Resources Available:
-
-TECHNICAL ANALYSIS:
 {technical_report}
 
 {order_flow_report}
@@ -436,16 +508,30 @@ Previous Debate:
 Last Bull Argument:
 {bull_argument}
 
-INSTRUCTIONS:
-1. Present 2-3 compelling reasons AGAINST long / FOR short
-2. Use specific numbers from ALL data sources (technical, order flow, derivatives)
-3. Directly counter the bull's arguments with data
-4. Highlight risks the bull is ignoring
+TASK:
+1. Identify BEARISH signals or risks with specific numbers from the data
+2. Present 2-3 compelling reasons AGAINST going LONG
+3. Counter the bull's arguments with evidence
 
-Deliver your argument now (2-3 paragraphs):"""
+Deliver your argument (2-3 paragraphs):"""
+
+        # System prompt: Role + Indicator definitions (TradingAgents style)
+        system_prompt = f"""You are a professional Bear Analyst for {symbol}.
+Your role is to analyze raw market data and build the strongest possible case AGAINST going LONG.
+
+{INDICATOR_DEFINITIONS}
+
+Use the indicator definitions above to interpret the numbers correctly.
+Focus on risks and bearish signals in the data."""
+
+        # Store prompts for diagnosis (v11.4)
+        self.last_prompts["bear"] = {
+            "system": system_prompt,
+            "user": prompt,
+        }
 
         return self._call_api_with_retry([
-            {"role": "system", "content": "You are a professional Bear Analyst. Use order flow and derivatives data to highlight risks."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
         ])
 
@@ -458,129 +544,65 @@ Deliver your argument now (2-3 paragraphs):"""
         Judge evaluates the debate and makes decision.
 
         Borrowed from: TradingAgents/agents/managers/research_manager.py
-        Optimized with prescriptive prompt engineering to reduce HOLD bias.
+        Simplified v3.0: Let AI autonomously evaluate without hardcoded rules
         """
-        prompt = f"""You are the Portfolio Manager and Debate Judge.
-Your role is to evaluate the Bull vs Bear debate and make a DEFINITIVE trading decision.
+        prompt = f"""You are the Portfolio Manager evaluating the Bull vs Bear debate.
+Your role is to make a DEFINITIVE trading decision based on the debate's strongest arguments.
 
-=== MANDATORY RULES (YOU MUST FOLLOW EXACTLY) ===
-
-1. ⚠️ YOU MUST COUNT TECHNICAL CONFIRMATIONS BEFORE DECIDING
-2. ⚠️ YOU MUST FOLLOW THE DECISION RULES ALGORITHMICALLY - NO SUBJECTIVE INTERPRETATION
-3. ⚠️ DO NOT DEFAULT TO HOLD - It causes missed opportunities
-4. ⚠️ One side almost always has stronger evidence - FIND IT and COMMIT TO IT
+DEBATE TRANSCRIPT:
+{debate_history}
 
 Past Trading Mistakes to AVOID:
 {past_memories if past_memories else "No past data - this is a fresh start."}
 
-FULL DEBATE TRANSCRIPT:
-{debate_history}
+YOUR TASK:
+1. Summarize the key points from both sides, focusing on the most compelling evidence
+2. Determine which side presented stronger, more data-backed arguments
+3. Make a DEFINITIVE decision - LONG, SHORT, or HOLD
 
-=== STEP 1: COUNT TECHNICAL CONFIRMATIONS (MANDATORY) ===
+DECISION GUIDELINES:
+- Focus on evidence quality, not argument quantity
+- Consider the overall market context and risk/reward
+- One side almost always has an edge - find it and commit
+- HOLD is only for genuine uncertainty, not a safe default
+- Be decisive - missed opportunities cost money too
 
-You MUST count how many of these specific confirmations each side presented:
+SUPPORT/RESISTANCE RISK CHECK (IMPORTANT):
+- Before finalizing SHORT: Check if price is near support (BB Lower, within 2%)
+  → If yes, require VERY STRONG bearish evidence to proceed, otherwise HOLD
+- Before finalizing LONG: Check if price is near resistance (BB Upper, within 2%)
+  → If yes, require VERY STRONG bullish evidence to proceed, otherwise HOLD
+- Include this risk assessment in your "acknowledged_risks" if applicable
 
-BULLISH Confirmations (count in Bull's arguments):
-1. Price above SMA20 OR Price above SMA50 (clear trend support)
-2. RSI < 55 (not overbought, has room to rise) - NOTE: RSI 40-55 is neutral, not bearish
-3. MACD > Signal (bullish crossover) OR MACD histogram > 0
-4. Price within 1% of support level OR within 1% of BB lower band
-5. Volume ratio > 1.0 (above average) OR bullish volume pattern mentioned
-
-BEARISH Confirmations (count in Bear's arguments):
-1. Price below SMA20 AND Price below SMA50 (both must be true for stronger signal)
-2. RSI > 65 (showing overbought condition) - NOTE: RSI 45-65 is neutral, not bearish weakness
-3. MACD < Signal (bearish crossover) OR MACD histogram < 0
-4. Price within 1% of resistance level OR within 1% of BB upper band
-5. Volume ratio < 0.8 (clearly below average) OR bearish volume pattern mentioned
-
-QUANTITATIVE THRESHOLDS (v2.1 - use these exact numbers):
-- "Near support/resistance": within 1% of the level
-- "RSI showing weakness": RSI > 65 (not just > 40)
-- "Volume decreasing": volume < 80% of average (volume_ratio < 0.8)
-- "Volume increasing": volume > average (volume_ratio > 1.0)
-
-IMPORTANT: Each confirmation is worth 1 point if ANY of the conditions in that item are true.
-Example: If price is above SMA50 but below SMA20, confirmation #1 STILL COUNTS as 1.
-
-=== STEP 2: APPLY DECISION RULES (MANDATORY - NO EXCEPTIONS) ===
-
-You MUST follow these rules EXACTLY as written:
-
-IF Bullish count >= 3:
-    → decision = "LONG"
-    → confidence = "HIGH"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE IF Bearish count >= 3:
-    → decision = "SHORT"
-    → confidence = "HIGH"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE IF Bullish count == 2 AND Bullish count > Bearish count:
-    → decision = "LONG"
-    → confidence = "MEDIUM"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE IF Bearish count == 2 AND Bearish count > Bullish count:
-    → decision = "SHORT"
-    → confidence = "MEDIUM"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE IF Bullish count >= 2 AND Bull's argument quality is clearly superior:
-    → decision = "LONG"
-    → confidence = "MEDIUM"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE IF Bearish count >= 2 AND Bear's argument quality is clearly superior:
-    → decision = "SHORT"
-    → confidence = "MEDIUM"
-    → STOP HERE, DO NOT CONTINUE
-
-ELSE:
-    → decision = "HOLD"
-    → confidence = "LOW"
-    (This should be RARE - only when both sides have < 2 confirmations AND are truly balanced)
-
-=== STEP 3: VERIFICATION CHECKLIST (BEFORE RESPONDING) ===
-
-Before you provide your JSON response, verify:
-✓ Did you count all 5 bullish confirmations? (Write the count)
-✓ Did you count all 5 bearish confirmations? (Write the count)
-✓ Did you apply the decision rules EXACTLY as written above?
-✓ Did you avoid using HOLD as a default safe choice?
-✓ If you chose HOLD, are BOTH counts < 2 AND truly balanced?
-
-=== OUTPUT FORMAT ===
-
-Provide your decision in this EXACT JSON format (no additional text):
+OUTPUT FORMAT (JSON only, no other text):
 {{
     "decision": "LONG|SHORT|HOLD",
     "winning_side": "BULL|BEAR|TIE",
     "confidence": "HIGH|MEDIUM|LOW",
-    "bullish_count": <number 0-5>,
-    "bearish_count": <number 0-5>,
     "key_reasons": ["reason1", "reason2", "reason3"],
     "acknowledged_risks": ["risk1", "risk2"]
-}}
+}}"""
 
-JSON response only (no preamble, no explanation):"""
+        system_prompt = "You are a Portfolio Manager. Evaluate the debate objectively and make a decisive trading recommendation. Avoid defaulting to HOLD - commit to the side with stronger evidence."
+
+        # Store prompts for diagnosis (v11.4)
+        self.last_prompts["judge"] = {
+            "system": system_prompt,
+            "user": prompt,
+        }
 
         # Use JSON retry mechanism to improve reliability
         decision = self._extract_json_with_retry(
             messages=[
-                {"role": "system", "content": "You are a Portfolio Manager. You MUST follow the quantitative decision rules EXACTLY. Do NOT use subjective judgment to override the rules. Count confirmations accurately and apply the decision logic algorithmically."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,  # Lower temperature for more consistent output
+            temperature=0.3,  # Slightly higher for more nuanced judgment
             max_json_retries=2,
         )
 
         if decision:
-            # Log the confirmation counts for transparency
-            bullish = decision.get('bullish_count', 'N/A')
-            bearish = decision.get('bearish_count', 'N/A')
-            self.logger.info(f"📊 Judge counted: Bullish {bullish}/5, Bearish {bearish}/5")
+            self.logger.info(f"📊 Judge decision: {decision.get('decision')} ({decision.get('confidence')})")
             return decision
 
         # Fallback decision if all retries failed
@@ -589,8 +611,6 @@ JSON response only (no preamble, no explanation):"""
             "decision": "HOLD",
             "winning_side": "TIE",
             "confidence": "LOW",
-            "bullish_count": 0,
-            "bearish_count": 0,
             "key_reasons": ["JSON parse error - defaulting to HOLD"],
             "acknowledged_risks": ["Parse failure"]
         }
@@ -607,6 +627,7 @@ JSON response only (no preamble, no explanation):"""
         Final risk evaluation and position sizing.
 
         Borrowed from: TradingAgents/agents/risk_mgmt/conservative_debator.py
+        Simplified v3.0: Let AI determine SL/TP based on market structure
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
@@ -631,49 +652,47 @@ CURRENT POSITION:
 
 CURRENT PRICE: ${current_price:,.2f}
 
-RISK RULES:
-1. Position sizing based on confidence:
-   - HIGH confidence + clear trend → 100% of base position
-   - MEDIUM confidence → 50% of base position
-   - LOW confidence → 25% or skip trade
+YOUR TASK:
+1. Evaluate if the proposed trade makes sense given the market data
+2. Set stop loss based on market structure (support/resistance levels)
+3. Set take profit based on confidence level and potential targets
+4. Determine appropriate position size based on risk assessment
 
-2. Stop Loss (CRITICAL - minimum 1% distance required):
-   - LONG: Place SL 1.5-2% BELOW entry price
-     * Can reference support level, but SL must be AT LEAST 1% below entry
-     * If support is too close (<1% from entry), use default 2% below
-   - SHORT: Place SL 1.5-2% ABOVE entry price
-     * Can reference resistance level, but SL must be AT LEAST 1% above entry
-     * If resistance is too close (<1% from entry), use default 2% above
-   - NEVER place SL closer than 1% from entry price
+GUIDELINES:
+- Stop loss should be placed at logical market structure levels
+- Higher confidence = larger position size, wider targets
+- Lower confidence = smaller position size, tighter stops
+- Consider the acknowledged risks when setting parameters
 
-3. Take Profit:
-   - HIGH confidence: 2-3% target
-   - MEDIUM confidence: 1.5-2% target
-   - LOW confidence: 1% target
-
-Provide final recommendation in this exact JSON format:
+OUTPUT FORMAT (JSON only, no other text):
 {{
     "signal": "BUY|SELL|HOLD",
     "confidence": "HIGH|MEDIUM|LOW",
     "risk_level": "LOW|MEDIUM|HIGH",
-    "position_size_pct": 25|50|100,
+    "position_size_pct": <number 25-100>,
     "stop_loss": <price_number>,
     "take_profit": <price_number>,
     "reason": "<one sentence explaining the final decision>",
     "debate_summary": "<brief summary of bull vs bear debate>"
 }}
 
-MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD
+MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
 
-JSON response only:"""
+        system_prompt = "You are a Risk Manager. Analyze the market data and set appropriate trade parameters based on market structure and risk/reward."
+
+        # Store prompts for diagnosis (v11.4)
+        self.last_prompts["risk"] = {
+            "system": system_prompt,
+            "user": prompt,
+        }
 
         # Use JSON retry mechanism to improve reliability
         decision = self._extract_json_with_retry(
             messages=[
-                {"role": "system", "content": "You are a Risk Manager. Provide precise trade parameters with specific price levels."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
+            temperature=0.2,
             max_json_retries=2,
         )
 
@@ -764,35 +783,33 @@ JSON response only:"""
             return float(val) if val is not None else default
 
         # Base report (15M execution layer data)
+        # TradingAgents v3.6: Added period statistics for trend assessment
+        period_hours = safe_get('period_hours')
         report = f"""
-Price: ${safe_get('price'):,.2f}
-24h Change: {safe_get('price_change'):+.2f}%
+=== MARKET DATA (15M Timeframe) ===
 
-TREND ANALYSIS:
-- Overall Trend: {data.get('overall_trend', 'N/A')}
-- Short-term: {data.get('short_term_trend', 'N/A')}
-- MACD Direction: {data.get('macd_trend', 'N/A')}
+PRICE:
+- Current: ${safe_get('price'):,.2f}
+- Period High ({period_hours:.0f}h): ${safe_get('period_high'):,.2f}
+- Period Low ({period_hours:.0f}h): ${safe_get('period_low'):,.2f}
+- Period Change ({period_hours:.0f}h): {safe_get('period_change_pct'):+.2f}%
 
-MOVING AVERAGES (15M):
+MOVING AVERAGES:
 - SMA 5: ${safe_get('sma_5'):,.2f}
 - SMA 20: ${safe_get('sma_20'):,.2f}
 - SMA 50: ${safe_get('sma_50'):,.2f}
 
-MOMENTUM (15M):
-- RSI: {safe_get('rsi'):.1f} ({'Overbought >70' if safe_get('rsi') > 70 else 'Oversold <30' if safe_get('rsi') < 30 else 'Neutral 30-70'})
+MOMENTUM:
+- RSI: {safe_get('rsi'):.1f}
 - MACD: {safe_get('macd'):.4f}
 - MACD Signal: {safe_get('macd_signal'):.4f}
-- MACD Histogram: {safe_get('macd_histogram'):.4f} ({'Bullish' if safe_get('macd_histogram') > 0 else 'Bearish'})
+- MACD Histogram: {safe_get('macd_histogram'):.4f}
 
-VOLATILITY (Bollinger Bands 15M):
+VOLATILITY (Bollinger Bands):
 - Upper: ${safe_get('bb_upper'):,.2f}
 - Middle: ${safe_get('bb_middle'):,.2f}
 - Lower: ${safe_get('bb_lower'):,.2f}
-- Price Position: {safe_get('bb_position'):.1%}
-
-KEY LEVELS:
-- Resistance: ${safe_get('resistance'):,.2f}
-- Support: ${safe_get('support'):,.2f}
+- Position: {safe_get('bb_position'):.1f}% (0%=Lower Band, 100%=Upper Band)
 
 VOLUME:
 - Volume Ratio: {safe_get('volume_ratio'):.2f}x average
@@ -808,13 +825,13 @@ VOLUME:
             mtf_rsi = mtf_safe_get('rsi')
             mtf_macd = mtf_safe_get('macd')
 
+            # TradingAgents v3.3: Raw 4H data without interpretation guidance
             report += f"""
-=== 4-HOUR DECISION LAYER (IMPORTANT FOR DIRECTION) ===
-This is the medium-term view for directional bias. Weight this heavily in your analysis.
+=== MARKET DATA (4H Timeframe) ===
 
 MOMENTUM (4H):
-- RSI: {mtf_rsi:.1f} ({'Overbought >70' if mtf_rsi > 70 else 'Oversold <30' if mtf_rsi < 30 else 'Neutral 30-70'})
-- MACD: {mtf_macd:.4f} ({'Bullish' if mtf_macd > 0 else 'Bearish'})
+- RSI: {mtf_rsi:.1f}
+- MACD: {mtf_macd:.4f}
 - MACD Signal: {mtf_safe_get('macd_signal'):.4f}
 
 MOVING AVERAGES (4H):
@@ -825,19 +842,33 @@ BOLLINGER BANDS (4H):
 - Upper: ${mtf_safe_get('bb_upper'):,.2f}
 - Middle: ${mtf_safe_get('bb_middle'):,.2f}
 - Lower: ${mtf_safe_get('bb_lower'):,.2f}
+- Position: {mtf_safe_get('bb_position'):.1f}% (0%=Lower, 100%=Upper)
+"""
 
-4H TREND: {mtf_decision.get('overall_trend', 'N/A')}
+        # Add 1D trend layer data if available (MTF v3.5)
+        mtf_trend = data.get('mtf_trend_layer')
+        if mtf_trend:
+            def trend_safe_get(key, default=0):
+                val = mtf_trend.get(key)
+                return float(val) if val is not None else default
 
-MULTI-TIMEFRAME GUIDANCE:
-- Use 4H data for DIRECTIONAL BIAS (bullish/bearish)
-- Use 15M data for ENTRY TIMING (RSI levels, precise entry)
-- If 4H and 15M conflict, PREFER 4H direction with patience for better 15M entry
+            report += f"""
+=== MARKET DATA (1D Timeframe - Macro Trend) ===
+
+TREND INDICATORS (1D):
+- SMA 200: ${trend_safe_get('sma_200'):,.2f}
+- Price vs SMA_200: {'+' if data.get('price', 0) > trend_safe_get('sma_200') else ''}{((data.get('price', 0) / trend_safe_get('sma_200') - 1) * 100) if trend_safe_get('sma_200') > 0 else 0:.2f}%
+- MACD: {trend_safe_get('macd'):.4f}
+- MACD Signal: {trend_safe_get('macd_signal'):.4f}
 """
 
         return report
 
     def _format_sentiment_report(self, data: Optional[Dict[str, Any]]) -> str:
-        """Format sentiment data for prompts."""
+        """Format sentiment data for prompts.
+
+        TradingAgents v3.3: Pass raw ratios only, no interpretation.
+        """
         if not data:
             return "SENTIMENT: Data not available"
 
@@ -846,12 +877,12 @@ MULTI-TIMEFRAME GUIDANCE:
         neg_ratio = data.get('negative_ratio') or 0
         sign = '+' if net >= 0 else ''
 
+        # TradingAgents v3.3: Raw data only, AI interprets
         return f"""
-MARKET SENTIMENT (Long/Short Ratio):
-- Bullish Ratio: {pos_ratio:.1%}
-- Bearish Ratio: {neg_ratio:.1%}
-- Net Sentiment: {sign}{net:.3f}
-- Interpretation: {'Bullish bias' if net > 0.1 else 'Bearish bias' if net < -0.1 else 'Neutral'}
+MARKET SENTIMENT (Binance Long/Short Ratio):
+- Long Ratio: {pos_ratio:.1%}
+- Short Ratio: {neg_ratio:.1%}
+- Net: {sign}{net:.3f}
 """
 
     def _format_position(self, position: Optional[Dict[str, Any]]) -> str:
@@ -942,6 +973,22 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
         """Return the last debate transcript for debugging/logging."""
         return self.last_debate_transcript
 
+    def get_last_prompts(self) -> Dict[str, Dict[str, str]]:
+        """
+        Return the last prompts sent to each agent (v11.4 diagnostic feature).
+
+        Returns
+        -------
+        Dict[str, Dict[str, str]]
+            {
+                "bull": {"system": "...", "user": "..."},
+                "bear": {"system": "...", "user": "..."},
+                "judge": {"system": "...", "user": "..."},
+                "risk": {"system": "...", "user": "..."},
+            }
+        """
+        return self.last_prompts
+
     def _format_order_flow_report(self, data: Optional[Dict[str, Any]]) -> str:
         """
         Format order flow data for AI prompts.
@@ -962,35 +1009,22 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
             return "ORDER FLOW: Data not available (using neutral assumptions)"
 
         buy_ratio = data.get('buy_ratio', 0.5)
-        cvd_trend = data.get('cvd_trend', 'NEUTRAL')
         avg_trade = data.get('avg_trade_usdt', 0)
+        volume_usdt = data.get('volume_usdt', 0)
         trades_count = data.get('trades_count', 0)
         recent_bars = data.get('recent_10_bars', [])
 
-        # Interpret buy/sell ratio
-        if buy_ratio > 0.55:
-            buy_interpretation = "BULLISH (buyers dominating)"
-        elif buy_ratio < 0.45:
-            buy_interpretation = "BEARISH (sellers dominating)"
-        else:
-            buy_interpretation = "NEUTRAL (balanced)"
+        # Format recent bars (raw data only, AI infers trend)
+        recent_str = ", ".join([f"{r:.1%}" for r in recent_bars]) if recent_bars else "N/A"
 
-        # Format recent bars
-        recent_str = ", ".join([f"{r:.1%}" for r in recent_bars[-5:]]) if recent_bars else "N/A"
-
+        # TradingAgents v3.6: Added volume_usdt for market activity assessment
         return f"""
-ORDER FLOW ANALYSIS (Binance Taker Data):
-- Buy Ratio: {buy_ratio:.1%} ({buy_interpretation})
-- CVD Trend: {cvd_trend} ({'Accumulation' if cvd_trend == 'RISING' else 'Distribution' if cvd_trend == 'FALLING' else 'Sideways'})
+ORDER FLOW (Binance Taker Data):
+- Buy Ratio (10-bar avg): {buy_ratio:.1%}
+- Volume (USDT): ${volume_usdt:,.0f}
 - Avg Trade Size: ${avg_trade:,.0f} USDT
 - Trade Count: {trades_count:,}
-- Recent 5 Bars Buy Ratio: [{recent_str}]
-
-INTERPRETATION:
-- Buy Ratio > 55%: Strong buying pressure, confirms bullish momentum
-- Buy Ratio < 45%: Strong selling pressure, confirms bearish momentum
-- CVD RISING: Smart money accumulating, potential breakout
-- CVD FALLING: Distribution phase, potential breakdown
+- Recent 10 Bars: [{recent_str}]
 """
 
     def _format_derivatives_report(self, data: Optional[Dict[str, Any]], current_price: float = 0.0) -> str:
@@ -1014,69 +1048,45 @@ INTERPRETATION:
         if not data or not data.get('enabled', True):
             return "DERIVATIVES: Data not available (Coinalyze API disabled or unavailable)"
 
+        # v3.0: Pass raw data only, let AI interpret
         parts = ["DERIVATIVES MARKET DATA:"]
 
-        # Open Interest
+        # Open Interest (raw value only)
         oi = data.get('open_interest')
         if oi:
             oi_btc = oi.get('value', 0)
             parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
-            parts.append("  → OI Rising + Price Rising: Trend strengthening (bullish confirmation)")
-            parts.append("  → OI Falling: Positions closing, trend may be weakening")
         else:
             parts.append("- Open Interest: N/A")
 
-        # Funding Rate
+        # Funding Rate (raw value only, no interpretation)
         funding = data.get('funding_rate')
         if funding:
             rate = funding.get('value', 0)
             rate_pct = rate * 100
-
-            if rate > 0.001:
-                interp = "VERY_BULLISH (longs paying shorts, potential squeeze risk)"
-            elif rate > 0.0005:
-                interp = "BULLISH"
-            elif rate < -0.001:
-                interp = "VERY_BEARISH (shorts paying longs, potential short squeeze)"
-            elif rate < -0.0005:
-                interp = "BEARISH"
-            else:
-                interp = "NEUTRAL"
-
-            parts.append(f"- Funding Rate: {rate_pct:.4f}% ({interp})")
-
-            if rate > 0.001:
-                parts.append("  → ⚠️ HIGH Funding: Market overheated, long squeeze risk")
-            elif rate < -0.001:
-                parts.append("  → NEGATIVE Funding: Shorts paying longs, potential short squeeze")
+            parts.append(f"- Funding Rate: {rate_pct:.4f}%")
         else:
             parts.append("- Funding Rate: N/A")
 
-        # Liquidations (注意: Coinalyze API 返回的是 BTC 单位，需要转换为 USD)
+        # Liquidations (raw values only)
         liq = data.get('liquidations')
         if liq:
             history = liq.get('history', [])
             if history:
                 item = history[-1]
-                # API 返回的是 BTC 单位
                 long_liq_btc = float(item.get('l', 0))
                 short_liq_btc = float(item.get('s', 0))
                 total_btc = long_liq_btc + short_liq_btc
 
-                # 转换为 USD (使用传入的 current_price)
-                price_for_conversion = current_price if current_price > 0 else 88000  # fallback
-                long_liq_usd = long_liq_btc * price_for_conversion
-                short_liq_usd = short_liq_btc * price_for_conversion
+                # Convert to USD
+                price_for_conversion = current_price if current_price > 0 else 88000
                 total_usd = total_btc * price_for_conversion
 
                 parts.append(f"- Liquidations (1h): {total_btc:.4f} BTC (${total_usd:,.0f})")
                 if total_btc > 0:
                     long_ratio = long_liq_btc / total_btc
-                    parts.append(f"  → Long Liq: {long_liq_btc:.4f} BTC (${long_liq_usd:,.0f}) ({long_ratio:.0%})")
-                    parts.append(f"  → Short Liq: {short_liq_btc:.4f} BTC (${short_liq_usd:,.0f}) ({1-long_ratio:.0%})")
-
-                    if total_usd > 50_000_000:  # > $50M USD
-                        parts.append("  → ⚠️ HIGH liquidations: Extreme volatility, be cautious")
+                    parts.append(f"  - Long Liq: {long_liq_btc:.4f} BTC ({long_ratio:.0%})")
+                    parts.append(f"  - Short Liq: {short_liq_btc:.4f} BTC ({1-long_ratio:.0%})")
             else:
                 parts.append("- Liquidations (1h): N/A")
         else:

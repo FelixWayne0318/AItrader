@@ -815,11 +815,22 @@ TELEGRAM_CHAT_ID=xxx          # 你的个人用户 ID
 |------|--------|------|
 | `timer_interval_sec` | 900 | 分析间隔 (秒)，15分钟 |
 
-#### 多时间框架 (MTF) 配置 v3.2 🆕
+#### 多时间框架 (MTF) 配置 v3.6 🆕
 
 **功能状态**: ✅ **已启用** (`multi_timeframe.enabled: true`)
 
 MTF (Multi-Timeframe) 框架使用三层时间周期协同决策，结合订单流和衍生品数据增强 AI 分析质量。
+
+##### v3.6 新增数据 (完整数据覆盖)
+
+| 数据字段 | 说明 | 来源 |
+|---------|------|------|
+| `period_high` | K线周期内最高价 | indicator_manager.recent_bars |
+| `period_low` | K线周期内最低价 | indicator_manager.recent_bars |
+| `period_change_pct` | K线周期内价格变化百分比 | 计算: (当前价-开盘价)/开盘价 |
+| `period_hours` | K线周期覆盖的小时数 | 计算: bars数量 * 15分钟 / 60 |
+| `volume_usdt` | 24小时成交额 (USDT) | Binance K线数据 |
+| `price_change` | 24小时价格变化百分比 | Binance ticker API |
 
 ##### 架构设计
 

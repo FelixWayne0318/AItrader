@@ -1,14 +1,14 @@
-# 多时间框架实施方案 v3.2.9
+# 多时间框架实施方案 v3.6
 
 ## 文档信息
 
 | 项目 | 值 |
 |------|-----|
-| 版本 | 3.2.9 |
+| 版本 | 3.6 |
 | 创建日期 | 2026-01-26 |
-| 更新日期 | 2026-01-26 |
+| 更新日期 | 2026-01-30 |
 | 基于 | TradingAgents 架构 + AItrader 现有系统 |
-| 状态 | **✅ 实际代码已实现** (v3.2.9 - 核心模块已创建并集成) |
+| 状态 | **✅ 实际代码已实现** (v3.6 - 完整数据覆盖) |
 
 ## 版本历史
 
@@ -28,8 +28,27 @@
 | v3.2.7 | 2026-01-26 | **P0 阻塞项修复**，BarType构建、_prefetch_multi_timeframe_bars()、SMA_200初始化、时间戳标准化 |
 | v3.2.8 | 2026-01-26 | **NautilusTrader API 合规性修复**，request_bars 签名修正 (start/end datetime)、新增 MultiTimeframeManager 完整定义 |
 | v3.2.9 | 2026-01-26 | **✅ 实际代码实现完成**，创建核心模块文件、集成 main_live.py、添加 Config 字段 |
+| v3.6 | 2026-01-30 | **✅ 完整数据覆盖**，添加 period_high/low/change_pct、volume_usdt 到 AI 输入，diagnose_realtime.py v11.10 |
 
-### v3.2.9 主要更新 (✅ 实际代码实现完成)
+### v3.6 主要更新 (✅ 完整数据覆盖)
+
+**本版本确保所有采集的数据完整传递给 AI 分析。**
+
+1. **✅ 新增价格统计数据**
+   - `period_high`: K线周期内最高价
+   - `period_low`: K线周期内最低价
+   - `period_change_pct`: K线周期内价格变化百分比
+   - `period_hours`: K线周期覆盖的小时数
+
+2. **✅ 新增成交量数据**
+   - `volume_usdt`: 24小时成交额 (USDT)
+   - `price_change`: 24小时价格变化百分比
+
+3. **✅ 修复 diagnose_realtime.py v11.10**
+   - 添加 `fetch_binance_klines()` 和 `MockBar` 类修复 MTF 数据加载
+   - 修复 BB Position 显示 (原 0.5% → 正确 52%)
+
+### v3.2.9 主要更新 (实际代码实现完成)
 
 **本版本将设计文档转化为实际可运行代码，所有核心模块已创建并集成。**
 
