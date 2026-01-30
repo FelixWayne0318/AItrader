@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.7 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.8 (与实盘 100% 一致)
+
+v11.8 更新 - 添加 BB Position 和 1D 趋势层数据:
+- 显示 BB Position (15M/4H) - 价格在 BB 带内的位置
+- 显示 1D 趋势层数据 (SMA_200, MACD)
+- AI 输入数据验证新增 MTF 完整数据
 
 v11.7 更新 - 修复 validate_multiagent_sltp 调用签名:
 - 参数顺序: (side, multi_sl, multi_tp, entry_price)
@@ -304,7 +309,7 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.7')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.8')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -549,7 +554,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.7 (TradingAgents v3.4 - 修复所有函数签名){mode_str}")
+print(f"  实盘信号诊断工具 v11.8 (MTF v3.5 - BB Position + 1D 趋势层){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1142,6 +1147,74 @@ try:
     print("  ✅ 技术数据获取成功")
     print("  📝 v3.3: AI 只接收原始数值 (SMA/RSI/MACD/BB)，不接收 support/resistance/trend 标签")
 
+    # ========== MTF 多时间框架数据获取 (v11.8 新增) ==========
+    # 获取 4H 决策层数据
+    try:
+        from indicators.technical_manager import TechnicalIndicatorManager
+
+        # 4H 数据
+        klines_4h = fetch_binance_klines("BTCUSDT", "4h", 60)
+        if klines_4h and len(klines_4h) >= 50:
+            indicator_manager_4h = TechnicalIndicatorManager(
+                sma_periods=[20, 50],
+                ema_periods=[12, 26],
+                rsi_period=14,
+                macd_fast=12,
+                macd_slow=26,
+                macd_signal=9,
+                bb_period=20,
+            )
+            for kline in klines_4h:
+                bar_4h = create_bar_from_kline(kline, "BTCUSDT-PERP.BINANCE-4-HOUR-LAST-EXTERNAL")
+                indicator_manager_4h.update(bar_4h)
+
+            decision_layer_data = indicator_manager_4h.get_technical_data(current_price)
+            technical_data['mtf_decision_layer'] = {
+                'timeframe': '4H',
+                'rsi': decision_layer_data.get('rsi', 50),
+                'macd': decision_layer_data.get('macd', 0),
+                'macd_signal': decision_layer_data.get('macd_signal', 0),
+                'sma_20': decision_layer_data.get('sma_20', 0),
+                'sma_50': decision_layer_data.get('sma_50', 0),
+                'bb_upper': decision_layer_data.get('bb_upper', 0),
+                'bb_middle': decision_layer_data.get('bb_middle', 0),
+                'bb_lower': decision_layer_data.get('bb_lower', 0),
+                'bb_position': decision_layer_data.get('bb_position', 50),
+            }
+            print(f"  ✅ 4H 决策层数据加载: RSI={technical_data['mtf_decision_layer']['rsi']:.1f}")
+        else:
+            print("  ⚠️ 4H K线数据不足，跳过决策层")
+
+        # 1D 数据
+        klines_1d = fetch_binance_klines("BTCUSDT", "1d", 220)
+        if klines_1d and len(klines_1d) >= 200:
+            indicator_manager_1d = TechnicalIndicatorManager(
+                sma_periods=[200],
+                ema_periods=[12, 26],
+                rsi_period=14,
+                macd_fast=12,
+                macd_slow=26,
+                macd_signal=9,
+                bb_period=20,
+            )
+            for kline in klines_1d:
+                bar_1d = create_bar_from_kline(kline, "BTCUSDT-PERP.BINANCE-1-DAY-LAST-EXTERNAL")
+                indicator_manager_1d.update(bar_1d)
+
+            trend_layer_data = indicator_manager_1d.get_technical_data(current_price)
+            technical_data['mtf_trend_layer'] = {
+                'timeframe': '1D',
+                'sma_200': trend_layer_data.get('sma_200', 0),
+                'macd': trend_layer_data.get('macd', 0),
+                'macd_signal': trend_layer_data.get('macd_signal', 0),
+            }
+            print(f"  ✅ 1D 趋势层数据加载: SMA_200=${technical_data['mtf_trend_layer']['sma_200']:,.2f}")
+        else:
+            print(f"  ⚠️ 1D K线数据不足 ({len(klines_1d) if klines_1d else 0}/200)，跳过趋势层")
+
+    except Exception as e:
+        print(f"  ⚠️ MTF 多时间框架数据获取失败: {e}")
+
 except (AttributeError, KeyError, TypeError, ValueError) as e:
     print(f"  ❌ 技术数据获取失败: {e}")
     import traceback
@@ -1326,7 +1399,7 @@ try:
     print("  │              AI 输入数据验证 (传给 MultiAgent)                   │")
     print("  └─────────────────────────────────────────────────────────────────┘")
     print()
-    print("  [1] technical_data (技术指标):")
+    print("  [1] technical_data (15M 技术指标):")
     print(f"      price:           ${technical_data.get('price', 0):,.2f}")
     print(f"      sma_5:           ${technical_data.get('sma_5', 0):,.2f}")
     print(f"      sma_20:          ${technical_data.get('sma_20', 0):,.2f}")
@@ -1334,6 +1407,9 @@ try:
     print(f"      rsi:             {technical_data.get('rsi', 0):.2f}")
     print(f"      macd:            {technical_data.get('macd', 0):.4f}")
     print(f"      macd_histogram:  {technical_data.get('macd_histogram', 0):.4f}")
+    print(f"      bb_upper:        ${technical_data.get('bb_upper', 0):,.2f}")
+    print(f"      bb_lower:        ${technical_data.get('bb_lower', 0):,.2f}")
+    print(f"      bb_position:     {technical_data.get('bb_position', 50):.1f}% (0%=下轨, 100%=上轨)")
     print(f"      [诊断用] overall_trend: {technical_data.get('overall_trend', 'N/A')}")
     print()
     print("  [2] sentiment_data (情绪数据):")
@@ -1374,14 +1450,44 @@ try:
     else:
         print("  [5] derivatives_report: None (未获取)")
     print()
+
+    # ========== MTF 多时间框架数据 (v11.8 新增) ==========
+    # 获取 4H 决策层数据
+    mtf_decision_data = technical_data.get('mtf_decision_layer')
+    if mtf_decision_data:
+        print("  [6] mtf_decision_layer (4H 决策层):")
+        print(f"      rsi:             {mtf_decision_data.get('rsi', 0):.2f}")
+        print(f"      macd:            {mtf_decision_data.get('macd', 0):.4f}")
+        print(f"      sma_20:          ${mtf_decision_data.get('sma_20', 0):,.2f}")
+        print(f"      sma_50:          ${mtf_decision_data.get('sma_50', 0):,.2f}")
+        print(f"      bb_upper:        ${mtf_decision_data.get('bb_upper', 0):,.2f}")
+        print(f"      bb_lower:        ${mtf_decision_data.get('bb_lower', 0):,.2f}")
+        print(f"      bb_position:     {mtf_decision_data.get('bb_position', 50):.1f}%")
+    else:
+        print("  [6] mtf_decision_layer (4H): 未初始化或未启用")
+    print()
+
+    # 获取 1D 趋势层数据
+    mtf_trend_data = technical_data.get('mtf_trend_layer')
+    if mtf_trend_data:
+        print("  [7] mtf_trend_layer (1D 趋势层):")
+        print(f"      sma_200:         ${mtf_trend_data.get('sma_200', 0):,.2f}")
+        price_vs_sma200 = ((current_price / mtf_trend_data.get('sma_200', 1) - 1) * 100) if mtf_trend_data.get('sma_200', 0) > 0 else 0
+        print(f"      price vs SMA200: {'+' if price_vs_sma200 >= 0 else ''}{price_vs_sma200:.2f}%")
+        print(f"      macd:            {mtf_trend_data.get('macd', 0):.4f}")
+        print(f"      macd_signal:     {mtf_trend_data.get('macd_signal', 0):.4f}")
+    else:
+        print("  [7] mtf_trend_layer (1D): 未初始化或未启用")
+    print()
+
     if current_position:
-        print("  [6] current_position (当前持仓):")
+        print("  [8] current_position (当前持仓):")
         print(f"      side:            {current_position.get('side', 'N/A')}")
         print(f"      quantity:        {current_position.get('quantity', 0)} BTC")
         print(f"      entry_price:     ${current_position.get('entry_price', 0):,.2f}")
         print(f"      unrealized_pnl:  ${current_position.get('unrealized_pnl', 0):,.2f}")
     else:
-        print("  [6] current_position: None (无持仓)")
+        print("  [8] current_position: None (无持仓)")
     print()
     print("  ────────────────────────────────────────────────────────────────")
 
