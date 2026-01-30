@@ -55,8 +55,8 @@ export function TradeTimeline({ trades, maxItems = 10 }: TradeTimelineProps) {
               <div
                 className={`absolute left-2.5 top-3 w-3 h-3 rounded-full border-2 ${
                   trade.is_profit
-                    ? 'bg-profit/20 border-profit'
-                    : 'bg-loss/20 border-loss'
+                    ? 'bg-[hsl(var(--profit))]/20 border-[hsl(var(--profit))]'
+                    : 'bg-[hsl(var(--loss))]/20 border-[hsl(var(--loss))]'
                 }`}
               />
 
@@ -75,8 +75,8 @@ export function TradeTimeline({ trades, maxItems = 10 }: TradeTimelineProps) {
                     <span
                       className={`px-2 py-0.5 text-xs font-medium rounded ${
                         trade.side === 'LONG'
-                          ? 'bg-profit/10 text-profit'
-                          : 'bg-loss/10 text-loss'
+                          ? 'bg-[hsl(var(--profit))]/10 text-[hsl(var(--profit))]'
+                          : 'bg-[hsl(var(--loss))]/10 text-[hsl(var(--loss))]'
                       }`}
                     >
                       {trade.side}
@@ -90,7 +90,7 @@ export function TradeTimeline({ trades, maxItems = 10 }: TradeTimelineProps) {
                   </div>
 
                   {/* PnL */}
-                  <div className={`font-mono font-semibold ${trade.is_profit ? 'text-profit' : 'text-loss'}`}>
+                  <div className={`font-mono font-semibold ${trade.is_profit ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'}`}>
                     {trade.is_profit ? '+' : ''}{trade.pnl.toFixed(2)} USDT
                   </div>
                 </div>
@@ -116,7 +116,7 @@ export function TradeTimeline({ trades, maxItems = 10 }: TradeTimelineProps) {
                         {trade.pnl_percent !== 0 && (
                           <div>
                             <span className="text-muted-foreground">Return</span>
-                            <p className={trade.is_profit ? 'text-profit' : 'text-loss'}>
+                            <p className={trade.is_profit ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'}>
                               {trade.is_profit ? '+' : ''}{trade.pnl_percent.toFixed(2)}%
                             </p>
                           </div>

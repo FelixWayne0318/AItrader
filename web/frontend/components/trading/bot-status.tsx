@@ -51,9 +51,10 @@ export function BotStatus({
   const statusConfig = {
     running: {
       label: 'Running',
-      color: 'profit',
-      bgColor: 'bg-profit/10',
-      borderColor: 'border-profit/30',
+      dotColor: 'bg-[hsl(var(--profit))]',
+      textColor: 'text-[hsl(var(--profit))]',
+      bgColor: 'bg-[hsl(var(--profit))]/10',
+      borderColor: 'border-[hsl(var(--profit))]/30',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -63,9 +64,10 @@ export function BotStatus({
     },
     paused: {
       label: 'Paused',
-      color: 'warning',
-      bgColor: 'bg-warning/10',
-      borderColor: 'border-warning/30',
+      dotColor: 'bg-[hsl(var(--warning))]',
+      textColor: 'text-[hsl(var(--warning))]',
+      bgColor: 'bg-[hsl(var(--warning))]/10',
+      borderColor: 'border-[hsl(var(--warning))]/30',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -74,7 +76,8 @@ export function BotStatus({
     },
     stopped: {
       label: 'Stopped',
-      color: 'muted-foreground',
+      dotColor: 'bg-muted-foreground',
+      textColor: 'text-muted-foreground',
       bgColor: 'bg-muted',
       borderColor: 'border-border',
       icon: (
@@ -86,9 +89,10 @@ export function BotStatus({
     },
     error: {
       label: 'Error',
-      color: 'loss',
-      bgColor: 'bg-loss/10',
-      borderColor: 'border-loss/30',
+      dotColor: 'bg-[hsl(var(--loss))]',
+      textColor: 'text-[hsl(var(--loss))]',
+      bgColor: 'bg-[hsl(var(--loss))]/10',
+      borderColor: 'border-[hsl(var(--loss))]/30',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -98,7 +102,6 @@ export function BotStatus({
   };
 
   const config = statusConfig[status];
-  const textColor = `text-${config.color}`;
 
   return (
     <div className={`rounded-xl border ${config.borderColor} ${config.bgColor} p-4`}>
@@ -107,7 +110,7 @@ export function BotStatus({
           {/* Breathing status dot */}
           <div className="relative">
             <motion.div
-              className={`w-3 h-3 rounded-full bg-${config.color}`}
+              className={`w-3 h-3 rounded-full ${config.dotColor}`}
               animate={
                 status === 'running'
                   ? {
@@ -124,7 +127,7 @@ export function BotStatus({
             />
             {status === 'running' && (
               <motion.div
-                className={`absolute inset-0 rounded-full bg-${config.color}`}
+                className={`absolute inset-0 rounded-full ${config.dotColor}`}
                 animate={{
                   scale: [1, 2],
                   opacity: [0.5, 0],
@@ -138,11 +141,11 @@ export function BotStatus({
             )}
           </div>
 
-          <div className={textColor}>{config.icon}</div>
+          <div className={config.textColor}>{config.icon}</div>
 
           <div>
             <h4 className="font-semibold text-foreground">Bot Status</h4>
-            <p className={`text-sm ${textColor}`}>{config.label}</p>
+            <p className={`text-sm ${config.textColor}`}>{config.label}</p>
           </div>
         </div>
 
@@ -200,10 +203,10 @@ export function BotStatus({
 // Compact version for dashboard headers
 export function BotStatusBadge({ status }: { status: 'running' | 'paused' | 'stopped' | 'error' }) {
   const config = {
-    running: { label: 'Running', color: 'bg-profit text-profit-foreground' },
-    paused: { label: 'Paused', color: 'bg-warning text-warning-foreground' },
+    running: { label: 'Running', color: 'bg-[hsl(var(--profit))] text-white' },
+    paused: { label: 'Paused', color: 'bg-[hsl(var(--warning))] text-white' },
     stopped: { label: 'Stopped', color: 'bg-muted text-muted-foreground' },
-    error: { label: 'Error', color: 'bg-loss text-loss-foreground' },
+    error: { label: 'Error', color: 'bg-[hsl(var(--loss))] text-white' },
   };
 
   const { label, color } = config[status];

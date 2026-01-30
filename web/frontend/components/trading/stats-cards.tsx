@@ -64,15 +64,15 @@ export function StatsCard({
 }: StatsCardProps) {
   const colorClasses = {
     default: 'border-border',
-    profit: 'border-profit/30',
-    loss: 'border-loss/30',
+    profit: 'border-[hsl(var(--profit))]/30',
+    loss: 'border-[hsl(var(--loss))]/30',
     primary: 'border-primary/30',
   };
 
   const valueColors = {
     default: 'text-foreground',
-    profit: 'text-profit',
-    loss: 'text-loss',
+    profit: 'text-[hsl(var(--profit))]',
+    loss: 'text-[hsl(var(--loss))]',
     primary: 'text-primary',
   };
 
@@ -113,7 +113,7 @@ export function StatsCard({
           {change !== undefined && (
             <span
               className={`text-sm font-medium ${
-                change >= 0 ? 'text-profit' : 'text-loss'
+                change >= 0 ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'
               }`}
             >
               {change >= 0 ? '+' : ''}

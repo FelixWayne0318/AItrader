@@ -72,8 +72,8 @@ function NotificationItem({
   const typeColors = {
     trade: 'text-primary bg-primary/10',
     signal: 'text-accent bg-accent/10',
-    error: 'text-loss bg-loss/10',
-    warning: 'text-warning bg-warning/10',
+    error: 'text-[hsl(var(--loss))] bg-[hsl(var(--loss))]/10',
+    warning: 'text-[hsl(var(--warning))] bg-[hsl(var(--warning))]/10',
     info: 'text-muted-foreground bg-muted',
     system: 'text-primary bg-primary/10',
   };
@@ -81,8 +81,8 @@ function NotificationItem({
   const borderColors = {
     trade: 'border-l-primary',
     signal: 'border-l-accent',
-    error: 'border-l-loss',
-    warning: 'border-l-warning',
+    error: 'border-l-[hsl(var(--loss))]',
+    warning: 'border-l-[hsl(var(--warning))]',
     info: 'border-l-muted-foreground',
     system: 'border-l-primary',
   };
@@ -140,7 +140,7 @@ function NotificationItem({
           {onDelete && (
             <button
               onClick={() => onDelete(notification.id)}
-              className="p-2 sm:p-1.5 rounded-lg hover:bg-loss/10 hover:text-loss transition-colors min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 flex items-center justify-center"
+              className="p-2 sm:p-1.5 rounded-lg hover:bg-[hsl(var(--loss))]/10 hover:text-[hsl(var(--loss))] transition-colors min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 flex items-center justify-center"
               title="Delete"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -279,7 +279,7 @@ export function NotificationBell({
         />
       </svg>
       {unreadCount > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 w-5 h-5 flex items-center justify-center text-xs font-bold bg-loss text-white rounded-full">
+        <span className="absolute -top-0.5 -right-0.5 w-5 h-5 flex items-center justify-center text-xs font-bold bg-[hsl(var(--loss))] text-white rounded-full">
           {unreadCount > 9 ? '9+' : unreadCount}
         </span>
       )}

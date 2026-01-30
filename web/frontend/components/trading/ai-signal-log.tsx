@@ -37,11 +37,11 @@ interface AISignalLogProps {
 
 function SignalBadge({ signal, size = 'md' }: { signal: string; size?: 'sm' | 'md' }) {
   const colors = {
-    BUY: 'bg-profit/20 text-profit border-profit/30',
-    SELL: 'bg-loss/20 text-loss border-loss/30',
-    HOLD: 'bg-warning/20 text-warning border-warning/30',
-    LONG: 'bg-profit/20 text-profit border-profit/30',
-    SHORT: 'bg-loss/20 text-loss border-loss/30',
+    BUY: 'bg-[hsl(var(--profit))]/20 text-[hsl(var(--profit))] border-[hsl(var(--profit))]/30',
+    SELL: 'bg-[hsl(var(--loss))]/20 text-[hsl(var(--loss))] border-[hsl(var(--loss))]/30',
+    HOLD: 'bg-[hsl(var(--warning))]/20 text-[hsl(var(--warning))] border-[hsl(var(--warning))]/30',
+    LONG: 'bg-[hsl(var(--profit))]/20 text-[hsl(var(--profit))] border-[hsl(var(--profit))]/30',
+    SHORT: 'bg-[hsl(var(--loss))]/20 text-[hsl(var(--loss))] border-[hsl(var(--loss))]/30',
   };
 
   const sizeClasses = {
@@ -58,8 +58,8 @@ function SignalBadge({ signal, size = 'md' }: { signal: string; size?: 'sm' | 'm
 
 function ConfidenceBadge({ confidence }: { confidence: string }) {
   const colors = {
-    HIGH: 'text-profit',
-    MEDIUM: 'text-warning',
+    HIGH: 'text-[hsl(var(--profit))]',
+    MEDIUM: 'text-[hsl(var(--warning))]',
     LOW: 'text-muted-foreground',
   };
 
@@ -84,8 +84,8 @@ function AnalysisCard({
   const [expanded, setExpanded] = useState(false);
 
   const borderColors = {
-    profit: 'border-profit/30',
-    loss: 'border-loss/30',
+    profit: 'border-[hsl(var(--profit))]/30',
+    loss: 'border-[hsl(var(--loss))]/30',
     primary: 'border-primary/30',
   };
 
@@ -136,8 +136,8 @@ function AnalysisCard({
       {/* Judge specific fields */}
       {analysis.bull_score !== undefined && (
         <div className="mt-2 pt-2 border-t border-border/50 flex items-center gap-4 text-xs">
-          <span className="text-profit">Bull: {analysis.bull_score}</span>
-          <span className="text-loss">Bear: {analysis.bear_score}</span>
+          <span className="text-[hsl(var(--profit))]">Bull: {analysis.bull_score}</span>
+          <span className="text-[hsl(var(--loss))]">Bear: {analysis.bear_score}</span>
         </div>
       )}
     </div>
@@ -261,7 +261,7 @@ export function AISignalLog({ signals, maxItems = 5 }: AISignalLogProps) {
                       analysis={signal.bull_analysis}
                       color="profit"
                       icon={
-                        <svg className="w-4 h-4 text-profit" fill="currentColor" viewBox="0 0 20 20">
+                        <svg className="w-4 h-4 text-[hsl(var(--profit))]" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd" />
                         </svg>
                       }
@@ -271,7 +271,7 @@ export function AISignalLog({ signals, maxItems = 5 }: AISignalLogProps) {
                       analysis={signal.bear_analysis}
                       color="loss"
                       icon={
-                        <svg className="w-4 h-4 text-loss" fill="currentColor" viewBox="0 0 20 20">
+                        <svg className="w-4 h-4 text-[hsl(var(--loss))]" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M12 13a1 1 0 100 2h5a1 1 0 001-1V9a1 1 0 10-2 0v2.586l-4.293-4.293a1 1 0 00-1.414 0L8 9.586 3.707 5.293a1 1 0 00-1.414 1.414l5 5a1 1 0 001.414 0L11 9.414 14.586 13H12z" clipRule="evenodd" />
                         </svg>
                       }

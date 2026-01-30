@@ -35,9 +35,9 @@ function MetricCard({
 }) {
   const colorClasses = {
     primary: 'from-primary/20 to-transparent border-primary/20 text-primary',
-    profit: 'from-profit/20 to-transparent border-profit/20 text-profit',
-    loss: 'from-loss/20 to-transparent border-loss/20 text-loss',
-    warning: 'from-warning/20 to-transparent border-warning/20 text-warning',
+    profit: 'from-[hsl(var(--profit))]/20 to-transparent border-[hsl(var(--profit))]/20 text-[hsl(var(--profit))]',
+    loss: 'from-[hsl(var(--loss))]/20 to-transparent border-[hsl(var(--loss))]/20 text-[hsl(var(--loss))]',
+    warning: 'from-[hsl(var(--warning))]/20 to-transparent border-[hsl(var(--warning))]/20 text-[hsl(var(--warning))]',
   };
 
   return (
