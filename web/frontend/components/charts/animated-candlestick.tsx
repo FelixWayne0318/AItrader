@@ -39,9 +39,9 @@ function parseKlineData(klines: any[]): Candle[] {
   }));
 }
 
-// Pure CSS animated candlestick chart with real data
+// DipSway-style animated candlestick chart with real data
 export function AnimatedCandlestick({
-  height = 300,
+  height = 320,
   candleCount = 30,
   showVolume = true,
   title = 'BTC/USDT',
@@ -55,40 +55,33 @@ export function AnimatedCandlestick({
   const { data: klineData, error } = useSWR(
     isClient ? `/api/trading/klines/${symbol}?interval=${interval}&limit=${candleCount}` : null,
     fetcher,
-    { refreshInterval: 10000 } // Refresh every 10 seconds
+    { refreshInterval: 10000 }
   );
 
-  // Initialize client-side rendering
   useEffect(() => {
     setIsClient(true);
   }, []);
 
-  // Parse kline data
   const candles = klineData?.klines ? parseKlineData(klineData.klines) : [];
 
-  // Calculate current price and change
   const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
   const firstPrice = candles.length > 0 ? candles[0].open : 0;
   const priceChange = firstPrice > 0 ? ((currentPrice - firstPrice) / firstPrice) * 100 : 0;
 
-  // Calculate dimensions
-  const headerHeight = 70;
-  const bottomPadding = 40;
+  const headerHeight = 72;
+  const bottomPadding = 36;
   const chartAreaHeight = height - headerHeight - bottomPadding;
-  const candleChartHeight = showVolume ? chartAreaHeight * 0.75 : chartAreaHeight;
-  const volumeChartHeight = showVolume ? chartAreaHeight * 0.20 : 0;
+  const candleChartHeight = showVolume ? chartAreaHeight * 0.78 : chartAreaHeight;
+  const volumeChartHeight = showVolume ? chartAreaHeight * 0.18 : 0;
 
-  // Calculate price range
   const prices = candles.length > 0 ? candles.flatMap((c) => [c.high, c.low]) : [0];
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
   const priceRange = maxPrice - minPrice || 1;
 
-  // Calculate volume range
   const volumes = candles.length > 0 ? candles.map((c) => c.volume) : [0];
   const maxVolume = Math.max(...volumes);
 
-  // Convert price to percentage from top
   const priceToPercent = useCallback(
     (price: number) => {
       return ((maxPrice - price) / priceRange) * 100;
@@ -96,18 +89,22 @@ export function AnimatedCandlestick({
     [maxPrice, priceRange]
   );
 
-  // Loading state
+  // Loading state with premium spinner
   if (!isClient || candles.length === 0) {
     return (
       <div
         ref={containerRef}
-        className="relative bg-gradient-to-b from-card/80 to-background rounded-xl border border-border/50 overflow-hidden"
+        className="chart-container glass-strong relative"
         style={{ height, minHeight: height }}
       >
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-            <span className="text-sm">{error ? 'Failed to load data' : 'Loading real-time data...'}</span>
+          <div className="flex flex-col items-center gap-3">
+            <div className="relative">
+              <div className="w-10 h-10 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+            </div>
+            <span className="text-sm text-muted-foreground">
+              {error ? 'Failed to load data' : 'Loading market data...'}
+            </span>
           </div>
         </div>
       </div>
@@ -119,88 +116,91 @@ export function AnimatedCandlestick({
   return (
     <div
       ref={containerRef}
-      className="relative bg-gradient-to-b from-card/80 to-background rounded-xl border border-border/50 overflow-hidden"
+      className="chart-container relative overflow-hidden rounded-xl border border-border/50"
       style={{ height, minHeight: height }}
     >
-      {/* CSS for animations */}
-      <style jsx>{`
-        @keyframes pulse {
-          0%, 100% {
-            opacity: 0.5;
-            box-shadow: 0 0 4px currentColor;
-          }
-          50% {
-            opacity: 0.8;
-            box-shadow: 0 0 8px currentColor;
-          }
-        }
-        .glow-pulse {
-          animation: pulse 1.5s ease-in-out infinite;
-        }
-      `}</style>
+      {/* Premium background effects */}
+      <div className="absolute inset-0 mesh-gradient opacity-40" />
+      <div className="absolute inset-0 grid-pattern opacity-20" />
 
-      {/* Glowing background effect */}
-      <div className="absolute inset-0 opacity-30 pointer-events-none">
-        <div className="absolute top-1/4 right-1/4 w-40 h-40 bg-primary/30 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 left-1/4 w-32 h-32 bg-accent/20 rounded-full blur-3xl" />
-      </div>
-
-      {/* Header */}
+      {/* Dynamic glow based on price trend */}
       <div
-        className="relative p-3 sm:p-4 flex items-center justify-between z-10 bg-gradient-to-b from-card/90 to-transparent"
+        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-2/3 h-40 rounded-full blur-3xl opacity-15 transition-colors duration-1000"
+        style={{ background: priceChange >= 0 ? 'hsl(var(--profit))' : 'hsl(var(--loss))' }}
+      />
+
+      {/* Header with glass effect */}
+      <div
+        className="relative px-4 sm:px-5 py-4 flex items-center justify-between z-10 backdrop-blur-sm bg-card/30"
         style={{ height: headerHeight }}
       >
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-[#f7931a] to-[#f39c12] flex items-center justify-center flex-shrink-0">
-            <span className="text-white text-xs font-bold">₿</span>
+        <div className="flex items-center gap-3">
+          {/* Bitcoin icon with glow */}
+          <div className="relative group">
+            <div className="absolute inset-0 bg-[#f7931a] rounded-full blur-lg opacity-40 group-hover:opacity-60 transition-opacity" />
+            <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-[#f7931a] to-[#e8850d] flex items-center justify-center shadow-lg border border-[#f7931a]/30">
+              <span className="text-white text-sm font-bold">₿</span>
+            </div>
           </div>
           <div>
-            <h3 className="font-semibold text-foreground text-sm sm:text-base">{title}</h3>
-            <p className="text-[10px] sm:text-xs text-muted-foreground">Perpetual · {interval}</p>
+            <h3 className="font-semibold text-foreground text-base tracking-tight">{title}</h3>
+            <p className="text-xs text-muted-foreground">Perpetual · {interval}</p>
           </div>
         </div>
+
         <div className="text-right">
-          <p className="font-mono text-base sm:text-xl font-bold text-foreground">
+          <p className="font-mono text-xl sm:text-2xl font-bold text-foreground tracking-tight">
             ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p
-            className={`text-[10px] sm:text-xs font-medium ${
-              priceChange >= 0 ? 'text-green-500' : 'text-red-500'
-            }`}
-          >
+          <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+            priceChange >= 0
+              ? 'bg-[hsl(var(--profit))]/15 text-[hsl(var(--profit))]'
+              : 'bg-[hsl(var(--loss))]/15 text-[hsl(var(--loss))]'
+          }`}>
+            {priceChange >= 0 ? (
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M7 11l5-5m0 0l5 5m-5-5v12" />
+              </svg>
+            ) : (
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M17 13l-5 5m0 0l-5-5m5 5V6" />
+              </svg>
+            )}
             {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
-          </p>
+          </div>
         </div>
       </div>
 
-      {/* Chart container */}
-      <div className="relative px-2" style={{ height: chartAreaHeight }}>
-        {/* Price axis labels */}
-        <div className="absolute right-1 sm:right-2 top-0 flex flex-col justify-between z-10 pointer-events-none" style={{ height: candleChartHeight }}>
-          <span className="text-[9px] sm:text-[10px] text-muted-foreground font-mono">
-            ${maxPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </span>
-          <span className="text-[9px] sm:text-[10px] text-muted-foreground font-mono">
-            ${((maxPrice + minPrice) / 2).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </span>
-          <span className="text-[9px] sm:text-[10px] text-muted-foreground font-mono">
-            ${minPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </span>
+      {/* Chart area */}
+      <div className="relative px-3" style={{ height: chartAreaHeight }}>
+        {/* Price labels with subtle background */}
+        <div
+          className="absolute right-2 top-0 flex flex-col justify-between z-10 pointer-events-none"
+          style={{ height: candleChartHeight }}
+        >
+          {[maxPrice, (maxPrice + minPrice) / 2, minPrice].map((price, i) => (
+            <span
+              key={i}
+              className="text-[10px] text-muted-foreground/80 font-mono tabular-nums bg-card/60 backdrop-blur-sm px-1.5 py-0.5 rounded"
+            >
+              ${price.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </span>
+          ))}
         </div>
 
         {/* Grid lines */}
-        <div className="absolute inset-x-2 top-0" style={{ height: candleChartHeight }}>
+        <div className="absolute inset-x-3 top-0" style={{ height: candleChartHeight }}>
           {[0, 25, 50, 75, 100].map((percent) => (
             <div
               key={percent}
-              className="absolute w-full border-t border-border/20 border-dashed"
+              className="absolute w-full border-t border-border/20"
               style={{ top: `${percent}%` }}
             />
           ))}
         </div>
 
-        {/* Candlesticks using divs */}
-        <div className="absolute inset-x-2 top-0 flex" style={{ height: candleChartHeight }}>
+        {/* Candlesticks */}
+        <div className="absolute inset-x-3 top-0 flex" style={{ height: candleChartHeight }}>
           {candles.map((candle, index) => {
             const isUp = candle.close >= candle.open;
             const isLatest = index === candles.length - 1;
@@ -219,54 +219,73 @@ export function AnimatedCandlestick({
               >
                 {/* Wick */}
                 <div
-                  className="absolute left-1/2 -translate-x-1/2"
+                  className="absolute left-1/2 -translate-x-1/2 transition-all duration-150"
                   style={{
                     top: `${highPercent}%`,
                     height: `${lowPercent - highPercent}%`,
                     width: '1px',
-                    backgroundColor: isUp ? '#22c55e' : '#ef4444',
+                    backgroundColor: isUp ? 'hsl(var(--profit))' : 'hsl(var(--loss))',
+                    opacity: isLatest ? 1 : 0.7,
                   }}
                 />
                 {/* Body */}
                 <div
-                  className={`absolute left-1/2 -translate-x-1/2 rounded-sm ${isLatest ? 'glow-pulse' : ''}`}
+                  className="absolute left-1/2 -translate-x-1/2 rounded-[2px] transition-all duration-150"
                   style={{
                     top: `${bodyTopPercent}%`,
                     height: `${bodyHeightPercent}%`,
-                    width: '60%',
+                    width: candleCount > 40 ? '50%' : '65%',
                     minHeight: '2px',
-                    backgroundColor: isUp ? 'rgba(34, 197, 94, 0.3)' : '#ef4444',
-                    border: `1px solid ${isUp ? '#22c55e' : '#ef4444'}`,
-                    color: isUp ? '#22c55e' : '#ef4444',
+                    backgroundColor: isUp ? 'hsl(var(--profit))' : 'hsl(var(--loss))',
+                    opacity: isUp ? 0.85 : 1,
+                    boxShadow: isLatest
+                      ? `0 0 12px ${isUp ? 'hsl(var(--profit) / 0.6)' : 'hsl(var(--loss) / 0.6)'}`
+                      : 'none',
                   }}
                 />
+                {/* Latest candle pulsing border */}
+                {isLatest && (
+                  <div
+                    className="absolute left-1/2 -translate-x-1/2 rounded-[2px] animate-pulse"
+                    style={{
+                      top: `${bodyTopPercent}%`,
+                      height: `${bodyHeightPercent}%`,
+                      width: candleCount > 40 ? '50%' : '65%',
+                      minHeight: '2px',
+                      border: `1px solid ${isUp ? 'hsl(var(--profit))' : 'hsl(var(--loss))'}`,
+                      opacity: 0.4,
+                    }}
+                  />
+                )}
               </div>
             );
           })}
         </div>
 
-        {/* Volume bars */}
+        {/* Volume bars with gradient */}
         {showVolume && (
           <div
-            className="absolute inset-x-2 bottom-0 flex items-end"
+            className="absolute inset-x-3 bottom-0 flex items-end gap-px"
             style={{ height: volumeChartHeight }}
           >
-            {candles.map((candle, index) => {
+            {candles.map((candle) => {
               const isUp = candle.close >= candle.open;
               const barHeightPercent = maxVolume > 0 ? (candle.volume / maxVolume) * 100 : 0;
 
               return (
                 <div
                   key={candle.id}
-                  className="relative"
-                  style={{ width: `${candleWidth}%`, height: '100%' }}
+                  className="relative flex-1"
+                  style={{ height: '100%' }}
                 >
                   <div
-                    className="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-t-sm"
+                    className="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-t-[1px] transition-all duration-150"
                     style={{
-                      width: '60%',
-                      height: `${barHeightPercent}%`,
-                      backgroundColor: isUp ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)',
+                      width: '70%',
+                      height: `${Math.max(barHeightPercent, 2)}%`,
+                      background: isUp
+                        ? 'linear-gradient(to top, hsl(var(--profit) / 0.3), hsl(var(--profit) / 0.1))'
+                        : 'linear-gradient(to top, hsl(var(--loss) / 0.3), hsl(var(--loss) / 0.1))',
                     }}
                   />
                 </div>
@@ -276,19 +295,21 @@ export function AnimatedCandlestick({
         )}
       </div>
 
-      {/* Live indicator */}
-      <div className="absolute bottom-2 sm:bottom-3 left-2 sm:left-3 flex items-center gap-1.5 sm:gap-2 z-10">
-        <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-green-500 animate-pulse" />
-        <span className="text-[10px] sm:text-xs text-muted-foreground">Live · Real Data</span>
+      {/* Footer with live indicator */}
+      <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between z-10">
+        <div className="flex items-center gap-2">
+          <div className="status-dot active" />
+          <span className="text-xs text-muted-foreground">Live · Real Data</span>
+        </div>
       </div>
 
-      {/* Gradient overlay at bottom */}
-      <div className="absolute bottom-0 left-0 right-0 h-16 sm:h-20 bg-gradient-to-t from-background/80 to-transparent pointer-events-none" />
+      {/* Bottom gradient fade */}
+      <div className="absolute bottom-0 left-0 right-0 h-14 bg-gradient-to-t from-[hsl(222_47%_4%)] to-transparent pointer-events-none" />
     </div>
   );
 }
 
-// Hero version with larger size and outer glow
+// Hero version with premium outer glow
 interface HeroAnimatedCandlestickProps {
   symbol?: string;
   interval?: string;
@@ -297,17 +318,21 @@ interface HeroAnimatedCandlestickProps {
 export function HeroAnimatedCandlestick({ symbol = 'BTCUSDT', interval = '15m' }: HeroAnimatedCandlestickProps) {
   return (
     <div className="relative w-full max-w-3xl mx-auto px-2 sm:px-0">
-      {/* Outer glow */}
-      <div className="absolute -inset-2 sm:-inset-4 bg-gradient-to-r from-primary/20 via-accent/20 to-primary/20 rounded-2xl blur-xl opacity-50" />
+      {/* Outer glow layers */}
+      <div className="absolute -inset-2 bg-gradient-to-r from-primary/25 via-accent/15 to-primary/25 rounded-2xl blur-2xl opacity-70" />
+      <div className="absolute -inset-px bg-gradient-to-r from-primary/40 via-transparent to-accent/40 rounded-xl opacity-40" />
 
-      <AnimatedCandlestick
-        height={280}
-        candleCount={30}
-        showVolume={true}
-        title="BTC/USDT"
-        symbol={symbol}
-        interval={interval}
-      />
+      {/* Chart */}
+      <div className="relative">
+        <AnimatedCandlestick
+          height={320}
+          candleCount={30}
+          showVolume={true}
+          title="BTC/USDT"
+          symbol={symbol}
+          interval={interval}
+        />
+      </div>
     </div>
   );
 }
