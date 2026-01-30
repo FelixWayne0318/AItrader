@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.8 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.9 (与实盘 100% 一致)
+
+v11.9 更新 - 完整数据覆盖 (TradingAgents v3.6):
+- 添加周期价格统计: period_high, period_low, period_change_pct
+- 添加订单流完整数据: volume_usdt (新增)
+- AI 现在能看到所有收集的有价值数据
 
 v11.8 更新 - 添加 BB Position 和 1D 趋势层数据:
 - 显示 BB Position (15M/4H) - 价格在 BB 带内的位置
@@ -309,7 +314,7 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.8')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.9')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -554,7 +559,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.8 (MTF v3.5 - BB Position + 1D 趋势层){mode_str}")
+print(f"  实盘信号诊断工具 v11.9 (TradingAgents v3.6 - 完整数据覆盖){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1297,6 +1302,19 @@ if len(bars) >= 2:
 else:
     price_change = 0.0
 
+# v3.6: 计算周期统计 (与 deepseek_strategy._calculate_period_statistics 一致)
+if bars and len(bars) >= 2:
+    period_high = max(float(bar.high) for bar in bars)
+    period_low = min(float(bar.low) for bar in bars)
+    period_start_price = float(bars[0].open)
+    period_change_pct = ((current_price - period_start_price) / period_start_price) * 100 if period_start_price > 0 else 0
+    period_hours = len(bars) * 15 / 60  # 15分钟K线
+else:
+    period_high = current_price
+    period_low = current_price
+    period_change_pct = 0
+    period_hours = 0
+
 price_data = {
     'price': current_price,
     'timestamp': datetime.now().isoformat(),
@@ -1305,12 +1323,20 @@ price_data = {
     'volume': float(klines_raw[-1][5]),
     'price_change': price_change,
     'kline_data': kline_data,
+    # v3.6: 周期统计
+    'period_high': period_high,
+    'period_low': period_low,
+    'period_change_pct': period_change_pct,
+    'period_hours': round(period_hours, 1),
 }
 
 print(f"  Current Price: ${price_data['price']:,.2f}")
 print(f"  High: ${price_data['high']:,.2f}")
 print(f"  Low: ${price_data['low']:,.2f}")
 print(f"  Price Change: {price_data['price_change']:.2f}%")
+print(f"  Period High ({period_hours:.0f}h): ${period_high:,.2f}")
+print(f"  Period Low ({period_hours:.0f}h): ${period_low:,.2f}")
+print(f"  Period Change ({period_hours:.0f}h): {period_change_pct:+.2f}%")
 print(f"  K-line Count: {len(price_data['kline_data'])}")
 print("  ✅ 价格数据构建成功")
 
@@ -1417,15 +1443,21 @@ try:
     print(f"      negative_ratio:  {sentiment_data.get('negative_ratio', 0):.4f} ({sentiment_data.get('negative_ratio', 0)*100:.2f}%)")
     print(f"      net_sentiment:   {sentiment_data.get('net_sentiment', 0):.4f}")
     print()
-    print("  [3] price_data (价格数据):")
+    print("  [3] price_data (价格数据 v3.6):")
     print(f"      price:           ${price_data.get('price', 0):,.2f}")
-    print(f"      price_change:    {price_data.get('price_change', 0):.2f}%")
+    print(f"      price_change:    {price_data.get('price_change', 0):.2f}% (上一根K线)")
+    period_hours = price_data.get('period_hours', 0)
+    print(f"      period_high:     ${price_data.get('period_high', 0):,.2f} ({period_hours:.0f}h)")
+    print(f"      period_low:      ${price_data.get('period_low', 0):,.2f} ({period_hours:.0f}h)")
+    print(f"      period_change:   {price_data.get('period_change_pct', 0):+.2f}% ({period_hours:.0f}h)")
     print()
     if order_flow_report:
-        print("  [4] order_flow_report (订单流):")
+        print("  [4] order_flow_report (订单流 v3.6):")
         print(f"      buy_ratio:       {order_flow_report.get('buy_ratio', 0):.4f} ({order_flow_report.get('buy_ratio', 0)*100:.2f}%)")
-        print(f"      [诊断用] cvd_trend: {order_flow_report.get('cvd_trend', 'N/A')}")
+        print(f"      volume_usdt:     ${order_flow_report.get('volume_usdt', 0):,.0f}")
         print(f"      avg_trade_usdt:  ${order_flow_report.get('avg_trade_usdt', 0):,.2f}")
+        print(f"      trades_count:    {order_flow_report.get('trades_count', 0):,}")
+        print(f"      [诊断用] cvd_trend: {order_flow_report.get('cvd_trend', 'N/A')}")
         print(f"      data_source:     {order_flow_report.get('data_source', 'N/A')}")
     else:
         print("  [4] order_flow_report: None (未获取)")

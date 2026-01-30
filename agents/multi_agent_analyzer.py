@@ -783,13 +783,16 @@ MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
             return float(val) if val is not None else default
 
         # Base report (15M execution layer data)
-        # TradingAgents v3.3: Pass raw data only, no pre-computed interpretations
+        # TradingAgents v3.6: Added period statistics for trend assessment
+        period_hours = safe_get('period_hours')
         report = f"""
 === MARKET DATA (15M Timeframe) ===
 
 PRICE:
 - Current: ${safe_get('price'):,.2f}
-- 24h Change: {safe_get('price_change'):+.2f}%
+- Period High ({period_hours:.0f}h): ${safe_get('period_high'):,.2f}
+- Period Low ({period_hours:.0f}h): ${safe_get('period_low'):,.2f}
+- Period Change ({period_hours:.0f}h): {safe_get('period_change_pct'):+.2f}%
 
 MOVING AVERAGES:
 - SMA 5: ${safe_get('sma_5'):,.2f}
@@ -1007,16 +1010,18 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
 
         buy_ratio = data.get('buy_ratio', 0.5)
         avg_trade = data.get('avg_trade_usdt', 0)
+        volume_usdt = data.get('volume_usdt', 0)
         trades_count = data.get('trades_count', 0)
         recent_bars = data.get('recent_10_bars', [])
 
         # Format recent bars (raw data only, AI infers trend)
         recent_str = ", ".join([f"{r:.1%}" for r in recent_bars]) if recent_bars else "N/A"
 
-        # TradingAgents v3.3: Raw data only, removed cvd_trend label
+        # TradingAgents v3.6: Added volume_usdt for market activity assessment
         return f"""
 ORDER FLOW (Binance Taker Data):
 - Buy Ratio (10-bar avg): {buy_ratio:.1%}
+- Volume (USDT): ${volume_usdt:,.0f}
 - Avg Trade Size: ${avg_trade:,.0f} USDT
 - Trade Count: {trades_count:,}
 - Recent 10 Bars: [{recent_str}]

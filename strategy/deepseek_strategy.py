@@ -1351,7 +1351,8 @@ class DeepSeekAIStrategy(Strategy):
                 }
                 self.log.info("📊 Using neutral sentiment data (no data available)")
 
-            # Build price data for AI
+            # Build price data for AI (v3.6: 添加周期统计数据)
+            period_stats = self._calculate_period_statistics()
             price_data = {
                 'price': current_price,
                 'timestamp': self.clock.utc_now().isoformat(),
@@ -1360,6 +1361,11 @@ class DeepSeekAIStrategy(Strategy):
                 'volume': float(current_bar.volume),
                 'price_change': self._calculate_price_change(),
                 'kline_data': kline_data,
+                # v3.6: 周期统计 (基于可用 K 线历史)
+                'period_high': period_stats['period_high'],
+                'period_low': period_stats['period_low'],
+                'period_change_pct': period_stats['period_change_pct'],
+                'period_hours': period_stats['period_hours'],
             }
 
             # Get current position
@@ -1393,6 +1399,12 @@ class DeepSeekAIStrategy(Strategy):
                 ai_technical_data['timeframe'] = '15M'
                 # 重要: 添加 price 到 technical_data (multi_agent_analyzer._format_technical_report 需要)
                 ai_technical_data['price'] = current_price
+                # v3.6: 添加价格统计数据 (周期高/低/变化)
+                ai_technical_data['price_change'] = price_data.get('price_change', 0)
+                ai_technical_data['period_high'] = price_data.get('period_high', 0)
+                ai_technical_data['period_low'] = price_data.get('period_low', 0)
+                ai_technical_data['period_change_pct'] = price_data.get('period_change_pct', 0)
+                ai_technical_data['period_hours'] = price_data.get('period_hours', 0)
                 if decision_layer_data and decision_layer_data.get('_initialized', True):
                     # 添加 4H 数据作为决策层信息
                     # TradingAgents v3.3: 只传原始数据，不传 overall_trend 预判断
@@ -1720,7 +1732,7 @@ class DeepSeekAIStrategy(Strategy):
             self.log.warning(f"Failed to send Telegram heartbeat: {e}")
 
     def _calculate_price_change(self) -> float:
-        """Calculate price change percentage."""
+        """Calculate price change percentage (last bar only)."""
         bars = self.indicator_manager.recent_bars
         if len(bars) < 2:
             return 0.0
@@ -1729,6 +1741,50 @@ class DeepSeekAIStrategy(Strategy):
         previous = float(bars[-2].close)
 
         return ((current - previous) / previous) * 100
+
+    def _calculate_period_statistics(self) -> Dict[str, Any]:
+        """
+        Calculate price statistics from available K-line history.
+
+        Returns period high/low/change based on available bars.
+        With 15m K-lines: 50 bars ≈ 12.5h, 96 bars = 24h
+
+        Returns
+        -------
+        Dict with:
+            - period_high: Highest price in period
+            - period_low: Lowest price in period
+            - period_change_pct: Price change % from period start
+            - period_hours: Actual hours of data available
+        """
+        bars = self.indicator_manager.recent_bars
+        if not bars or len(bars) < 2:
+            return {
+                'period_high': 0,
+                'period_low': 0,
+                'period_change_pct': 0,
+                'period_hours': 0,
+            }
+
+        current_price = float(bars[-1].close)
+        period_start_price = float(bars[0].open)
+
+        # Calculate high/low from all available bars
+        period_high = max(float(bar.high) for bar in bars)
+        period_low = min(float(bar.low) for bar in bars)
+
+        # Calculate price change from period start
+        period_change_pct = ((current_price - period_start_price) / period_start_price) * 100 if period_start_price > 0 else 0
+
+        # Estimate hours based on bar count (assuming 15m bars)
+        period_hours = len(bars) * 15 / 60
+
+        return {
+            'period_high': period_high,
+            'period_low': period_low,
+            'period_change_pct': period_change_pct,
+            'period_hours': round(period_hours, 1),
+        }
 
     def _get_current_position_data(self, current_price: Optional[float] = None, from_telegram: bool = False) -> Optional[Dict[str, Any]]:
         """
