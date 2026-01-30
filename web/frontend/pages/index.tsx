@@ -33,8 +33,8 @@ const HeroAnimatedCandlestick = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="relative w-full max-w-3xl mx-auto px-4 sm:px-0">
-        <div className="h-[280px] sm:h-[320px] rounded-xl border border-border/50 bg-card/50 flex items-center justify-center">
+      <div className="relative w-full">
+        <div className="h-[360px] flex items-center justify-center">
           <div className="flex items-center gap-2 text-muted-foreground">
             <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
             <span className="text-sm">Loading chart...</span>
