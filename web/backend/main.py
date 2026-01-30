@@ -6,7 +6,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+# StaticFiles import removed - uploads served via API routes for security
 from starlette.middleware.sessions import SessionMiddleware
 
 from core.config import settings, load_aitrader_env
@@ -136,8 +136,9 @@ app.include_router(trading_router, prefix="/api")
 app.include_router(websocket_router, prefix="/api")
 app.include_router(performance_router)
 
-# Mount uploads directory for static files
-app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+# Note: uploads are served via /api/public/uploads/{filename} route for security
+# (only logo_ and favicon_ prefixes allowed)
+# Old static mount removed to avoid route conflicts
 
 
 @app.get("/api/health")
