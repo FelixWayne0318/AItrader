@@ -21,7 +21,7 @@ interface AnimatedCandlestickProps {
   title?: string;
 }
 
-function generateInitialCandles(count: number, basePrice: number = 45000): Candle[] {
+function generateInitialCandles(count: number, basePrice: number = 105000): Candle[] {
   const candles: Candle[] = [];
   let price = basePrice;
 
@@ -78,7 +78,7 @@ export function AnimatedCandlestick({
   title = 'BTC/USDT',
 }: AnimatedCandlestickProps) {
   const [candles, setCandles] = useState<Candle[]>([]);
-  const [currentPrice, setCurrentPrice] = useState(45000);
+  const [currentPrice, setCurrentPrice] = useState(105000);
   const [priceChange, setPriceChange] = useState(0);
   const [isClient, setIsClient] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -122,7 +122,7 @@ export function AnimatedCandlestick({
   const volumeChartHeight = showVolume ? chartAreaHeight * 0.20 : 0;
 
   // Calculate price range
-  const prices = candles.length > 0 ? candles.flatMap((c) => [c.high, c.low]) : [45000, 44500];
+  const prices = candles.length > 0 ? candles.flatMap((c) => [c.high, c.low]) : [105000, 104500];
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
   const priceRange = maxPrice - minPrice || 1;

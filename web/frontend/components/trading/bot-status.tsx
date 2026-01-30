@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
 
 interface BotStatusProps {
   status: 'running' | 'paused' | 'stopped' | 'error';
@@ -51,10 +50,10 @@ export function BotStatus({
   const statusConfig = {
     running: {
       label: 'Running',
-      dotColor: 'bg-[hsl(var(--profit))]',
-      textColor: 'text-[hsl(var(--profit))]',
-      bgColor: 'bg-[hsl(var(--profit))]/10',
-      borderColor: 'border-[hsl(var(--profit))]/30',
+      dotColor: 'bg-green-500',
+      textColor: 'text-green-500',
+      bgColor: 'bg-green-500/10',
+      borderColor: 'border-green-500/30',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -64,10 +63,10 @@ export function BotStatus({
     },
     paused: {
       label: 'Paused',
-      dotColor: 'bg-[hsl(var(--warning))]',
-      textColor: 'text-[hsl(var(--warning))]',
-      bgColor: 'bg-[hsl(var(--warning))]/10',
-      borderColor: 'border-[hsl(var(--warning))]/30',
+      dotColor: 'bg-yellow-500',
+      textColor: 'text-yellow-500',
+      bgColor: 'bg-yellow-500/10',
+      borderColor: 'border-yellow-500/30',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -76,7 +75,7 @@ export function BotStatus({
     },
     stopped: {
       label: 'Stopped',
-      dotColor: 'bg-muted-foreground',
+      dotColor: 'bg-gray-400',
       textColor: 'text-muted-foreground',
       bgColor: 'bg-muted',
       borderColor: 'border-border',
@@ -89,10 +88,10 @@ export function BotStatus({
     },
     error: {
       label: 'Error',
-      dotColor: 'bg-[hsl(var(--loss))]',
-      textColor: 'text-[hsl(var(--loss))]',
-      bgColor: 'bg-[hsl(var(--loss))]/10',
-      borderColor: 'border-[hsl(var(--loss))]/30',
+      dotColor: 'bg-red-500',
+      textColor: 'text-red-500',
+      bgColor: 'bg-red-500/10',
+      borderColor: 'border-red-500/30',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -102,6 +101,7 @@ export function BotStatus({
   };
 
   const config = statusConfig[status];
+  const strokeDashoffset = 175.93 * (1 - countdownPercent / 100);
 
   return (
     <div className={`rounded-xl border ${config.borderColor} ${config.bgColor} p-4`}>
@@ -109,34 +109,12 @@ export function BotStatus({
         <div className="flex items-center gap-3">
           {/* Breathing status dot */}
           <div className="relative">
-            <motion.div
-              className={`w-3 h-3 rounded-full ${config.dotColor}`}
-              animate={
-                status === 'running'
-                  ? {
-                      scale: [1, 1.2, 1],
-                      opacity: [1, 0.7, 1],
-                    }
-                  : {}
-              }
-              transition={{
-                duration: 2,
-                repeat: Infinity,
-                ease: 'easeInOut',
-              }}
+            <div
+              className={`w-3 h-3 rounded-full ${config.dotColor} ${status === 'running' ? 'animate-pulse' : ''}`}
             />
             {status === 'running' && (
-              <motion.div
-                className={`absolute inset-0 rounded-full ${config.dotColor}`}
-                animate={{
-                  scale: [1, 2],
-                  opacity: [0.5, 0],
-                }}
-                transition={{
-                  duration: 2,
-                  repeat: Infinity,
-                  ease: 'easeOut',
-                }}
+              <div
+                className={`absolute inset-0 rounded-full ${config.dotColor} animate-ping opacity-50`}
               />
             )}
           </div>
@@ -161,7 +139,7 @@ export function BotStatus({
                 strokeWidth="4"
                 fill="none"
               />
-              <motion.circle
+              <circle
                 cx="32"
                 cy="32"
                 r="28"
@@ -170,8 +148,8 @@ export function BotStatus({
                 fill="none"
                 strokeLinecap="round"
                 strokeDasharray={175.93}
-                animate={{ strokeDashoffset: 175.93 * (1 - countdownPercent / 100) }}
-                transition={{ duration: 1, ease: 'linear' }}
+                strokeDashoffset={strokeDashoffset}
+                className="transition-all duration-1000 ease-linear"
               />
             </svg>
             <div className="absolute inset-0 flex items-center justify-center">
@@ -203,24 +181,18 @@ export function BotStatus({
 // Compact version for dashboard headers
 export function BotStatusBadge({ status }: { status: 'running' | 'paused' | 'stopped' | 'error' }) {
   const config = {
-    running: { label: 'Running', color: 'bg-[hsl(var(--profit))] text-white' },
-    paused: { label: 'Paused', color: 'bg-[hsl(var(--warning))] text-white' },
+    running: { label: 'Running', color: 'bg-green-500 text-white' },
+    paused: { label: 'Paused', color: 'bg-yellow-500 text-white' },
     stopped: { label: 'Stopped', color: 'bg-muted text-muted-foreground' },
-    error: { label: 'Error', color: 'bg-[hsl(var(--loss))] text-white' },
+    error: { label: 'Error', color: 'bg-red-500 text-white' },
   };
 
   const { label, color } = config[status];
 
   return (
     <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full ${color}`}>
-      <motion.div
-        className={`w-2 h-2 rounded-full ${status === 'running' ? 'bg-white' : 'bg-current opacity-50'}`}
-        animate={
-          status === 'running'
-            ? { scale: [1, 1.3, 1], opacity: [1, 0.7, 1] }
-            : {}
-        }
-        transition={{ duration: 1.5, repeat: Infinity }}
+      <div
+        className={`w-2 h-2 rounded-full ${status === 'running' ? 'bg-white animate-pulse' : 'bg-current opacity-50'}`}
       />
       <span className="text-sm font-medium">{label}</span>
     </div>

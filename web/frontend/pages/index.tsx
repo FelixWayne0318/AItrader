@@ -266,15 +266,15 @@ export default function HomePage() {
       </Head>
 
       <div className="min-h-screen gradient-bg noise-overlay">
-        {/* Ticker Tape */}
-        <div className="border-b border-border/50 bg-background/50">
+        <Header locale={locale} t={t} />
+
+        {/* Ticker Tape - positioned below fixed header */}
+        <div className="pt-16 border-b border-border/50 bg-background/50">
           <TickerTapeWidget />
         </div>
 
-        <Header locale={locale} t={t} />
-
         {/* Hero Section */}
-        <section className="relative pt-32 pb-24 px-4 overflow-hidden">
+        <section className="relative pt-16 pb-24 px-4 overflow-hidden">
           {/* Background effects */}
           <div className="absolute inset-0 grid-pattern opacity-30" />
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl" />
