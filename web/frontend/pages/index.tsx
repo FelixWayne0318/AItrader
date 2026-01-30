@@ -28,14 +28,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useTranslation, type Locale } from "@/lib/i18n";
 import { TickerTapeWidget, MiniChartWidget } from "@/components/charts/tradingview-widget";
 
-// Dynamic import with SSR disabled to avoid hydration mismatch (random data generation)
+// Dynamic import with SSR disabled
 const HeroAnimatedCandlestick = dynamic(
   () => import("@/components/charts/animated-candlestick").then(mod => mod.HeroAnimatedCandlestick),
   {
     ssr: false,
     loading: () => (
-      <div className="relative w-full max-w-3xl mx-auto px-2 sm:px-0">
-        <div className="h-[280px] rounded-xl border border-border/50 bg-card/50 flex items-center justify-center">
+      <div className="relative w-full max-w-3xl mx-auto px-4 sm:px-0">
+        <div className="h-[280px] sm:h-[320px] rounded-xl border border-border/50 bg-card/50 flex items-center justify-center">
           <div className="flex items-center gap-2 text-muted-foreground">
             <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
             <span className="text-sm">Loading chart...</span>
@@ -48,7 +48,6 @@ const HeroAnimatedCandlestick = dynamic(
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
-// Format number with sign
 const formatPnL = (value: number) => {
   const formatted = Math.abs(value).toFixed(2);
   if (value >= 0) return `+$${formatted}`;
@@ -61,7 +60,7 @@ const formatPercent = (value: number) => {
   return `-${formatted}%`;
 };
 
-// Animated number component
+// Animated value component
 function AnimatedValue({
   value,
   isLoading,
@@ -72,12 +71,12 @@ function AnimatedValue({
   className?: string;
 }) {
   if (isLoading) {
-    return <span className="shimmer inline-block w-20 h-8 rounded" />;
+    return <span className="shimmer inline-block w-16 sm:w-20 h-6 sm:h-8 rounded" />;
   }
   return <span className={`number-animate ${className}`}>{value}</span>;
 }
 
-// Stats card component
+// Stats card component - responsive
 function StatsCard({
   title,
   value,
@@ -109,24 +108,24 @@ function StatsCard({
 
   return (
     <Card className="stat-card border-border/50">
-      <CardContent className="p-6">
-        <div className="flex items-start justify-between">
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">{title}</p>
+      <CardContent className="p-4 sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1 sm:space-y-2 min-w-0 flex-1">
+            <p className="text-xs sm:text-sm text-muted-foreground truncate">{title}</p>
             <div className="flex items-baseline gap-2">
               <AnimatedValue
                 value={value}
                 isLoading={isLoading}
-                className={`text-3xl font-bold ${colorClass}`}
+                className={`text-xl sm:text-2xl lg:text-3xl font-bold ${colorClass}`}
               />
             </div>
             {subtitle && (
-              <p className="text-xs text-muted-foreground">{subtitle}</p>
+              <p className="text-[10px] sm:text-xs text-muted-foreground">{subtitle}</p>
             )}
           </div>
-          <div className={`p-3 rounded-xl ${bgClass}`}>
+          <div className={`p-2 sm:p-3 rounded-lg sm:rounded-xl flex-shrink-0 ${bgClass}`}>
             <Icon
-              className={`h-6 w-6 ${
+              className={`h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 ${
                 type === "profit"
                   ? "text-[hsl(var(--profit))]"
                   : type === "loss"
@@ -157,8 +156,7 @@ function MiniPnLChart({ data }: { data: Array<{ cumulative_pnl: number }> }) {
   const points = values
     .map((v, i) => {
       const x = padding + (i / (values.length - 1)) * (width - 2 * padding);
-      const y =
-        height - padding - ((v - min) / range) * (height - 2 * padding);
+      const y = height - padding - ((v - min) / range) * (height - 2 * padding);
       return `${x},${y}`;
     })
     .join(" ");
@@ -166,29 +164,23 @@ function MiniPnLChart({ data }: { data: Array<{ cumulative_pnl: number }> }) {
   const isPositive = values[values.length - 1] >= values[0];
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-10">
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-8 sm:h-10">
       <defs>
         <linearGradient id="lineGradient" x1="0" y1="0" x2="0" y2="1">
           <stop
             offset="0%"
-            stopColor={
-              isPositive ? "hsl(var(--profit))" : "hsl(var(--loss))"
-            }
+            stopColor={isPositive ? "hsl(var(--profit))" : "hsl(var(--loss))"}
             stopOpacity="0.3"
           />
           <stop
             offset="100%"
-            stopColor={
-              isPositive ? "hsl(var(--profit))" : "hsl(var(--loss))"
-            }
+            stopColor={isPositive ? "hsl(var(--profit))" : "hsl(var(--loss))"}
             stopOpacity="0"
           />
         </linearGradient>
       </defs>
       <polygon
-        points={`${padding},${height - padding} ${points} ${
-          width - padding
-        },${height - padding}`}
+        points={`${padding},${height - padding} ${points} ${width - padding},${height - padding}`}
         fill="url(#lineGradient)"
       />
       <polyline
@@ -203,7 +195,7 @@ function MiniPnLChart({ data }: { data: Array<{ cumulative_pnl: number }> }) {
   );
 }
 
-// Feature card
+// Feature card - responsive
 function FeatureCard({
   icon: Icon,
   title,
@@ -215,14 +207,14 @@ function FeatureCard({
 }) {
   return (
     <Card className="feature-card border-border/50 group hover:border-primary/30 transition-all duration-300">
-      <CardContent className="p-8">
-        <div className="icon-wrapper w-14 h-14 mb-6 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/10 flex items-center justify-center">
-          <Icon className="h-7 w-7 text-primary" />
+      <CardContent className="p-5 sm:p-6 lg:p-8">
+        <div className="icon-wrapper w-10 h-10 sm:w-12 sm:h-12 lg:w-14 lg:h-14 mb-4 sm:mb-5 lg:mb-6 rounded-xl sm:rounded-2xl bg-gradient-to-br from-primary/20 to-accent/10 flex items-center justify-center">
+          <Icon className="h-5 w-5 sm:h-6 sm:w-6 lg:h-7 lg:w-7 text-primary" />
         </div>
-        <h3 className="text-xl font-semibold mb-3 group-hover:text-primary transition-colors">
+        <h3 className="text-base sm:text-lg lg:text-xl font-semibold mb-2 sm:mb-3 group-hover:text-primary transition-colors">
           {title}
         </h3>
-        <p className="text-muted-foreground leading-relaxed">{description}</p>
+        <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">{description}</p>
       </CardContent>
     </Card>
   );
@@ -233,26 +225,22 @@ export default function HomePage() {
   const locale = (router.locale || "en") as Locale;
   const { t } = useTranslation(locale);
 
-  // Fetch performance data
   const { data: performance, error: perfError } = useSWR(
     "/api/public/performance?days=30",
     fetcher,
     { refreshInterval: 60000 }
   );
 
-  // Fetch system status
   const { data: status } = useSWR("/api/public/system-status", fetcher, {
     refreshInterval: 30000,
   });
 
-  // Fetch ticker for BTC price
   const { data: ticker } = useSWR("/api/trading/ticker/BTCUSDT", fetcher, {
     refreshInterval: 10000,
   });
 
   const isLoading = !performance && !perfError;
-  const pnlType =
-    (performance?.total_pnl || 0) >= 0 ? "profit" : ("loss" as const);
+  const pnlType = (performance?.total_pnl || 0) >= 0 ? "profit" : ("loss" as const);
 
   return (
     <>
@@ -268,47 +256,34 @@ export default function HomePage() {
       <div className="min-h-screen gradient-bg noise-overlay">
         <Header locale={locale} t={t} />
 
-        {/* Ticker Tape - positioned below fixed header */}
+        {/* Ticker Tape */}
         <div className="pt-16 border-b border-border/50 bg-background/50">
           <TickerTapeWidget />
         </div>
 
         {/* Hero Section */}
-        <section className="relative pt-16 pb-24 px-4 overflow-hidden">
+        <section className="relative pt-8 sm:pt-12 lg:pt-16 pb-12 sm:pb-16 lg:pb-24 px-4 overflow-hidden">
           {/* Background effects */}
           <div className="absolute inset-0 grid-pattern opacity-30" />
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-3xl" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] sm:w-[600px] lg:w-[800px] h-[400px] sm:h-[600px] lg:h-[800px] bg-primary/5 rounded-full blur-3xl" />
 
           <div className="container mx-auto relative z-10">
             <div className="max-w-4xl mx-auto text-center">
               {/* Status Badge */}
-              <div className="inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full glass mb-10">
-                <span
-                  className={`status-dot ${
-                    status?.trading_active ? "active" : "inactive"
-                  }`}
-                />
-                <span className="text-sm font-medium">
-                  {status?.trading_active
-                    ? "Bot Active & Trading"
-                    : "Bot Offline"}
+              <div className="inline-flex items-center gap-2 sm:gap-2.5 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full glass mb-6 sm:mb-8 lg:mb-10">
+                <span className={`status-dot ${status?.trading_active ? "active" : "inactive"}`} />
+                <span className="text-xs sm:text-sm font-medium">
+                  {status?.trading_active ? "Bot Active" : "Bot Offline"}
                 </span>
                 {ticker?.price && (
                   <>
-                    <span className="text-muted-foreground">|</span>
-                    <span className="text-sm">
-                      BTC{" "}
-                      <span className="font-mono font-semibold">
-                        ${Number(ticker.price).toLocaleString()}
-                      </span>
+                    <span className="text-muted-foreground hidden sm:inline">|</span>
+                    <span className="text-xs sm:text-sm hidden sm:inline">
+                      BTC <span className="font-mono font-semibold">${Number(ticker.price).toLocaleString()}</span>
                     </span>
-                    <span
-                      className={`text-xs ${
-                        ticker.price_change_percent >= 0
-                          ? "text-[hsl(var(--profit))]"
-                          : "text-[hsl(var(--loss))]"
-                      }`}
-                    >
+                    <span className={`text-xs hidden sm:inline ${
+                      ticker.price_change_percent >= 0 ? "text-[hsl(var(--profit))]" : "text-[hsl(var(--loss))]"
+                    }`}>
                       {formatPercent(ticker.price_change_percent)}
                     </span>
                   </>
@@ -316,7 +291,7 @@ export default function HomePage() {
               </div>
 
               {/* Main Title */}
-              <h1 className="text-5xl md:text-7xl font-bold mb-6 leading-tight">
+              <h1 className="text-3xl sm:text-5xl lg:text-7xl font-bold mb-4 sm:mb-6 leading-tight">
                 <span className="text-primary text-glow">AI-Powered</span>
                 <br />
                 <span className="bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">
@@ -324,31 +299,23 @@ export default function HomePage() {
                 </span>
               </h1>
 
-              <p className="text-xl text-muted-foreground max-w-2xl mx-auto mb-12 leading-relaxed">
+              <p className="text-base sm:text-lg lg:text-xl text-muted-foreground max-w-2xl mx-auto mb-8 sm:mb-10 lg:mb-12 leading-relaxed px-2">
                 Advanced algorithmic trading powered by{" "}
-                <span className="text-foreground font-medium">DeepSeek AI</span>{" "}
-                and{" "}
-                <span className="text-foreground font-medium">
-                  multi-agent decision system
-                </span>
-                . Automated 24/7 trading with intelligent risk management.
+                <span className="text-foreground font-medium">DeepSeek AI</span> and{" "}
+                <span className="text-foreground font-medium">multi-agent decision system</span>.
               </p>
 
               {/* CTA Buttons */}
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
-                <Link href="/copy">
-                  <Button size="lg" className="glow-primary text-lg px-8 h-14">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 mb-10 sm:mb-12 lg:mb-16">
+                <Link href="/copy" className="w-full sm:w-auto">
+                  <Button size="lg" className="glow-primary text-base sm:text-lg px-6 sm:px-8 h-12 sm:h-14 w-full sm:w-auto">
                     Start Copy Trading
-                    <ArrowRight className="ml-2 h-5 w-5" />
+                    <ArrowRight className="ml-2 h-4 w-4 sm:h-5 sm:w-5" />
                   </Button>
                 </Link>
-                <Link href="/chart">
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    className="text-lg px-8 h-14"
-                  >
-                    <BarChart3 className="mr-2 h-5 w-5" />
+                <Link href="/chart" className="w-full sm:w-auto">
+                  <Button size="lg" variant="outline" className="text-base sm:text-lg px-6 sm:px-8 h-12 sm:h-14 w-full sm:w-auto">
+                    <BarChart3 className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
                     Live Chart
                   </Button>
                 </Link>
@@ -361,34 +328,27 @@ export default function HomePage() {
         </section>
 
         {/* Live Stats Section */}
-        <section className="py-16 px-4 relative">
+        <section className="py-10 sm:py-12 lg:py-16 px-4 relative">
           <div className="container mx-auto">
-            <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center justify-between mb-6 sm:mb-8">
               <div>
-                <h2 className="text-2xl font-bold">Live Performance</h2>
-                <p className="text-muted-foreground">Last 30 days</p>
+                <h2 className="text-xl sm:text-2xl font-bold">Live Performance</h2>
+                <p className="text-sm text-muted-foreground">Last 30 days</p>
               </div>
               <Link
                 href="/performance"
-                className="flex items-center gap-1 text-sm text-primary hover:underline"
+                className="flex items-center gap-1 text-xs sm:text-sm text-primary hover:underline"
               >
-                View Details <ChevronRight className="h-4 w-4" />
+                View Details <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4" />
               </Link>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 stagger-children">
+            {/* Stats Grid - 2x2 on mobile, 4 columns on larger screens */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
               <StatsCard
                 title="Total Return"
-                value={
-                  isLoading
-                    ? "..."
-                    : formatPnL(performance?.total_pnl || 0)
-                }
-                subtitle={
-                  performance?.total_pnl_percent
-                    ? formatPercent(performance.total_pnl_percent)
-                    : undefined
-                }
+                value={isLoading ? "..." : formatPnL(performance?.total_pnl || 0)}
+                subtitle={performance?.total_pnl_percent ? formatPercent(performance.total_pnl_percent) : undefined}
                 icon={pnlType === "profit" ? TrendingUp : TrendingDown}
                 type={pnlType}
                 isLoading={isLoading}
@@ -396,20 +356,14 @@ export default function HomePage() {
               <StatsCard
                 title="Win Rate"
                 value={isLoading ? "..." : `${performance?.win_rate || 0}%`}
-                subtitle={`${performance?.winning_trades || 0}W / ${
-                  performance?.losing_trades || 0
-                }L`}
+                subtitle={`${performance?.winning_trades || 0}W / ${performance?.losing_trades || 0}L`}
                 icon={Target}
                 type="neutral"
                 isLoading={isLoading}
               />
               <StatsCard
                 title="Max Drawdown"
-                value={
-                  isLoading
-                    ? "..."
-                    : `-${performance?.max_drawdown_percent || 0}%`
-                }
+                value={isLoading ? "..." : `-${performance?.max_drawdown_percent || 0}%`}
                 subtitle="Peak to trough"
                 icon={AlertTriangle}
                 type="loss"
@@ -427,28 +381,22 @@ export default function HomePage() {
 
             {/* Mini Chart */}
             {performance?.pnl_curve && performance.pnl_curve.length > 0 && (
-              <Card className="mt-8 border-border/50">
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between mb-4">
+              <Card className="mt-6 sm:mt-8 border-border/50">
+                <CardContent className="p-4 sm:p-6">
+                  <div className="flex items-center justify-between mb-3 sm:mb-4">
                     <div>
-                      <h3 className="font-semibold">Cumulative PnL</h3>
-                      <p className="text-sm text-muted-foreground">
-                        30-day equity curve
-                      </p>
+                      <h3 className="text-sm sm:text-base font-semibold">Cumulative PnL</h3>
+                      <p className="text-xs sm:text-sm text-muted-foreground">30-day equity curve</p>
                     </div>
                     <div className="text-right">
-                      <p
-                        className={`text-2xl font-bold ${
-                          (performance?.total_pnl || 0) >= 0
-                            ? "text-[hsl(var(--profit))]"
-                            : "text-[hsl(var(--loss))]"
-                        }`}
-                      >
+                      <p className={`text-lg sm:text-2xl font-bold ${
+                        (performance?.total_pnl || 0) >= 0 ? "text-[hsl(var(--profit))]" : "text-[hsl(var(--loss))]"
+                      }`}>
                         {formatPnL(performance?.total_pnl || 0)}
                       </p>
                     </div>
                   </div>
-                  <div className="h-32">
+                  <div className="h-20 sm:h-32">
                     <MiniPnLChart data={performance.pnl_curve} />
                   </div>
                 </CardContent>
@@ -458,33 +406,33 @@ export default function HomePage() {
         </section>
 
         {/* Features Section */}
-        <section className="py-20 px-4">
+        <section className="py-12 sm:py-16 lg:py-20 px-4">
           <div className="container mx-auto">
-            <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">
+            <div className="text-center mb-10 sm:mb-12 lg:mb-16">
+              <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-3 sm:mb-4">
                 Why Choose Algvex?
               </h2>
-              <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-                Powered by cutting-edge AI technology and institutional-grade
-                risk management
+              <p className="text-sm sm:text-base lg:text-lg text-muted-foreground max-w-2xl mx-auto">
+                Powered by cutting-edge AI technology and institutional-grade risk management
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {/* Features Grid - 1 column on mobile, 2 on tablet, 3 on desktop */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
               <FeatureCard
                 icon={Bot}
                 title="Multi-Agent AI"
-                description="Bull, Bear, and Judge agents debate market conditions using DeepSeek AI for balanced, unbiased decisions."
+                description="Bull, Bear, and Judge agents debate market conditions using DeepSeek AI for balanced decisions."
               />
               <FeatureCard
                 icon={Shield}
                 title="Risk Management"
-                description="Dynamic position sizing, support/resistance-based stop losses, and trailing stops protect your capital."
+                description="Dynamic position sizing, support/resistance-based stop losses, and trailing stops."
               />
               <FeatureCard
                 icon={BarChart3}
-                title="Multi-Timeframe Analysis"
-                description="Three-layer framework (1D trend, 4H decision, 15M execution) ensures precise entry timing."
+                title="Multi-Timeframe"
+                description="Three-layer framework (1D trend, 4H decision, 15M execution) ensures precise timing."
               />
               <FeatureCard
                 icon={Zap}
@@ -506,22 +454,21 @@ export default function HomePage() {
         </section>
 
         {/* CTA Section */}
-        <section className="py-20 px-4">
+        <section className="py-12 sm:py-16 lg:py-20 px-4">
           <div className="container mx-auto">
             <Card className="border-border/50 overflow-hidden relative">
               <div className="absolute inset-0 mesh-gradient opacity-50" />
-              <CardContent className="p-12 md:p-16 relative z-10 text-center">
-                <h2 className="text-3xl md:text-4xl font-bold mb-4">
+              <CardContent className="p-8 sm:p-12 lg:p-16 relative z-10 text-center">
+                <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-3 sm:mb-4">
                   Ready to Start?
                 </h2>
-                <p className="text-muted-foreground text-lg mb-8 max-w-xl mx-auto">
-                  Connect your exchange account and let our AI handle the
-                  trading while you focus on what matters.
+                <p className="text-sm sm:text-base lg:text-lg text-muted-foreground mb-6 sm:mb-8 max-w-xl mx-auto">
+                  Connect your exchange account and let our AI handle the trading while you focus on what matters.
                 </p>
                 <Link href="/copy">
-                  <Button size="lg" className="glow-primary text-lg px-10 h-14">
+                  <Button size="lg" className="glow-primary text-base sm:text-lg px-8 sm:px-10 h-12 sm:h-14">
                     Get Started
-                    <ArrowRight className="ml-2 h-5 w-5" />
+                    <ArrowRight className="ml-2 h-4 w-4 sm:h-5 sm:w-5" />
                   </Button>
                 </Link>
               </CardContent>
