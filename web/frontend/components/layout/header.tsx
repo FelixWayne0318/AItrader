@@ -140,9 +140,8 @@ export function Header({ locale, t }: HeaderProps) {
   return (
     <header className="fixed top-3 left-4 right-4 z-50">
       {/* Floating rounded container - DipSway inspired */}
-      <div className="container mx-auto">
-        <div className="bg-background/70 backdrop-blur-xl border border-border/40 rounded-2xl shadow-lg shadow-black/5">
-          <div className="flex h-14 items-center justify-between px-4">
+      <div className="bg-background/80 backdrop-blur-xl border border-border/40 rounded-2xl shadow-lg shadow-black/5">
+        <div className="flex h-14 items-center justify-between px-4">
             {/* Logo - Dynamic from branding settings */}
             <Link href="/" className="flex items-center gap-2.5 group">
               {branding?.logo_url ? (
@@ -362,7 +361,6 @@ export function Header({ locale, t }: HeaderProps) {
             </div>
           )}
         </div>
-      </div>
     </header>
   );
 }
