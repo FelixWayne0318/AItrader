@@ -138,9 +138,9 @@ export function Header({ locale, t }: HeaderProps) {
   };
 
   return (
-    <header className="fixed top-3 left-4 right-4 z-50">
-      {/* Floating rounded container - DipSway inspired */}
-      <div className="bg-background/80 backdrop-blur-xl border border-border/40 rounded-2xl shadow-lg shadow-black/5">
+    <header className="fixed top-3 inset-x-0 z-50 flex justify-center px-4 pointer-events-none">
+      {/* Floating rounded container - only this has background */}
+      <div className="w-full max-w-7xl bg-background/80 backdrop-blur-xl border border-border/40 rounded-2xl shadow-lg shadow-black/5 pointer-events-auto">
         <div className="flex h-14 items-center justify-between px-4">
             {/* Logo - Dynamic from branding settings */}
             <Link href="/" className="flex items-center gap-2.5 group">
@@ -184,9 +184,9 @@ export function Header({ locale, t }: HeaderProps) {
             {/* Market Metrics - Condensed with expandable dropdown */}
             {mounted && (
               <div ref={metricsRef} className="hidden lg:flex items-center gap-2 relative">
-                {/* Bot Status - Full display */}
+                {/* Bot Status - Full display with icon */}
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
-                  <div className={`h-2 w-2 rounded-full ${status?.trading_active ? "bg-green-500 animate-pulse" : "bg-muted-foreground"}`} />
+                  <Bot className={`h-3.5 w-3.5 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
                   <span className="text-xs text-muted-foreground">Bot:</span>
                   <span className={`text-xs font-medium ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`}>
                     {status?.trading_active ? "Running" : "Offline"}
@@ -320,7 +320,7 @@ export function Header({ locale, t }: HeaderProps) {
                   <p className="text-xs text-muted-foreground px-2 mb-3 font-medium">Market Data</p>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/30">
-                      <div className={`h-2.5 w-2.5 rounded-full ${status?.trading_active ? "bg-green-500 animate-pulse" : "bg-muted-foreground"}`} />
+                      <Bot className={`h-4 w-4 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
                       <span className={`text-sm font-medium ${status?.trading_active ? "text-green-500" : ""}`}>
                         {status?.trading_active ? "Live" : "Offline"}
                       </span>

@@ -1,13 +1,30 @@
 "use client";
 
 import Link from "next/link";
+import { useState, useEffect } from "react";
+import useSWR from "swr";
 import { Twitter, MessageCircle, Github } from "lucide-react";
+
+const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 interface FooterProps {
   t: (key: string) => string;
 }
 
 export function Footer({ t }: FooterProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Fetch site branding
+  const { data: branding } = useSWR(
+    mounted ? "/api/public/site-branding" : null,
+    fetcher,
+    { refreshInterval: 300000 }
+  );
+
   return (
     <footer className="border-t border-border bg-background/50">
       <div className="container mx-auto px-4 py-12">
@@ -15,10 +32,18 @@ export function Footer({ t }: FooterProps) {
           {/* Brand */}
           <div className="col-span-1 md:col-span-2">
             <Link href="/" className="flex items-center space-x-2 mb-4">
-              <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-                <span className="text-primary-foreground font-bold text-lg">A</span>
-              </div>
-              <span className="text-xl font-bold">AlgVex</span>
+              {branding?.logo_url ? (
+                <img
+                  src={branding.logo_url}
+                  alt={branding?.site_name || "AlgVex"}
+                  className="h-8 w-8 rounded-lg object-contain"
+                />
+              ) : (
+                <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
+                  <span className="text-primary-foreground font-bold text-lg">A</span>
+                </div>
+              )}
+              <span className="text-xl font-bold">{branding?.site_name || "AlgVex"}</span>
             </Link>
             <p className="text-sm text-muted-foreground max-w-md">
               AI-powered algorithmic trading system built on NautilusTrader
@@ -86,7 +111,7 @@ export function Footer({ t }: FooterProps) {
             {t("footer.disclaimer")}
           </p>
           <p className="text-xs text-muted-foreground text-center mt-2">
-            &copy; {new Date().getFullYear()} AlgVex. {t("footer.rights")}.
+            &copy; {new Date().getFullYear()} {branding?.site_name || "AlgVex"}. {t("footer.rights")}.
           </p>
         </div>
       </div>

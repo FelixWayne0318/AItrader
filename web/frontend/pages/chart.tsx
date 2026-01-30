@@ -129,10 +129,7 @@ export default function ChartPage() {
           {/* Sub-header with symbol selector */}
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center">
-                <Brain className="h-4 w-4 text-primary-foreground" />
-              </div>
-              <span className="font-semibold">AI Trading View</span>
+              <span className="font-semibold text-lg">AI Trading View</span>
             </div>
 
             {/* Symbol selector */}

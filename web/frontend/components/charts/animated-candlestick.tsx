@@ -122,7 +122,7 @@ export function AnimatedCandlestick({
         <div className="flex items-center gap-3">
           {/* Bitcoin icon - minimal style matching theme */}
           <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
-            <span className="text-primary font-bold text-sm">₿</span>
+            <span className="text-primary font-bold text-xl">₿</span>
           </div>
           <div>
             <h3 className="font-semibold text-foreground text-base tracking-tight">{title}</h3>
