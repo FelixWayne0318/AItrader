@@ -355,10 +355,7 @@ export default function HomePage() {
               </div>
 
               {/* Animated Candlestick Chart */}
-              <HeroAnimatedCandlestick
-                basePrice={ticker?.price ? Number(ticker.price) : undefined}
-                priceChangePercent={ticker?.price_change_percent}
-              />
+              <HeroAnimatedCandlestick symbol="BTCUSDT" interval="15m" />
             </div>
           </div>
         </section>

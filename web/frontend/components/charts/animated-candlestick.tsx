@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import useSWR from 'swr';
 
 interface Candle {
   id: number;
@@ -15,106 +16,60 @@ interface Candle {
 interface AnimatedCandlestickProps {
   height?: number;
   candleCount?: number;
-  animationSpeed?: number;
-  volatility?: number;
   showVolume?: boolean;
   title?: string;
-  basePrice?: number;
+  symbol?: string;
+  interval?: string;
 }
 
-function generateInitialCandles(count: number, basePrice: number = 105000): Candle[] {
-  const candles: Candle[] = [];
-  let price = basePrice;
+const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
-  for (let i = 0; i < count; i++) {
-    const change = (Math.random() - 0.5) * 500;
-    const open = price;
-    const close = price + change;
-    const high = Math.max(open, close) + Math.random() * 150;
-    const low = Math.min(open, close) - Math.random() * 150;
-    const volume = 100 + Math.random() * 900;
+// Parse Binance kline data to Candle format
+function parseKlineData(klines: any[]): Candle[] {
+  if (!klines || !Array.isArray(klines)) return [];
 
-    candles.push({
-      id: i,
-      open,
-      high,
-      low,
-      close,
-      volume,
-      timestamp: Date.now() - (count - i) * 60000,
-    });
-
-    price = close;
-  }
-
-  return candles;
+  return klines.map((k, index) => ({
+    id: index,
+    open: parseFloat(k.open || k[1]),
+    high: parseFloat(k.high || k[2]),
+    low: parseFloat(k.low || k[3]),
+    close: parseFloat(k.close || k[4]),
+    volume: parseFloat(k.volume || k[5]),
+    timestamp: k.open_time || k[0],
+  }));
 }
 
-function generateNewCandle(lastCandle: Candle, volatility: number): Candle {
-  const change = (Math.random() - 0.5) * volatility;
-  const open = lastCandle.close;
-  const close = open + change;
-  const high = Math.max(open, close) + Math.random() * (volatility * 0.3);
-  const low = Math.min(open, close) - Math.random() * (volatility * 0.3);
-  const volume = 100 + Math.random() * 900;
-
-  return {
-    id: lastCandle.id + 1,
-    open,
-    high,
-    low,
-    close,
-    volume,
-    timestamp: Date.now(),
-  };
-}
-
-// Pure CSS animated candlestick chart - no framer-motion for better mobile compatibility
+// Pure CSS animated candlestick chart with real data
 export function AnimatedCandlestick({
   height = 300,
   candleCount = 30,
-  animationSpeed = 2000,
-  volatility = 500,
   showVolume = true,
   title = 'BTC/USDT',
-  basePrice = 105000,
+  symbol = 'BTCUSDT',
+  interval = '15m',
 }: AnimatedCandlestickProps) {
-  const [candles, setCandles] = useState<Candle[]>([]);
-  const [currentPrice, setCurrentPrice] = useState(basePrice);
-  const [priceChange, setPriceChange] = useState(0);
   const [isClient, setIsClient] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Initialize on client only to avoid hydration mismatch
+  // Fetch real kline data from API
+  const { data: klineData, error } = useSWR(
+    isClient ? `/api/trading/klines/${symbol}?interval=${interval}&limit=${candleCount}` : null,
+    fetcher,
+    { refreshInterval: 10000 } // Refresh every 10 seconds
+  );
+
+  // Initialize client-side rendering
   useEffect(() => {
     setIsClient(true);
-    setCandles(generateInitialCandles(candleCount, basePrice));
-  }, [candleCount, basePrice]);
+  }, []);
 
-  // Update current price display
-  useEffect(() => {
-    if (candles.length > 0) {
-      const lastCandle = candles[candles.length - 1];
-      const firstCandle = candles[0];
-      setCurrentPrice(lastCandle.close);
-      setPriceChange(((lastCandle.close - firstCandle.open) / firstCandle.open) * 100);
-    }
-  }, [candles]);
+  // Parse kline data
+  const candles = klineData?.klines ? parseKlineData(klineData.klines) : [];
 
-  // Generate new candles periodically
-  useEffect(() => {
-    if (!isClient) return;
-
-    const interval = setInterval(() => {
-      setCandles((prev) => {
-        if (prev.length === 0) return prev;
-        const newCandle = generateNewCandle(prev[prev.length - 1], volatility);
-        return [...prev.slice(1), newCandle];
-      });
-    }, animationSpeed);
-
-    return () => clearInterval(interval);
-  }, [animationSpeed, volatility, isClient]);
+  // Calculate current price and change
+  const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
+  const firstPrice = candles.length > 0 ? candles[0].open : 0;
+  const priceChange = firstPrice > 0 ? ((currentPrice - firstPrice) / firstPrice) * 100 : 0;
 
   // Calculate dimensions
   const headerHeight = 70;
@@ -124,13 +79,13 @@ export function AnimatedCandlestick({
   const volumeChartHeight = showVolume ? chartAreaHeight * 0.20 : 0;
 
   // Calculate price range
-  const prices = candles.length > 0 ? candles.flatMap((c) => [c.high, c.low]) : [105000, 104500];
+  const prices = candles.length > 0 ? candles.flatMap((c) => [c.high, c.low]) : [0];
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
   const priceRange = maxPrice - minPrice || 1;
 
   // Calculate volume range
-  const volumes = candles.length > 0 ? candles.map((c) => c.volume) : [500];
+  const volumes = candles.length > 0 ? candles.map((c) => c.volume) : [0];
   const maxVolume = Math.max(...volumes);
 
   // Convert price to percentage from top
@@ -141,7 +96,7 @@ export function AnimatedCandlestick({
     [maxPrice, priceRange]
   );
 
-  // Don't render chart until client-side
+  // Loading state
   if (!isClient || candles.length === 0) {
     return (
       <div
@@ -152,14 +107,14 @@ export function AnimatedCandlestick({
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="flex items-center gap-2 text-muted-foreground">
             <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-            <span className="text-sm">Loading chart...</span>
+            <span className="text-sm">{error ? 'Failed to load data' : 'Loading real-time data...'}</span>
           </div>
         </div>
       </div>
     );
   }
 
-  const candleWidth = 100 / candleCount;
+  const candleWidth = 100 / candles.length;
 
   return (
     <div
@@ -169,16 +124,6 @@ export function AnimatedCandlestick({
     >
       {/* CSS for animations */}
       <style jsx>{`
-        @keyframes slideIn {
-          from {
-            opacity: 0;
-            transform: translateX(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
         @keyframes pulse {
           0%, 100% {
             opacity: 0.5;
@@ -188,22 +133,6 @@ export function AnimatedCandlestick({
             opacity: 0.8;
             box-shadow: 0 0 8px currentColor;
           }
-        }
-        @keyframes priceUpdate {
-          from {
-            opacity: 0;
-            transform: translateY(-5px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        .candle-enter {
-          animation: slideIn 0.3s ease-out forwards;
-        }
-        .price-animate {
-          animation: priceUpdate 0.3s ease-out;
         }
         .glow-pulse {
           animation: pulse 1.5s ease-in-out infinite;
@@ -227,14 +156,11 @@ export function AnimatedCandlestick({
           </div>
           <div>
             <h3 className="font-semibold text-foreground text-sm sm:text-base">{title}</h3>
-            <p className="text-[10px] sm:text-xs text-muted-foreground">Perpetual</p>
+            <p className="text-[10px] sm:text-xs text-muted-foreground">Perpetual · {interval}</p>
           </div>
         </div>
         <div className="text-right">
-          <p
-            key={currentPrice.toFixed(0)}
-            className="font-mono text-base sm:text-xl font-bold text-foreground price-animate"
-          >
+          <p className="font-mono text-base sm:text-xl font-bold text-foreground">
             ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
           <p
@@ -288,7 +214,7 @@ export function AnimatedCandlestick({
             return (
               <div
                 key={candle.id}
-                className={`relative ${isLatest ? 'candle-enter' : ''}`}
+                className="relative"
                 style={{ width: `${candleWidth}%`, height: '100%' }}
               >
                 {/* Wick */}
@@ -299,7 +225,6 @@ export function AnimatedCandlestick({
                     height: `${lowPercent - highPercent}%`,
                     width: '1px',
                     backgroundColor: isUp ? '#22c55e' : '#ef4444',
-                    transition: 'all 0.3s ease-out',
                   }}
                 />
                 {/* Body */}
@@ -312,7 +237,6 @@ export function AnimatedCandlestick({
                     minHeight: '2px',
                     backgroundColor: isUp ? 'rgba(34, 197, 94, 0.3)' : '#ef4444',
                     border: `1px solid ${isUp ? '#22c55e' : '#ef4444'}`,
-                    transition: 'all 0.3s ease-out',
                     color: isUp ? '#22c55e' : '#ef4444',
                   }}
                 />
@@ -329,7 +253,7 @@ export function AnimatedCandlestick({
           >
             {candles.map((candle, index) => {
               const isUp = candle.close >= candle.open;
-              const barHeightPercent = (candle.volume / maxVolume) * 100;
+              const barHeightPercent = maxVolume > 0 ? (candle.volume / maxVolume) * 100 : 0;
 
               return (
                 <div
@@ -343,7 +267,6 @@ export function AnimatedCandlestick({
                       width: '60%',
                       height: `${barHeightPercent}%`,
                       backgroundColor: isUp ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)',
-                      transition: 'height 0.3s ease-out',
                     }}
                   />
                 </div>
@@ -356,7 +279,7 @@ export function AnimatedCandlestick({
       {/* Live indicator */}
       <div className="absolute bottom-2 sm:bottom-3 left-2 sm:left-3 flex items-center gap-1.5 sm:gap-2 z-10">
         <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-green-500 animate-pulse" />
-        <span className="text-[10px] sm:text-xs text-muted-foreground">Live</span>
+        <span className="text-[10px] sm:text-xs text-muted-foreground">Live · Real Data</span>
       </div>
 
       {/* Gradient overlay at bottom */}
@@ -367,11 +290,11 @@ export function AnimatedCandlestick({
 
 // Hero version with larger size and outer glow
 interface HeroAnimatedCandlestickProps {
-  basePrice?: number;
-  priceChangePercent?: number;
+  symbol?: string;
+  interval?: string;
 }
 
-export function HeroAnimatedCandlestick({ basePrice, priceChangePercent }: HeroAnimatedCandlestickProps) {
+export function HeroAnimatedCandlestick({ symbol = 'BTCUSDT', interval = '15m' }: HeroAnimatedCandlestickProps) {
   return (
     <div className="relative w-full max-w-3xl mx-auto px-2 sm:px-0">
       {/* Outer glow */}
@@ -379,12 +302,11 @@ export function HeroAnimatedCandlestick({ basePrice, priceChangePercent }: HeroA
 
       <AnimatedCandlestick
         height={280}
-        candleCount={25}
-        animationSpeed={1800}
-        volatility={basePrice ? basePrice * 0.005 : 500}
+        candleCount={30}
         showVolume={true}
         title="BTC/USDT"
-        basePrice={basePrice}
+        symbol={symbol}
+        interval={interval}
       />
     </div>
   );
