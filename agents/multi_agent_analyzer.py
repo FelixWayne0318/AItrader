@@ -32,6 +32,70 @@ from strategy.trading_logic import (
 )
 
 
+# =============================================================================
+# TradingAgents v3.3: Indicator Definitions for AI
+# Borrowed from: TradingAgents/agents/analysts/market_analyst.py
+#
+# These definitions teach AI how to interpret raw indicator values.
+# AI receives raw numbers and uses these definitions to form its own judgment.
+# =============================================================================
+INDICATOR_DEFINITIONS = """
+INDICATOR REFERENCE (How to interpret the data):
+
+MOVING AVERAGES:
+- SMA (Simple Moving Average): Trend direction indicator
+  * Price > SMA = Bullish bias
+  * Price < SMA = Bearish bias
+  * SMA_5 > SMA_20 > SMA_50 = Strong uptrend (aligned)
+  * SMA_5 < SMA_20 < SMA_50 = Strong downtrend (aligned)
+
+RSI (Relative Strength Index):
+- Range: 0-100
+- >70 = Overbought (potential reversal down or pullback)
+- <30 = Oversold (potential reversal up or bounce)
+- 40-60 = Neutral zone
+
+MACD (Moving Average Convergence Divergence):
+- MACD > Signal = Bullish momentum
+- MACD < Signal = Bearish momentum
+- Histogram growing = Momentum strengthening
+- Histogram shrinking = Momentum weakening
+- Zero line crossover = Trend change signal
+
+BOLLINGER BANDS:
+- Price near Upper Band = Potentially overbought / strong momentum
+- Price near Lower Band = Potentially oversold / weak momentum
+- Price at Middle Band = Fair value / consolidation
+- Band squeeze (narrow) = Low volatility, breakout coming
+- Band expansion (wide) = High volatility
+
+SUPPORT/RESISTANCE:
+- Support = Recent low, potential bounce zone
+- Resistance = Recent high, potential rejection zone
+- Price near support = Risky to short, good for long entry
+- Price near resistance = Risky to long, good for short entry
+
+VOLUME:
+- Volume Ratio > 1.5x = High interest, confirms move
+- Volume Ratio < 0.5x = Low interest, weak move
+
+ORDER FLOW (Buy Ratio):
+- >55% = Buyers dominating (bullish)
+- <45% = Sellers dominating (bearish)
+- 45-55% = Balanced
+
+FUNDING RATE (Derivatives):
+- Positive (>0.01%) = Longs paying shorts, crowded long
+- Negative (<-0.01%) = Shorts paying longs, crowded short
+- Near zero = Balanced
+
+OPEN INTEREST:
+- Rising OI + Rising Price = New longs entering (bullish)
+- Rising OI + Falling Price = New shorts entering (bearish)
+- Falling OI = Positions closing, trend weakening
+"""
+
+
 class MultiAgentAnalyzer:
     """
     Multi-agent trading analysis system with Bull/Bear debate mechanism.
@@ -351,10 +415,12 @@ class MultiAgentAnalyzer:
         Generate bull analyst's argument.
 
         Borrowed from: TradingAgents/agents/researchers/bull_researcher.py
-        Simplified v3.0: Let AI autonomously analyze data without hardcoded rules
+        TradingAgents v3.3: AI interprets raw data using indicator definitions
         """
         prompt = f"""You are a Bull Analyst advocating for LONG position on {symbol}.
 Your task is to build a strong, evidence-based case for going LONG.
+
+{INDICATOR_DEFINITIONS}
 
 AVAILABLE DATA:
 
@@ -373,15 +439,21 @@ Last Bear Argument:
 {bear_argument if bear_argument else "No bear argument yet - make your opening case."}
 
 INSTRUCTIONS:
-1. Analyze ALL data sources and identify BULLISH signals
-2. Present 2-3 compelling reasons with specific numbers from the data
-3. If bear made arguments, counter them with evidence
-4. Be persuasive but factual
+1. Use the INDICATOR REFERENCE above to interpret the raw data
+2. Identify BULLISH signals with specific numbers
+3. Present 2-3 compelling reasons for going LONG
+4. If bear made arguments, counter them with evidence
 
 Deliver your argument (2-3 paragraphs):"""
 
+        # TradingAgents v3.3: Include indicator definitions in system prompt
+        system_prompt = f"""You are a professional Bull Analyst for {symbol}.
+Your role is to analyze raw market data and build the strongest possible case for going LONG.
+Use the indicator definitions provided to interpret the numbers correctly.
+Focus on evidence from the data, not assumptions."""
+
         return self._call_api_with_retry([
-            {"role": "system", "content": "You are a professional Bull Analyst. Analyze the provided data and build the strongest possible case for going LONG."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
         ])
 
@@ -399,10 +471,12 @@ Deliver your argument (2-3 paragraphs):"""
         Generate bear analyst's argument.
 
         Borrowed from: TradingAgents/agents/researchers/bear_researcher.py
-        Simplified v3.0: Let AI autonomously analyze data without hardcoded rules
+        TradingAgents v3.3: AI interprets raw data using indicator definitions
         """
         prompt = f"""You are a Bear Analyst making the case AGAINST going LONG on {symbol}.
 Your goal is to present well-reasoned arguments for SHORT or staying FLAT.
+
+{INDICATOR_DEFINITIONS}
 
 AVAILABLE DATA:
 
@@ -421,15 +495,21 @@ Last Bull Argument:
 {bull_argument}
 
 INSTRUCTIONS:
-1. Analyze ALL data sources and identify BEARISH signals or risks
-2. Present 2-3 compelling reasons with specific numbers from the data
-3. Counter the bull's arguments with evidence
-4. Highlight risks being ignored
+1. Use the INDICATOR REFERENCE above to interpret the raw data
+2. Identify BEARISH signals or risks with specific numbers
+3. Present 2-3 compelling reasons AGAINST going LONG
+4. Counter the bull's arguments with evidence
 
 Deliver your argument (2-3 paragraphs):"""
 
+        # TradingAgents v3.3: Include indicator definitions in system prompt
+        system_prompt = f"""You are a professional Bear Analyst for {symbol}.
+Your role is to analyze raw market data and build the strongest possible case AGAINST going LONG.
+Use the indicator definitions provided to interpret the numbers correctly.
+Focus on risks and bearish signals in the data."""
+
         return self._call_api_with_retry([
-            {"role": "system", "content": "You are a professional Bear Analyst. Analyze the provided data and build the strongest possible case AGAINST going LONG."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
         ])
 
@@ -658,33 +738,31 @@ MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
             return float(val) if val is not None else default
 
         # Base report (15M execution layer data)
+        # TradingAgents v3.3: Pass raw data only, no pre-computed interpretations
         report = f"""
-Price: ${safe_get('price'):,.2f}
-24h Change: {safe_get('price_change'):+.2f}%
+=== MARKET DATA (15M Timeframe) ===
 
-TREND ANALYSIS:
-- Overall Trend: {data.get('overall_trend', 'N/A')}
-- Short-term: {data.get('short_term_trend', 'N/A')}
-- MACD Direction: {data.get('macd_trend', 'N/A')}
+PRICE:
+- Current: ${safe_get('price'):,.2f}
+- 24h Change: {safe_get('price_change'):+.2f}%
 
-MOVING AVERAGES (15M):
+MOVING AVERAGES:
 - SMA 5: ${safe_get('sma_5'):,.2f}
 - SMA 20: ${safe_get('sma_20'):,.2f}
 - SMA 50: ${safe_get('sma_50'):,.2f}
 
-MOMENTUM (15M):
+MOMENTUM:
 - RSI: {safe_get('rsi'):.1f}
 - MACD: {safe_get('macd'):.4f}
 - MACD Signal: {safe_get('macd_signal'):.4f}
 - MACD Histogram: {safe_get('macd_histogram'):.4f}
 
-VOLATILITY (Bollinger Bands 15M):
+VOLATILITY (Bollinger Bands):
 - Upper: ${safe_get('bb_upper'):,.2f}
 - Middle: ${safe_get('bb_middle'):,.2f}
 - Lower: ${safe_get('bb_lower'):,.2f}
-- Price Position: {safe_get('bb_position'):.1%}
 
-KEY LEVELS:
+KEY LEVELS (20-bar high/low):
 - Resistance: ${safe_get('resistance'):,.2f}
 - Support: ${safe_get('support'):,.2f}
 
@@ -702,9 +780,9 @@ VOLUME:
             mtf_rsi = mtf_safe_get('rsi')
             mtf_macd = mtf_safe_get('macd')
 
+            # TradingAgents v3.3: Raw 4H data without interpretation guidance
             report += f"""
-=== 4-HOUR DECISION LAYER (IMPORTANT FOR DIRECTION) ===
-This is the medium-term view for directional bias. Weight this heavily in your analysis.
+=== MARKET DATA (4H Timeframe) ===
 
 MOMENTUM (4H):
 - RSI: {mtf_rsi:.1f}
@@ -719,19 +797,15 @@ BOLLINGER BANDS (4H):
 - Upper: ${mtf_safe_get('bb_upper'):,.2f}
 - Middle: ${mtf_safe_get('bb_middle'):,.2f}
 - Lower: ${mtf_safe_get('bb_lower'):,.2f}
-
-4H TREND: {mtf_decision.get('overall_trend', 'N/A')}
-
-MULTI-TIMEFRAME GUIDANCE:
-- Use 4H data for DIRECTIONAL BIAS (bullish/bearish)
-- Use 15M data for ENTRY TIMING (RSI levels, precise entry)
-- If 4H and 15M conflict, PREFER 4H direction with patience for better 15M entry
 """
 
         return report
 
     def _format_sentiment_report(self, data: Optional[Dict[str, Any]]) -> str:
-        """Format sentiment data for prompts."""
+        """Format sentiment data for prompts.
+
+        TradingAgents v3.3: Pass raw ratios only, no interpretation.
+        """
         if not data:
             return "SENTIMENT: Data not available"
 
@@ -740,12 +814,12 @@ MULTI-TIMEFRAME GUIDANCE:
         neg_ratio = data.get('negative_ratio') or 0
         sign = '+' if net >= 0 else ''
 
+        # TradingAgents v3.3: Raw data only, AI interprets
         return f"""
-MARKET SENTIMENT (Long/Short Ratio):
-- Bullish Ratio: {pos_ratio:.1%}
-- Bearish Ratio: {neg_ratio:.1%}
-- Net Sentiment: {sign}{net:.3f}
-- Interpretation: {'Bullish bias' if net > 0.1 else 'Bearish bias' if net < -0.1 else 'Neutral'}
+MARKET SENTIMENT (Binance Long/Short Ratio):
+- Long Ratio: {pos_ratio:.1%}
+- Short Ratio: {neg_ratio:.1%}
+- Net: {sign}{net:.3f}
 """
 
     def _format_position(self, position: Optional[Dict[str, Any]]) -> str:
