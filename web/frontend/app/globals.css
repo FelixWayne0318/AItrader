@@ -314,19 +314,25 @@
    Profit/Loss Display
    ============================================================================ */
 .profit-value {
-  @apply text-profit font-semibold;
+  color: hsl(var(--profit));
+  font-weight: 600;
 }
 
 .loss-value {
-  @apply text-loss font-semibold;
+  color: hsl(var(--loss));
+  font-weight: 600;
 }
 
 .profit-bg {
-  @apply bg-profit/10 text-profit border border-profit/20;
+  background-color: hsl(var(--profit) / 0.1);
+  color: hsl(var(--profit));
+  border: 1px solid hsl(var(--profit) / 0.2);
 }
 
 .loss-bg {
-  @apply bg-loss/10 text-loss border border-loss/20;
+  background-color: hsl(var(--loss) / 0.1);
+  color: hsl(var(--loss));
+  border: 1px solid hsl(var(--loss) / 0.2);
 }
 
 /* ============================================================================
@@ -544,11 +550,11 @@
 }
 
 .log-viewer .log-level-warn {
-  @apply text-warning;
+  color: hsl(var(--warning));
 }
 
 .log-viewer .log-level-error {
-  @apply text-loss;
+  color: hsl(var(--loss));
 }
 
 /* ============================================================================
