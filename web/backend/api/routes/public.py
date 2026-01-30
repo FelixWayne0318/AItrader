@@ -1,7 +1,9 @@
 """
 Public API Routes - No authentication required
 """
+import os
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -10,6 +12,9 @@ from models import SocialLink, CopyTradingLink, SiteSettings
 from services import binance_service
 
 router = APIRouter(prefix="/public", tags=["Public"])
+
+# Upload directory for public file access
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "uploads")
 
 
 @router.get("/performance")
@@ -92,6 +97,40 @@ async def get_site_setting(key: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Setting not found")
 
     return {"key": setting.key, "value": setting.value}
+
+
+@router.get("/site-branding")
+async def get_site_branding(db: AsyncSession = Depends(get_db)):
+    """Get site branding settings (logo, favicon, site name)"""
+    branding_keys = ["logo_url", "favicon_url", "site_name", "site_tagline"]
+    result = await db.execute(
+        select(SiteSettings).where(SiteSettings.key.in_(branding_keys))
+    )
+    settings = result.scalars().all()
+
+    branding = {s.key: s.value for s in settings}
+
+    return {
+        "logo_url": branding.get("logo_url"),
+        "favicon_url": branding.get("favicon_url"),
+        "site_name": branding.get("site_name", "AlgVex"),
+        "site_tagline": branding.get("site_tagline"),
+    }
+
+
+@router.get("/uploads/{filename}")
+async def get_public_upload(filename: str):
+    """Serve uploaded files publicly (logos, favicons)"""
+    # Security: only allow specific prefixes for public access
+    allowed_prefixes = ["logo_", "favicon_"]
+    if not any(filename.startswith(prefix) for prefix in allowed_prefixes):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    filepath = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(filepath)
 
 
 @router.get("/system-status")

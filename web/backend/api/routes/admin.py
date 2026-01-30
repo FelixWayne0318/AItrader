@@ -450,8 +450,8 @@ async def upload_logo(
     with open(filepath, "wb") as f:
         f.write(content)
 
-    # Save to database
-    logo_url = f"/api/uploads/{filename}"
+    # Save to database (use public URL path)
+    logo_url = f"/api/public/uploads/{filename}"
     result = await db.execute(
         select(SiteSettings).where(SiteSettings.key == "logo_url")
     )
@@ -497,7 +497,7 @@ async def upload_favicon(
     with open(filepath, "wb") as f:
         f.write(content)
 
-    favicon_url = f"/api/uploads/{filename}"
+    favicon_url = f"/api/public/uploads/{filename}"
     result = await db.execute(
         select(SiteSettings).where(SiteSettings.key == "favicon_url")
     )

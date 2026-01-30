@@ -87,6 +87,13 @@ export function Header({ locale, t }: HeaderProps) {
     { refreshInterval: 30000 }
   );
 
+  // Fetch site branding (logo, site name)
+  const { data: branding } = useSWR(
+    mounted ? "/api/public/site-branding" : null,
+    fetcher,
+    { refreshInterval: 300000 } // Refresh every 5 minutes
+  );
+
   const toggleLocale = () => {
     const newLocale = locale === "en" ? "zh" : "en";
     router.push(router.pathname, router.asPath, { locale: newLocale });
@@ -136,13 +143,23 @@ export function Header({ locale, t }: HeaderProps) {
       <div className="container mx-auto">
         <div className="bg-background/70 backdrop-blur-xl border border-border/40 rounded-2xl shadow-lg shadow-black/5">
           <div className="flex h-14 items-center justify-between px-4">
-            {/* Logo - Enhanced with gradient effect */}
+            {/* Logo - Dynamic from branding settings */}
             <Link href="/" className="flex items-center gap-2.5 group">
-              <div className="relative h-8 w-8 rounded-xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shadow-md shadow-primary/20 group-hover:shadow-primary/40 transition-shadow">
-                <span className="text-primary-foreground font-bold text-sm">A</span>
-                <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-              <span className="text-lg font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">AlgVex</span>
+              {branding?.logo_url ? (
+                <img
+                  src={branding.logo_url}
+                  alt={branding?.site_name || "AlgVex"}
+                  className="h-8 w-8 rounded-xl object-contain shadow-md shadow-primary/20 group-hover:shadow-primary/40 transition-shadow"
+                />
+              ) : (
+                <div className="relative h-8 w-8 rounded-xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shadow-md shadow-primary/20 group-hover:shadow-primary/40 transition-shadow">
+                  <span className="text-primary-foreground font-bold text-sm">A</span>
+                  <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+              )}
+              <span className="text-lg font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">
+                {branding?.site_name || "AlgVex"}
+              </span>
             </Link>
 
             {/* Desktop Navigation - Clean pill style */}
