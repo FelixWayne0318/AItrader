@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.9 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.10 (与实盘 100% 一致)
+
+v11.10 更新 - 修复 MTF 数据加载和 BB Position 显示:
+- 添加 fetch_binance_klines() 和 create_bar_from_kline() 辅助函数
+- 修复 MTF 4H/1D 数据加载 (之前报 'fetch_binance_klines' not defined)
+- 修复 bb_position 显示格式 (原始值 0-1 需乘 100 显示为百分比)
 
 v11.9 更新 - 完整数据覆盖 (TradingAgents v3.6):
 - 添加周期价格统计: period_high, period_low, period_change_pct
@@ -313,8 +318,69 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Tuple
 
+# =============================================================================
+# Helper Functions for MTF Data Loading (v11.9)
+# =============================================================================
+
+class MockBar:
+    """Mock bar object for indicator updates (same as used in main loop)"""
+    def __init__(self, o, h, l, c, v, ts):
+        self.open = Decimal(str(o))
+        self.high = Decimal(str(h))
+        self.low = Decimal(str(l))
+        self.close = Decimal(str(c))
+        self.volume = Decimal(str(v))
+        self.ts_init = int(ts)
+
+
+def fetch_binance_klines(symbol: str, interval: str, limit: int) -> list:
+    """
+    Fetch klines from Binance Futures API.
+
+    Args:
+        symbol: Trading pair (e.g., "BTCUSDT")
+        interval: K-line interval (e.g., "4h", "1d")
+        limit: Number of klines to fetch
+
+    Returns:
+        List of kline data or empty list on failure
+    """
+    import requests
+    try:
+        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
+        response = requests.get(url, timeout=15)
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except Exception:
+        return []
+
+
+def create_bar_from_kline(kline: list, bar_type: str) -> MockBar:
+    """
+    Create a MockBar from Binance kline data.
+
+    Args:
+        kline: Binance kline array [timestamp, open, high, low, close, volume, ...]
+        bar_type: Bar type string (for logging only)
+
+    Returns:
+        MockBar object
+    """
+    return MockBar(
+        float(kline[1]),  # open
+        float(kline[2]),  # high
+        float(kline[3]),  # low
+        float(kline[4]),  # close
+        float(kline[5]),  # volume
+        int(kline[0])     # timestamp
+    )
+
+
+# =============================================================================
+
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.9')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.10')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -559,7 +625,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.9 (TradingAgents v3.6 - 完整数据覆盖){mode_str}")
+print(f"  实盘信号诊断工具 v11.10 (修复 MTF 数据加载 + BB Position){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1435,7 +1501,7 @@ try:
     print(f"      macd_histogram:  {technical_data.get('macd_histogram', 0):.4f}")
     print(f"      bb_upper:        ${technical_data.get('bb_upper', 0):,.2f}")
     print(f"      bb_lower:        ${technical_data.get('bb_lower', 0):,.2f}")
-    print(f"      bb_position:     {technical_data.get('bb_position', 50):.1f}% (0%=下轨, 100%=上轨)")
+    print(f"      bb_position:     {technical_data.get('bb_position', 0.5) * 100:.1f}% (0%=下轨, 100%=上轨)")
     print(f"      [诊断用] overall_trend: {technical_data.get('overall_trend', 'N/A')}")
     print()
     print("  [2] sentiment_data (情绪数据):")
@@ -1494,7 +1560,7 @@ try:
         print(f"      sma_50:          ${mtf_decision_data.get('sma_50', 0):,.2f}")
         print(f"      bb_upper:        ${mtf_decision_data.get('bb_upper', 0):,.2f}")
         print(f"      bb_lower:        ${mtf_decision_data.get('bb_lower', 0):,.2f}")
-        print(f"      bb_position:     {mtf_decision_data.get('bb_position', 50):.1f}%")
+        print(f"      bb_position:     {mtf_decision_data.get('bb_position', 0.5) * 100:.1f}%")
     else:
         print("  [6] mtf_decision_layer (4H): 未初始化或未启用")
     print()
