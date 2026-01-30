@@ -176,22 +176,22 @@ export function AISignalLog({ signals, maxItems = 5 }: AISignalLogProps) {
         >
           {/* Header */}
           <div
-            className="p-4 cursor-pointer"
+            className="p-3 sm:p-4 cursor-pointer"
             onClick={() => setExpandedId(expandedId === signal.id ? null : signal.id)}
           >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
                 <SignalBadge signal={signal.final_signal} />
                 <span className="font-medium">{signal.symbol}</span>
                 <ConfidenceBadge confidence={signal.confidence} />
               </div>
 
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-muted-foreground">
+              <div className="flex items-center gap-2 sm:gap-3 text-xs text-muted-foreground">
+                <span className="truncate">
                   {new Date(signal.timestamp).toLocaleString()}
                 </span>
                 <svg
-                  className={`w-4 h-4 text-muted-foreground transition-transform ${
+                  className={`w-4 h-4 flex-shrink-0 transition-transform ${
                     expandedId === signal.id ? 'rotate-180' : ''
                   }`}
                   fill="none"
@@ -226,7 +226,7 @@ export function AISignalLog({ signals, maxItems = 5 }: AISignalLogProps) {
                 <div className="px-4 pb-4 space-y-3">
                   {/* Market data */}
                   {signal.market_data && (
-                    <div className="grid grid-cols-4 gap-2 p-3 rounded-lg bg-muted/30">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 rounded-lg bg-muted/30">
                       {signal.market_data.price && (
                         <div>
                           <span className="text-xs text-muted-foreground">Price</span>

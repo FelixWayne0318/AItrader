@@ -148,8 +148,8 @@ export function BotStatus({
 
         {/* Countdown circle */}
         {status === 'running' && (
-          <div className="relative w-16 h-16">
-            <svg className="w-full h-full transform -rotate-90">
+          <div className="relative w-12 h-12 sm:w-16 sm:h-16">
+            <svg className="w-full h-full transform -rotate-90" viewBox="0 0 64 64">
               <circle
                 cx="32"
                 cy="32"
@@ -172,14 +172,14 @@ export function BotStatus({
               />
             </svg>
             <div className="absolute inset-0 flex items-center justify-center">
-              <span className="text-xs font-mono text-foreground">{countdown}</span>
+              <span className="text-[10px] sm:text-xs font-mono text-foreground">{countdown}</span>
             </div>
           </div>
         )}
       </div>
 
       {/* Info row */}
-      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-border/50">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 pt-4 border-t border-border/50">
         <div>
           <span className="text-xs text-muted-foreground">Last Trade</span>
           <p className="text-sm font-medium text-foreground">

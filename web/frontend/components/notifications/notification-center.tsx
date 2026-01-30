@@ -129,7 +129,7 @@ function NotificationItem({
           {!notification.read && onMarkAsRead && (
             <button
               onClick={() => onMarkAsRead(notification.id)}
-              className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+              className="p-2 sm:p-1.5 rounded-lg hover:bg-muted transition-colors min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 flex items-center justify-center"
               title="Mark as read"
             >
               <svg className="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -140,7 +140,7 @@ function NotificationItem({
           {onDelete && (
             <button
               onClick={() => onDelete(notification.id)}
-              className="p-1.5 rounded-lg hover:bg-loss/10 hover:text-loss transition-colors"
+              className="p-2 sm:p-1.5 rounded-lg hover:bg-loss/10 hover:text-loss transition-colors min-w-[40px] min-h-[40px] sm:min-w-0 sm:min-h-0 flex items-center justify-center"
               title="Delete"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

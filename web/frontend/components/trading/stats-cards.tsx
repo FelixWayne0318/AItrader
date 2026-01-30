@@ -99,7 +99,7 @@ export function StatsCard({
         {icon && <div className="text-muted-foreground">{icon}</div>}
       </div>
 
-      <div className={`text-2xl font-bold ${valueColors[color]}`}>
+      <div className={`text-lg sm:text-xl md:text-2xl font-bold ${valueColors[color]}`}>
         <AnimatedNumber
           value={value}
           prefix={prefix}
