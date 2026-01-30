@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 
 interface Candle {
   id: number;
@@ -16,11 +15,10 @@ interface Candle {
 interface AnimatedCandlestickProps {
   height?: number;
   candleCount?: number;
-  animationSpeed?: number; // ms between new candles
+  animationSpeed?: number;
   volatility?: number;
   showVolume?: boolean;
   title?: string;
-  symbol?: string;
 }
 
 function generateInitialCandles(count: number, basePrice: number = 45000): Candle[] {
@@ -70,6 +68,7 @@ function generateNewCandle(lastCandle: Candle, volatility: number): Candle {
   };
 }
 
+// Pure CSS animated candlestick chart - no framer-motion for better mobile compatibility
 export function AnimatedCandlestick({
   height = 300,
   candleCount = 30,
@@ -77,27 +76,18 @@ export function AnimatedCandlestick({
   volatility = 500,
   showVolume = true,
   title = 'BTC/USDT',
-  symbol,
 }: AnimatedCandlestickProps) {
-  const [candles, setCandles] = useState<Candle[]>(() =>
-    generateInitialCandles(candleCount)
-  );
-  const [currentPrice, setCurrentPrice] = useState(0);
+  const [candles, setCandles] = useState<Candle[]>([]);
+  const [currentPrice, setCurrentPrice] = useState(45000);
   const [priceChange, setPriceChange] = useState(0);
+  const [isClient, setIsClient] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
 
-  // Get container width for responsive rendering
+  // Initialize on client only to avoid hydration mismatch
   useEffect(() => {
-    const updateWidth = () => {
-      if (containerRef.current) {
-        setContainerWidth(containerRef.current.clientWidth);
-      }
-    };
-    updateWidth();
-    window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
-  }, []);
+    setIsClient(true);
+    setCandles(generateInitialCandles(candleCount));
+  }, [candleCount]);
 
   // Update current price display
   useEffect(() => {
@@ -111,63 +101,63 @@ export function AnimatedCandlestick({
 
   // Generate new candles periodically
   useEffect(() => {
+    if (!isClient) return;
+
     const interval = setInterval(() => {
       setCandles((prev) => {
+        if (prev.length === 0) return prev;
         const newCandle = generateNewCandle(prev[prev.length - 1], volatility);
         return [...prev.slice(1), newCandle];
       });
     }, animationSpeed);
 
     return () => clearInterval(interval);
-  }, [animationSpeed, volatility]);
+  }, [animationSpeed, volatility, isClient]);
 
-  // Calculate chart dimensions
-  const chartHeight = showVolume ? height * 0.65 : height - 80;
-  const volumeHeight = showVolume ? height * 0.15 : 0;
+  // Calculate dimensions
   const headerHeight = 70;
   const bottomPadding = 40;
+  const chartAreaHeight = height - headerHeight - bottomPadding;
+  const candleChartHeight = showVolume ? chartAreaHeight * 0.75 : chartAreaHeight;
+  const volumeChartHeight = showVolume ? chartAreaHeight * 0.20 : 0;
 
   // Calculate price range
-  const prices = candles.flatMap((c) => [c.high, c.low]);
+  const prices = candles.length > 0 ? candles.flatMap((c) => [c.high, c.low]) : [45000, 44500];
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
   const priceRange = maxPrice - minPrice || 1;
 
   // Calculate volume range
-  const volumes = candles.map((c) => c.volume);
+  const volumes = candles.length > 0 ? candles.map((c) => c.volume) : [500];
   const maxVolume = Math.max(...volumes);
 
-  // Responsive candle count
-  const effectiveCandleCount = containerWidth < 400 ? Math.min(candleCount, 20) : candleCount;
-  const displayCandles = candles.slice(-effectiveCandleCount);
-
-  // SVG dimensions
-  const svgWidth = 100;
-  const svgHeight = chartHeight + volumeHeight;
-
-  const candleWidth = (svgWidth - 4) / effectiveCandleCount;
-  const candleGap = candleWidth * 0.15;
-  const candleBodyWidth = candleWidth - candleGap;
-
-  // Convert price to Y coordinate
-  const priceToY = useCallback(
+  // Convert price to percentage from top
+  const priceToPercent = useCallback(
     (price: number) => {
-      const padding = 5;
-      return (
-        padding +
-        ((maxPrice - price) / priceRange) * (chartHeight - 2 * padding)
-      );
+      return ((maxPrice - price) / priceRange) * 100;
     },
-    [maxPrice, priceRange, chartHeight]
+    [maxPrice, priceRange]
   );
 
-  // Convert volume to height
-  const volumeToHeight = useCallback(
-    (volume: number) => {
-      return (volume / maxVolume) * (volumeHeight - 5);
-    },
-    [maxVolume, volumeHeight]
-  );
+  // Don't render chart until client-side
+  if (!isClient || candles.length === 0) {
+    return (
+      <div
+        ref={containerRef}
+        className="relative bg-gradient-to-b from-card/80 to-background rounded-xl border border-border/50 overflow-hidden"
+        style={{ height, minHeight: height }}
+      >
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+            <span className="text-sm">Loading chart...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const candleWidth = 100 / candleCount;
 
   return (
     <div
@@ -175,6 +165,49 @@ export function AnimatedCandlestick({
       className="relative bg-gradient-to-b from-card/80 to-background rounded-xl border border-border/50 overflow-hidden"
       style={{ height, minHeight: height }}
     >
+      {/* CSS for animations */}
+      <style jsx>{`
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateX(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+        @keyframes pulse {
+          0%, 100% {
+            opacity: 0.5;
+            box-shadow: 0 0 4px currentColor;
+          }
+          50% {
+            opacity: 0.8;
+            box-shadow: 0 0 8px currentColor;
+          }
+        }
+        @keyframes priceUpdate {
+          from {
+            opacity: 0;
+            transform: translateY(-5px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .candle-enter {
+          animation: slideIn 0.3s ease-out forwards;
+        }
+        .price-animate {
+          animation: priceUpdate 0.3s ease-out;
+        }
+        .glow-pulse {
+          animation: pulse 1.5s ease-in-out infinite;
+        }
+      `}</style>
+
       {/* Glowing background effect */}
       <div className="absolute inset-0 opacity-30 pointer-events-none">
         <div className="absolute top-1/4 right-1/4 w-40 h-40 bg-primary/30 rounded-full blur-3xl" />
@@ -182,7 +215,10 @@ export function AnimatedCandlestick({
       </div>
 
       {/* Header */}
-      <div className="relative p-3 sm:p-4 flex items-center justify-between z-10 bg-gradient-to-b from-card/90 to-transparent" style={{ height: headerHeight }}>
+      <div
+        className="relative p-3 sm:p-4 flex items-center justify-between z-10 bg-gradient-to-b from-card/90 to-transparent"
+        style={{ height: headerHeight }}
+      >
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-[#f7931a] to-[#f39c12] flex items-center justify-center flex-shrink-0">
             <span className="text-white text-xs font-bold">₿</span>
@@ -193,17 +229,15 @@ export function AnimatedCandlestick({
           </div>
         </div>
         <div className="text-right">
-          <motion.p
-            key={currentPrice.toFixed(2)}
-            initial={{ y: -10, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="font-mono text-base sm:text-xl font-bold text-foreground"
+          <p
+            key={currentPrice.toFixed(0)}
+            className="font-mono text-base sm:text-xl font-bold text-foreground price-animate"
           >
             ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </motion.p>
+          </p>
           <p
             className={`text-[10px] sm:text-xs font-medium ${
-              priceChange >= 0 ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'
+              priceChange >= 0 ? 'text-green-500' : 'text-red-500'
             }`}
           >
             {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
@@ -212,191 +246,114 @@ export function AnimatedCandlestick({
       </div>
 
       {/* Chart container */}
-      <div className="relative" style={{ height: height - headerHeight - bottomPadding }}>
-        {/* Price axis labels - positioned absolutely on the right */}
-        <div
-          className="absolute right-1 sm:right-2 top-0 bottom-0 flex flex-col justify-between py-2 z-10 pointer-events-none"
-          style={{ width: 'auto' }}
-        >
-          <div className="text-[9px] sm:text-[10px] text-muted-foreground font-mono text-right whitespace-nowrap">
+      <div className="relative px-2" style={{ height: chartAreaHeight }}>
+        {/* Price axis labels */}
+        <div className="absolute right-1 sm:right-2 top-0 flex flex-col justify-between z-10 pointer-events-none" style={{ height: candleChartHeight }}>
+          <span className="text-[9px] sm:text-[10px] text-muted-foreground font-mono">
             ${maxPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </div>
-          <div className="text-[9px] sm:text-[10px] text-muted-foreground font-mono text-right whitespace-nowrap">
+          </span>
+          <span className="text-[9px] sm:text-[10px] text-muted-foreground font-mono">
             ${((maxPrice + minPrice) / 2).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </div>
-          <div className="text-[9px] sm:text-[10px] text-muted-foreground font-mono text-right whitespace-nowrap">
+          </span>
+          <span className="text-[9px] sm:text-[10px] text-muted-foreground font-mono">
             ${minPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </div>
+          </span>
         </div>
 
-        {/* Candlestick chart SVG */}
-        <svg
-          className="absolute inset-0 w-full h-full"
-          viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-          preserveAspectRatio="xMidYMid meet"
-        >
-          {/* Grid lines */}
-          <defs>
-            <pattern id="candleGrid" width="10" height="10" patternUnits="userSpaceOnUse">
-              <path
-                d="M 10 0 L 0 0 0 10"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="0.1"
-                className="text-border"
-                opacity="0.2"
-              />
-            </pattern>
-            {/* Glow filter for the latest candle */}
-            <filter id="candleGlow" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="0.8" result="coloredBlur" />
-              <feMerge>
-                <feMergeNode in="coloredBlur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-
-          <rect width={svgWidth} height={svgHeight} fill="url(#candleGrid)" />
-
-          {/* Horizontal grid lines */}
-          {[0.25, 0.5, 0.75].map((ratio) => (
-            <line
-              key={ratio}
-              x1="0"
-              y1={chartHeight * ratio}
-              x2={svgWidth}
-              y2={chartHeight * ratio}
-              stroke="currentColor"
-              strokeWidth="0.1"
-              className="text-border"
-              opacity="0.3"
-              strokeDasharray="2 2"
+        {/* Grid lines */}
+        <div className="absolute inset-x-2 top-0" style={{ height: candleChartHeight }}>
+          {[0, 25, 50, 75, 100].map((percent) => (
+            <div
+              key={percent}
+              className="absolute w-full border-t border-border/20 border-dashed"
+              style={{ top: `${percent}%` }}
             />
           ))}
+        </div>
 
-          {/* Candles */}
-          <AnimatePresence mode="popLayout">
-            {displayCandles.map((candle, index) => {
-              const x = 2 + index * candleWidth + candleGap / 2;
+        {/* Candlesticks using divs */}
+        <div className="absolute inset-x-2 top-0 flex" style={{ height: candleChartHeight }}>
+          {candles.map((candle, index) => {
+            const isUp = candle.close >= candle.open;
+            const isLatest = index === candles.length - 1;
+
+            const highPercent = priceToPercent(candle.high);
+            const lowPercent = priceToPercent(candle.low);
+            const bodyTopPercent = priceToPercent(Math.max(candle.open, candle.close));
+            const bodyBottomPercent = priceToPercent(Math.min(candle.open, candle.close));
+            const bodyHeightPercent = Math.max(bodyBottomPercent - bodyTopPercent, 0.5);
+
+            return (
+              <div
+                key={candle.id}
+                className={`relative ${isLatest ? 'candle-enter' : ''}`}
+                style={{ width: `${candleWidth}%`, height: '100%' }}
+              >
+                {/* Wick */}
+                <div
+                  className="absolute left-1/2 -translate-x-1/2"
+                  style={{
+                    top: `${highPercent}%`,
+                    height: `${lowPercent - highPercent}%`,
+                    width: '1px',
+                    backgroundColor: isUp ? '#22c55e' : '#ef4444',
+                    transition: 'all 0.3s ease-out',
+                  }}
+                />
+                {/* Body */}
+                <div
+                  className={`absolute left-1/2 -translate-x-1/2 rounded-sm ${isLatest ? 'glow-pulse' : ''}`}
+                  style={{
+                    top: `${bodyTopPercent}%`,
+                    height: `${bodyHeightPercent}%`,
+                    width: '60%',
+                    minHeight: '2px',
+                    backgroundColor: isUp ? 'rgba(34, 197, 94, 0.3)' : '#ef4444',
+                    border: `1px solid ${isUp ? '#22c55e' : '#ef4444'}`,
+                    transition: 'all 0.3s ease-out',
+                    color: isUp ? '#22c55e' : '#ef4444',
+                  }}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Volume bars */}
+        {showVolume && (
+          <div
+            className="absolute inset-x-2 bottom-0 flex items-end"
+            style={{ height: volumeChartHeight }}
+          >
+            {candles.map((candle, index) => {
               const isUp = candle.close >= candle.open;
-              const isLatest = index === displayCandles.length - 1;
-
-              const bodyTop = priceToY(Math.max(candle.open, candle.close));
-              const bodyBottom = priceToY(Math.min(candle.open, candle.close));
-              const bodyHeight = Math.max(bodyBottom - bodyTop, 0.8);
-
-              const wickTop = priceToY(candle.high);
-              const wickBottom = priceToY(candle.low);
+              const barHeightPercent = (candle.volume / maxVolume) * 100;
 
               return (
-                <motion.g
+                <div
                   key={candle.id}
-                  initial={{ opacity: 0, x: candleWidth }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -candleWidth }}
-                  transition={{ duration: 0.3 }}
-                  filter={isLatest ? 'url(#candleGlow)' : undefined}
+                  className="relative"
+                  style={{ width: `${candleWidth}%`, height: '100%' }}
                 >
-                  {/* Wick */}
-                  <motion.line
-                    x1={x + candleBodyWidth / 2}
-                    y1={wickTop}
-                    x2={x + candleBodyWidth / 2}
-                    y2={wickBottom}
-                    stroke={isUp ? '#22c55e' : '#ef4444'}
-                    strokeWidth="0.3"
-                    initial={isLatest ? { y1: bodyTop, y2: bodyBottom } : undefined}
-                    animate={{ y1: wickTop, y2: wickBottom }}
-                    transition={{ duration: 0.5 }}
+                  <div
+                    className="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-t-sm"
+                    style={{
+                      width: '60%',
+                      height: `${barHeightPercent}%`,
+                      backgroundColor: isUp ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)',
+                      transition: 'height 0.3s ease-out',
+                    }}
                   />
-                  {/* Body */}
-                  <motion.rect
-                    x={x}
-                    width={candleBodyWidth}
-                    fill={isUp ? '#22c55e' : '#ef4444'}
-                    fillOpacity={isUp ? 0.2 : 1}
-                    stroke={isUp ? '#22c55e' : '#ef4444'}
-                    strokeWidth="0.2"
-                    rx="0.3"
-                    initial={isLatest ? { y: bodyTop, height: 0.8 } : { y: bodyTop, height: bodyHeight }}
-                    animate={{ y: bodyTop, height: bodyHeight }}
-                    transition={{ duration: 0.5, ease: 'easeOut' }}
-                  />
-                  {/* Glow effect for latest candle */}
-                  {isLatest && (
-                    <motion.rect
-                      x={x - 0.5}
-                      y={bodyTop - 0.5}
-                      width={candleBodyWidth + 1}
-                      height={bodyHeight + 1}
-                      fill="none"
-                      stroke={isUp ? '#22c55e' : '#ef4444'}
-                      strokeWidth="0.4"
-                      rx="0.5"
-                      opacity={0.5}
-                      animate={{
-                        opacity: [0.3, 0.6, 0.3],
-                        strokeWidth: [0.4, 0.6, 0.4],
-                      }}
-                      transition={{
-                        duration: 1.5,
-                        repeat: Infinity,
-                        ease: 'easeInOut',
-                      }}
-                    />
-                  )}
-                </motion.g>
+                </div>
               );
             })}
-          </AnimatePresence>
-
-          {/* Volume bars */}
-          {showVolume && (
-            <g transform={`translate(0, ${chartHeight + 5})`}>
-              <AnimatePresence mode="popLayout">
-                {displayCandles.map((candle, index) => {
-                  const x = 2 + index * candleWidth + candleGap / 2;
-                  const isUp = candle.close >= candle.open;
-                  const barHeight = volumeToHeight(candle.volume);
-
-                  return (
-                    <motion.rect
-                      key={candle.id}
-                      x={x}
-                      y={volumeHeight - barHeight}
-                      width={candleBodyWidth}
-                      height={barHeight}
-                      fill={isUp ? '#22c55e' : '#ef4444'}
-                      opacity={0.3}
-                      rx="0.3"
-                      initial={{ height: 0, y: volumeHeight }}
-                      animate={{ height: barHeight, y: volumeHeight - barHeight }}
-                      exit={{ height: 0, y: volumeHeight }}
-                      transition={{ duration: 0.3 }}
-                    />
-                  );
-                })}
-              </AnimatePresence>
-            </g>
-          )}
-        </svg>
+          </div>
+        )}
       </div>
 
       {/* Live indicator */}
       <div className="absolute bottom-2 sm:bottom-3 left-2 sm:left-3 flex items-center gap-1.5 sm:gap-2 z-10">
-        <motion.div
-          className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#22c55e]"
-          animate={{
-            scale: [1, 1.3, 1],
-            opacity: [1, 0.7, 1],
-          }}
-          transition={{
-            duration: 1.5,
-            repeat: Infinity,
-            ease: 'easeInOut',
-          }}
-        />
+        <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-green-500 animate-pulse" />
         <span className="text-[10px] sm:text-xs text-muted-foreground">Live</span>
       </div>
 
@@ -406,7 +363,7 @@ export function AnimatedCandlestick({
   );
 }
 
-// Hero version with larger size and more effects
+// Hero version with larger size and outer glow
 export function HeroAnimatedCandlestick() {
   return (
     <div className="relative w-full max-w-3xl mx-auto px-2 sm:px-0">
