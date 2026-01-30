@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
 import useSWR from "swr";
-import dynamic from "next/dynamic";
 import {
   Settings,
   Shield,
@@ -46,24 +45,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
-// Dynamic imports for browser-only components (lightweight-charts requires window)
-// Reference: https://nextjs.org/docs/app/building-your-application/optimizing/lazy-loading#skipping-ssr
-const EquityCurve = dynamic(
-  () => import("@/components/charts/equity-curve").then((mod) => mod.EquityCurve),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex items-center justify-center h-[350px] bg-card/50 rounded-xl border border-border">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-          <span className="text-sm text-muted-foreground">Loading chart...</span>
-        </div>
-      </div>
-    )
-  }
-);
-
-// Standard imports for components that don't require window
+// New Performance Components
+import { EquityCurve } from "@/components/charts/equity-curve";
 import { TradeTimeline } from "@/components/trading/trade-timeline";
 import { RiskMetrics } from "@/components/trading/risk-metrics";
 import { AISignalLog } from "@/components/trading/ai-signal-log";

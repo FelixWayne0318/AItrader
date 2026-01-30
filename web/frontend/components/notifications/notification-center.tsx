@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface Notification {
   id: string;
@@ -63,12 +64,10 @@ function NotificationItem({
   notification,
   onMarkAsRead,
   onDelete,
-  index = 0,
 }: {
   notification: Notification;
   onMarkAsRead?: (id: string) => void;
   onDelete?: (id: string) => void;
-  index?: number;
 }) {
   const typeColors = {
     trade: 'text-primary bg-primary/10',
@@ -89,11 +88,14 @@ function NotificationItem({
   };
 
   return (
-    <div
+    <motion.div
+      layout
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 20 }}
       className={`relative p-4 rounded-lg border-l-4 ${borderColors[notification.type]} ${
         notification.read ? 'bg-card/30' : 'bg-card'
-      } border border-border/50 animate-slide-in`}
-      style={{ animationDelay: `${index * 50}ms` }}
+      } border border-border/50`}
     >
       <div className="flex items-start gap-3">
         {/* Icon */}
@@ -148,24 +150,7 @@ function NotificationItem({
           )}
         </div>
       </div>
-
-      <style jsx>{`
-        @keyframes slide-in {
-          from {
-            opacity: 0;
-            transform: translateX(-20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
-        .animate-slide-in {
-          animation: slide-in 0.3s ease-out forwards;
-          opacity: 0;
-        }
-      `}</style>
-    </div>
+    </motion.div>
   );
 }
 
@@ -234,49 +219,40 @@ export function NotificationCenter({
 
       {/* Notification list */}
       <div className="space-y-2 max-h-[500px] overflow-y-auto">
-        {filteredNotifications.length > 0 ? (
-          filteredNotifications.map((notification, index) => (
-            <NotificationItem
-              key={notification.id}
-              notification={notification}
-              onMarkAsRead={onMarkAsRead}
-              onDelete={onDelete}
-              index={index}
-            />
-          ))
-        ) : (
-          <div className="py-12 text-center text-muted-foreground animate-fade-in">
-            <svg
-              className="w-12 h-12 mx-auto mb-3 opacity-50"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+        <AnimatePresence>
+          {filteredNotifications.length > 0 ? (
+            filteredNotifications.map((notification) => (
+              <NotificationItem
+                key={notification.id}
+                notification={notification}
+                onMarkAsRead={onMarkAsRead}
+                onDelete={onDelete}
               />
-            </svg>
-            <p className="text-sm">No notifications</p>
-          </div>
-        )}
+            ))
+          ) : (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="py-12 text-center text-muted-foreground"
+            >
+              <svg
+                className="w-12 h-12 mx-auto mb-3 opacity-50"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                />
+              </svg>
+              <p className="text-sm">No notifications</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-
-      <style jsx>{`
-        @keyframes fade-in {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
-        }
-        .animate-fade-in {
-          animation: fade-in 0.3s ease-out forwards;
-        }
-      `}</style>
     </div>
   );
 }

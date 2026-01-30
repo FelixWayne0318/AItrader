@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
 
 type Theme = 'dark' | 'light' | 'system';
 
@@ -76,29 +77,17 @@ export function ThemeToggle() {
       className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted hover:bg-muted/80 transition-colors"
       title={`Current: ${labels[theme]}. Click to change.`}
     >
-      <div
+      <motion.div
         key={theme}
-        className="text-muted-foreground animate-icon-rotate"
+        initial={{ rotate: -180, opacity: 0 }}
+        animate={{ rotate: 0, opacity: 1 }}
+        exit={{ rotate: 180, opacity: 0 }}
+        transition={{ duration: 0.2 }}
+        className="text-muted-foreground"
       >
         {icons[theme]}
-      </div>
+      </motion.div>
       <span className="text-sm text-muted-foreground hidden sm:inline">{labels[theme]}</span>
-
-      <style jsx>{`
-        @keyframes icon-rotate {
-          from {
-            transform: rotate(-180deg);
-            opacity: 0;
-          }
-          to {
-            transform: rotate(0);
-            opacity: 1;
-          }
-        }
-        .animate-icon-rotate {
-          animation: icon-rotate 0.2s ease-out;
-        }
-      `}</style>
     </button>
   );
 }
