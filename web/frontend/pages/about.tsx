@@ -68,7 +68,8 @@ export default function AboutPage() {
       <div className="min-h-screen gradient-bg">
         <Header locale={locale} t={t} />
 
-        <main className="pt-24 pb-16 px-4">
+        {/* pt-32 accounts for header (64px) + intelligence bar (48px) + spacing */}
+        <main className="pt-32 pb-16 px-4">
           <div className="container mx-auto max-w-4xl">
             {/* Page Header */}
             <div className="text-center mb-16">

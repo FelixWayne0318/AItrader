@@ -26,7 +26,6 @@ import { Footer } from "@/components/layout/footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useTranslation, type Locale } from "@/lib/i18n";
-import { MarketIntelligenceBar } from "@/components/trading/market-intelligence-bar";
 
 // Dynamic import with SSR disabled
 const HeroAnimatedCandlestick = dynamic(
@@ -256,13 +255,8 @@ export default function HomePage() {
       <div className="min-h-screen gradient-bg noise-overlay">
         <Header locale={locale} t={t} />
 
-        {/* Market Intelligence Bar - Transparent with key metrics */}
-        <div className="pt-16 border-b border-border/30 bg-transparent backdrop-blur-sm">
-          <MarketIntelligenceBar />
-        </div>
-
-        {/* Hero Section */}
-        <section className="relative pt-8 sm:pt-12 lg:pt-16 pb-12 sm:pb-16 lg:pb-24 px-4 overflow-hidden">
+        {/* Hero Section - pt-28 accounts for header (64px) + intelligence bar (48px) */}
+        <section className="relative pt-28 sm:pt-32 lg:pt-36 pb-12 sm:pb-16 lg:pb-24 px-4 overflow-hidden">
           {/* Background effects */}
           <div className="absolute inset-0 grid-pattern opacity-30" />
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] sm:w-[600px] lg:w-[800px] h-[400px] sm:h-[600px] lg:h-[800px] bg-primary/5 rounded-full blur-3xl" />

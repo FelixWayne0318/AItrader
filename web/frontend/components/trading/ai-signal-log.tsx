@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface AnalysisData {
   signal: string;
@@ -112,16 +113,23 @@ function AnalysisCard({
             {expanded ? 'Hide details' : `View ${analysis.key_points.length} key points`}
           </button>
 
-          {expanded && (
-            <ul className="mt-2 space-y-1 animate-slide-down">
-              {analysis.key_points.map((point, i) => (
-                <li key={i} className="text-xs text-muted-foreground flex items-start gap-1">
-                  <span className="text-primary">•</span>
-                  {point}
-                </li>
-              ))}
-            </ul>
-          )}
+          <AnimatePresence>
+            {expanded && (
+              <motion.ul
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="mt-2 space-y-1 overflow-hidden"
+              >
+                {analysis.key_points.map((point, i) => (
+                  <li key={i} className="text-xs text-muted-foreground flex items-start gap-1">
+                    <span className="text-primary">•</span>
+                    {point}
+                  </li>
+                ))}
+              </motion.ul>
+            )}
+          </AnimatePresence>
         </>
       )}
 
@@ -132,22 +140,6 @@ function AnalysisCard({
           <span className="text-[hsl(var(--loss))]">Bear: {analysis.bear_score}</span>
         </div>
       )}
-
-      <style jsx>{`
-        @keyframes slide-down {
-          from {
-            opacity: 0;
-            transform: translateY(-10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        .animate-slide-down {
-          animation: slide-down 0.2s ease-out forwards;
-        }
-      `}</style>
     </div>
   );
 }
@@ -171,14 +163,16 @@ export function AISignalLog({ signals, maxItems = 5 }: AISignalLogProps) {
   return (
     <div className="space-y-3">
       {displaySignals.map((signal, index) => (
-        <div
+        <motion.div
           key={signal.id}
-          className={`rounded-xl border transition-all animate-fade-in ${
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: index * 0.05 }}
+          className={`rounded-xl border transition-all ${
             expandedId === signal.id
               ? 'bg-card border-primary/30'
               : 'bg-card/50 border-border/50 hover:border-border'
           }`}
-          style={{ animationDelay: `${index * 50}ms` }}
         >
           {/* Header */}
           <div
@@ -197,7 +191,7 @@ export function AISignalLog({ signals, maxItems = 5 }: AISignalLogProps) {
                   {new Date(signal.timestamp).toLocaleString()}
                 </span>
                 <svg
-                  className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${
+                  className={`w-4 h-4 flex-shrink-0 transition-transform ${
                     expandedId === signal.id ? 'rotate-180' : ''
                   }`}
                   fill="none"
@@ -221,107 +215,84 @@ export function AISignalLog({ signals, maxItems = 5 }: AISignalLogProps) {
           </div>
 
           {/* Expanded content */}
-          {expandedId === signal.id && (
-            <div className="overflow-hidden animate-expand">
-              <div className="px-4 pb-4 space-y-3">
-                {/* Market data */}
-                {signal.market_data && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 rounded-lg bg-muted/30">
-                    {signal.market_data.price && (
-                      <div>
-                        <span className="text-xs text-muted-foreground">Price</span>
-                        <p className="font-mono text-sm">${signal.market_data.price.toLocaleString()}</p>
-                      </div>
-                    )}
-                    {signal.market_data.rsi && (
-                      <div>
-                        <span className="text-xs text-muted-foreground">RSI</span>
-                        <p className="font-mono text-sm">{signal.market_data.rsi.toFixed(1)}</p>
-                      </div>
-                    )}
-                    {signal.market_data.macd && (
-                      <div>
-                        <span className="text-xs text-muted-foreground">MACD</span>
-                        <p className="font-mono text-sm">{signal.market_data.macd.toFixed(1)}</p>
-                      </div>
-                    )}
-                    {signal.market_data.volume_24h && (
-                      <div>
-                        <span className="text-xs text-muted-foreground">Volume 24h</span>
-                        <p className="font-mono text-sm">{signal.market_data.volume_24h}</p>
-                      </div>
-                    )}
+          <AnimatePresence>
+            {expandedId === signal.id && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="px-4 pb-4 space-y-3">
+                  {/* Market data */}
+                  {signal.market_data && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 rounded-lg bg-muted/30">
+                      {signal.market_data.price && (
+                        <div>
+                          <span className="text-xs text-muted-foreground">Price</span>
+                          <p className="font-mono text-sm">${signal.market_data.price.toLocaleString()}</p>
+                        </div>
+                      )}
+                      {signal.market_data.rsi && (
+                        <div>
+                          <span className="text-xs text-muted-foreground">RSI</span>
+                          <p className="font-mono text-sm">{signal.market_data.rsi.toFixed(1)}</p>
+                        </div>
+                      )}
+                      {signal.market_data.macd && (
+                        <div>
+                          <span className="text-xs text-muted-foreground">MACD</span>
+                          <p className="font-mono text-sm">{signal.market_data.macd.toFixed(1)}</p>
+                        </div>
+                      )}
+                      {signal.market_data.volume_24h && (
+                        <div>
+                          <span className="text-xs text-muted-foreground">Volume 24h</span>
+                          <p className="font-mono text-sm">{signal.market_data.volume_24h}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Analysis cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <AnalysisCard
+                      title="Bull Analyst"
+                      analysis={signal.bull_analysis}
+                      color="profit"
+                      icon={
+                        <svg className="w-4 h-4 text-[hsl(var(--profit))]" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd" />
+                        </svg>
+                      }
+                    />
+                    <AnalysisCard
+                      title="Bear Analyst"
+                      analysis={signal.bear_analysis}
+                      color="loss"
+                      icon={
+                        <svg className="w-4 h-4 text-[hsl(var(--loss))]" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M12 13a1 1 0 100 2h5a1 1 0 001-1V9a1 1 0 10-2 0v2.586l-4.293-4.293a1 1 0 00-1.414 0L8 9.586 3.707 5.293a1 1 0 00-1.414 1.414l5 5a1 1 0 001.414 0L11 9.414 14.586 13H12z" clipRule="evenodd" />
+                        </svg>
+                      }
+                    />
+                    <AnalysisCard
+                      title="Judge Decision"
+                      analysis={signal.judge_decision}
+                      color="primary"
+                      icon={
+                        <svg className="w-4 h-4 text-primary" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+                        </svg>
+                      }
+                    />
                   </div>
-                )}
-
-                {/* Analysis cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <AnalysisCard
-                    title="Bull Analyst"
-                    analysis={signal.bull_analysis}
-                    color="profit"
-                    icon={
-                      <svg className="w-4 h-4 text-[hsl(var(--profit))]" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd" />
-                      </svg>
-                    }
-                  />
-                  <AnalysisCard
-                    title="Bear Analyst"
-                    analysis={signal.bear_analysis}
-                    color="loss"
-                    icon={
-                      <svg className="w-4 h-4 text-[hsl(var(--loss))]" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M12 13a1 1 0 100 2h5a1 1 0 001-1V9a1 1 0 10-2 0v2.586l-4.293-4.293a1 1 0 00-1.414 0L8 9.586 3.707 5.293a1 1 0 00-1.414 1.414l5 5a1 1 0 001.414 0L11 9.414 14.586 13H12z" clipRule="evenodd" />
-                      </svg>
-                    }
-                  />
-                  <AnalysisCard
-                    title="Judge Decision"
-                    analysis={signal.judge_decision}
-                    color="primary"
-                    icon={
-                      <svg className="w-4 h-4 text-primary" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
-                      </svg>
-                    }
-                  />
                 </div>
-              </div>
-            </div>
-          )}
-        </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
       ))}
-
-      <style jsx>{`
-        @keyframes fade-in {
-          from {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        @keyframes expand {
-          from {
-            opacity: 0;
-            max-height: 0;
-          }
-          to {
-            opacity: 1;
-            max-height: 1000px;
-          }
-        }
-        .animate-fade-in {
-          animation: fade-in 0.3s ease-out forwards;
-          opacity: 0;
-        }
-        .animate-expand {
-          animation: expand 0.3s ease-out forwards;
-        }
-      `}</style>
     </div>
   );
 }

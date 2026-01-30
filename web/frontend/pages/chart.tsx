@@ -7,8 +7,8 @@ import useSWR from "swr";
 import {
   TradingViewWidget,
   TechnicalAnalysisWidget,
-  TickerTapeWidget,
 } from "@/components/charts/tradingview-widget";
+import { MarketIntelligenceBar } from "@/components/trading/market-intelligence-bar";
 import {
   ArrowLeft,
   TrendingUp,
@@ -79,9 +79,9 @@ export default function ChartPage() {
       </Head>
 
       <div className="min-h-screen gradient-bg">
-        {/* Ticker Tape */}
-        <div className="border-b border-border/50 bg-background/50">
-          <TickerTapeWidget />
+        {/* Market Intelligence Bar - consistent with other pages */}
+        <div className="border-b border-border/30 bg-background/60 backdrop-blur-sm">
+          <MarketIntelligenceBar />
         </div>
 
         {/* Header */}
