@@ -279,7 +279,7 @@
 }
 
 .status-dot.active {
-  @apply bg-profit;
+  background-color: hsl(var(--profit));
   animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
@@ -288,7 +288,7 @@
 }
 
 .status-dot.warning {
-  @apply bg-warning;
+  background-color: hsl(var(--warning));
   animation: pulse-glow-warning 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
