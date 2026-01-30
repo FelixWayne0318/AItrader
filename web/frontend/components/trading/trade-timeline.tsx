@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 
 interface Trade {
   id: string;
@@ -41,94 +40,82 @@ export function TradeTimeline({ trades, maxItems = 10 }: TradeTimelineProps) {
       <div className="absolute left-4 top-0 bottom-0 w-px bg-border" />
 
       <div className="space-y-3">
-        <AnimatePresence>
-          {displayTrades.map((trade, index) => (
-            <motion.div
-              key={trade.id}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ delay: index * 0.05 }}
-              className="relative pl-10"
+        {displayTrades.map((trade, index) => (
+          <div
+            key={trade.id}
+            className="relative pl-10 animate-fade-in"
+            style={{ animationDelay: `${index * 50}ms` }}
+          >
+            {/* Timeline dot */}
+            <div
+              className={`absolute left-2.5 top-3 w-3 h-3 rounded-full border-2 ${
+                trade.is_profit
+                  ? 'bg-[hsl(var(--profit))]/20 border-[hsl(var(--profit))]'
+                  : 'bg-[hsl(var(--loss))]/20 border-[hsl(var(--loss))]'
+              }`}
+            />
+
+            {/* Trade card */}
+            <div
+              className={`p-3 rounded-lg border transition-all cursor-pointer hover:border-primary/30 ${
+                expandedId === trade.id
+                  ? 'bg-card border-primary/50'
+                  : 'bg-card/50 border-border/50'
+              }`}
+              onClick={() => setExpandedId(expandedId === trade.id ? null : trade.id)}
             >
-              {/* Timeline dot */}
-              <div
-                className={`absolute left-2.5 top-3 w-3 h-3 rounded-full border-2 ${
-                  trade.is_profit
-                    ? 'bg-[hsl(var(--profit))]/20 border-[hsl(var(--profit))]'
-                    : 'bg-[hsl(var(--loss))]/20 border-[hsl(var(--loss))]'
-                }`}
-              />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  {/* Direction badge */}
+                  <span
+                    className={`px-2 py-0.5 text-xs font-medium rounded ${
+                      trade.side === 'LONG'
+                        ? 'bg-[hsl(var(--profit))]/10 text-[hsl(var(--profit))]'
+                        : 'bg-[hsl(var(--loss))]/10 text-[hsl(var(--loss))]'
+                    }`}
+                  >
+                    {trade.side}
+                  </span>
 
-              {/* Trade card */}
-              <div
-                className={`p-3 rounded-lg border transition-all cursor-pointer hover:border-primary/30 ${
-                  expandedId === trade.id
-                    ? 'bg-card border-primary/50'
-                    : 'bg-card/50 border-border/50'
-                }`}
-                onClick={() => setExpandedId(expandedId === trade.id ? null : trade.id)}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {/* Direction badge */}
-                    <span
-                      className={`px-2 py-0.5 text-xs font-medium rounded ${
-                        trade.side === 'LONG'
-                          ? 'bg-[hsl(var(--profit))]/10 text-[hsl(var(--profit))]'
-                          : 'bg-[hsl(var(--loss))]/10 text-[hsl(var(--loss))]'
-                      }`}
-                    >
-                      {trade.side}
-                    </span>
+                  {/* Symbol */}
+                  <span className="font-medium text-foreground">{trade.symbol}</span>
 
-                    {/* Symbol */}
-                    <span className="font-medium text-foreground">{trade.symbol}</span>
-
-                    {/* Time */}
-                    <span className="text-xs text-muted-foreground">{trade.time_display}</span>
-                  </div>
-
-                  {/* PnL */}
-                  <div className={`font-mono font-semibold ${trade.is_profit ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'}`}>
-                    {trade.is_profit ? '+' : ''}{trade.pnl.toFixed(2)} USDT
-                  </div>
+                  {/* Time */}
+                  <span className="text-xs text-muted-foreground">{trade.time_display}</span>
                 </div>
 
-                {/* Expanded details */}
-                <AnimatePresence>
-                  {expandedId === trade.id && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="pt-3 mt-3 border-t border-border/50 grid grid-cols-2 gap-3 text-sm">
-                        <div>
-                          <span className="text-muted-foreground">Trade ID</span>
-                          <p className="font-mono text-foreground">{trade.id}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Time</span>
-                          <p className="text-foreground">{new Date(trade.time).toLocaleString()}</p>
-                        </div>
-                        {trade.pnl_percent !== 0 && (
-                          <div>
-                            <span className="text-muted-foreground">Return</span>
-                            <p className={trade.is_profit ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'}>
-                              {trade.is_profit ? '+' : ''}{trade.pnl_percent.toFixed(2)}%
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                {/* PnL */}
+                <div className={`font-mono font-semibold ${trade.is_profit ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'}`}>
+                  {trade.is_profit ? '+' : ''}{trade.pnl.toFixed(2)} USDT
+                </div>
               </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
+
+              {/* Expanded details */}
+              {expandedId === trade.id && (
+                <div className="overflow-hidden animate-slide-down">
+                  <div className="pt-3 mt-3 border-t border-border/50 grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Trade ID</span>
+                      <p className="font-mono text-foreground">{trade.id}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Time</span>
+                      <p className="text-foreground">{new Date(trade.time).toLocaleString()}</p>
+                    </div>
+                    {trade.pnl_percent !== 0 && (
+                      <div>
+                        <span className="text-muted-foreground">Return</span>
+                        <p className={trade.is_profit ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--loss))]'}>
+                          {trade.is_profit ? '+' : ''}{trade.pnl_percent.toFixed(2)}%
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
 
       {trades.length > maxItems && (
@@ -138,6 +125,36 @@ export function TradeTimeline({ trades, maxItems = 10 }: TradeTimelineProps) {
           </span>
         </div>
       )}
+
+      <style jsx>{`
+        @keyframes fade-in {
+          from {
+            opacity: 0;
+            transform: translateX(-20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+        @keyframes slide-down {
+          from {
+            opacity: 0;
+            max-height: 0;
+          }
+          to {
+            opacity: 1;
+            max-height: 200px;
+          }
+        }
+        .animate-fade-in {
+          animation: fade-in 0.3s ease-out forwards;
+          opacity: 0;
+        }
+        .animate-slide-down {
+          animation: slide-down 0.2s ease-out forwards;
+        }
+      `}</style>
     </div>
   );
 }

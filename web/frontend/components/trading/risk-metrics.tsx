@@ -1,7 +1,5 @@
 'use client';
 
-import { motion } from 'framer-motion';
-
 interface RiskMetricsData {
   max_drawdown: number;
   max_drawdown_percent: number;
@@ -41,11 +39,9 @@ function MetricCard({
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.05 }}
-      className={`relative overflow-hidden rounded-xl border bg-gradient-to-br ${colorClasses[color]} p-4`}
+    <div
+      className={`relative overflow-hidden rounded-xl border bg-gradient-to-br ${colorClasses[color]} p-4 animate-fade-in-up`}
+      style={{ animationDelay: `${index * 50}ms` }}
     >
       <div className="flex items-start justify-between">
         <div>
@@ -55,7 +51,24 @@ function MetricCard({
         </div>
         <div className={`p-2 rounded-lg bg-background/50`}>{icon}</div>
       </div>
-    </motion.div>
+
+      <style jsx>{`
+        @keyframes fade-in-up {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .animate-fade-in-up {
+          animation: fade-in-up 0.3s ease-out forwards;
+          opacity: 0;
+        }
+      `}</style>
+    </div>
   );
 }
 

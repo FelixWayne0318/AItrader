@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { motion, useSpring, useTransform } from 'framer-motion';
+import { useEffect, useState } from 'react';
 
 interface AnimatedNumberProps {
   value: number;
@@ -17,24 +16,39 @@ export function AnimatedNumber({
   prefix = '',
   suffix = '',
   decimals = 2,
-  duration = 1,
+  duration = 1000,
   className = '',
 }: AnimatedNumberProps) {
-  const spring = useSpring(0, { duration: duration * 1000 });
-  const display = useTransform(spring, (current) =>
-    `${prefix}${current.toFixed(decimals)}${suffix}`
+  const [displayValue, setDisplayValue] = useState(0);
+
+  useEffect(() => {
+    const startTime = Date.now();
+    const startValue = displayValue;
+    const diff = value - startValue;
+
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // Ease out cubic
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      const current = startValue + diff * easeOut;
+
+      setDisplayValue(current);
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+
+    requestAnimationFrame(animate);
+  }, [value, duration]);
+
+  return (
+    <span className={className}>
+      {prefix}{displayValue.toFixed(decimals)}{suffix}
+    </span>
   );
-  const [displayValue, setDisplayValue] = useState(`${prefix}0${suffix}`);
-
-  useEffect(() => {
-    spring.set(value);
-  }, [spring, value]);
-
-  useEffect(() => {
-    return display.on('change', (v) => setDisplayValue(v));
-  }, [display]);
-
-  return <span className={className}>{displayValue}</span>;
 }
 
 interface StatsCardProps {
@@ -89,10 +103,8 @@ export function StatsCard({
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`rounded-xl border ${colorClasses[color]} bg-card/50 p-4 hover:bg-card transition-colors`}
+    <div
+      className={`rounded-xl border ${colorClasses[color]} bg-card/50 p-4 hover:bg-card transition-colors animate-fade-in-up`}
     >
       <div className="flex items-start justify-between mb-2">
         <span className="text-sm text-muted-foreground">{title}</span>
@@ -125,7 +137,23 @@ export function StatsCard({
           )}
         </div>
       )}
-    </motion.div>
+
+      <style jsx>{`
+        @keyframes fade-in-up {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .animate-fade-in-up {
+          animation: fade-in-up 0.3s ease-out forwards;
+        }
+      `}</style>
+    </div>
   );
 }
 
