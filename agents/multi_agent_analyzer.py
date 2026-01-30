@@ -70,6 +70,21 @@ BOLLINGER BANDS:
 - Band expansion (wide) = High volatility
 - SMA_50 and BB Middle can serve as dynamic support/resistance
 
+SUPPORT/RESISTANCE RISK (IMPORTANT):
+- BB Lower Band and recent swing lows act as SUPPORT
+- BB Upper Band and recent swing highs act as RESISTANCE
+- Risk consideration for trade direction:
+  * SHORT near support (BB Lower, within 2%): HIGH RISK - support may hold, causing bounce
+  * LONG near resistance (BB Upper, within 2%): HIGH RISK - resistance may hold, causing rejection
+- When price is near support/resistance:
+  * Require STRONGER evidence to trade against the level
+  * Consider tighter stop loss or reduced position size
+  * If evidence is weak, prefer HOLD over risky entry
+- BB Position interpretation:
+  * 0-15% = Very close to support (cautious on SHORT)
+  * 85-100% = Very close to resistance (cautious on LONG)
+  * 15-85% = Safe zone for directional trades
+
 VOLUME:
 - Volume Ratio > 1.5x = High interest, confirms move
 - Volume Ratio < 0.5x = Low interest, weak move
