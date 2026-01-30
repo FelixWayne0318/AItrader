@@ -247,8 +247,8 @@ export default function HomePage() {
       <div className="min-h-screen gradient-bg noise-overlay">
         <Header locale={locale} t={t} />
 
-        {/* Hero Section - pt-20 accounts for single-row header (56px) */}
-        <section className="relative pt-20 sm:pt-24 lg:pt-28 pb-12 sm:pb-16 lg:pb-24 px-4 overflow-hidden">
+        {/* Hero Section - pt-24 accounts for floating rounded header with extra spacing */}
+        <section className="relative pt-24 sm:pt-28 lg:pt-32 pb-12 sm:pb-16 lg:pb-24 px-4 overflow-hidden">
           {/* Background effects */}
           <div className="absolute inset-0 grid-pattern opacity-30" />
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] sm:w-[600px] lg:w-[800px] h-[400px] sm:h-[600px] lg:h-[800px] bg-primary/5 rounded-full blur-3xl" />

@@ -124,8 +124,8 @@ export default function ChartPage() {
       <div className="min-h-screen gradient-bg">
         <Header locale={locale} t={t} />
 
-        {/* pt-20 accounts for single-row unified header (56px) */}
-        <main className="container mx-auto px-4 pt-20 pb-6">
+        {/* pt-24 accounts for floating rounded header with extra spacing */}
+        <main className="container mx-auto px-4 pt-24 pb-6">
           {/* Sub-header with symbol selector */}
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
