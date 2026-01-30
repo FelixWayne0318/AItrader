@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
 import useSWR from "swr";
+import dynamic from "next/dynamic";
 import {
   Settings,
   Shield,
@@ -44,6 +45,32 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+
+// Dynamic imports for browser-only components (lightweight-charts requires window)
+// Reference: https://nextjs.org/docs/app/building-your-application/optimizing/lazy-loading#skipping-ssr
+const EquityCurve = dynamic(
+  () => import("@/components/charts/equity-curve").then((mod) => mod.EquityCurve),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center h-[350px] bg-card/50 rounded-xl border border-border">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+          <span className="text-sm text-muted-foreground">Loading chart...</span>
+        </div>
+      </div>
+    )
+  }
+);
+
+// Standard imports for components that don't require window
+import { TradeTimeline } from "@/components/trading/trade-timeline";
+import { RiskMetrics } from "@/components/trading/risk-metrics";
+import { AISignalLog } from "@/components/trading/ai-signal-log";
+import { NotificationCenter, NotificationBell } from "@/components/notifications/notification-center";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { BotStatus, BotStatusBadge } from "@/components/trading/bot-status";
+import { PerformanceStats, StatsCard } from "@/components/trading/stats-cards";
 
 // Fetcher for SWR
 const fetcher = (url: string, token: string) =>
@@ -530,9 +557,68 @@ export default function AdminPage() {
     (p: any) => parseFloat(p.positionAmt) !== 0
   ) || [];
 
+  // Performance data fetching
+  const { data: performanceData, mutate: refetchPerformance } = useSWR(
+    token ? ["/api/performance/stats", token] : null,
+    ([url, t]) => fetcher(url, t),
+    { refreshInterval: 60000 }
+  );
+
+  const { data: recentTrades } = useSWR(
+    token ? ["/api/performance/trades?limit=20", token] : null,
+    ([url, t]) => fetcher(url, t),
+    { refreshInterval: 30000 }
+  );
+
+  const { data: aiSignals, mutate: refetchSignals } = useSWR(
+    token ? ["/api/performance/signals?limit=10", token] : null,
+    ([url, t]) => fetcher(url, t),
+    { refreshInterval: 60000 }
+  );
+
+  const { data: notifications, mutate: refetchNotifications } = useSWR(
+    token ? ["/api/performance/notifications?limit=50", token] : null,
+    ([url, t]) => fetcher(url, t),
+    { refreshInterval: 30000 }
+  );
+
+  const { data: notificationCount } = useSWR(
+    token ? ["/api/performance/notifications/unread-count", token] : null,
+    ([url, t]) => fetcher(url, t),
+    { refreshInterval: 10000 }
+  );
+
+  const handleMarkNotificationRead = async (id: string) => {
+    if (!token) return;
+    try {
+      await fetch(`/api/performance/notifications/${id}/read`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      refetchNotifications();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    if (!token) return;
+    try {
+      await fetch("/api/performance/notifications/read-all", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      refetchNotifications();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Tabs configuration
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: Activity },
+    { id: "performance", label: "Performance", icon: BarChart3 },
+    { id: "signals", label: "AI Signals", icon: Bot },
     { id: "trading", label: "Trading", icon: TrendingUp },
     { id: "config", label: "Configuration", icon: Settings },
     { id: "logs", label: "Logs", icon: Terminal },
@@ -586,6 +672,11 @@ export default function AdminPage() {
                     </span>
                   </div>
                 )}
+                <ThemeToggle />
+                <NotificationBell
+                  unreadCount={notificationCount?.data?.count || 0}
+                  onClick={() => setActiveTab("notifications")}
+                />
                 <Button variant="ghost" size="sm" onClick={handleLogout}>
                   <LogOut className="h-4 w-4 mr-2" />
                   Logout
@@ -861,6 +952,150 @@ export default function AdminPage() {
                       <p>No active positions</p>
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Performance Tab */}
+          {activeTab === "performance" && (
+            <div className="space-y-6 animate-fade-in">
+              {/* Performance Stats Cards */}
+              {performanceData?.data && (
+                <PerformanceStats
+                  stats={performanceData.data}
+                  loading={!performanceData}
+                />
+              )}
+
+              {/* Equity Curve and Risk Metrics */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Equity Curve */}
+                <Card className="border-border/50 lg:col-span-2">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="flex items-center gap-2">
+                        <TrendingUp className="h-5 w-5 text-primary" />
+                        Equity Curve
+                      </CardTitle>
+                      <Button variant="ghost" size="sm" onClick={() => refetchPerformance()}>
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <EquityCurve
+                      data={performanceData?.data?.equity_curve || []}
+                      height={350}
+                    />
+                  </CardContent>
+                </Card>
+
+                {/* Bot Status */}
+                <div className="space-y-4">
+                  <BotStatus
+                    status={serviceStatus?.running ? "running" : "stopped"}
+                    timerIntervalSec={900}
+                  />
+
+                  {/* Quick Stats */}
+                  <Card className="border-border/50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Risk Metrics</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {performanceData?.data && (
+                        <div className="space-y-3">
+                          <div className="flex justify-between">
+                            <span className="text-sm text-muted-foreground">Profit Factor</span>
+                            <span className={`font-semibold ${performanceData.data.profit_factor >= 1.5 ? 'text-[hsl(var(--profit))]' : 'text-[hsl(var(--warning))]'}`}>
+                              {performanceData.data.profit_factor?.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-muted-foreground">Sharpe Ratio</span>
+                            <span className={`font-semibold ${performanceData.data.sharpe_ratio >= 1 ? 'text-[hsl(var(--profit))]' : 'text-muted-foreground'}`}>
+                              {performanceData.data.sharpe_ratio?.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-muted-foreground">Max Drawdown</span>
+                            <span className="font-semibold text-[hsl(var(--loss))]">
+                              ${performanceData.data.max_drawdown?.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-muted-foreground">Best Trade</span>
+                            <span className="font-semibold text-[hsl(var(--profit))]">
+                              +${performanceData.data.best_trade?.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-muted-foreground">Worst Trade</span>
+                            <span className="font-semibold text-[hsl(var(--loss))]">
+                              ${performanceData.data.worst_trade?.toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+
+              {/* Trade History Timeline */}
+              <Card className="border-border/50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-primary" />
+                    Recent Trades
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <TradeTimeline trades={recentTrades?.data || []} maxItems={10} />
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* AI Signals Tab */}
+          {activeTab === "signals" && (
+            <div className="space-y-6 animate-fade-in">
+              <Card className="border-border/50">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Bot className="h-5 w-5 text-primary" />
+                        AI Analysis History
+                      </CardTitle>
+                      <CardDescription>
+                        Bull vs Bear debate analysis with Judge decisions
+                      </CardDescription>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => refetchSignals()}>
+                      <RefreshCw className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <AISignalLog signals={aiSignals?.data || []} maxItems={10} />
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Notifications Tab */}
+          {activeTab === "notifications" && (
+            <div className="space-y-6 animate-fade-in">
+              <Card className="border-border/50">
+                <CardContent className="p-6">
+                  <NotificationCenter
+                    notifications={notifications?.data || []}
+                    unreadCount={notificationCount?.data?.count || 0}
+                    onMarkAsRead={handleMarkNotificationRead}
+                    onMarkAllAsRead={handleMarkAllNotificationsRead}
+                  />
                 </CardContent>
               </Card>
             </div>
