@@ -53,29 +53,6 @@ export default function App({ Component, pageProps }: AppProps) {
       <Head>
         <title>{branding?.site_name || "AlgVex"} - AI Trading</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        {/* Critical CSS fallback - ensures basic layout even if main CSS fails */}
-        <style dangerouslySetInnerHTML={{ __html: `
-          /* Critical CSS Fallback */
-          :root {
-            --background: 222 47% 5%;
-            --foreground: 210 40% 98%;
-          }
-          body {
-            margin: 0;
-            background-color: hsl(222 47% 5%);
-            color: hsl(210 40% 98%);
-            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-          }
-          /* Hide elements that should only show on specific breakpoints */
-          @media (max-width: 1023px) {
-            .lg\\:flex { display: none !important; }
-          }
-          @media (min-width: 1024px) {
-            .lg\\:hidden { display: none !important; }
-            .lg\\:flex { display: flex !important; }
-          }
-          .hidden { display: none !important; }
-        ` }} />
       </Head>
       <main className={fontClasses}>
         <Component {...pageProps} />

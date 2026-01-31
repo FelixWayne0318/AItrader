@@ -6,33 +6,16 @@ export default function Document() {
       <Head>
         <link rel="icon" href="/favicon.ico" />
         <meta name="theme-color" content="#0a0a0f" />
-        {/* Critical CSS - loaded inline to prevent FOUC and ensure layout works */}
-        <style dangerouslySetInnerHTML={{ __html: `
-          :root {
-            --background: 222 47% 5%;
-            --foreground: 210 40% 98%;
-            --primary: 173 80% 50%;
-            --muted: 217 33% 15%;
-            --border: 217 33% 17%;
-          }
-          html, body { margin: 0; padding: 0; }
-          body {
-            background-color: hsl(222 47% 5%);
-            color: hsl(210 40% 98%);
-            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-            -webkit-font-smoothing: antialiased;
-          }
-          /* Critical responsive classes - prevent layout flash */
-          .hidden { display: none !important; }
-          @media (max-width: 1023px) {
-            .lg\\:flex, .lg\\:block { display: none !important; }
-          }
-          @media (min-width: 1024px) {
-            .lg\\:hidden { display: none !important; }
-            .lg\\:flex { display: flex !important; }
-            .lg\\:block { display: block !important; }
-          }
-        `}} />
+        {/*
+          NOTE: We do NOT use inline critical CSS here.
+          Tailwind CSS should handle all styling through proper content scanning.
+          If responsive classes don't work, the fix is:
+          1. Clear .next cache: rm -rf .next
+          2. Rebuild: npm run build
+          3. Restart server: pm2 restart algvex-frontend
+
+          Reference: https://github.com/tailwindlabs/tailwindcss/discussions/8521
+        */}
       </Head>
       <body className="bg-background text-foreground">
         <Main />

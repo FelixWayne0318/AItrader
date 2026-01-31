@@ -2,28 +2,21 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   darkMode: ["class"],
-  // Increase specificity to prevent CSS conflicts (recommended by Tailwind community)
-  important: true,
+  // NOTE: We intentionally do NOT use 'important: true' as it's a sledgehammer approach
+  // that can cause conflicts with other libraries. See: https://sebastiandedeyne.com/why-we-use-important-with-tailwind
+
+  // Content paths - Tailwind scans these files for class names
+  // This is the CORRECT way to ensure classes are included (not safelist)
   content: [
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    // Include any additional paths where Tailwind classes might be used
+    "./lib/**/*.{js,ts,jsx,tsx}",
   ],
-  // Safelist critical responsive classes to prevent purging
-  safelist: [
-    "hidden",
-    "lg:hidden",
-    "lg:flex",
-    "lg:block",
-    "xl:flex",
-    "xl:block",
-    "xl:hidden",
-    // Ensure all responsive variants are preserved
-    {
-      pattern: /^(hidden|flex|block|inline-flex)$/,
-      variants: ["lg", "xl", "md", "sm"],
-    },
-  ],
+  // NOTE: safelist should be "last resort" per official docs
+  // We only safelist truly dynamic classes that can't be detected by content scanning
+  // Static classes like 'lg:hidden' should NOT need safelisting if content paths are correct
   theme: {
     extend: {
       colors: {
