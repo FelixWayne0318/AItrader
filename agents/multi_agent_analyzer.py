@@ -285,6 +285,8 @@ class MultiAgentAnalyzer:
         derivatives_report: Optional[Dict[str, Any]] = None,
         # ========== v3.0: Binance Derivatives (Top Traders, Taker Ratio) ==========
         binance_derivatives_report: Optional[Dict[str, Any]] = None,
+        # ========== v3.7: Order Book Depth ==========
+        orderbook_report: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis with Bull/Bear debate.
@@ -353,6 +355,8 @@ class MultiAgentAnalyzer:
             derivatives_summary = self._format_derivatives_report(
                 derivatives_report, current_price, binance_derivatives_report
             )
+            # v3.7: Format order book depth data
+            orderbook_summary = self._format_orderbook_report(orderbook_report)
 
             # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
@@ -370,6 +374,7 @@ class MultiAgentAnalyzer:
                     sentiment_report=sent_summary,
                     order_flow_report=order_flow_summary,      # MTF v2.1
                     derivatives_report=derivatives_summary,     # MTF v2.1
+                    orderbook_report=orderbook_summary,         # v3.7
                     history=debate_history,
                     bear_argument=bear_argument,
                 )
@@ -382,6 +387,7 @@ class MultiAgentAnalyzer:
                     sentiment_report=sent_summary,
                     order_flow_report=order_flow_summary,      # MTF v2.1
                     derivatives_report=derivatives_summary,     # MTF v2.1
+                    orderbook_report=orderbook_summary,         # v3.7
                     history=debate_history,
                     bull_argument=bull_argument,
                 )
@@ -429,6 +435,7 @@ class MultiAgentAnalyzer:
         sentiment_report: str,
         order_flow_report: str,      # MTF v2.1
         derivatives_report: str,     # MTF v2.1
+        orderbook_report: str,       # v3.7
         history: str,
         bear_argument: str,
     ) -> str:
@@ -446,6 +453,8 @@ class MultiAgentAnalyzer:
 {order_flow_report}
 
 {derivatives_report}
+
+{orderbook_report}
 
 {sentiment_report}
 
@@ -489,6 +498,7 @@ Focus on evidence from the data, not assumptions."""
         sentiment_report: str,
         order_flow_report: str,      # MTF v2.1
         derivatives_report: str,     # MTF v2.1
+        orderbook_report: str,       # v3.7
         history: str,
         bull_argument: str,
     ) -> str:
@@ -506,6 +516,8 @@ Focus on evidence from the data, not assumptions."""
 {order_flow_report}
 
 {derivatives_report}
+
+{orderbook_report}
 
 {sentiment_report}
 
@@ -1235,5 +1247,95 @@ ORDER FLOW (Binance Taker Data):
 
         if not parts:
             return "DERIVATIVES: No data available"
+
+        return "\n".join(parts)
+
+    def _format_orderbook_report(self, data: Optional[Dict[str, Any]]) -> str:
+        """
+        Format order book depth data for AI prompts.
+
+        v3.7: New method for order book depth integration
+
+        Parameters
+        ----------
+        data : Dict, optional
+            Order book depth data (OBI, spread, slippage, etc.)
+
+        Returns
+        -------
+        str
+            Formatted order book report for AI prompts
+        """
+        if not data:
+            return "ORDER BOOK DEPTH: Data not available"
+
+        # Check data status
+        status = data.get('_status', {})
+        if status.get('code') != 'OK':
+            return f"ORDER BOOK DEPTH: {status.get('message', 'Error occurred')}"
+
+        parts = ["ORDER BOOK DEPTH:"]
+
+        # OBI (Order Book Imbalance)
+        simple_obi = data.get('simple_obi', 0)
+        weighted_obi_data = data.get('weighted_obi', {})
+        weighted_obi = weighted_obi_data.get('value', 0)
+        adaptive_obi = weighted_obi_data.get('adaptive_value', weighted_obi)
+
+        parts.append(f"- Simple OBI: {simple_obi:+.3f} ({'Buy pressure' if simple_obi > 0 else 'Sell pressure' if simple_obi < 0 else 'Balanced'})")
+        parts.append(f"- Weighted OBI: {weighted_obi:+.3f} (Adaptive: {adaptive_obi:+.3f})")
+
+        # Spread
+        spread = data.get('spread', {})
+        if spread:
+            abs_spread = spread.get('absolute', 0)
+            pct_spread = spread.get('pct', 0)
+            parts.append(f"- Spread: ${abs_spread:.2f} ({pct_spread:.3f}%)")
+
+        # Depth Distribution
+        depth_dist = data.get('depth_distribution', {})
+        if depth_dist:
+            bid_pct = depth_dist.get('bid_pct', 0)
+            ask_pct = depth_dist.get('ask_pct', 0)
+            total_usd = depth_dist.get('total_depth_usd', 0)
+            parts.append(f"- Depth Distribution: Bid {bid_pct:.1f}% / Ask {ask_pct:.1f}% (Total: ${total_usd:,.0f})")
+
+        # Pressure Gradient (v2.0)
+        gradient = data.get('pressure_gradient', {})
+        if gradient:
+            near_bid = gradient.get('near_bid_pct', 0)
+            near_ask = gradient.get('near_ask_pct', 0)
+            far_bid = gradient.get('far_bid_pct', 0)
+            far_ask = gradient.get('far_ask_pct', 0)
+            parts.append(f"- Pressure Gradient: Near (Bid {near_bid:.1f}% / Ask {near_ask:.1f}%), Far (Bid {far_bid:.1f}% / Ask {far_ask:.1f}%)")
+
+        # Dynamics (v2.0 Critical)
+        dynamics = data.get('dynamics', {})
+        if dynamics:
+            obi_change = dynamics.get('obi_change', 'N/A')
+            depth_change = dynamics.get('depth_change', 'N/A')
+            spread_change = dynamics.get('spread_change', 'N/A')
+            parts.append(f"- Dynamics: OBI={obi_change}, Depth={depth_change}, Spread={spread_change}")
+
+        # Slippage Estimates with Confidence (v2.0)
+        slippage = data.get('slippage_estimates', {})
+        if slippage:
+            parts.append("- Slippage Estimates:")
+            for amount, est in slippage.items():
+                if isinstance(est, dict):
+                    buy_slip = est.get('buy', {}).get('pct', 0)
+                    sell_slip = est.get('sell', {}).get('pct', 0)
+                    confidence = est.get('buy', {}).get('confidence', 'LOW')
+                    parts.append(f"  - {amount} BTC: Buy {buy_slip:.3f}%, Sell {sell_slip:.3f}% [Confidence: {confidence}]")
+
+        # Anomalies
+        anomalies = data.get('anomalies', [])
+        if anomalies:
+            parts.append(f"- Large Orders Detected: {len(anomalies)} anomalies")
+            for anom in anomalies[:3]:  # Show up to 3
+                side = anom.get('side', 'unknown')
+                price = anom.get('price', 0)
+                amount = anom.get('amount', 0)
+                parts.append(f"  - {side.upper()}: ${price:.2f} x {amount:.4f} BTC")
 
         return "\n".join(parts)

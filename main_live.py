@@ -37,6 +37,8 @@ from nautilus_trader.model.identifiers import TraderId, InstrumentId
 from nautilus_trader.trading.config import ImportableStrategyConfig
 
 from strategy.deepseek_strategy import DeepSeekAIStrategy, DeepSeekAIStrategyConfig
+from utils.binance_orderbook_client import BinanceOrderBookClient
+from utils.orderbook_processor import OrderBookProcessor
 
 
 # Load environment variables
@@ -301,6 +303,18 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
 
         # Network: Telegram message timeout
         network_telegram_message_timeout=config_manager.get('network', 'telegram', 'message_timeout', default=30.0),
+
+        # Order Book Configuration (v3.7)
+        order_book_enabled=config_manager.get('order_book', 'enabled', default=False),
+        order_book_api_timeout=config_manager.get('order_book', 'api', 'timeout', default=10.0),
+        order_book_api_max_retries=config_manager.get('order_book', 'api', 'max_retries', default=2),
+        order_book_api_retry_delay=config_manager.get('order_book', 'api', 'retry_delay', default=1.0),
+        order_book_price_band_pct=config_manager.get('order_book', 'processing', 'price_band_pct', default=0.5),
+        order_book_anomaly_threshold=config_manager.get('order_book', 'processing', 'anomaly_detection', 'base_threshold', default=3.0),
+        order_book_slippage_amounts=tuple(config_manager.get('order_book', 'processing', 'slippage_amounts', default=[0.1, 0.5, 1.0])),
+        order_book_weighted_decay=config_manager.get('order_book', 'processing', 'weighted_obi', 'base_decay', default=0.8),
+        order_book_adaptive_decay=config_manager.get('order_book', 'processing', 'weighted_obi', 'adaptive', default=True),
+        order_book_history_size=config_manager.get('order_book', 'processing', 'history', 'size', default=10),
     )
 
 
