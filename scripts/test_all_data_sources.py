@@ -11,11 +11,22 @@
 用法:
     cd /home/linuxuser/nautilus_AItrader
     source venv/bin/activate
+
+    # 仅显示
     python3 scripts/test_all_data_sources.py
+
+    # 导出到 logs/
+    python3 scripts/test_all_data_sources.py --export
+
+    # 导出并推送到 GitHub
+    python3 scripts/test_all_data_sources.py --export --push
 """
 
 import os
 import sys
+import json
+import argparse
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -32,16 +43,97 @@ if env_file.exists():
 else:
     load_dotenv(project_root / ".env")
 
+# 输出缓冲
+output_lines = []
+
+
+def log(msg: str = ""):
+    """同时打印和记录"""
+    print(msg)
+    output_lines.append(msg)
+
 
 def print_header(title: str):
-    print("\n" + "=" * 70)
-    print(f"  {title}")
-    print("=" * 70)
+    log("\n" + "=" * 70)
+    log(f"  {title}")
+    log("=" * 70)
+
+
+def export_data(complete_data: dict, binance_data: dict, coinalyze_data: dict) -> Path:
+    """导出原始数据到 logs/ 目录"""
+    logs_dir = project_root / "logs"
+    logs_dir.mkdir(exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # 导出完整数据 (JSON)
+    json_file = logs_dir / f"data_sources_{timestamp}.json"
+    export_data = {
+        "timestamp": datetime.now().isoformat(),
+        "binance_derivatives": binance_data,
+        "coinalyze": coinalyze_data,
+        "complete_assembled": complete_data,
+    }
+
+    # 自定义 JSON 序列化器处理特殊类型
+    def json_serializer(obj):
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        return str(obj)
+
+    with open(json_file, "w", encoding="utf-8") as f:
+        json.dump(export_data, f, indent=2, ensure_ascii=False, default=json_serializer)
+
+    # 导出文本报告
+    txt_file = logs_dir / f"data_sources_{timestamp}.txt"
+    with open(txt_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(output_lines))
+
+    return json_file, txt_file
+
+
+def push_to_github(files: list):
+    """推送文件到 GitHub"""
+    try:
+        # 添加文件
+        for f in files:
+            subprocess.run(["git", "add", str(f)], cwd=project_root, check=True)
+
+        # 提交
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        commit_msg = f"data: Export data sources snapshot {timestamp}"
+        subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=project_root,
+            check=True,
+        )
+
+        # 推送
+        result = subprocess.run(
+            ["git", "push"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode == 0:
+            log("✅ 已推送到 GitHub")
+        else:
+            log(f"⚠️ 推送失败: {result.stderr}")
+
+    except subprocess.CalledProcessError as e:
+        log(f"❌ Git 操作失败: {e}")
 
 
 def main():
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="测试所有数据源整合")
+    parser.add_argument("--export", action="store_true", help="导出数据到 logs/ 目录")
+    parser.add_argument("--push", action="store_true", help="推送到 GitHub (需要 --export)")
+    args = parser.parse_args()
+
     print_header("数据源整合测试")
-    print(f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    log(f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     # =========================================================================
     # 1. 测试 BinanceDerivativesClient
@@ -52,7 +144,7 @@ def main():
 
     binance_deriv = BinanceDerivativesClient()
 
-    print("\n获取所有 Binance 衍生品数据...")
+    log("\n获取所有 Binance 衍生品数据...")
     binance_data = binance_deriv.fetch_all(symbol="BTCUSDT", period="15m", history_limit=10)
 
     # 显示结果
@@ -63,17 +155,17 @@ def main():
             latest = value.get("latest")
             trend = value.get("trend", "N/A")
             if latest:
-                print(f"\n  ✅ {key}:")
-                print(f"     Latest: {latest}")
-                print(f"     Trend: {trend}")
+                log(f"\n  ✅ {key}:")
+                log(f"     Latest: {latest}")
+                log(f"     Trend: {trend}")
             else:
-                print(f"\n  ⚠️ {key}: {value}")
+                log(f"\n  ⚠️ {key}: {value}")
         else:
-            print(f"\n  ✅ {key}: {value}")
+            log(f"\n  ✅ {key}: {value}")
 
     # 测试格式化输出
-    print("\n📄 格式化输出:")
-    print(binance_deriv.format_for_ai(binance_data))
+    log("\n📄 格式化输出:")
+    log(binance_deriv.format_for_ai(binance_data))
 
     # =========================================================================
     # 2. 测试 CoinalyzeClient (扩展的历史数据)
@@ -83,39 +175,40 @@ def main():
     from utils.coinalyze_client import CoinalyzeClient
 
     coinalyze = CoinalyzeClient()
+    coinalyze_data = {}
 
     if coinalyze.is_enabled():
-        print("\n获取所有 Coinalyze 数据 (含历史)...")
+        log("\n获取所有 Coinalyze 数据 (含历史)...")
         coinalyze_data = coinalyze.fetch_all_with_history(history_hours=4)
 
         # 显示趋势
         trends = coinalyze_data.get("trends", {})
-        print("\n  📊 趋势分析:")
-        print(f"     OI 趋势: {trends.get('oi_trend', 'N/A')}")
-        print(f"     资金费率趋势: {trends.get('funding_trend', 'N/A')}")
-        print(f"     多空比趋势: {trends.get('long_short_trend', 'N/A')}")
+        log("\n  📊 趋势分析:")
+        log(f"     OI 趋势: {trends.get('oi_trend', 'N/A')}")
+        log(f"     资金费率趋势: {trends.get('funding_trend', 'N/A')}")
+        log(f"     多空比趋势: {trends.get('long_short_trend', 'N/A')}")
 
         # 显示历史数据条数
         oi_hist = coinalyze_data.get("open_interest_history", {})
         if oi_hist and oi_hist.get("history"):
-            print(f"\n  ✅ OI 历史: {len(oi_hist['history'])} 条记录")
+            log(f"\n  ✅ OI 历史: {len(oi_hist['history'])} 条记录")
 
         fr_hist = coinalyze_data.get("funding_rate_history", {})
         if fr_hist and fr_hist.get("history"):
-            print(f"  ✅ 资金费率历史: {len(fr_hist['history'])} 条记录")
+            log(f"  ✅ 资金费率历史: {len(fr_hist['history'])} 条记录")
 
         ls_hist = coinalyze_data.get("long_short_ratio_history", {})
         if ls_hist and ls_hist.get("history"):
-            print(f"  ✅ 多空比历史: {len(ls_hist['history'])} 条记录")
+            log(f"  ✅ 多空比历史: {len(ls_hist['history'])} 条记录")
             # 显示最新的多空比
             latest = ls_hist["history"][-1]
-            print(f"     最新: ratio={latest.get('r')}, long={latest.get('l')}%, short={latest.get('s')}%")
+            log(f"     最新: ratio={latest.get('r')}, long={latest.get('l')}%, short={latest.get('s')}%")
 
         # 测试格式化输出
-        print("\n📄 格式化输出:")
-        print(coinalyze.format_for_ai(coinalyze_data, current_price=100000))
+        log("\n📄 格式化输出:")
+        log(coinalyze.format_for_ai(coinalyze_data, current_price=100000))
     else:
-        print("  ❌ COINALYZE_API_KEY 未设置")
+        log("  ❌ COINALYZE_API_KEY 未设置")
 
     # =========================================================================
     # 3. 测试 AIDataAssembler 完整数据组装
@@ -150,7 +243,7 @@ def main():
         "macd": {"macd": 100, "signal": 80, "histogram": 20},
     }
 
-    print("\n组装完整数据...")
+    log("\n组装完整数据...")
     complete_data = assembler.assemble(
         technical_data=technical_data,
         symbol="BTCUSDT",
@@ -159,33 +252,33 @@ def main():
 
     # 显示数据源状态
     metadata = complete_data.get("_metadata", {})
-    print("\n  📊 数据源状态:")
-    print(f"     K线来源: {metadata.get('kline_source', 'unknown')}")
-    print(f"     Coinalyze: {'✅ 启用' if metadata.get('coinalyze_enabled') else '❌ 禁用'}")
-    print(f"     Binance 衍生品: {'✅ 启用' if metadata.get('binance_derivatives_enabled') else '❌ 禁用'}")
+    log("\n  📊 数据源状态:")
+    log(f"     K线来源: {metadata.get('kline_source', 'unknown')}")
+    log(f"     Coinalyze: {'✅ 启用' if metadata.get('coinalyze_enabled') else '❌ 禁用'}")
+    log(f"     Binance 衍生品: {'✅ 启用' if metadata.get('binance_derivatives_enabled') else '❌ 禁用'}")
 
     # 显示趋势数据
     derivatives = complete_data.get("derivatives", {})
     trends = derivatives.get("trends", {})
     if trends:
-        print("\n  📈 趋势数据:")
+        log("\n  📈 趋势数据:")
         for key, value in trends.items():
-            print(f"     {key}: {value}")
+            log(f"     {key}: {value}")
 
     # 显示 Binance 衍生品数据
     binance_deriv_data = complete_data.get("binance_derivatives")
     if binance_deriv_data:
-        print("\n  🏦 Binance 衍生品数据:")
+        log("\n  🏦 Binance 衍生品数据:")
         top_pos = binance_deriv_data.get("top_long_short_position", {}).get("latest")
         if top_pos:
-            print(f"     大户持仓比: {top_pos.get('longShortRatio')}")
+            log(f"     大户持仓比: {top_pos.get('longShortRatio')}")
         taker = binance_deriv_data.get("taker_long_short", {}).get("latest")
         if taker:
-            print(f"     Taker 买卖比: {taker.get('buySellRatio')}")
+            log(f"     Taker 买卖比: {taker.get('buySellRatio')}")
 
     # 测试完整报告格式化
-    print("\n📄 完整市场数据报告:")
-    print(assembler.format_complete_report(complete_data))
+    log("\n📄 完整市场数据报告:")
+    log(assembler.format_complete_report(complete_data))
 
     # =========================================================================
     # 4. 数据利用率统计
@@ -216,11 +309,24 @@ def main():
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 """
-    print(stats)
+    log(stats)
 
-    print("\n" + "=" * 70)
-    print("  ✅ 所有数据源测试完成!")
-    print("=" * 70)
+    log("\n" + "=" * 70)
+    log("  ✅ 所有数据源测试完成!")
+    log("=" * 70)
+
+    # =========================================================================
+    # 5. 导出和推送
+    # =========================================================================
+    if args.export:
+        print_header("5. 导出数据")
+        json_file, txt_file = export_data(complete_data, binance_data, coinalyze_data)
+        log(f"\n  ✅ JSON 数据: {json_file}")
+        log(f"  ✅ 文本报告: {txt_file}")
+
+        if args.push:
+            log("\n推送到 GitHub...")
+            push_to_github([json_file, txt_file])
 
 
 if __name__ == "__main__":
