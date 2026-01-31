@@ -2,10 +2,27 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   darkMode: ["class"],
+  // Increase specificity to prevent CSS conflicts (recommended by Tailwind community)
+  important: true,
   content: [
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  // Safelist critical responsive classes to prevent purging
+  safelist: [
+    "hidden",
+    "lg:hidden",
+    "lg:flex",
+    "lg:block",
+    "xl:flex",
+    "xl:block",
+    "xl:hidden",
+    // Ensure all responsive variants are preserved
+    {
+      pattern: /^(hidden|flex|block|inline-flex)$/,
+      variants: ["lg", "xl", "md", "sm"],
+    },
   ],
   theme: {
     extend: {
