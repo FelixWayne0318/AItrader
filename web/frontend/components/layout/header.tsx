@@ -81,9 +81,9 @@ export function Header({ locale, t }: HeaderProps) {
   return (
     <header className="fixed top-4 inset-x-0 z-50 px-4">
       {/* DipSway Style: Transparent header, each group has its own background */}
-      <div className="max-w-7xl mx-auto flex h-14 items-center justify-between gap-3">
+      <div className="max-w-7xl mx-auto flex h-14 items-center justify-between">
 
-        {/* Group 1: Logo - No background, just the logo */}
+        {/* Group 1: Logo - No background */}
         <Link href="/" className="flex items-center gap-2.5 group shrink-0">
           {branding?.logo_url ? (
             <img src={branding.logo_url} alt={branding?.site_name || "AlgVex"} className="h-8 w-8 rounded-xl object-contain" />
@@ -95,8 +95,9 @@ export function Header({ locale, t }: HeaderProps) {
           <span className="text-lg font-bold">{branding?.site_name || "AlgVex"}</span>
         </Link>
 
-        {/* Group 2: Navigation - Own rounded background */}
-        <nav className="hidden lg:flex items-center gap-1 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl p-1">
+        {/* Group 2: Navigation - Own rounded background (Desktop + Landscape) */}
+        {/* lg: desktop, landscape-primary: landscape mobile */}
+        <nav className="hidden lg:flex landscape:flex items-center gap-1 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl p-1 ml-8">
           {navItems.map((item) => {
             const isActive = router.pathname === item.href;
             return (
@@ -115,79 +116,85 @@ export function Header({ locale, t }: HeaderProps) {
           })}
         </nav>
 
-        {/* Group 3: Bot Status - Own rounded background */}
-        {mounted && (
-          <div className="hidden lg:flex items-center gap-1.5 px-3 py-2 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl">
-            <Bot className={`h-3.5 w-3.5 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
-            <span className="text-xs text-muted-foreground">Bot:</span>
-            <span className={`text-xs font-medium ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`}>
-              {status?.trading_active ? "Running" : "Offline"}
-            </span>
-          </div>
-        )}
+        {/* Spacer to push metrics group closer together */}
+        <div className="hidden lg:block landscape:block flex-1" />
 
-        {/* Group 4: AI Signal - Own rounded background */}
-        {mounted && (
-          <div className={`hidden lg:flex items-center gap-1.5 px-3 py-2 backdrop-blur-xl border border-border/30 rounded-xl ${
-            signal === "BUY" || signal === "LONG" ? "bg-green-500/10" :
-            signal === "SELL" || signal === "SHORT" ? "bg-red-500/10" : "bg-background/60"
-          }`}>
-            <Brain className={`h-3.5 w-3.5 ${getSignalColor(signal)}`} />
-            <span className="text-xs text-muted-foreground">Signal:</span>
-            <span className={`text-xs font-semibold ${getSignalColor(signal)}`}>{signal}</span>
-          </div>
-        )}
+        {/* Metrics Group Container - smaller gaps between Bot/Signal/Markets */}
+        <div className="hidden lg:flex landscape:flex items-center gap-1.5">
+          {/* Group 3: Bot Status */}
+          {mounted && (
+            <div className="flex items-center gap-1.5 px-3 py-2 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl">
+              <Bot className={`h-3.5 w-3.5 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
+              <span className="text-xs text-muted-foreground">Bot:</span>
+              <span className={`text-xs font-medium ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`}>
+                {status?.trading_active ? "Running" : "Offline"}
+              </span>
+            </div>
+          )}
 
-        {/* Group 5: Markets Dropdown - Own rounded background */}
-        {mounted && (
-          <div ref={metricsRef} className="hidden lg:block relative">
-            <button
-              onClick={() => setMetricsExpanded(!metricsExpanded)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <TrendingUp className="h-3.5 w-3.5" />
-              <span>Markets</span>
-              <ChevronDown className={`h-3 w-3 transition-transform ${metricsExpanded ? "rotate-180" : ""}`} />
-            </button>
+          {/* Group 4: AI Signal */}
+          {mounted && (
+            <div className={`flex items-center gap-1.5 px-3 py-2 backdrop-blur-xl border border-border/30 rounded-xl ${
+              signal === "BUY" || signal === "LONG" ? "bg-green-500/10" :
+              signal === "SELL" || signal === "SHORT" ? "bg-red-500/10" : "bg-background/60"
+            }`}>
+              <Brain className={`h-3.5 w-3.5 ${getSignalColor(signal)}`} />
+              <span className="text-xs text-muted-foreground">Signal:</span>
+              <span className={`text-xs font-semibold ${getSignalColor(signal)}`}>{signal}</span>
+            </div>
+          )}
 
-            {metricsExpanded && (
-              <div className="absolute top-full right-0 mt-2 w-64 bg-background/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl p-3 space-y-2 z-50">
-                <div className="text-xs text-muted-foreground font-medium mb-2">Market Metrics</div>
-                <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
-                  <div className="flex items-center gap-2">
-                    <Users className={`h-4 w-4 ${longPercent > 50 ? "text-green-500" : "text-red-500"}`} />
-                    <span className="text-sm">Long/Short</span>
-                  </div>
-                  <span className={`text-sm font-semibold ${longPercent > 50 ? "text-green-500" : "text-red-500"}`}>{longPercent.toFixed(1)}%</span>
-                </div>
-                <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
-                  <div className="flex items-center gap-2">
-                    <Percent className={`h-4 w-4 ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`} />
-                    <span className="text-sm">Funding Rate</span>
-                  </div>
-                  <span className={`text-sm font-semibold ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`}>{fundingRate >= 0 ? "+" : ""}{fundingRate.toFixed(4)}%</span>
-                </div>
-                <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
-                  <div className="flex items-center gap-2">
-                    <BarChart3 className="h-4 w-4 text-blue-500" />
-                    <span className="text-sm">Open Interest</span>
-                  </div>
-                  <span className="text-sm font-semibold">{formatOI(oiValue)}</span>
-                </div>
-                <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
-                  <div className="flex items-center gap-2">
-                    <Activity className="h-4 w-4 text-purple-500" />
-                    <span className="text-sm">24h Volume</span>
-                  </div>
-                  <span className="text-sm font-semibold">{formatVolume(volume24h)}</span>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+          {/* Group 5: Markets Dropdown */}
+          {mounted && (
+            <div ref={metricsRef} className="relative">
+              <button
+                onClick={() => setMetricsExpanded(!metricsExpanded)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <TrendingUp className="h-3.5 w-3.5" />
+                <span>Markets</span>
+                <ChevronDown className={`h-3 w-3 transition-transform ${metricsExpanded ? "rotate-180" : ""}`} />
+              </button>
 
-        {/* Group 6: Language + CTA - Own rounded backgrounds */}
-        <div className="hidden lg:flex items-center gap-2">
+              {metricsExpanded && (
+                <div className="absolute top-full right-0 mt-2 w-64 bg-background/95 backdrop-blur-xl border border-border/40 rounded-xl shadow-xl p-3 space-y-2 z-50">
+                  <div className="text-xs text-muted-foreground font-medium mb-2">Market Metrics</div>
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
+                    <div className="flex items-center gap-2">
+                      <Users className={`h-4 w-4 ${longPercent > 50 ? "text-green-500" : "text-red-500"}`} />
+                      <span className="text-sm">Long/Short</span>
+                    </div>
+                    <span className={`text-sm font-semibold ${longPercent > 50 ? "text-green-500" : "text-red-500"}`}>{longPercent.toFixed(1)}%</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
+                    <div className="flex items-center gap-2">
+                      <Percent className={`h-4 w-4 ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`} />
+                      <span className="text-sm">Funding Rate</span>
+                    </div>
+                    <span className={`text-sm font-semibold ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`}>{fundingRate >= 0 ? "+" : ""}{fundingRate.toFixed(4)}%</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4 text-blue-500" />
+                      <span className="text-sm">Open Interest</span>
+                    </div>
+                    <span className="text-sm font-semibold">{formatOI(oiValue)}</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
+                    <div className="flex items-center gap-2">
+                      <Activity className="h-4 w-4 text-purple-500" />
+                      <span className="text-sm">24h Volume</span>
+                    </div>
+                    <span className="text-sm font-semibold">{formatVolume(volume24h)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Group 6: Language + CTA (Desktop + Landscape) */}
+        <div className="hidden lg:flex landscape:flex items-center gap-2 ml-3">
           <Button
             variant="ghost"
             size="sm"
@@ -204,20 +211,44 @@ export function Header({ locale, t }: HeaderProps) {
           </Link>
         </div>
 
-        {/* Mobile menu button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="lg:hidden h-9 w-9 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl"
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        >
-          {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </Button>
+        {/* Mobile Portrait: Show Bot + Signal + Menu button */}
+        <div className="flex lg:hidden landscape:hidden items-center gap-2">
+          {/* Bot Status - Mobile Portrait */}
+          {mounted && (
+            <div className="flex items-center gap-1 px-2 py-1.5 bg-background/60 backdrop-blur-xl border border-border/30 rounded-lg">
+              <Bot className={`h-3 w-3 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
+              <span className={`text-[10px] font-medium ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`}>
+                {status?.trading_active ? "Running" : "Offline"}
+              </span>
+            </div>
+          )}
+
+          {/* Signal - Mobile Portrait */}
+          {mounted && (
+            <div className={`flex items-center gap-1 px-2 py-1.5 backdrop-blur-xl border border-border/30 rounded-lg ${
+              signal === "BUY" || signal === "LONG" ? "bg-green-500/10" :
+              signal === "SELL" || signal === "SHORT" ? "bg-red-500/10" : "bg-background/60"
+            }`}>
+              <Brain className={`h-3 w-3 ${getSignalColor(signal)}`} />
+              <span className={`text-[10px] font-semibold ${getSignalColor(signal)}`}>{signal}</span>
+            </div>
+          )}
+
+          {/* Mobile menu button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          >
+            {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </Button>
+        </div>
       </div>
 
-      {/* Mobile Navigation Menu */}
+      {/* Mobile Navigation Menu (Portrait only) */}
       {mobileMenuOpen && (
-        <div className="lg:hidden mt-3 max-w-7xl mx-auto bg-background/95 backdrop-blur-xl border border-border/40 rounded-2xl p-4">
+        <div className="lg:hidden landscape:hidden mt-3 max-w-7xl mx-auto bg-background/95 backdrop-blur-xl border border-border/40 rounded-2xl p-4">
           <nav className="flex flex-col gap-1 mb-4">
             {navItems.map((item) => {
               const isActive = router.pathname === item.href;
@@ -236,23 +267,11 @@ export function Header({ locale, t }: HeaderProps) {
             })}
           </nav>
 
+          {/* Market Data - 4 metrics */}
           {mounted && (
             <div className="border-t border-border/30 pt-4 mb-4">
               <p className="text-xs text-muted-foreground px-2 mb-3 font-medium">Market Data</p>
               <div className="grid grid-cols-2 gap-2">
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/30">
-                  <Bot className={`h-4 w-4 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
-                  <span className={`text-sm font-medium ${status?.trading_active ? "text-green-500" : ""}`}>
-                    {status?.trading_active ? "Live" : "Offline"}
-                  </span>
-                </div>
-                <div className={`flex items-center gap-2 p-3 rounded-xl ${
-                  signal === "BUY" || signal === "LONG" ? "bg-green-500/10" :
-                  signal === "SELL" || signal === "SHORT" ? "bg-red-500/10" : "bg-muted/30"
-                }`}>
-                  <Brain className={`h-4 w-4 ${getSignalColor(signal)}`} />
-                  <span className={`text-sm font-semibold ${getSignalColor(signal)}`}>{signal}</span>
-                </div>
                 <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/30">
                   <Users className={`h-4 w-4 ${longPercent > 50 ? "text-green-500" : "text-red-500"}`} />
                   <span className="text-sm">{longPercent.toFixed(0)}% Long</span>
@@ -262,6 +281,14 @@ export function Header({ locale, t }: HeaderProps) {
                   <span className={`text-sm ${fundingRate >= 0 ? "text-green-500" : "text-red-500"}`}>
                     {fundingRate >= 0 ? "+" : ""}{fundingRate.toFixed(4)}%
                   </span>
+                </div>
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/30">
+                  <BarChart3 className="h-4 w-4 text-blue-500" />
+                  <span className="text-sm">OI {formatOI(oiValue)}</span>
+                </div>
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/30">
+                  <Activity className="h-4 w-4 text-purple-500" />
+                  <span className="text-sm">{formatVolume(volume24h)}</span>
                 </div>
               </div>
             </div>

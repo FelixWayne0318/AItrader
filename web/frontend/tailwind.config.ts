@@ -18,6 +18,15 @@ const config: Config = {
   // We only safelist truly dynamic classes that can't be detected by content scanning
   // Static classes like 'lg:hidden' should NOT need safelisting if content paths are correct
   theme: {
+    screens: {
+      'sm': '640px',
+      'md': '768px',
+      'lg': '1024px',
+      'xl': '1280px',
+      '2xl': '1536px',
+      // Landscape mode for mobile devices
+      'landscape': { 'raw': '(orientation: landscape) and (max-height: 500px)' },
+    },
     extend: {
       colors: {
         background: "hsl(var(--background))",
