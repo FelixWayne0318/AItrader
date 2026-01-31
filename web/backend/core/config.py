@@ -1,5 +1,5 @@
 """
-Algvex Web Configuration
+AlgVex Web Configuration
 """
 import os
 from pathlib import Path
@@ -9,7 +9,7 @@ from typing import Optional
 
 class Settings(BaseSettings):
     # Application
-    APP_NAME: str = "Algvex"
+    APP_NAME: str = "AlgVex"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
 

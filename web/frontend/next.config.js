@@ -1,6 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
   reactStrictMode: true,
   async rewrites() {
     return [
@@ -14,7 +13,7 @@ const nextConfig = {
   i18n: {
     locales: ['en', 'zh'],
     defaultLocale: 'en',
-    localeDetection: true,
+    localeDetection: false,
   },
 };
 

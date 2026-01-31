@@ -664,6 +664,93 @@ Environment=AUTO_CONFIRM=true
 └── QUICKSTART.md             # 快速入门
 ```
 
+## 🎨 Web 前端设计规范 (DipSway 风格)
+
+### 导航栏设计原则
+
+导航栏采用 **DipSway 风格**：透明背景 + 独立浮动组件组。
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  ❌ 错误: 整个导航栏有统一的黑色/深色背景                                  │
+│  ✅ 正确: 导航栏本身透明，每个组件组有独立的半透明圆角背景                 │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### 组件组结构
+
+| 组件组 | 背景 | 说明 |
+|--------|------|------|
+| Logo (AlgVex) | 无背景 | 只显示 Logo 图标 + 文字 |
+| 导航 (Home/Chart/Performance/Copy Trading) | `bg-background/60 backdrop-blur-xl border rounded-xl` | 独立浮动圆角背景 |
+| Bot Status | `bg-background/60 backdrop-blur-xl border rounded-xl` | 独立浮动圆角背景 |
+| Signal | `bg-background/60` 或信号颜色 | 独立浮动圆角背景 |
+| Markets 下拉菜单 | `bg-background/60 backdrop-blur-xl border rounded-xl` | 独立浮动圆角背景 |
+| 语言选择 | `bg-background/60 backdrop-blur-xl border rounded-xl` | 独立浮动圆角背景 |
+| CTA 按钮 | `bg-gradient-to-r from-primary to-primary/80` | 主色渐变 |
+
+### 间距规则
+
+```
+[Logo] ----ml-8---- [Nav Group] ----flex-1---- [Bot|Signal|Markets] --ml-3-- [Lang|CTA]
+                                                    ↑
+                                            gap-1.5 (较小间距)
+```
+
+- **导航组与后续组件**: `ml-8` (较大间距)
+- **Bot/Signal/Markets 之间**: `gap-1.5` (较小间距)
+- **语言/CTA 与前面组件**: `ml-3`
+
+### 响应式设计
+
+| 屏幕类型 | 显示内容 |
+|----------|----------|
+| **桌面 (lg+)** | 全部组件 |
+| **手机横屏 (landscape)** | 同桌面 |
+| **手机竖屏 (portrait)** | Logo + Bot Status + Signal + 汉堡菜单 |
+
+**Tailwind 断点配置** (`tailwind.config.ts`):
+
+```typescript
+screens: {
+  'landscape': { 'raw': '(orientation: landscape) and (max-height: 500px)' },
+}
+```
+
+### 手机竖屏菜单内容
+
+点击汉堡菜单展开:
+- 导航链接 (Home/Chart/Performance/Copy Trading)
+- Market Data (4 个指标: Long/Short, Funding Rate, OI, Volume)
+- 语言切换 + CTA 按钮
+
+### CTA 按钮设计
+
+两个主要 CTA 按钮样式一致：
+
+```tsx
+// Start Copy Trading - 主按钮
+className="bg-gradient-to-r from-primary to-primary/80 shadow-lg shadow-primary/25 border border-primary/20"
+
+// Live Chart - 次要按钮
+className="bg-background/60 backdrop-blur-xl border border-border/50 hover:border-primary/30"
+```
+
+### 前端部署流程
+
+**关键**: 每次部署必须清除 `.next` 缓存，否则 Tailwind CSS 响应式类可能失效。
+
+```bash
+cd /home/linuxuser/nautilus_AItrader/web/frontend
+rm -rf .next                 # 关键! 清除缓存
+npm run build                # 重新构建
+pm2 restart algvex-frontend  # 重启服务
+```
+
+**参考**:
+- [Tailwind CSS Production Issues](https://github.com/tailwindlabs/tailwindcss/discussions/8521)
+- 部署脚本: `web/frontend/scripts/deploy.sh`
+
 ## 配置管理
 
 **重要更新 (Phase 1-2 完成)**: 配置现通过 ConfigManager 统一管理，支持多环境切换。

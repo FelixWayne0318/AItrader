@@ -1,10 +1,10 @@
-# Algvex - AItrader Web Interface
+# AlgVex - AItrader Web Interface
 
 AI-Powered Cryptocurrency Trading System Web Dashboard
 
 ## Overview
 
-Algvex is a web interface for the AItrader trading system, featuring:
+AlgVex is a web interface for the AItrader trading system, featuring:
 
 - **Public Dashboard**: Performance metrics, P&L curves, system status
 - **Admin Panel**: Strategy configuration, social links, service control

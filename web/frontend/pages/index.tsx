@@ -19,6 +19,7 @@ import {
   Cpu,
   Globe,
   ChevronRight,
+  Users,
 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
@@ -33,8 +34,8 @@ const HeroAnimatedCandlestick = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="relative w-full max-w-3xl mx-auto px-4 sm:px-0">
-        <div className="h-[280px] sm:h-[320px] rounded-xl border border-border/50 bg-card/50 flex items-center justify-center">
+      <div className="relative w-full">
+        <div className="h-[360px] flex items-center justify-center">
           <div className="flex items-center gap-2 text-muted-foreground">
             <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
             <span className="text-sm">Loading chart...</span>
@@ -230,21 +231,13 @@ export default function HomePage() {
     { refreshInterval: 60000 }
   );
 
-  const { data: status } = useSWR("/api/public/system-status", fetcher, {
-    refreshInterval: 30000,
-  });
-
-  const { data: ticker } = useSWR("/api/trading/ticker/BTCUSDT", fetcher, {
-    refreshInterval: 10000,
-  });
-
   const isLoading = !performance && !perfError;
   const pnlType = (performance?.total_pnl || 0) >= 0 ? "profit" : ("loss" as const);
 
   return (
     <>
       <Head>
-        <title>Algvex - AI-Powered Crypto Trading</title>
+        <title>AlgVex - AI-Powered Crypto Trading</title>
         <meta
           name="description"
           content="Advanced algorithmic trading powered by DeepSeek AI and multi-agent decision system"
@@ -255,35 +248,14 @@ export default function HomePage() {
       <div className="min-h-screen gradient-bg noise-overlay">
         <Header locale={locale} t={t} />
 
-        {/* Hero Section - pt-28 accounts for header (64px) + intelligence bar (48px) */}
-        <section className="relative pt-28 sm:pt-32 lg:pt-36 pb-12 sm:pb-16 lg:pb-24 px-4 overflow-hidden">
+        {/* Hero Section - pt-24 accounts for floating rounded header with extra spacing */}
+        <section className="relative pt-24 sm:pt-28 lg:pt-32 pb-12 sm:pb-16 lg:pb-24 px-4 overflow-hidden">
           {/* Background effects */}
           <div className="absolute inset-0 grid-pattern opacity-30" />
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] sm:w-[600px] lg:w-[800px] h-[400px] sm:h-[600px] lg:h-[800px] bg-primary/5 rounded-full blur-3xl" />
 
           <div className="container mx-auto relative z-10">
             <div className="max-w-4xl mx-auto text-center">
-              {/* Status Badge */}
-              <div className="inline-flex items-center gap-2 sm:gap-2.5 px-3 sm:px-5 py-2 sm:py-2.5 rounded-full glass mb-6 sm:mb-8 lg:mb-10">
-                <span className={`status-dot ${status?.trading_active ? "active" : "inactive"}`} />
-                <span className="text-xs sm:text-sm font-medium">
-                  {status?.trading_active ? "Bot Active" : "Bot Offline"}
-                </span>
-                {ticker?.price && (
-                  <>
-                    <span className="text-muted-foreground hidden sm:inline">|</span>
-                    <span className="text-xs sm:text-sm hidden sm:inline">
-                      BTC <span className="font-mono font-semibold">${Number(ticker.price).toLocaleString()}</span>
-                    </span>
-                    <span className={`text-xs hidden sm:inline ${
-                      ticker.price_change_percent >= 0 ? "text-[hsl(var(--profit))]" : "text-[hsl(var(--loss))]"
-                    }`}>
-                      {formatPercent(ticker.price_change_percent)}
-                    </span>
-                  </>
-                )}
-              </div>
-
               {/* Main Title */}
               <h1 className="text-3xl sm:text-5xl lg:text-7xl font-bold mb-4 sm:mb-6 leading-tight">
                 <span className="text-primary text-glow">AI-Powered</span>
@@ -299,18 +271,18 @@ export default function HomePage() {
                 <span className="text-foreground font-medium">multi-agent decision system</span>.
               </p>
 
-              {/* CTA Buttons */}
+              {/* CTA Buttons - Same fixed width for both buttons */}
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 mb-10 sm:mb-12 lg:mb-16">
-                <Link href="/copy" className="w-full sm:w-auto">
-                  <Button size="lg" className="glow-primary text-base sm:text-lg px-6 sm:px-8 h-12 sm:h-14 w-full sm:w-auto">
-                    Start Copy Trading
-                    <ArrowRight className="ml-2 h-4 w-4 sm:h-5 sm:w-5" />
+                <Link href="/copy" className="w-full sm:w-[260px]">
+                  <Button size="lg" className="text-base sm:text-lg h-12 sm:h-14 w-full bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-lg shadow-primary/25 border border-primary/20 justify-center">
+                    <Users className="mr-2 h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0" />
+                    <span>Start Copy Trading</span>
                   </Button>
                 </Link>
-                <Link href="/chart" className="w-full sm:w-auto">
-                  <Button size="lg" variant="outline" className="text-base sm:text-lg px-6 sm:px-8 h-12 sm:h-14 w-full sm:w-auto">
-                    <BarChart3 className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
-                    Live Chart
+                <Link href="/chart" className="w-full sm:w-[260px]">
+                  <Button size="lg" className="text-base sm:text-lg h-12 sm:h-14 w-full bg-background/60 backdrop-blur-xl border border-border/50 hover:bg-background/80 hover:border-primary/30 text-foreground justify-center">
+                    <BarChart3 className="mr-2 h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0" />
+                    <span>Live Chart</span>
                   </Button>
                 </Link>
               </div>
@@ -404,7 +376,7 @@ export default function HomePage() {
           <div className="container mx-auto">
             <div className="text-center mb-10 sm:mb-12 lg:mb-16">
               <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-3 sm:mb-4">
-                Why Choose Algvex?
+                Why Choose AlgVex?
               </h2>
               <p className="text-sm sm:text-base lg:text-lg text-muted-foreground max-w-2xl mx-auto">
                 Powered by cutting-edge AI technology and institutional-grade risk management

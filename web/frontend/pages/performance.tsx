@@ -40,7 +40,7 @@ export default function PerformancePage() {
   return (
     <>
       <Head>
-        <title>Performance - Algvex</title>
+        <title>Performance - AlgVex</title>
         <meta
           name="description"
           content="Real-time trading performance from Binance Futures"
@@ -50,8 +50,8 @@ export default function PerformancePage() {
       <div className="min-h-screen gradient-bg">
         <Header locale={locale} t={t} />
 
-        {/* pt-32 accounts for header (64px) + intelligence bar (48px) + spacing */}
-        <main className="pt-32 pb-16 px-4">
+        {/* pt-24 accounts for floating rounded header with extra spacing */}
+        <main className="pt-24 pb-16 px-4">
           <div className="container mx-auto">
             {/* Page Header */}
             <div className="mb-8">

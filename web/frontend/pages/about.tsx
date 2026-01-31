@@ -58,18 +58,18 @@ export default function AboutPage() {
   return (
     <>
       <Head>
-        <title>About - Algvex</title>
+        <title>About - AlgVex</title>
         <meta
           name="description"
-          content="Learn about Algvex AI-powered trading system"
+          content="Learn about AlgVex AI-powered trading system"
         />
       </Head>
 
       <div className="min-h-screen gradient-bg">
         <Header locale={locale} t={t} />
 
-        {/* pt-32 accounts for header (64px) + intelligence bar (48px) + spacing */}
-        <main className="pt-32 pb-16 px-4">
+        {/* pt-24 accounts for floating rounded header with extra spacing */}
+        <main className="pt-24 pb-16 px-4">
           <div className="container mx-auto max-w-4xl">
             {/* Page Header */}
             <div className="text-center mb-16">

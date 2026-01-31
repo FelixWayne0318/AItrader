@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /* ============================================================================
-   Algvex - AI Trading Dashboard
+   AlgVex - AI Trading Dashboard
    Design inspired by DipSway: Clean, minimal, professional crypto aesthetic
    ============================================================================ */
 
@@ -525,6 +525,18 @@
 
   .grid-pattern {
     background-size: 40px 40px;
+  }
+}
+
+/* Hide scrollbar but allow scrolling (for landscape navbar) */
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Chrome, Safari, Opera */
   }
 }
 

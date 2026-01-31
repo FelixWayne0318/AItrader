@@ -457,6 +457,57 @@ class TradingService:
             print(f"Error fetching order book: {e}")
         return None
 
+    async def get_open_interest(self, symbol: str = "BTCUSDT") -> Optional[Dict]:
+        """Get open interest for a symbol"""
+        try:
+            async with httpx.AsyncClient() as client:
+                # Get current open interest
+                resp = await client.get(
+                    f"{self.BASE_URL}/fapi/v1/openInterest",
+                    params={"symbol": symbol},
+                    timeout=10.0
+                )
+                if resp.status_code != 200:
+                    return None
+
+                oi_data = resp.json()
+                current_oi = float(oi_data.get("openInterest", 0))
+
+                # Get open interest history for 24h change
+                hist_resp = await client.get(
+                    f"{self.BASE_URL}/futures/data/openInterestHist",
+                    params={
+                        "symbol": symbol,
+                        "period": "1h",
+                        "limit": 25,  # ~24 hours
+                    },
+                    timeout=10.0
+                )
+
+                change_24h = 0.0
+                oi_value_usd = 0.0
+
+                if hist_resp.status_code == 200:
+                    hist_data = hist_resp.json()
+                    if len(hist_data) >= 2:
+                        # Get 24h ago value (or earliest available)
+                        old_oi = float(hist_data[0].get("sumOpenInterest", 0))
+                        new_oi = float(hist_data[-1].get("sumOpenInterest", 0))
+                        oi_value_usd = float(hist_data[-1].get("sumOpenInterestValue", 0))
+                        if old_oi > 0:
+                            change_24h = ((new_oi - old_oi) / old_oi) * 100
+
+                return {
+                    "symbol": symbol,
+                    "open_interest": current_oi,
+                    "value": oi_value_usd,
+                    "change_24h": round(change_24h, 2),
+                    "timestamp": oi_data.get("time"),
+                }
+        except Exception as e:
+            print(f"Error fetching open interest: {e}")
+        return None
+
     async def get_long_short_ratio(
         self,
         symbol: str = "BTCUSDT",

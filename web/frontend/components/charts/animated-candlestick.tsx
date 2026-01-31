@@ -120,12 +120,9 @@ export function AnimatedCandlestick({
         style={{ height: headerHeight }}
       >
         <div className="flex items-center gap-3">
-          {/* Bitcoin icon */}
-          <div className="relative">
-            <div className="absolute inset-0 bg-[#f7931a] rounded-full blur-md opacity-40" />
-            <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-[#f7931a] to-[#e8850d] flex items-center justify-center shadow-lg">
-              <span className="text-white text-sm font-bold">₿</span>
-            </div>
+          {/* Bitcoin icon - minimal style matching theme */}
+          <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
+            <span className="text-primary font-bold text-xl">₿</span>
           </div>
           <div>
             <h3 className="font-semibold text-foreground text-base tracking-tight">{title}</h3>
@@ -282,7 +279,7 @@ export function AnimatedCandlestick({
   );
 }
 
-// Hero version
+// Hero version - Full width, transparent background
 interface HeroAnimatedCandlestickProps {
   symbol?: string;
   interval?: string;
@@ -290,15 +287,12 @@ interface HeroAnimatedCandlestickProps {
 
 export function HeroAnimatedCandlestick({ symbol = 'BTCUSDT', interval = '15m' }: HeroAnimatedCandlestickProps) {
   return (
-    <div className="relative w-full max-w-3xl mx-auto">
-      {/* Subtle outer glow */}
-      <div className="absolute -inset-4 bg-primary/10 rounded-3xl blur-3xl opacity-50" />
-
-      {/* Glass container */}
-      <div className="relative rounded-2xl border border-primary/20 bg-card/30 backdrop-blur-sm overflow-hidden">
+    <div className="relative w-full">
+      {/* Full width transparent container */}
+      <div className="relative overflow-hidden">
         <AnimatedCandlestick
-          height={320}
-          candleCount={30}
+          height={360}
+          candleCount={40}
           showVolume={true}
           title="BTC/USDT"
           symbol={symbol}

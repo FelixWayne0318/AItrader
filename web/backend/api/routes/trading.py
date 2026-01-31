@@ -59,6 +59,13 @@ async def get_long_short_ratio(
     return {"symbol": symbol, "period": period, "data": data}
 
 
+@router.get("/open-interest/{symbol}")
+async def get_open_interest(symbol: str = "BTCUSDT"):
+    """Get open interest and 24h change"""
+    data = await trading_service.get_open_interest(symbol)
+    return data or {"error": "Failed to fetch open interest"}
+
+
 # ============================================================================
 # Protected Account Data (Auth Required)
 # ============================================================================
