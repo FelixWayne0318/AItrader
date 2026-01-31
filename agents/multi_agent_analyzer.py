@@ -23,6 +23,9 @@ from datetime import datetime
 
 from openai import OpenAI
 
+# S/R Zone Calculator (v3.8: Multi-source support/resistance detection)
+from utils.sr_zone_calculator import SRZoneCalculator
+
 # Import shared constants for consistency (Phase 3: migrated to functions)
 from strategy.trading_logic import (
     get_min_sl_distance_pct,
@@ -138,6 +141,28 @@ ORDER BOOK DEPTH (Microstructure):
   * Slippage < 0.05% = Deep book, safe for larger orders
   * Slippage > 0.10% = Thin book, use smaller position size
   * Low confidence slippage = Sparse data, be cautious
+
+SUPPORT/RESISTANCE ZONES (Multi-source S/R):
+- Zones are calculated from multiple sources for higher accuracy:
+  * Order Book Walls (most reliable) = Real orders at that price
+  * Bollinger Bands (dynamic) = Statistical price boundaries
+  * SMA_50/SMA_200 (trend) = Moving average support/resistance
+
+- Strength levels:
+  * HIGH = Multiple sources agree OR Order Wall present (strong confluence)
+  * MEDIUM = 2 sources agree
+  * LOW = Single source only
+
+- Trading implications:
+  * LONG near HIGH resistance = HIGH RISK (multiple barriers to break)
+  * SHORT near HIGH support = HIGH RISK (multiple buyers waiting)
+  * Distance < 1% to HIGH zone = Extreme caution
+  * Distance > 2% = Safer for directional trades
+
+- Zone usage:
+  * Use S/R zones for stop loss placement (beyond the zone)
+  * Use S/R zones for take profit targets (before the zone)
+  * Order Walls may be pulled (spoofed) - consider with other data
 """
 
 
@@ -201,6 +226,17 @@ class MultiAgentAnalyzer:
         # Retry configuration (same as DeepSeekAnalyzer)
         self.max_retries = 2
         self.retry_delay = 1.0
+
+        # v3.8: S/R Zone Calculator (multi-source support/resistance)
+        self.sr_calculator = SRZoneCalculator(
+            cluster_pct=0.5,              # 聚类阈值 0.5%
+            zone_expand_pct=0.1,          # Zone 扩展 0.1%
+            hard_control_threshold_pct=1.0,  # 硬风控阈值 1% (仅对 HIGH strength)
+            logger=self.logger,
+        )
+
+        # Cache for S/R zones (updated in analyze())
+        self._sr_zones_cache: Optional[Dict[str, Any]] = None
 
     def _call_api_with_retry(
         self,
@@ -392,6 +428,15 @@ class MultiAgentAnalyzer:
             # v3.7: Format order book depth data
             orderbook_summary = self._format_orderbook_report(orderbook_report)
 
+            # v3.8: Calculate S/R Zones (multi-source support/resistance)
+            sr_zones = self._calculate_sr_zones(
+                current_price=current_price,
+                technical_data=technical_report,
+                orderbook_data=orderbook_report,
+            )
+            self._sr_zones_cache = sr_zones  # Cache for _evaluate_risk()
+            sr_zones_summary = sr_zones.get('ai_report', '') if sr_zones else ''
+
             # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
             debate_history = ""
@@ -409,6 +454,7 @@ class MultiAgentAnalyzer:
                     order_flow_report=order_flow_summary,      # MTF v2.1
                     derivatives_report=derivatives_summary,     # MTF v2.1
                     orderbook_report=orderbook_summary,         # v3.7
+                    sr_zones_report=sr_zones_summary,           # v3.8
                     history=debate_history,
                     bear_argument=bear_argument,
                 )
@@ -422,6 +468,7 @@ class MultiAgentAnalyzer:
                     order_flow_report=order_flow_summary,      # MTF v2.1
                     derivatives_report=derivatives_summary,     # MTF v2.1
                     orderbook_report=orderbook_summary,         # v3.7
+                    sr_zones_report=sr_zones_summary,           # v3.8
                     history=debate_history,
                     bull_argument=bull_argument,
                 )
@@ -470,6 +517,7 @@ class MultiAgentAnalyzer:
         order_flow_report: str,      # MTF v2.1
         derivatives_report: str,     # MTF v2.1
         orderbook_report: str,       # v3.7
+        sr_zones_report: str,        # v3.8
         history: str,
         bear_argument: str,
     ) -> str:
@@ -478,6 +526,7 @@ class MultiAgentAnalyzer:
 
         Borrowed from: TradingAgents/agents/researchers/bull_researcher.py
         TradingAgents v3.3: Indicator definitions in system prompt (like TradingAgents)
+        v3.8: Added S/R zones report
         """
         # User prompt: Only data and task (no indicator definitions)
         prompt = f"""AVAILABLE DATA:
@@ -489,6 +538,8 @@ class MultiAgentAnalyzer:
 {derivatives_report}
 
 {orderbook_report}
+
+{sr_zones_report}
 
 {sentiment_report}
 
@@ -533,6 +584,7 @@ Focus on evidence from the data, not assumptions."""
         order_flow_report: str,      # MTF v2.1
         derivatives_report: str,     # MTF v2.1
         orderbook_report: str,       # v3.7
+        sr_zones_report: str,        # v3.8
         history: str,
         bull_argument: str,
     ) -> str:
@@ -541,6 +593,7 @@ Focus on evidence from the data, not assumptions."""
 
         Borrowed from: TradingAgents/agents/researchers/bear_researcher.py
         TradingAgents v3.3: AI interprets raw data using indicator definitions
+        v3.8: Added S/R zones report
         """
         # User prompt: Only data and task (no indicator definitions)
         prompt = f"""AVAILABLE DATA:
@@ -552,6 +605,8 @@ Focus on evidence from the data, not assumptions."""
 {derivatives_report}
 
 {orderbook_report}
+
+{sr_zones_report}
 
 {sentiment_report}
 
@@ -683,74 +738,47 @@ OUTPUT FORMAT (JSON only, no other text):
         Borrowed from: TradingAgents/agents/risk_mgmt/conservative_debator.py
         Simplified v3.0: Let AI determine SL/TP based on market structure
         v3.7: Added BB position hardcoded checks for support/resistance risk control
+        v3.8: Replaced BB-only check with multi-source S/R Zone check
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
         reasons = proposed_action.get("key_reasons", [])
         risks = proposed_action.get("acknowledged_risks", [])
 
-        # ========== v3.7: BB Position Hardcoded Check ==========
-        # Reference: Previous analysis identified that AI prompts alone are insufficient
-        # for reliable support/resistance risk control. Adding hardcoded checks.
-        if technical_data:
-            bb_upper = technical_data.get('bb_upper')
-            bb_lower = technical_data.get('bb_lower')
+        # ========== v3.8: S/R Zone Hard Control ==========
+        # Uses multi-source S/R zones (BB + SMA + Order Book Walls)
+        # Only blocks when near HIGH strength zones (confluence of multiple sources)
+        if self._sr_zones_cache:
+            hard_control = self._sr_zones_cache.get('hard_control', {})
 
-            # Get configuration (with defaults)
-            risk_config = self.config.get('risk', {})
-            bb_block_enabled = risk_config.get('bb_block_enabled', True)
-            bb_block_threshold_pct = risk_config.get('bb_block_threshold_pct', 2.0)
-            bb_high_confidence_override = risk_config.get('bb_high_confidence_override', False)
+            # Block LONG if too close to HIGH strength resistance
+            if action == "LONG" and hard_control.get('block_long'):
+                reason = hard_control.get('reason', 'Too close to resistance')
+                self.logger.warning(f"⚠️ {reason}")
+                proposed_action["decision"] = "HOLD"
+                proposed_action["confidence"] = "LOW"
+                if isinstance(reasons, list):
+                    reasons = reasons.copy()
+                    reasons.append(f"Blocked: {reason}")
+                if isinstance(risks, list):
+                    risks = risks.copy()
+                    risks.append("Too close to HIGH strength resistance zone")
+                action = "HOLD"
 
-            # Only apply check if BB data is valid and feature is enabled
-            if bb_block_enabled and bb_upper and bb_lower and current_price > 0:
-                # Calculate distance to BB bands as percentage
-                distance_to_upper = (bb_upper - current_price) / current_price * 100
-                distance_to_lower = (current_price - bb_lower) / current_price * 100
-
-                # Allow override for HIGH confidence trades (optional)
-                apply_block = True
-                if bb_high_confidence_override and confidence == "HIGH":
-                    apply_block = False
-                    self.logger.info(f"BB block override: HIGH confidence allows trading near bands")
-
-                if apply_block:
-                    # Block LONG if too close to resistance (BB Upper)
-                    if action == "LONG" and distance_to_upper < bb_block_threshold_pct:
-                        self.logger.warning(
-                            f"⚠️ LONG blocked: Price too close to resistance "
-                            f"(BB Upper {distance_to_upper:.2f}% away, threshold {bb_block_threshold_pct}%)"
-                        )
-                        proposed_action["decision"] = "HOLD"
-                        proposed_action["confidence"] = "LOW"
-                        if isinstance(reasons, list):
-                            reasons = reasons.copy()
-                            reasons.append(
-                                f"Blocked: Price within {distance_to_upper:.1f}% of BB Upper resistance"
-                            )
-                        if isinstance(risks, list):
-                            risks = risks.copy()
-                            risks.append("Too close to resistance level")
-                        action = "HOLD"
-
-                    # Block SHORT if too close to support (BB Lower)
-                    elif action == "SHORT" and distance_to_lower < bb_block_threshold_pct:
-                        self.logger.warning(
-                            f"⚠️ SHORT blocked: Price too close to support "
-                            f"(BB Lower {distance_to_lower:.2f}% away, threshold {bb_block_threshold_pct}%)"
-                        )
-                        proposed_action["decision"] = "HOLD"
-                        proposed_action["confidence"] = "LOW"
-                        if isinstance(reasons, list):
-                            reasons = reasons.copy()
-                            reasons.append(
-                                f"Blocked: Price within {distance_to_lower:.1f}% of BB Lower support"
-                            )
-                        if isinstance(risks, list):
-                            risks = risks.copy()
-                            risks.append("Too close to support level")
-                        action = "HOLD"
-        # ========== End of BB Position Check ==========
+            # Block SHORT if too close to HIGH strength support
+            elif action == "SHORT" and hard_control.get('block_short'):
+                reason = hard_control.get('reason', 'Too close to support')
+                self.logger.warning(f"⚠️ {reason}")
+                proposed_action["decision"] = "HOLD"
+                proposed_action["confidence"] = "LOW"
+                if isinstance(reasons, list):
+                    reasons = reasons.copy()
+                    reasons.append(f"Blocked: {reason}")
+                if isinstance(risks, list):
+                    risks = risks.copy()
+                    risks.append("Too close to HIGH strength support zone")
+                action = "HOLD"
+        # ========== End of S/R Zone Hard Control ==========
 
         prompt = f"""As the Risk Manager, provide final trade parameters.
 
@@ -1283,6 +1311,100 @@ ORDER FLOW (Binance Taker Data):
             return "DERIVATIVES: No data available"
 
         return "\n".join(parts)
+
+    def _calculate_sr_zones(
+        self,
+        current_price: float,
+        technical_data: Optional[Dict[str, Any]],
+        orderbook_data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Calculate S/R Zones from multiple data sources (v3.8).
+
+        Combines:
+        - Bollinger Bands (BB Upper/Lower)
+        - SMA (SMA_50, SMA_200)
+        - Order Book Walls (bid/ask anomalies)
+
+        Parameters
+        ----------
+        current_price : float
+            Current market price
+        technical_data : Dict, optional
+            Technical indicator data containing BB and SMA values
+        orderbook_data : Dict, optional
+            Order book data containing anomalies (walls)
+
+        Returns
+        -------
+        Dict
+            S/R zones result from SRZoneCalculator
+        """
+        if current_price <= 0:
+            return self.sr_calculator._empty_result()
+
+        # Extract BB data
+        bb_data = None
+        if technical_data:
+            bb_upper = technical_data.get('bb_upper')
+            bb_lower = technical_data.get('bb_lower')
+            bb_middle = technical_data.get('bb_middle')
+            if bb_upper and bb_lower:
+                bb_data = {
+                    'upper': bb_upper,
+                    'lower': bb_lower,
+                    'middle': bb_middle,
+                }
+
+        # Extract SMA data
+        sma_data = None
+        if technical_data:
+            sma_50 = technical_data.get('sma_50')
+            sma_200 = technical_data.get('sma_200')
+            if sma_50 or sma_200:
+                sma_data = {
+                    'sma_50': sma_50,
+                    'sma_200': sma_200,
+                }
+
+        # Extract Order Book anomalies (walls)
+        orderbook_anomalies = None
+        if orderbook_data:
+            anomalies = orderbook_data.get('anomalies', {})
+            if anomalies:
+                orderbook_anomalies = {
+                    'bid_anomalies': anomalies.get('bid_anomalies', []),
+                    'ask_anomalies': anomalies.get('ask_anomalies', []),
+                }
+
+        # Calculate S/R zones
+        try:
+            result = self.sr_calculator.calculate(
+                current_price=current_price,
+                bb_data=bb_data,
+                sma_data=sma_data,
+                orderbook_anomalies=orderbook_anomalies,
+            )
+
+            # Log S/R zone detection
+            if result.get('nearest_resistance'):
+                r = result['nearest_resistance']
+                self.logger.debug(
+                    f"S/R Zone: Nearest Resistance ${r.price_center:,.0f} "
+                    f"({r.distance_pct:.1f}% away) [{r.strength}]"
+                )
+            if result.get('nearest_support'):
+                s = result['nearest_support']
+                self.logger.debug(
+                    f"S/R Zone: Nearest Support ${s.price_center:,.0f} "
+                    f"({s.distance_pct:.1f}% away) [{s.strength}]"
+                )
+
+            return result
+
+        except Exception as e:
+            self.logger.warning(f"S/R zone calculation failed: {e}")
+            return self.sr_calculator._empty_result()
 
     def _format_orderbook_report(self, data: Optional[Dict[str, Any]]) -> str:
         """
