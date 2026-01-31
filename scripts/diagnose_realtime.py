@@ -2011,6 +2011,9 @@ print()
 # 模拟 _execute_trade 的检查逻辑 (使用共享模块)
 print("  模拟 _execute_trade 检查:")
 
+# 初始化变量 (避免 NameError in summary mode)
+btc_quantity = 0
+
 # 0. 检查 is_trading_paused (诊断无法检测，需查看服务状态)
 print("  ⚠️ is_trading_paused: 无法检测 (需查看服务日志)")
 
