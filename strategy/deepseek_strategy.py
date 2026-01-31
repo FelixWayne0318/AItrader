@@ -2631,11 +2631,18 @@ class DeepSeekAIStrategy(Strategy):
         """
         try:
             instrument_key = str(self.instrument_id)
-            
+
             # Check if we have trailing stop state for this instrument
             if instrument_key not in self.trailing_stop_state:
                 return
-            
+
+            # Verify position still exists (fix for -2022 ReduceOnly rejection)
+            position = self.cache.position(self.position_id)
+            if position is None or position.is_closed:
+                self.log.debug(f"Position closed, cleaning up trailing_stop_state")
+                del self.trailing_stop_state[instrument_key]
+                return
+
             state = self.trailing_stop_state[instrument_key]
             entry_price = state["entry_price"]
             side = state["side"]
@@ -2745,11 +2752,33 @@ class DeepSeekAIStrategy(Strategy):
             Position side (LONG/SHORT)
         """
         try:
+            # First, verify position still exists (fix for -2022 ReduceOnly rejection)
+            position = self.cache.position(self.position_id)
+            if position is None or position.is_closed:
+                self.log.warning(
+                    f"⚠️ Position no longer exists, skipping trailing stop update. "
+                    f"Cleaning up trailing_stop_state."
+                )
+                # Clean up state
+                if instrument_key in self.trailing_stop_state:
+                    del self.trailing_stop_state[instrument_key]
+                return
+
             state = self.trailing_stop_state[instrument_key]
             old_sl_price = state["current_sl_price"]
             old_sl_order_id = state["sl_order_id"]
             quantity = state["quantity"]
-            
+
+            # Verify quantity matches current position
+            current_qty = float(position.quantity)
+            if abs(current_qty - quantity) > 0.0001:
+                self.log.warning(
+                    f"⚠️ Position quantity changed ({quantity:.4f} → {current_qty:.4f}), "
+                    f"updating trailing stop state"
+                )
+                state["quantity"] = current_qty
+                quantity = current_qty
+
             # Log the update
             if old_sl_price:
                 move_pct = ((new_sl_price - old_sl_price) / old_sl_price) * 100
