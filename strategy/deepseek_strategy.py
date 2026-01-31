@@ -171,14 +171,10 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     network_telegram_message_timeout: float = 30.0  # Telegram 消息发送超时 (秒)
     sentiment_timeout: float = 10.0
 
-    # Multi-Timeframe Configuration (v3.2.9)
+    # Multi-Timeframe Configuration (v3.3)
     multi_timeframe_enabled: bool = False  # Default disabled for backward compatibility
     mtf_trend_sma_period: int = 200        # SMA period for trend layer (1D)
-    mtf_trend_require_above_sma: bool = True
-    mtf_trend_require_macd_positive: bool = True
     mtf_decision_debate_rounds: int = 2    # Debate rounds for decision layer (4H)
-    mtf_execution_rsi_entry_min: int = 35  # RSI entry range for execution layer (15M)
-    mtf_execution_rsi_entry_max: int = 65
 
     # Order Book Configuration (v3.7)
     order_book_enabled: bool = False  # 启用订单簿深度数据 (默认关闭)
@@ -345,14 +341,12 @@ class DeepSeekAIStrategy(Strategy):
                 self.decision_bar_type = BarType.from_str(f"{instrument_str}-4-HOUR-LAST-EXTERNAL")
                 self.execution_bar_type = BarType.from_str(f"{instrument_str}-15-MINUTE-LAST-EXTERNAL")
 
-                # Build MTF config from strategy config
+                # Build MTF config from strategy config (v3.3: removed unused filter configs)
                 mtf_config = {
                     'enabled': True,
                     'trend_layer': {
                         'timeframe': '1d',
                         'sma_period': getattr(config, 'mtf_trend_sma_period', 200),
-                        'require_above_sma': getattr(config, 'mtf_trend_require_above_sma', True),
-                        'require_macd_positive': getattr(config, 'mtf_trend_require_macd_positive', True),
                     },
                     'decision_layer': {
                         'timeframe': '4h',
@@ -360,8 +354,6 @@ class DeepSeekAIStrategy(Strategy):
                     },
                     'execution_layer': {
                         'timeframe': '15m',
-                        'rsi_entry_min': getattr(config, 'mtf_execution_rsi_entry_min', 35),
-                        'rsi_entry_max': getattr(config, 'mtf_execution_rsi_entry_max', 65),
                     }
                 }
 
