@@ -331,8 +331,6 @@ class DeepSeekAIStrategy(Strategy):
         self.decision_bar_type = None
         self.execution_bar_type = None
 
-        # Async request tracking for request_bars (v3.2.8)
-        self._pending_requests: Dict[str, Any] = {}  # layer -> request_id
         self._mtf_trend_initialized = False
         self._mtf_decision_initialized = False
         self._mtf_execution_initialized = False
