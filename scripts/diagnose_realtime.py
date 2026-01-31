@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.13 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.14 (与实盘 100% 一致)
+
+v11.14 更新 - 修复误导性输出问题:
+- 修复 Step 11: HOLD 信号不计算仓位 (与实盘一致)
+- 修复 SL/TP 显示: HOLD 时标注 "(仅供参考，HOLD 不使用)"
+- 修复 Block 状态: 增加触发说明 (已触发/未触发/不适用)
+- 修复版本描述: 架构改为 v3.8 (有 S/R Zone 执行层风控)
+- 修复订单簿冷启动: 无历史数据时添加警告
 
 v11.13 更新 - 添加 S/R Zone 测试 (v3.8):
 - 添加 Step 9.5.5: S/R Zone Calculator 测试
@@ -79,7 +86,7 @@ v11.3 更新 - TradingAgents v3.3 数据标准化:
 - Phase 1: Bull/Bear 辩论 (2 AI calls) - AI 自主分析数据
 - Phase 2: Judge 决策 (1 AI call) - AI 自主评估辩论，做出决策
 - Phase 3: Risk 评估 (1 AI call) - AI 自主设定 SL/TP/仓位
-- 本地风控: 无 (完全由 AI 决策)
+- 本地风控: S/R Zone Block (执行层风控，防止追墙下单)
 - 设计理念: "Autonomy is non-negotiable" - AI 应像人类分析师思考
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
@@ -397,7 +404,7 @@ def create_bar_from_kline(kline: list, bar_type: str) -> MockBar:
 # =============================================================================
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.13')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.14')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -642,7 +649,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.13 (S/R Zone v3.8){mode_str}")
+print(f"  实盘信号诊断工具 v11.14 (S/R Zone v3.8){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1625,7 +1632,9 @@ try:
                 print(f"      Depth change:    {dynamics.get('depth_change_pct', 0):+.2f}%")
                 print(f"      Trend:           {dynamics.get('trend', 'N/A')}")
             else:
+                # v11.14: 冷启动警告
                 print(f"      Dynamics:        首次运行，无历史数据")
+                print(f"      ⚠️ 注意: adaptive OBI 无历史基线，数值可靠性降低")
 
             # v11.12: 修正字段路径 (平面结构，不是嵌套结构)
             bid_near_5 = gradient.get('bid_near_5', 0) * 100  # 转换为百分比
@@ -1706,11 +1715,14 @@ try:
 
     print()
     print("  🎯 Judge 最终决策:")
-    print(f"     Signal: {signal_data.get('signal', 'N/A')}")
+    judge_signal = signal_data.get('signal', 'N/A')
+    print(f"     Signal: {judge_signal}")
     print(f"     Confidence: {signal_data.get('confidence', 'N/A')}")
     print(f"     Risk Level: {signal_data.get('risk_level', 'N/A')}")
-    print(f"     Stop Loss: ${signal_data.get('stop_loss', 0):,.2f}" if signal_data.get('stop_loss') else "     Stop Loss: None")
-    print(f"     Take Profit: ${signal_data.get('take_profit', 0):,.2f}" if signal_data.get('take_profit') else "     Take Profit: None")
+    # v11.14: 标注 HOLD 时 SL/TP 不会使用
+    sltp_suffix = " (仅供参考，HOLD 不使用)" if judge_signal == 'HOLD' else ""
+    print(f"     Stop Loss: ${signal_data.get('stop_loss', 0):,.2f}{sltp_suffix}" if signal_data.get('stop_loss') else "     Stop Loss: None")
+    print(f"     Take Profit: ${signal_data.get('take_profit', 0):,.2f}{sltp_suffix}" if signal_data.get('take_profit') else "     Take Profit: None")
 
     # 显示 Judge 详细决策 (v3.0 简化版 - AI 完全自主决策)
     judge_decision = signal_data.get('judge_decision', {})
@@ -2148,13 +2160,13 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents v3.2 - AI 完全自主决策)")
+print("  诊断总结 (TradingAgents v3.8 - AI 决策 + 执行层风控)")
 print("=" * 70)
 print()
 
-# 显示架构状态 (v3.2: 无本地风控)
-print(f"  📊 架构: TradingAgents v3.2 - AI 完全自主决策")
-print(f"     本地风控: 无 (已移除所有硬编码规则)")
+# 显示架构状态 (v3.8: S/R Zone 执行层风控)
+print(f"  📊 架构: TradingAgents v3.8 - AI 决策 + 执行层风控")
+print(f"     本地风控: S/R Zone Block (执行层，非方向预测)")
 print()
 
 # TradingAgents: Judge 决策即最终决策
@@ -2722,7 +2734,9 @@ if not SUMMARY_MODE:
                                 print(f"          - Depth Change: {dynamics.get('depth_change_pct', 0):+.2f}%")
                                 print(f"          - Trend: {dynamics.get('trend', 'N/A')}")
                             else:
+                                # v11.14: 冷启动警告
                                 print(f"        Dynamics: 首次运行，无历史数据")
+                                print(f"        ⚠️ adaptive OBI 无历史基线，数值可靠性降低")
 
                             # Pressure Gradient (v11.12: 修正字段路径)
                             gradient = ob_result.get('pressure_gradient', {})
@@ -2838,13 +2852,42 @@ if not SUMMARY_MODE:
                 print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
                 print(f"           Sources: {', '.join(zone.sources)}")
 
-            # 显示硬风控状态
+            # v11.14: 显示硬风控状态，增加触发说明
             hard_control = sr_result.get('hard_control', {})
-            print(f"     ⚠️ 硬风控:")
-            print(f"        Block LONG: {hard_control.get('block_long', False)}")
-            print(f"        Block SHORT: {hard_control.get('block_short', False)}")
+            block_long = hard_control.get('block_long', False)
+            block_short = hard_control.get('block_short', False)
+            ai_signal = signal_data.get('signal', 'HOLD') if 'signal_data' in dir() else 'UNKNOWN'
+
+            print(f"     ⚠️ 硬风控状态:")
+
+            # Block LONG 状态和触发情况
+            if block_long:
+                if ai_signal == 'BUY':
+                    print(f"        Block LONG: True → ✅ 已触发 (AI 输出 BUY 被阻止)")
+                elif ai_signal == 'HOLD':
+                    print(f"        Block LONG: True (AI 输出 HOLD，未触发)")
+                else:
+                    print(f"        Block LONG: True (AI 输出 {ai_signal}，不适用)")
+            else:
+                print(f"        Block LONG: False")
+
+            # Block SHORT 状态和触发情况
+            if block_short:
+                if ai_signal == 'SELL':
+                    print(f"        Block SHORT: True → ✅ 已触发 (AI 输出 SELL 被阻止)")
+                elif ai_signal == 'HOLD':
+                    print(f"        Block SHORT: True (AI 输出 HOLD，未触发)")
+                else:
+                    print(f"        Block SHORT: True (AI 输出 {ai_signal}，不适用)")
+            else:
+                print(f"        Block SHORT: False")
+
             if hard_control.get('reason'):
                 print(f"        Reason: {hard_control.get('reason')}")
+
+            # 补充说明
+            if block_long or block_short:
+                print(f"        📝 说明: Block 仅在 AI 输出对应方向时触发")
 
             print("     ✅ S/R Zone Calculator 测试完成")
 
@@ -3151,44 +3194,65 @@ if not SUMMARY_MODE:
         print(f"     RSI 极值乘数: {calc_config['rsi_extreme_multiplier']}x (RSI>{calc_config['rsi_extreme_upper']} 或 <{calc_config['rsi_extreme_lower']} 时缩小)")
         print()
 
-        # 使用当前信号数据计算仓位
-        print("  📊 当前信号仓位计算:")
-        quantity, calc_details = calculate_position_size(
-            signal_data=signal_data,
-            price_data=price_data,
-            technical_data=technical_data,
-            config=calc_config,
-            logger=None
-        )
+        # v11.14: 检查信号类型，HOLD 时不计算仓位 (与实盘一致)
+        current_signal = signal_data.get('signal', 'HOLD')
 
-        print(f"     输入信号: {signal_data.get('signal', 'N/A')}")
-        print(f"     输入信心: {signal_data.get('confidence', 'N/A')}")
-        print(f"     当前价格: ${current_price:,.2f}")
-        print(f"     当前趋势: {technical_data.get('overall_trend', 'N/A')}")
-        print(f"     当前 RSI: {technical_data.get('rsi', 50):.2f}")
-        print()
-        print(f"     计算结果:")
-        print(f"     • 目标仓位: {quantity:.6f} BTC")
-        print(f"     • 等值 USDT: ${quantity * current_price:,.2f}")
-        print(f"     • 占 equity 比例: {(quantity * current_price / calc_config['equity']) * 100:.2f}%")
-        print()
+        if current_signal == 'HOLD':
+            # HOLD 信号：实盘直接 return，不计算仓位
+            print("  📊 当前信号仓位计算:")
+            print(f"     输入信号: HOLD")
+            print(f"     输入信心: {signal_data.get('confidence', 'N/A')}")
+            print()
+            print(f"     ℹ️ HOLD 信号不计算仓位 (与实盘一致)")
+            print(f"     → 实盘逻辑: if signal == 'HOLD': return")
+            print(f"     → 目标仓位: N/A")
+            print()
 
-        # 计算详情
-        if calc_details:
-            print(f"     计算详情:")
-            for key, value in calc_details.items():
-                if isinstance(value, float):
-                    print(f"     • {key}: {value:.4f}")
-                else:
-                    print(f"     • {key}: {value}")
+            # 仅展示配置参考，不实际计算
+            print("  📊 不同信心级别仓位参考 (假设 BUY/SELL 信号时):")
+            for conf_level in ['HIGH', 'MEDIUM', 'LOW']:
+                test_signal = {'signal': 'BUY', 'confidence': conf_level}
+                q, _ = calculate_position_size(test_signal, price_data, technical_data, calc_config)
+                print(f"     {conf_level}: {q:.6f} BTC (${q * current_price:,.2f})")
+        else:
+            # BUY/SELL 信号：正常计算仓位
+            print("  📊 当前信号仓位计算:")
+            quantity, calc_details = calculate_position_size(
+                signal_data=signal_data,
+                price_data=price_data,
+                technical_data=technical_data,
+                config=calc_config,
+                logger=None
+            )
 
-        # 模拟不同信心级别的仓位
-        print()
-        print("  📊 不同信心级别仓位对比:")
-        for conf_level in ['HIGH', 'MEDIUM', 'LOW']:
-            test_signal = {'signal': signal_data.get('signal', 'BUY'), 'confidence': conf_level}
-            q, _ = calculate_position_size(test_signal, price_data, technical_data, calc_config)
-            print(f"     {conf_level}: {q:.6f} BTC (${q * current_price:,.2f})")
+            print(f"     输入信号: {current_signal}")
+            print(f"     输入信心: {signal_data.get('confidence', 'N/A')}")
+            print(f"     当前价格: ${current_price:,.2f}")
+            print(f"     当前趋势: {technical_data.get('overall_trend', 'N/A')}")
+            print(f"     当前 RSI: {technical_data.get('rsi', 50):.2f}")
+            print()
+            print(f"     计算结果:")
+            print(f"     • 目标仓位: {quantity:.6f} BTC")
+            print(f"     • 等值 USDT: ${quantity * current_price:,.2f}")
+            print(f"     • 占 equity 比例: {(quantity * current_price / calc_config['equity']) * 100:.2f}%")
+            print()
+
+            # 计算详情
+            if calc_details:
+                print(f"     计算详情:")
+                for key, value in calc_details.items():
+                    if isinstance(value, float):
+                        print(f"     • {key}: {value:.4f}")
+                    else:
+                        print(f"     • {key}: {value}")
+
+            # 模拟不同信心级别的仓位
+            print()
+            print("  📊 不同信心级别仓位对比:")
+            for conf_level in ['HIGH', 'MEDIUM', 'LOW']:
+                test_signal = {'signal': current_signal, 'confidence': conf_level}
+                q, _ = calculate_position_size(test_signal, price_data, technical_data, calc_config)
+                print(f"     {conf_level}: {q:.6f} BTC (${q * current_price:,.2f})")
 
         print()
         print("  ✅ 仓位计算测试完成")
@@ -3524,16 +3588,18 @@ if not SUMMARY_MODE:
     print("  ┃                        AI 决策结果                                  ┃")
     print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
     print()
-    print(f"  原始信号: {signal_data.get('signal', 'N/A')}")
+    summary_signal = signal_data.get('signal', 'N/A')
+    print(f"  原始信号: {summary_signal}")
     print(f"  最终信号: {final_signal}")
     print(f"  信心等级: {signal_data.get('confidence', 'N/A')}")
     print(f"  风险等级: {signal_data.get('risk_level', 'N/A')}")
     judge_decision = signal_data.get('judge_decision', {})
     print(f"  胜出方:   {judge_decision.get('winning_side', 'N/A')}")
-    # v3.0: AI 完全自主决策，无确认计数框架
     print()
-    print(f"  AI 止损: ${signal_data.get('stop_loss', 0):,.2f}" if signal_data.get('stop_loss') else "  AI 止损: N/A")
-    print(f"  AI 止盈: ${signal_data.get('take_profit', 0):,.2f}" if signal_data.get('take_profit') else "  AI 止盈: N/A")
+    # v11.14: 标注 HOLD 时 SL/TP 不会使用
+    sltp_note = " (仅供参考，HOLD 不使用)" if summary_signal == 'HOLD' else ""
+    print(f"  AI 止损: ${signal_data.get('stop_loss', 0):,.2f}{sltp_note}" if signal_data.get('stop_loss') else "  AI 止损: N/A")
+    print(f"  AI 止盈: ${signal_data.get('take_profit', 0):,.2f}{sltp_note}" if signal_data.get('take_profit') else "  AI 止盈: N/A")
     print()
     print(f"  关键理由:")
     key_reasons = judge_decision.get('key_reasons', [])
@@ -3555,8 +3621,8 @@ if not SUMMARY_MODE:
     print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
     print()
 
-    print(f"  架构: TradingAgents v3.2 - AI 完全自主决策")
-    print(f"  本地风控: 无 (已移除所有硬编码规则)")
+    print(f"  架构: TradingAgents v3.8 - AI 决策 + 执行层风控")
+    print(f"  本地风控: S/R Zone Block (执行层，非方向预测)")
     print()
     print(f"  AI 决策: {signal_data.get('signal')} (Confidence: {signal_data.get('confidence')})")
     print(f"  Winning Side: {signal_data.get('judge_decision', {}).get('winning_side', 'N/A')}")
