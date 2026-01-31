@@ -227,34 +227,39 @@ class TelegramBot:
 
 ✅ *Features Enabled*:
 • Automatic SL/TP
-• OCO Management
+• Bracket Orders (NautilusTrader Built-in)
 • Trailing Stop Loss
-• Partial Take Profit
-• Redis Persistence
+• S/R Zone Hard Control (v3.8)
+• TradingAgents AI Decision
 
 🎯 Strategy is now monitoring the market...
 """
     
     def format_trade_signal(self, signal_data: Dict[str, Any]) -> str:
-        """Format trading signal notification."""
+        """Format trading signal notification (v2.0 - TradingAgents enhanced)."""
         signal = signal_data.get('signal', 'UNKNOWN')
         confidence = signal_data.get('confidence', 'UNKNOWN')
         price = signal_data.get('price', 0.0)
         timestamp = signal_data.get('timestamp', datetime.now())
-        
+
         # Technical indicators
         rsi = signal_data.get('rsi', 0.0)
         macd = signal_data.get('macd', 0.0)
         support = signal_data.get('support', 0.0)
         resistance = signal_data.get('resistance', 0.0)
-        
+
         # AI reasoning
         reasoning = signal_data.get('reasoning', 'No reasoning provided')
-        
+
+        # TradingAgents v3.8: Judge decision and debate info
+        winning_side = signal_data.get('winning_side', '')
+        debate_summary = signal_data.get('debate_summary', '')
+
         # Signal emoji
         signal_emoji = "🟢" if signal == "BUY" else "🔴" if signal == "SELL" else "⚪"
-        
-        return f"""
+
+        # Build message
+        msg = f"""
 {signal_emoji} *Trading Signal Detected*
 
 *Signal*: {signal}
@@ -271,6 +276,18 @@ class TelegramBot:
 🤖 *AI Analysis*:
 {reasoning[:200]}{'...' if len(reasoning) > 200 else ''}
 """
+
+        # Add Judge decision if available (TradingAgents v3.8)
+        if winning_side:
+            side_emoji = "🐂" if winning_side.upper() == "BULL" else "🐻" if winning_side.upper() == "BEAR" else "⚖️"
+            msg += f"\n{side_emoji} *Judge Decision*: {winning_side} wins"
+
+        # Add debate summary if available
+        if debate_summary:
+            safe_summary = self.escape_markdown(debate_summary[:150])
+            msg += f"\n📊 *Debate*: {safe_summary}{'...' if len(debate_summary) > 150 else ''}"
+
+        return msg
     
     def format_order_fill(self, order_data: Dict[str, Any]) -> str:
         """Format order fill notification."""
@@ -294,7 +311,7 @@ class TelegramBot:
 """
     
     def format_position_update(self, position_data: Dict[str, Any]) -> str:
-        """Format position update notification."""
+        """Format position update notification (v2.0 - with SL/TP info)."""
         action = position_data.get('action', 'UPDATE')  # OPENED, CLOSED, UPDATE
         side = position_data.get('side', 'UNKNOWN')
         quantity = position_data.get('quantity', 0.0)
@@ -302,7 +319,11 @@ class TelegramBot:
         current_price = position_data.get('current_price', 0.0)
         pnl = position_data.get('pnl', 0.0)
         pnl_pct = position_data.get('pnl_pct', 0.0)
-        
+
+        # Risk management info (v2.0)
+        sl_price = position_data.get('sl_price')
+        tp_price = position_data.get('tp_price')
+
         if action == "OPENED":
             emoji = "📈" if side == "LONG" else "📉"
             title = "Position Opened"
@@ -312,9 +333,9 @@ class TelegramBot:
         else:
             emoji = "📊"
             title = "Position Update"
-        
+
         pnl_emoji = "🟢" if pnl >= 0 else "🔴"
-        
+
         message = f"""
 {emoji} *{title}*
 
@@ -323,14 +344,23 @@ class TelegramBot:
 *Entry Price*: ${entry_price:,.2f}
 *Current Price*: ${current_price:,.2f}
 """
-        
+
+        # Add SL/TP for OPENED positions (v2.0)
+        if action == "OPENED":
+            if sl_price:
+                sl_pct = ((sl_price / entry_price) - 1) * 100 if entry_price > 0 else 0
+                message += f"🛡️ *Stop Loss*: ${sl_price:,.2f} ({sl_pct:+.2f}%)\n"
+            if tp_price:
+                tp_pct = ((tp_price / entry_price) - 1) * 100 if entry_price > 0 else 0
+                message += f"🎯 *Take Profit*: ${tp_price:,.2f} ({tp_pct:+.2f}%)\n"
+
         if action == "CLOSED" or action == "UPDATE":
             message += f"""
 {pnl_emoji} *P&L*: ${pnl:,.2f} ({pnl_pct:+.2f}%)
 """
-        
+
         message += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
-        
+
         return message
     
     def format_error_alert(self, error_data: Dict[str, Any]) -> str:
@@ -404,9 +434,9 @@ class TelegramBot:
 
     def format_heartbeat_message(self, heartbeat_data: Dict[str, Any]) -> str:
         """
-        Format heartbeat status message (v2.3 - Simplified).
+        Format heartbeat status message (v3.0 - TradingAgents enhanced).
 
-        统一格式，无论是否有持仓都显示相同结构，只是数据不同。
+        统一格式，包含 v3.6/3.7/3.8 指标数据。
         """
         # 安全获取所有值，确保不为 None
         signal = heartbeat_data.get('signal') or 'PENDING'
@@ -422,6 +452,28 @@ class TelegramBot:
         entry_price = heartbeat_data.get('entry_price') or 0
         position_size = heartbeat_data.get('position_size') or 0
         position_pnl_pct = heartbeat_data.get('position_pnl_pct') or 0
+
+        # v3.6 MTF Order Flow (optional)
+        order_flow = heartbeat_data.get('order_flow') or {}
+        buy_ratio = order_flow.get('buy_ratio')
+        cvd_trend = order_flow.get('cvd_trend')
+
+        # v3.6 Derivatives (optional)
+        derivatives = heartbeat_data.get('derivatives') or {}
+        funding_rate = derivatives.get('funding_rate')
+        oi_change_pct = derivatives.get('oi_change_pct')
+
+        # v3.7 Order Book (optional)
+        order_book = heartbeat_data.get('order_book') or {}
+        weighted_obi = order_book.get('weighted_obi')
+        obi_trend = order_book.get('obi_trend')
+
+        # v3.8 S/R Zone (optional)
+        sr_zone = heartbeat_data.get('sr_zone') or {}
+        nearest_support = sr_zone.get('nearest_support')
+        nearest_resistance = sr_zone.get('nearest_resistance')
+        block_long = sr_zone.get('block_long', False)
+        block_short = sr_zone.get('block_short', False)
 
         # Signal emoji
         signal_emoji = {'BUY': '🟢', 'SELL': '🔴', 'HOLD': '⚪'}.get(signal, '❓')
@@ -443,6 +495,59 @@ class TelegramBot:
         msg += f"💵 价格: ${price:,.2f}\n"
         msg += f"📈 RSI: {rsi:.1f}\n"
         msg += f"🎯 信号: {signal_emoji} {signal} ({confidence})\n"
+
+        # v3.8 S/R Zone Hard Control (if available)
+        if nearest_support is not None or nearest_resistance is not None:
+            msg += f"━━━━━━━━━━━━━━━━\n"
+            msg += f"🎯 *S/R Zone (v3.8)*\n"
+            if nearest_support is not None:
+                dist_sup = ((price - nearest_support) / price * 100) if price > 0 else 0
+                msg += f"  支撑: ${nearest_support:,.2f} ({dist_sup:+.2f}%)\n"
+            if nearest_resistance is not None:
+                dist_res = ((nearest_resistance - price) / price * 100) if price > 0 else 0
+                msg += f"  阻力: ${nearest_resistance:,.2f} (+{dist_res:.2f}%)\n"
+            # Block status
+            if block_long or block_short:
+                block_str = []
+                if block_long:
+                    block_str.append("🚫 LONG")
+                if block_short:
+                    block_str.append("🚫 SHORT")
+                msg += f"  风控: {' | '.join(block_str)}\n"
+
+        # v3.6 Order Flow (if available)
+        if buy_ratio is not None or cvd_trend:
+            msg += f"━━━━━━━━━━━━━━━━\n"
+            msg += f"📊 *订单流 (v3.6)*\n"
+            if buy_ratio is not None:
+                ratio_emoji = "🟢" if buy_ratio > 0.55 else "🔴" if buy_ratio < 0.45 else "⚪"
+                msg += f"  买入比: {ratio_emoji} {buy_ratio*100:.1f}%\n"
+            if cvd_trend:
+                trend_emoji = "📈" if cvd_trend == "RISING" else "📉" if cvd_trend == "FALLING" else "➖"
+                msg += f"  CVD: {trend_emoji} {cvd_trend}\n"
+
+        # v3.6 Derivatives (if available)
+        if funding_rate is not None or oi_change_pct is not None:
+            if buy_ratio is None and cvd_trend is None:
+                msg += f"━━━━━━━━━━━━━━━━\n"
+            msg += f"📉 *衍生品 (v3.6)*\n"
+            if funding_rate is not None:
+                fr_emoji = "🔴" if funding_rate > 0.01 else "🟢" if funding_rate < -0.01 else "⚪"
+                msg += f"  资金费: {fr_emoji} {funding_rate*100:.4f}%\n"
+            if oi_change_pct is not None:
+                oi_emoji = "📈" if oi_change_pct > 5 else "📉" if oi_change_pct < -5 else "➖"
+                msg += f"  OI变化: {oi_emoji} {oi_change_pct:+.2f}%\n"
+
+        # v3.7 Order Book (if available)
+        if weighted_obi is not None:
+            msg += f"━━━━━━━━━━━━━━━━\n"
+            msg += f"📖 *订单簿 (v3.7)*\n"
+            obi_emoji = "🟢" if weighted_obi > 0.1 else "🔴" if weighted_obi < -0.1 else "⚪"
+            msg += f"  OBI: {obi_emoji} {weighted_obi:+.3f}\n"
+            if obi_trend:
+                trend_emoji = "📈" if obi_trend == "STRENGTHENING" else "📉" if obi_trend == "WEAKENING" else "➖"
+                msg += f"  趋势: {trend_emoji} {obi_trend}\n"
+
         msg += f"━━━━━━━━━━━━━━━━\n"
         msg += f"💰 持仓: {pos_emoji}\n"
         msg += f"📍 入场: ${entry_price:,.2f}\n"
