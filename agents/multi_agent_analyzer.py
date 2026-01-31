@@ -1318,7 +1318,7 @@ Reason: {status.get('message', 'Unknown')}
         dynamics = data.get('dynamics', {})
         samples_count = dynamics.get('samples_count', 0) if dynamics else 0
 
-        parts.append("DYNAMICS (vs previous snapshot):")
+        parts.append("⭐ DYNAMICS (vs previous snapshot):")
         if samples_count > 0:
             obi_change = dynamics.get('obi_change')
             obi_change_pct = dynamics.get('obi_change_pct')
@@ -1354,7 +1354,7 @@ Reason: {status.get('message', 'Unknown')}
             bid_conc = gradient.get('bid_concentration', 'N/A')
             ask_conc = gradient.get('ask_concentration', 'N/A')
 
-            parts.append("PRESSURE GRADIENT:")
+            parts.append("⭐ PRESSURE GRADIENT:")
             parts.append(f"  Bid: {bid_near_5:.0f}% near-5, {bid_near_10:.0f}% near-10, {bid_near_20:.0f}% near-20 [{bid_conc} concentration]")
             parts.append(f"  Ask: {ask_near_5:.0f}% near-5, {ask_near_10:.0f}% near-10, {ask_near_20:.0f}% near-20 [{ask_conc} concentration]")
             parts.append("")
