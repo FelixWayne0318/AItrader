@@ -31,6 +31,9 @@ class AIDataAssembler:
         coinalyze_client,
         sentiment_client,
         binance_derivatives_client=None,
+        binance_orderbook_client=None,
+        orderbook_processor=None,
+        config: Dict = None,
         logger: logging.Logger = None,
     ):
         """
@@ -48,12 +51,21 @@ class AIDataAssembler:
             情绪数据客户端
         binance_derivatives_client : BinanceDerivativesClient, optional
             Binance 衍生品客户端 (大户数据等) - v3.0 新增
+        binance_orderbook_client : BinanceOrderBookClient, optional
+            Binance 订单簿客户端 - v3.7 新增
+        orderbook_processor : OrderBookProcessor, optional
+            订单簿处理器 - v3.7 新增
+        config : Dict, optional
+            配置字典 (用于获取配置参数)
         """
         self.binance_klines = binance_kline_client
         self.order_flow = order_flow_processor
         self.coinalyze = coinalyze_client
         self.sentiment = sentiment_client
         self.binance_derivatives = binance_derivatives_client
+        self.binance_orderbook = binance_orderbook_client
+        self.orderbook_processor = orderbook_processor
+        self.config = config or {}
         self.logger = logger or logging.getLogger(__name__)
 
         # OI 变化率计算缓存
@@ -134,7 +146,26 @@ class AIDataAssembler:
             except Exception as e:
                 self.logger.warning(f"⚠️ Binance derivatives fetch error: {e}")
 
-        # Step 7: 组装最终数据
+        # Step 7: 获取订单簿数据 - v3.7 新增
+        orderbook_data = None
+        if self.binance_orderbook and self.orderbook_processor:
+            try:
+                raw_orderbook = self.binance_orderbook.get_order_book(symbol=symbol)
+                if raw_orderbook:
+                    # 获取波动率用于自适应调整
+                    volatility = self._get_recent_volatility(technical_data)
+                    orderbook_data = self.orderbook_processor.process(
+                        order_book=raw_orderbook,
+                        current_price=current_price,
+                        volatility=volatility,
+                    )
+                else:
+                    orderbook_data = self._no_data_orderbook("API returned None")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Order book fetch error: {e}")
+                orderbook_data = self._no_data_orderbook(str(e))
+
+        # Step 8: 组装最终数据
         return {
             "price": {
                 "current": current_price,
@@ -145,11 +176,14 @@ class AIDataAssembler:
             "derivatives": derivatives,
             "sentiment": sentiment_data,
             "binance_derivatives": binance_derivatives_data,  # v3.0 新增
+            "order_book": orderbook_data,  # v3.7 新增
             "current_position": position_data or {},
             "_metadata": {
                 "kline_source": "binance_raw" if raw_klines else "none",
                 "coinalyze_enabled": self.coinalyze.is_enabled(),
                 "binance_derivatives_enabled": self.binance_derivatives is not None,
+                "orderbook_enabled": self.binance_orderbook is not None,
+                "orderbook_status": orderbook_data.get("_status", {}).get("code") if orderbook_data else "DISABLED",
             },
         }
 
@@ -477,6 +511,148 @@ class AIDataAssembler:
         parts.append(f"  - Coinalyze: {'enabled' if metadata.get('coinalyze_enabled') else 'disabled'}")
         parts.append(f"  - Binance Derivatives: {'enabled' if metadata.get('binance_derivatives_enabled') else 'disabled'}")
 
+        # =========================================================================
+        # 7. 订单簿深度数据 (v3.7 新增)
+        # =========================================================================
+        order_book = data.get("order_book")
+        if order_book:
+            status = order_book.get("_status", {})
+            status_code = status.get("code", "UNKNOWN")
+
+            parts.append("\nORDER BOOK DEPTH (Binance, 100 levels):")
+            parts.append(f"  Status: {status_code}")
+
+            # v2.0: 处理 NO_DATA 状态
+            if status_code == "NO_DATA":
+                parts.append(f"  Reason: {status.get('message', 'Unknown')}")
+                parts.append("  [All metrics unavailable - do not assume neutral market]")
+            else:
+                # OBI
+                obi = order_book.get("obi", {})
+                if obi:
+                    parts.append(f"  Simple OBI: {obi.get('simple', 0):+.3f}")
+                    decay = obi.get('decay_used', 0.8)
+                    parts.append(f"  Weighted OBI: {obi.get('adaptive_weighted', 0):+.3f} (decay={decay})")
+                    parts.append(
+                        f"  Bid Volume: ${obi.get('bid_volume_usd', 0)/1e6:.1f}M "
+                        f"({obi.get('bid_volume_btc', 0):.1f} BTC)"
+                    )
+                    parts.append(
+                        f"  Ask Volume: ${obi.get('ask_volume_usd', 0)/1e6:.1f}M "
+                        f"({obi.get('ask_volume_btc', 0):.1f} BTC)"
+                    )
+
+                # v2.0: Dynamics
+                dynamics = order_book.get("dynamics", {})
+                if dynamics and dynamics.get("samples_count", 0) > 0:
+                    parts.append("  DYNAMICS (vs previous):")
+                    if dynamics.get("obi_change") is not None:
+                        parts.append(
+                            f"    OBI Change: {dynamics['obi_change']:+.4f} "
+                            f"({dynamics.get('obi_change_pct', 0):+.1f}%)"
+                        )
+                    if dynamics.get("bid_depth_change_pct") is not None:
+                        parts.append(f"    Bid Depth: {dynamics['bid_depth_change_pct']:+.1f}%")
+                    if dynamics.get("ask_depth_change_pct") is not None:
+                        parts.append(f"    Ask Depth: {dynamics['ask_depth_change_pct']:+.1f}%")
+                    parts.append(f"    Trend: {dynamics.get('trend', 'N/A')}")
+
+                # v2.0: Pressure Gradient
+                gradient = order_book.get("pressure_gradient", {})
+                if gradient:
+                    parts.append("  PRESSURE GRADIENT:")
+                    parts.append(
+                        f"    Bid: {gradient.get('bid_near_5', 0):.0%} near-5, "
+                        f"{gradient.get('bid_near_10', 0):.0%} near-10 "
+                        f"[{gradient.get('bid_concentration', 'N/A')}]"
+                    )
+                    parts.append(
+                        f"    Ask: {gradient.get('ask_near_5', 0):.0%} near-5, "
+                        f"{gradient.get('ask_near_10', 0):.0%} near-10 "
+                        f"[{gradient.get('ask_concentration', 'N/A')}]"
+                    )
+
+                # 异常
+                anomalies = order_book.get("anomalies", {})
+                if anomalies and anomalies.get("has_significant"):
+                    threshold = anomalies.get("threshold_used", 3.0)
+                    reason = anomalies.get("threshold_reason", "normal")
+                    parts.append(f"  ANOMALIES (threshold={threshold}x, {reason}):")
+                    for a in anomalies.get("bid_anomalies", [])[:3]:  # 最多显示3个
+                        parts.append(
+                            f"    Bid @ ${a['price']:,.0f}: {a['volume_btc']:.0f} BTC "
+                            f"({a['multiplier']:.1f}x)"
+                        )
+                    for a in anomalies.get("ask_anomalies", [])[:3]:  # 最多显示3个
+                        parts.append(
+                            f"    Ask @ ${a['price']:,.0f}: {a['volume_btc']:.0f} BTC "
+                            f"({a['multiplier']:.1f}x)"
+                        )
+
+                # v2.0: 滑点 (含置信度)
+                liquidity = order_book.get("liquidity", {})
+                if liquidity:
+                    parts.append(f"  Spread: {liquidity.get('spread_pct', 0):.3f}%")
+                    slippage = liquidity.get("slippage", {})
+                    if slippage.get("buy_1.0_btc"):
+                        s = slippage["buy_1.0_btc"]
+                        if s.get("estimated") is not None:
+                            parts.append(
+                                f"  Slippage (Buy 1 BTC): {s['estimated']:.3f}% "
+                                f"[conf={s['confidence']:.0%}, range={s['range'][0]:.3f}%-{s['range'][1]:.3f}%]"
+                            )
+
         parts.append("\n" + "=" * 50)
 
         return "\n".join(parts)
+
+    def _get_recent_volatility(self, technical_data: Dict) -> float:
+        """
+        获取近期波动率 (用于自适应参数)
+
+        Parameters
+        ----------
+        technical_data : Dict
+            技术指标数据
+
+        Returns
+        -------
+        float
+            相对波动率 (ATR / price)
+        """
+        atr = technical_data.get("atr", 0)
+        price = technical_data.get("price", 1)
+        if price > 0:
+            return atr / price  # 相对波动率
+        return 0.02  # 默认 2%
+
+    def _no_data_orderbook(self, reason: str) -> Dict:
+        """
+        返回 NO_DATA 状态订单簿 (v2.0 Critical)
+
+        避免 AI 将缺失数据误解为中性市场
+
+        Parameters
+        ----------
+        reason : str
+            数据不可用的原因
+
+        Returns
+        -------
+        Dict
+            NO_DATA 状态字典
+        """
+        import time
+        return {
+            "obi": None,
+            "dynamics": None,
+            "pressure_gradient": None,
+            "depth_distribution": None,
+            "anomalies": None,
+            "liquidity": None,
+            "_status": {
+                "code": "NO_DATA",
+                "message": f"Order book data unavailable: {reason}",
+                "timestamp": int(time.time() * 1000),
+            },
+        }

@@ -1061,6 +1061,89 @@ COINALYZE_API_KEY=your_api_key_here  # 获取: https://coinalyze.net/
 - 评估报告: [docs/MTF_EVALUATION_AND_FIXES.md](docs/MTF_EVALUATION_AND_FIXES.md)
 - TradingAgents 框架: https://github.com/TauricResearch/TradingAgents
 
+#### 订单簿深度 (Order Book Depth) 配置 v3.7 🆕
+
+**功能状态**: ⚠️ **已实施，默认禁用** (`order_book.enabled: false`)
+
+订单簿深度数据提供盘口流动性和不平衡指标，帮助 AI 理解市场微观结构。
+
+##### 核心指标 (v2.0)
+
+| 指标 | 说明 | 版本 |
+|------|------|------|
+| **Simple OBI** | 买卖压力对比 | v1.0 |
+| **Weighted OBI** | 靠近盘口权重更高 | v1.0 |
+| **Adaptive OBI** | 基于波动率动态调整衰减因子 | ⭐ v2.0 |
+| **Dynamics** | 追踪 OBI/深度变化趋势 | ⭐ v2.0 Critical |
+| **Pressure Gradient** | 近档/远档压力梯度 | ⭐ v2.0 |
+| **Slippage (含置信度)** | 执行 N BTC 的预期滑点 + 不确定性 | ⭐ v2.0 |
+| **Dynamic Anomaly** | 基于波动率自适应阈值检测大单 | ⭐ v2.0 |
+
+##### 配置示例
+
+```yaml
+# configs/base.yaml
+order_book:
+  enabled: false                      # 启用订单簿数据 (Phase 2 测试后启用)
+
+  api:
+    limit: 100                        # 深度档位数
+    timeout: 10
+    max_retries: 2
+
+  processing:
+    weighted_obi:
+      base_decay: 0.8                 # 基础衰减因子
+      adaptive: true                  # 启用自适应衰减
+      volatility_factor: 0.1          # 波动率影响因子
+
+    anomaly_detection:
+      base_threshold: 3.0             # 基础异常阈值 (倍数)
+      dynamic: true                   # 启用动态调整
+
+    slippage_amounts:
+      - 0.1                           # 0.1 BTC
+      - 0.5                           # 0.5 BTC
+      - 1.0                           # 1.0 BTC
+
+    history:
+      size: 10                        # 缓存最近 N 次快照
+```
+
+##### v2.0 关键改进
+
+| 改进项 | 说明 | 重要性 |
+|--------|------|--------|
+| **NO_DATA 状态** | 避免 AI 误判中性市场 | ⭐ Critical |
+| **变化率指标** | dynamics 段，追踪 OBI/深度变化趋势 | ⭐ Critical |
+| **自适应加权 OBI** | 基于波动率调整衰减因子 | Recommended |
+| **Pressure Gradient** | 近档/远档压力梯度 | Recommended |
+| **滑点不确定性** | 滑点估算加入置信度和范围 | Recommended |
+
+##### 诊断工具
+
+```bash
+# 测试订单簿功能
+python3 scripts/diagnose_orderbook.py
+
+# 自定义参数
+python3 scripts/diagnose_orderbook.py --symbol ETHUSDT --limit 50 --volatility 0.03
+```
+
+##### 相关文档
+
+- 完整实施方案 v2.0: [docs/ORDER_BOOK_IMPLEMENTATION_PLAN.md](docs/ORDER_BOOK_IMPLEMENTATION_PLAN.md)
+- 专家评估得分: **8.58/10** (强烈推荐实施)
+- 参考论文: Cont et al. (2014), Cartea et al. (2015)
+
+##### 启用流程 (Phase 2)
+
+1. **测试**: `python3 scripts/diagnose_orderbook.py` 验证功能
+2. **回测**: 在开发环境运行一段时间，观察 AI 决策质量
+3. **A/B 测试**: 对比有/无订单簿数据的 Sharpe Ratio
+4. **启用**: `configs/base.yaml` 中设置 `order_book.enabled: true`
+5. **监控**: 观察数据质量和性能影响
+
 ### Telegram 命令
 
 | 命令 | 说明 |
