@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.10 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.11 (与实盘 100% 一致)
+
+v11.11 更新 - 添加订单簿深度测试 (v3.7):
+- 添加 Step 9.5: 订单簿客户端和处理器测试
+- 添加订单簿配置检查 (order_book.enabled)
+- 更新 AIDataAssembler 测试包含 order_book 数据
+- 添加 OBI、Dynamics、Pressure Gradient、Slippage 指标显示
+- AI 输入数据验证新增订单簿完整数据
 
 v11.10 更新 - 修复 MTF 数据加载和 BB Position 显示:
 - 添加 fetch_binance_klines() 和 create_bar_from_kline() 辅助函数
@@ -380,7 +387,7 @@ def create_bar_from_kline(kline: list, bar_type: str) -> MockBar:
 # =============================================================================
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.10')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.11')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -1547,6 +1554,75 @@ try:
         print("  [5] derivatives_report: None (未获取)")
     print()
 
+    # ========== 订单簿数据 (v11.11 新增) ==========
+    # 尝试获取订单簿数据用于显示
+    orderbook_display_data = None
+    try:
+        # 读取配置
+        ob_cfg = base_config.get('order_book', {}) if 'base_config' in dir() else {}
+        ob_enabled_for_display = ob_cfg.get('enabled', False)
+
+        if ob_enabled_for_display:
+            from utils.binance_orderbook_client import BinanceOrderBookClient
+            from utils.orderbook_processor import OrderBookProcessor
+
+            ob_api_cfg = ob_cfg.get('api', {})
+            ob_proc_cfg = ob_cfg.get('processing', {})
+
+            ob_client = BinanceOrderBookClient(
+                timeout=ob_api_cfg.get('timeout', 10),
+                max_retries=ob_api_cfg.get('max_retries', 2),
+                logger=None
+            )
+            ob_processor = OrderBookProcessor(config=ob_proc_cfg, logger=None)
+
+            raw_ob = ob_client.get_order_book(symbol="BTCUSDT", limit=ob_api_cfg.get('limit', 100))
+            if raw_ob:
+                orderbook_display_data = ob_processor.process(
+                    order_book=raw_ob,
+                    current_price=current_price,
+                    volatility=0.02
+                )
+    except Exception:
+        pass
+
+    if orderbook_display_data:
+        status = orderbook_display_data.get('_status', {})
+        status_code = status.get('code', 'UNKNOWN')
+        print(f"  [5.5] order_book_data (订单簿深度 v3.7) [状态: {status_code}]:")
+        if status_code == 'OK':
+            obi = orderbook_display_data.get('obi', {})
+            dynamics = orderbook_display_data.get('dynamics', {})
+            gradient = orderbook_display_data.get('pressure_gradient', {})
+            liquidity = orderbook_display_data.get('liquidity', {})
+
+            print(f"      OBI (simple):    {obi.get('simple', 0):+.4f}")
+            print(f"      OBI (weighted):  {obi.get('weighted', 0):+.4f}")
+            print(f"      OBI (adaptive):  {obi.get('adaptive_weighted', 0):+.4f}")
+
+            if dynamics.get('samples_count', 0) > 0:
+                print(f"      OBI change:      {dynamics.get('obi_change', 0):+.4f}")
+                print(f"      Depth change:    {dynamics.get('depth_change_pct', 0):+.2f}%")
+                print(f"      Trend:           {dynamics.get('trend', 'N/A')}")
+            else:
+                print(f"      Dynamics:        首次运行，无历史数据")
+
+            bid_grad = gradient.get('bid', {})
+            ask_grad = gradient.get('ask', {})
+            print(f"      Bid pressure:    near_5={bid_grad.get('near_5_pct', 0):.1f}%, concentration={bid_grad.get('concentration', 'N/A')}")
+            print(f"      Ask pressure:    near_5={ask_grad.get('near_5_pct', 0):.1f}%, concentration={ask_grad.get('concentration', 'N/A')}")
+
+            print(f"      Spread:          {liquidity.get('spread_pct', 0):.4f}%")
+        else:
+            print(f"      reason:          {status.get('reason', 'Unknown')}")
+    else:
+        ob_cfg_check = base_config.get('order_book', {}) if 'base_config' in dir() else {}
+        if ob_cfg_check.get('enabled', False):
+            print("  [5.5] order_book_data: 获取失败")
+        else:
+            print("  [5.5] order_book_data: 未启用 (order_book.enabled = false)")
+    print()
+
     # ========== MTF 多时间框架数据 (v11.8 新增) ==========
     # 获取 4H 决策层数据
     mtf_decision_data = technical_data.get('mtf_decision_layer')
@@ -2199,6 +2275,7 @@ if not SUMMARY_MODE:
         base_yaml_path = project_root / "configs" / "base.yaml"
         order_flow_enabled = False
         coinalyze_enabled = False
+        order_book_enabled = False  # v11.11: 订单簿配置
 
         if base_yaml_path.exists():
             with open(base_yaml_path) as f:
@@ -2207,6 +2284,9 @@ if not SUMMARY_MODE:
             order_flow_enabled = order_flow.get('enabled', False)
             coinalyze_cfg = order_flow.get('coinalyze', {})  # 正确路径: order_flow.coinalyze
             coinalyze_enabled = coinalyze_cfg.get('enabled', False)
+            # v11.11: 读取订单簿配置
+            order_book_cfg = base_config.get('order_book', {})
+            order_book_enabled = order_book_cfg.get('enabled', False)
 
         if not order_flow_enabled:
             print("  ℹ️ Order Flow 未启用，跳过 MTF 组件测试")
@@ -2423,11 +2503,35 @@ if not SUMMARY_MODE:
 
                 # 初始化所有组件
                 sentiment_client = SentimentDataFetcher()
+
+                # v11.11: 初始化订单簿组件 (如已启用)
+                ob_client_for_assembler = None
+                ob_processor_for_assembler = None
+                if order_book_enabled:
+                    try:
+                        from utils.binance_orderbook_client import BinanceOrderBookClient
+                        from utils.orderbook_processor import OrderBookProcessor
+                        ob_api_cfg = order_book_cfg.get('api', {})
+                        ob_proc_cfg = order_book_cfg.get('processing', {})
+                        ob_client_for_assembler = BinanceOrderBookClient(
+                            timeout=ob_api_cfg.get('timeout', 10),
+                            max_retries=ob_api_cfg.get('max_retries', 2),
+                            logger=None
+                        )
+                        ob_processor_for_assembler = OrderBookProcessor(
+                            config=ob_proc_cfg,
+                            logger=None
+                        )
+                    except ImportError:
+                        pass
+
                 assembler = AIDataAssembler(
                     binance_kline_client=kline_client,
                     order_flow_processor=processor,
                     coinalyze_client=coinalyze_client,
                     sentiment_client=sentiment_client,
+                    binance_orderbook_client=ob_client_for_assembler,  # v11.11
+                    orderbook_processor=ob_processor_for_assembler,    # v11.11
                     logger=None
                 )
                 print("     ✅ AIDataAssembler 导入成功")
@@ -2457,6 +2561,7 @@ if not SUMMARY_MODE:
                 print(f"        - 订单流: {assembled_data.get('order_flow') is not None}")
                 print(f"        - 衍生品: {assembled_data.get('derivatives') is not None}")
                 print(f"        - 情绪数据: {assembled_data.get('sentiment') is not None}")
+                print(f"        - 订单簿: {assembled_data.get('order_book') is not None}")  # v11.11
 
                 if assembled_data.get('order_flow'):
                     of = assembled_data['order_flow']
@@ -2472,6 +2577,15 @@ if not SUMMARY_MODE:
                     print(f"        - Derivatives OI Change: {oi_change if oi_change else 'N/A (首次)'}%")
                     print(f"        - Derivatives Funding Rate: {funding_pct:.4f}%")
 
+                # v11.11: 显示订单簿数据
+                if assembled_data.get('order_book'):
+                    ob = assembled_data['order_book']
+                    ob_status = ob.get('_status', {}).get('code', 'UNKNOWN')
+                    print(f"        - Order Book Status: {ob_status}")
+                    if ob_status == 'OK':
+                        obi = ob.get('obi', {})
+                        print(f"        - Order Book OBI (adaptive): {obi.get('adaptive_weighted', 0):+.4f}")
+
             except ImportError as e:
                 print(f"     ❌ 无法导入 AIDataAssembler: {e}")
             except Exception as e:
@@ -2479,8 +2593,136 @@ if not SUMMARY_MODE:
                 import traceback
                 traceback.print_exc()
 
+            print()
+
+            # ================================================================
+            # 9.5 测试 Order Book (订单簿深度) - v11.11 新增
+            # ================================================================
+            print("  [9.5] 测试 Order Book (v3.7)...")
+            if not order_book_enabled:
+                print("     ℹ️ Order Book 未启用 (order_book.enabled = false)")
+                print("     → 若要启用，修改 configs/base.yaml: order_book.enabled: true")
+            else:
+                try:
+                    from utils.binance_orderbook_client import BinanceOrderBookClient
+                    from utils.orderbook_processor import OrderBookProcessor
+
+                    # 读取订单簿配置
+                    ob_api_cfg = order_book_cfg.get('api', {})
+                    ob_proc_cfg = order_book_cfg.get('processing', {})
+
+                    # 初始化客户端
+                    ob_client = BinanceOrderBookClient(
+                        timeout=ob_api_cfg.get('timeout', 10),
+                        max_retries=ob_api_cfg.get('max_retries', 2),
+                        logger=None
+                    )
+                    print("     ✅ BinanceOrderBookClient 导入成功")
+
+                    # 初始化处理器
+                    ob_processor = OrderBookProcessor(
+                        config=ob_proc_cfg,
+                        logger=None
+                    )
+                    print("     ✅ OrderBookProcessor 导入成功")
+
+                    # 获取订单簿数据
+                    ob_limit = ob_api_cfg.get('limit', 100)
+                    print(f"     📊 获取 {symbol_clean} 订单簿 (limit={ob_limit})...")
+
+                    raw_orderbook = ob_client.get_order_book(
+                        symbol=symbol_clean,
+                        limit=ob_limit
+                    )
+
+                    if raw_orderbook:
+                        bids = raw_orderbook.get('bids', [])
+                        asks = raw_orderbook.get('asks', [])
+                        print(f"     ✅ 订单簿获取成功: {len(bids)} bids, {len(asks)} asks")
+
+                        # 显示盘口
+                        if bids and asks:
+                            best_bid = float(bids[0][0])
+                            best_ask = float(asks[0][0])
+                            spread = best_ask - best_bid
+                            spread_pct = (spread / best_bid) * 100
+                            print(f"        盘口: Bid ${best_bid:,.2f} | Ask ${best_ask:,.2f}")
+                            print(f"        Spread: ${spread:.2f} ({spread_pct:.4f}%)")
+
+                        # 处理订单簿
+                        print(f"     📊 处理订单簿数据...")
+                        # 使用诊断中已获取的价格作为当前价格
+                        current_price = snapshot_price
+                        # 估算波动率 (简化: 使用默认值)
+                        volatility = 0.02
+
+                        ob_result = ob_processor.process(
+                            order_book=raw_orderbook,
+                            current_price=current_price,
+                            volatility=volatility
+                        )
+
+                        if ob_result:
+                            status = ob_result.get('_status', {})
+                            status_code = status.get('code', 'UNKNOWN')
+                            print(f"     ✅ 订单簿处理完成 [状态: {status_code}]")
+
+                            # OBI 指标
+                            obi = ob_result.get('obi', {})
+                            print(f"        OBI:")
+                            print(f"          - Simple: {obi.get('simple', 0):+.4f}")
+                            print(f"          - Weighted: {obi.get('weighted', 0):+.4f}")
+                            print(f"          - Adaptive: {obi.get('adaptive_weighted', 0):+.4f}")
+
+                            # Dynamics (变化率)
+                            dynamics = ob_result.get('dynamics', {})
+                            if dynamics.get('samples_count', 0) > 0:
+                                print(f"        Dynamics:")
+                                print(f"          - OBI Change: {dynamics.get('obi_change', 0):+.4f}")
+                                print(f"          - Depth Change: {dynamics.get('depth_change_pct', 0):+.2f}%")
+                                print(f"          - Trend: {dynamics.get('trend', 'N/A')}")
+                            else:
+                                print(f"        Dynamics: 首次运行，无历史数据")
+
+                            # Pressure Gradient
+                            gradient = ob_result.get('pressure_gradient', {})
+                            bid_grad = gradient.get('bid', {})
+                            ask_grad = gradient.get('ask', {})
+                            print(f"        Pressure Gradient:")
+                            print(f"          - Bid: near_5={bid_grad.get('near_5_pct', 0):.1f}%, near_10={bid_grad.get('near_10_pct', 0):.1f}%")
+                            print(f"          - Ask: near_5={ask_grad.get('near_5_pct', 0):.1f}%, near_10={ask_grad.get('near_10_pct', 0):.1f}%")
+
+                            # 流动性
+                            liquidity = ob_result.get('liquidity', {})
+                            print(f"        Liquidity:")
+                            print(f"          - Spread: {liquidity.get('spread_pct', 0):.4f}%")
+                            slippage = liquidity.get('slippage', {})
+                            if slippage:
+                                for amount, data in slippage.items():
+                                    if isinstance(data, dict):
+                                        pct = data.get('pct', 0)
+                                        conf = data.get('confidence_pct', 0)
+                                        print(f"          - Slippage ({amount}): {pct:.4f}% [conf={conf:.0f}%]")
+
+                            # 异常检测
+                            anomalies = ob_result.get('anomalies', {})
+                            bid_anom = anomalies.get('bid_anomalies', [])
+                            ask_anom = anomalies.get('ask_anomalies', [])
+                            print(f"        Anomalies: {len(bid_anom)} bid, {len(ask_anom)} ask")
+                        else:
+                            print("     ❌ 订单簿处理返回 None")
+                    else:
+                        print("     ❌ 订单簿获取失败")
+
+                except ImportError as e:
+                    print(f"     ❌ 无法导入订单簿模块: {e}")
+                except Exception as e:
+                    print(f"     ❌ Order Book 测试失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+
         print()
-        print("  ✅ MTF v2.1 组件集成测试完成")
+        print("  ✅ MTF v2.1 + Order Book 组件集成测试完成")
 
     except Exception as e:
         print(f"  ❌ MTF 组件测试失败: {e}")
