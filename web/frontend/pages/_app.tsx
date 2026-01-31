@@ -5,14 +5,19 @@ import Head from "next/head";
 import useSWR from "swr";
 import "@/app/globals.css";
 
+// Font configuration with fallback to prevent render-blocking
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-sans",
+  display: "swap", // Prevent font from blocking render
+  fallback: ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],
 });
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
+  display: "swap",
+  fallback: ["Consolas", "Monaco", "monospace"],
 });
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
@@ -36,14 +41,43 @@ export default function App({ Component, pageProps }: AppProps) {
     }
   }, [branding?.favicon_url]);
 
+  // Safely get font variables (fallback to empty string if font fails)
+  const fontClasses = [
+    inter?.variable || "",
+    jetbrainsMono?.variable || "",
+    "font-sans antialiased min-h-screen bg-background text-foreground"
+  ].filter(Boolean).join(" ");
+
   return (
     <>
       <Head>
         <title>{branding?.site_name || "AlgVex"} - AI Trading</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {/* Critical CSS fallback - ensures basic layout even if main CSS fails */}
+        <style dangerouslySetInnerHTML={{ __html: `
+          /* Critical CSS Fallback */
+          :root {
+            --background: 222 47% 5%;
+            --foreground: 210 40% 98%;
+          }
+          body {
+            margin: 0;
+            background-color: hsl(222 47% 5%);
+            color: hsl(210 40% 98%);
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+          }
+          /* Hide elements that should only show on specific breakpoints */
+          @media (max-width: 1023px) {
+            .lg\\:flex { display: none !important; }
+          }
+          @media (min-width: 1024px) {
+            .lg\\:hidden { display: none !important; }
+            .lg\\:flex { display: flex !important; }
+          }
+          .hidden { display: none !important; }
+        ` }} />
       </Head>
-      <main
-        className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased min-h-screen`}
-      >
+      <main className={fontClasses}>
         <Component {...pageProps} />
       </main>
     </>
