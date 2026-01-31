@@ -29,7 +29,7 @@ v11.6 更新 - 修复 calculate_technical_sltp 调用签名:
 
 v11.5 更新 - 完整流程可视化:
 - 添加 AI Prompt 结构验证 (显示 System/User Prompt 内容)
-- 添加 MTF 状态估算 (基于当前数据估算 RISK_ON/OFF, ALLOW_LONG/SHORT)
+- 添加 MTF 状态估算 (基于当前数据估算趋势方向, ALLOW_LONG/SHORT)
 - 修复订单提交模拟类型错误 (safe_float 转换)
 - 添加 Funding Rate 差异原因标注 (Binance 8h vs Coinalyze 聚合)
 - 添加错误恢复机制验证 ([9.4/10] 新增步骤)
@@ -103,7 +103,7 @@ v11.6:
 
 v11.5:
 - 添加 AI Prompt 结构验证 (System/User Prompt 分离检查)
-- 添加 MTF 状态估算 (RISK_ON/OFF, ALLOW_LONG/SHORT)
+- 添加 MTF 状态估算 (趋势方向估算, ALLOW_LONG/SHORT)
 - 添加 safe_float() 类型转换
 - 添加 Funding Rate 差异标注 (Binance 8h vs Coinalyze)
 - 添加错误恢复机制验证
@@ -758,11 +758,9 @@ try:
                 try:
                     from indicators.multi_timeframe_manager import (
                         MultiTimeframeManager,
-                        RiskState,
                         DecisionState
                     )
                     print("  ✅ MultiTimeframeManager 导入成功")
-                    print(f"     RiskState: {[s.name for s in RiskState]}")
                     print(f"     DecisionState: {[s.name for s in DecisionState]}")
                 except ImportError as e:
                     print(f"  ⚠️ MultiTimeframeManager 导入失败: {e}")
@@ -812,10 +810,10 @@ if not SUMMARY_MODE and mtf_enabled:
     print("-" * 70)
 
     try:
-        from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState, DecisionState
+        from indicators.multi_timeframe_manager import MultiTimeframeManager, DecisionState
 
-        # 检查 MTF 管理器的关键方法
-        mtf_methods = ['route_bar', 'is_initialized', 'get_risk_state', 'get_decision_state', 'evaluate_risk_state']
+        # 检查 MTF 管理器的关键方法 (v3.1: 移除了 RiskState 相关方法)
+        mtf_methods = ['route_bar', 'is_initialized', 'get_decision_state', 'set_decision_state']
         missing_methods = []
         for method in mtf_methods:
             if not hasattr(MultiTimeframeManager, method):
@@ -841,11 +839,11 @@ if not SUMMARY_MODE and mtf_enabled:
         print("     → 查看服务日志检查初始化状态:")
         print("       journalctl -u nautilus-trader | grep -i 'mtf\\|timeframe\\|initialized'")
 
-        # 检查 RiskState 和 DecisionState 枚举值
+        # 检查 DecisionState 枚举值 (v3.1: RiskState 已移除)
         print()
         print("  📋 MTF 状态枚举检查:")
-        print(f"     RiskState 值: {[s.name for s in RiskState]}")
         print(f"     DecisionState 值: {[s.name for s in DecisionState]}")
+        print("     (v3.1: RiskState 已移除，交易决策完全由 AI 控制)")
 
         # 检查预取配置
         print()
@@ -1759,15 +1757,15 @@ print()
 print("  📊 MTF 状态估算 (基于当前数据，非实盘实时状态):")
 sma_200 = technical_data.get('sma_200', 0)
 if sma_200 > 0:
-    # 趋势层 (1D): 基于 SMA_200
+    # 趋势层 (1D): 基于 SMA_200 (仅供参考，实际决策由 AI 完成)
     price_vs_sma200 = current_price / sma_200 - 1 if sma_200 > 0 else 0
     if current_price > sma_200:
-        risk_state = "RISK_ON"
-        risk_reason = f"价格 > SMA_200 ({price_vs_sma200*100:+.2f}%)"
+        trend_estimate = "BULLISH"
+        trend_reason = f"价格 > SMA_200 ({price_vs_sma200*100:+.2f}%)"
     else:
-        risk_state = "RISK_OFF"
-        risk_reason = f"价格 < SMA_200 ({price_vs_sma200*100:+.2f}%)"
-    print(f"     趋势层 (1D): {risk_state} - {risk_reason}")
+        trend_estimate = "BEARISH"
+        trend_reason = f"价格 < SMA_200 ({price_vs_sma200*100:+.2f}%)"
+    print(f"     趋势层 (1D): {trend_estimate} - {trend_reason} (供 AI 参考)")
 
     # 决策层 (4H): 基于 SMA 排列和 RSI
     sma_5 = technical_data.get('sma_5', 0)
@@ -1795,8 +1793,7 @@ else:
 
 print()
 print("  ⚠️ 注意: 以上为基于当前数据的估算值")
-print("     实盘 MTF 状态需要历史 K 线初始化后才能获取真实值")
-print("     查看实盘状态: journalctl -u nautilus-trader | grep 'RISK_ON\\|RISK_OFF'")
+print("     v3.1: 所有交易决策由 AI (MultiAgent) 完成，本地不做趋势判断")
 print()
 print("  ✅ TradingAgents v3.4 架构验证完成")
 print()
@@ -2687,7 +2684,7 @@ if not SUMMARY_MODE:
             print(f"  [路由规则] Bar 类型 → 处理层:")
             print(f"     • {trend_tf.upper()} bar → 趋势层 (_handle_trend_bar)")
             print(f"       - 更新 SMA_200, MACD")
-            print(f"       - 计算 RISK_ON/RISK_OFF 状态")
+            print(f"       - 收集趋势数据供 AI 分析 (v3.1: 不做本地判断)")
             print(f"       - 设置 _mtf_trend_initialized = True")
             print()
             print(f"     • {decision_tf.upper()} bar → 决策层 (_handle_decision_bar)")

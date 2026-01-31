@@ -22,12 +22,6 @@ from nautilus_trader.model.data import Bar, BarType
 from indicators.technical_manager import TechnicalIndicatorManager
 
 
-class RiskState(Enum):
-    """趋势层风险状态"""
-    RISK_ON = "RISK_ON"       # 可交易
-    RISK_OFF = "RISK_OFF"     # 观望
-
-
 class DecisionState(Enum):
     """决策层方向状态"""
     ALLOW_LONG = "ALLOW_LONG"   # 允许做多
@@ -37,12 +31,16 @@ class DecisionState(Enum):
 
 class MultiTimeframeManager:
     """
-    多时间框架管理器 v3.0
+    多时间框架管理器 v3.1
 
     管理三层时间框架:
-    - trend_layer (1D): Risk-On/Risk-Off 判断
-    - decision_layer (4H): 方向决策
+    - trend_layer (1D): 提供趋势数据给 AI 分析
+    - decision_layer (4H): 方向决策 (AI 控制)
     - execution_layer (5M/15M): 入场执行
+
+    v3.1 更新:
+    - 移除本地 RISK_ON/OFF 判断，交由 AI 决策
+    - 保留趋势层数据收集功能
     """
 
     def __init__(
@@ -84,10 +82,8 @@ class MultiTimeframeManager:
             self.trend_manager = None
             self.decision_manager = None
             self.execution_manager = None
-            self._risk_state = RiskState.RISK_OFF
             self._decision_state = DecisionState.WAIT
             self._decision_confidence = "LOW"
-            self._risk_state_updated = None
             self._decision_updated = None
             self._last_trend_price = 0.0
             self._last_decision_price = 0.0
@@ -99,10 +95,7 @@ class MultiTimeframeManager:
         self.decision_manager: Optional[TechnicalIndicatorManager] = None
         self.execution_manager: Optional[TechnicalIndicatorManager] = None
 
-        # 状态缓存
-        self._risk_state: RiskState = RiskState.RISK_OFF
-        self._risk_state_updated: Optional[datetime] = None
-
+        # 状态缓存 (决策由 AI 控制，本地仅存储)
         self._decision_state: DecisionState = DecisionState.WAIT
         self._decision_confidence: str = "LOW"
         self._decision_updated: Optional[datetime] = None
@@ -290,150 +283,6 @@ class MultiTimeframeManager:
             self.logger.warning(f"Unknown bar type: {bar.bar_type}")
             return "unknown"
 
-    def evaluate_risk_state(self, current_price: float) -> RiskState:
-        """
-        评估趋势层风险状态 (Risk-On / Risk-Off)
-
-        使用 MACD 替代 ADX (ADX 未在 TechnicalIndicatorManager 实现)
-
-        Parameters
-        ----------
-        current_price : float
-            当前价格
-
-        Returns
-        -------
-        RiskState
-            RISK_ON (可交易) 或 RISK_OFF (观望)
-        """
-        if not self.trend_manager or not self.trend_manager.is_initialized():
-            self.logger.warning("趋势层未初始化，返回 RISK_OFF")
-            return RiskState.RISK_OFF
-
-        trend_config = self.config.get('trend_layer', {})
-        tech_data = self.trend_manager.get_technical_data(current_price)
-
-        # 规则 1: 价格在 SMA_200 上方
-        sma_period = trend_config.get('sma_period', 200)
-        sma_value = tech_data.get(f'sma_{sma_period}', current_price)
-        price_above_sma = current_price > sma_value
-
-        # 规则 2: MACD > 0 (替代 ADX，判断趋势方向)
-        macd_value = tech_data.get('macd', 0)
-        macd_positive = macd_value > 0
-
-        # 综合判断
-        require_above_sma = trend_config.get('require_above_sma', True)
-        require_macd_positive = trend_config.get('require_macd_positive', True)
-
-        conditions_met = True
-        if require_above_sma:
-            conditions_met = conditions_met and price_above_sma
-        if require_macd_positive:
-            conditions_met = conditions_met and macd_positive
-
-        if conditions_met:
-            self._risk_state = RiskState.RISK_ON
-        else:
-            self._risk_state = RiskState.RISK_OFF
-
-        self._risk_state_updated = datetime.now(timezone.utc)
-
-        self.logger.info(
-            f"[1D] 趋势层评估: {self._risk_state.value} "
-            f"(price={current_price:.2f}, SMA_{sma_period}={sma_value:.2f}, MACD={macd_value:.2f})"
-        )
-
-        return self._risk_state
-
-    def get_risk_state(self) -> RiskState:
-        """获取当前风险状态 (带缓存)"""
-        return self._risk_state
-
-    def evaluate_directional_permissions(self, current_price: float) -> Dict[str, Any]:
-        """
-        评估方向性权限 (替代二元 RISK_ON/OFF 开关)
-
-        🔒 Fix E21: 工业化实盘系统的硬风控边界
-        - 本地提供市场特征 (SMA, MACD)
-        - AI 负责战术决策 (具体信号和信心度)
-        - 本地硬风控保护资金安全 (熊市禁止做多，牛市可选禁做空)
-        - 与 TradingAgents 研究框架略有不同 (实盘需要 24/7 自动化硬边界)
-
-        Parameters
-        ----------
-        current_price : float
-            当前价格
-
-        Returns
-        -------
-        Dict[str, Any]
-            {
-                "allow_long": bool,      # 是否允许做多
-                "allow_short": bool,     # 是否允许做空
-                "regime": str,           # 市场状态 (BULL/BEAR/SIDEWAYS)
-                "position_multiplier": float,  # 仓位乘数 (0.5-1.5)
-                "reason": str            # 判断理由
-            }
-        """
-        if not self.trend_manager or not self.trend_manager.is_initialized():
-            self.logger.warning("趋势层未初始化，返回保守权限")
-            return {
-                "allow_long": False,
-                "allow_short": False,
-                "regime": "UNKNOWN",
-                "position_multiplier": 0.0,
-                "reason": "趋势层数据不足"
-            }
-
-        trend_config = self.config.get('trend_layer', {})
-        tech_data = self.trend_manager.get_technical_data(current_price)
-
-        # 获取技术指标
-        sma_period = trend_config.get('sma_period', 200)
-        sma_value = tech_data.get(f'sma_{sma_period}', current_price)
-        macd_value = tech_data.get('macd', 0)
-
-        price_above_sma = current_price > sma_value
-        macd_positive = macd_value > 0
-
-        # 方向性权限判断
-        if price_above_sma and macd_positive:
-            # 牛市：价格在 SMA 上方，MACD 为正
-            permissions = {
-                "allow_long": True,
-                "allow_short": True,  # 允许短线做空
-                "regime": "BULL",
-                "position_multiplier": 1.2,  # 牛市增加仓位
-                "reason": f"牛市 (价格 {current_price:.2f} > SMA{sma_period} {sma_value:.2f}, MACD {macd_value:.2f} > 0)"
-            }
-        elif not price_above_sma and not macd_positive:
-            # 熊市：价格在 SMA 下方，MACD 为负
-            permissions = {
-                "allow_long": False,  # 禁止做多
-                "allow_short": True,  # ✅ 允许做空（核心修复）
-                "regime": "BEAR",
-                "position_multiplier": 1.0,  # 熊市做空正常仓位
-                "reason": f"熊市 (价格 {current_price:.2f} < SMA{sma_period} {sma_value:.2f}, MACD {macd_value:.2f} < 0)"
-            }
-        else:
-            # 震荡：价格和 MACD 方向不一致
-            permissions = {
-                "allow_long": True,   # 震荡市允许双向
-                "allow_short": True,
-                "regime": "SIDEWAYS",
-                "position_multiplier": 0.7,  # 震荡市降低仓位
-                "reason": f"震荡 (价格与 SMA/MACD 方向不一致)"
-            }
-
-        self.logger.info(
-            f"[1D] 方向性权限评估: {permissions['regime']} | "
-            f"做多={permissions['allow_long']}, 做空={permissions['allow_short']} | "
-            f"仓位乘数={permissions['position_multiplier']:.1f}"
-        )
-
-        return permissions
-
     def get_decision_state(self) -> DecisionState:
         """获取当前决策状态"""
         return self._decision_state
@@ -534,8 +383,6 @@ class MultiTimeframeManager:
         """获取多时间框架状态摘要"""
         return {
             "enabled": self.enabled,
-            "risk_state": self._risk_state.value if self._risk_state else "UNKNOWN",
-            "risk_state_updated": self._risk_state_updated.isoformat() if self._risk_state_updated else None,
             "decision_state": self._decision_state.value if self._decision_state else "UNKNOWN",
             "decision_confidence": self._decision_confidence,
             "decision_updated": self._decision_updated.isoformat() if self._decision_updated else None,

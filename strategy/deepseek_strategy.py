@@ -316,7 +316,7 @@ class DeepSeekAIStrategy(Strategy):
 
         if self.mtf_enabled:
             try:
-                from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState, DecisionState
+                from indicators.multi_timeframe_manager import MultiTimeframeManager, DecisionState
 
                 # Build BarType objects for each layer
                 instrument_str = str(self.instrument_id)
@@ -352,7 +352,6 @@ class DeepSeekAIStrategy(Strategy):
                     logger=self.log,
                 )
                 # Store enums for use in on_timer (avoid import in hot path)
-                self._RiskState = RiskState
                 self._DecisionState = DecisionState
                 self.log.info(f"✅ MTF Manager initialized: trend={self.trend_bar_type}, decision={self.decision_bar_type}, exec={self.execution_bar_type}")
             except Exception as e:
@@ -1661,17 +1660,7 @@ class DeepSeekAIStrategy(Strategy):
             except Exception:
                 pass
 
-            # 3. 获取趋势状态
-            trend_status = 'N/A'
-            try:
-                if self.mtf_enabled and self.mtf_manager:
-                    trend_result = self.mtf_manager.check_trend_filter(cached_price or 0)
-                    if trend_result:
-                        trend_status = 'RISK_ON' if trend_result.get('risk_on', False) else 'RISK_OFF'
-            except Exception:
-                pass
-
-            # 4. 获取账户余额
+            # 3. 获取账户余额
             equity = getattr(self, 'equity', 0) or 0
 
             # 5. 计算运行时长
@@ -1723,7 +1712,6 @@ class DeepSeekAIStrategy(Strategy):
                 'position_size': position_size,
                 'timer_count': getattr(self, '_timer_count', 0),
                 'equity': equity,
-                'trend_status': trend_status,
                 'uptime_str': uptime_str,
             })
             self.telegram_bot.send_message_sync(heartbeat_msg)
