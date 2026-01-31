@@ -210,23 +210,46 @@ class TelegramCommandHandler:
             await self._send_response(update, f"❌ Error: {str(e)}")
     
     async def cmd_close(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /close command - close current position."""
+        """Handle /close command - show confirmation before closing position."""
         self.logger.info("Received /close command")
 
         if not self._is_authorized(update):
             await self._send_response(update, "❌ Unauthorized")
             return
 
+        # First get position info to show what will be closed
         try:
-            result = self.strategy_callback('close', {})
-
-            if result.get('success'):
-                await self._send_response(update, result.get('message', '✅ Position closed'))
+            pos_result = self.strategy_callback('position', {})
+            position_info = ""
+            if pos_result.get('success') and pos_result.get('data', {}).get('has_position'):
+                data = pos_result.get('data', {})
+                side = data.get('side', 'N/A')
+                qty = data.get('quantity', 0)
+                pnl = data.get('unrealized_pnl', 0)
+                pnl_pct = data.get('pnl_pct', 0)
+                pnl_emoji = "🟢" if pnl >= 0 else "🔴"
+                position_info = f"\n\n当前持仓: {side} {qty:.4f} BTC\n盈亏: {pnl_emoji} ${pnl:,.2f} ({pnl_pct:+.2f}%)"
             else:
-                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
-        except Exception as e:
-            self.logger.error(f"Error handling /close: {e}")
-            await self._send_response(update, f"❌ Error: {str(e)}")
+                position_info = "\n\n⚠️ 当前无持仓"
+        except Exception:
+            position_info = ""
+
+        # Show confirmation with inline buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ 确认平仓", callback_data='confirm_close'),
+                InlineKeyboardButton("❌ 取消", callback_data='cancel_close'),
+            ],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            f"⚠️ *确认平仓？*\n\n"
+            f"此操作将立即以市价平掉所有持仓。{position_info}\n\n"
+            f"请确认操作：",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
 
     async def cmd_orders(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /orders command - view open orders."""
@@ -367,6 +390,43 @@ class TelegramCommandHandler:
         callback_data = query.data
         self.logger.info(f"Received callback: {callback_data}")
 
+        # Handle close confirmation specially
+        if callback_data == 'confirm_close':
+            try:
+                result = self.strategy_callback('close', {})
+                if result.get('success'):
+                    await query.edit_message_text(
+                        "✅ *平仓成功*\n\n" + result.get('message', '持仓已平仓'),
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await query.edit_message_text(f"❌ 平仓失败: {result.get('error', 'Unknown')}")
+            except Exception as e:
+                self.logger.error(f"Error executing close: {e}")
+                await query.edit_message_text(f"❌ 平仓失败: {str(e)}")
+            return
+
+        if callback_data == 'cancel_close':
+            await query.edit_message_text("ℹ️ 平仓操作已取消")
+            return
+
+        # Handle menu close button specially (from /menu -> 平仓)
+        if callback_data == 'cmd_close':
+            # Show confirmation instead of executing directly
+            keyboard = [
+                [
+                    InlineKeyboardButton("✅ 确认平仓", callback_data='confirm_close'),
+                    InlineKeyboardButton("❌ 取消", callback_data='cancel_close'),
+                ],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "⚠️ *确认平仓？*\n\n此操作将立即以市价平掉所有持仓。\n\n请确认操作：",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            return
+
         # Map callback data to commands
         command_map = {
             'cmd_status': 'status',
@@ -376,7 +436,6 @@ class TelegramCommandHandler:
             'cmd_risk': 'risk',
             'cmd_pause': 'pause',
             'cmd_resume': 'resume',
-            'cmd_close': 'close',
         }
 
         command = command_map.get(callback_data)

@@ -296,6 +296,9 @@ class DeepSeekAIStrategy(Strategy):
 
         # Track trailing stop state for each position
         self.trailing_stop_state: Dict[str, Dict[str, Any]] = {}
+        # Throttle trailing stop notifications (5 minutes = 300 seconds)
+        self._last_trailing_stop_notify_time: float = 0.0
+        self._trailing_stop_notify_throttle: float = 300.0  # seconds
         # Format: {
         #   "instrument_id": {
         #       "entry_price": float,
@@ -2832,23 +2835,34 @@ class DeepSeekAIStrategy(Strategy):
 
             self.log.info(f"✅ New trailing SL order submitted @ ${new_sl_price:,.2f}")
 
-            # Send Telegram notification for trailing stop update
+            # Send Telegram notification for trailing stop update (with throttle)
             if self.telegram_bot and self.enable_telegram and old_sl_price:
-                try:
-                    entry_price = state.get("entry_price", 0)
-                    profit_pct = ((current_price - entry_price) / entry_price) if entry_price > 0 else 0
-                    if side == "SHORT":
-                        profit_pct = -profit_pct  # SHORT profit is inverse
+                import time
+                current_time = time.time()
+                time_since_last = current_time - self._last_trailing_stop_notify_time
 
-                    ts_msg = self.telegram_bot.format_trailing_stop_update({
-                        'old_sl_price': old_sl_price,
-                        'new_sl_price': new_sl_price,
-                        'current_price': current_price,
-                        'profit_pct': profit_pct,
-                    })
-                    self.telegram_bot.send_message_sync(ts_msg)
-                except Exception as te:
-                    self.log.warning(f"Failed to send trailing stop notification: {te}")
+                if time_since_last >= self._trailing_stop_notify_throttle:
+                    try:
+                        entry_price = state.get("entry_price", 0)
+                        profit_pct = ((current_price - entry_price) / entry_price) if entry_price > 0 else 0
+                        if side == "SHORT":
+                            profit_pct = -profit_pct  # SHORT profit is inverse
+
+                        ts_msg = self.telegram_bot.format_trailing_stop_update({
+                            'old_sl_price': old_sl_price,
+                            'new_sl_price': new_sl_price,
+                            'current_price': current_price,
+                            'profit_pct': profit_pct,
+                        })
+                        self.telegram_bot.send_message_sync(ts_msg)
+                        self._last_trailing_stop_notify_time = current_time
+                    except Exception as te:
+                        self.log.warning(f"Failed to send trailing stop notification: {te}")
+                else:
+                    self.log.debug(
+                        f"Trailing stop notification throttled "
+                        f"({time_since_last:.0f}s < {self._trailing_stop_notify_throttle:.0f}s)"
+                    )
 
             # Note: OCO relationship is handled automatically by NautilusTrader
             # When the new SL is submitted, it will be linked to the existing TP orders
