@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.11 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.12 (与实盘 100% 一致)
+
+v11.12 更新 - 修正订单簿字段映射:
+- 修复 pressure_gradient 字段路径 (bid_near_5 不是 bid.near_5_pct)
+- 修复 slippage 字段路径 (estimated 不是 pct, confidence 不是 confidence_pct)
 
 v11.11 更新 - 添加订单簿深度测试 (v3.7):
 - 添加 Step 9.5: 订单簿客户端和处理器测试
@@ -387,7 +391,7 @@ def create_bar_from_kline(kline: list, bar_type: str) -> MockBar:
 # =============================================================================
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.11')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.12')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -632,7 +636,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.10 (修复 MTF 数据加载 + BB Position){mode_str}")
+print(f"  实盘信号诊断工具 v11.12 (修正订单簿字段映射){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -1617,10 +1621,13 @@ try:
             else:
                 print(f"      Dynamics:        首次运行，无历史数据")
 
-            bid_grad = gradient.get('bid', {})
-            ask_grad = gradient.get('ask', {})
-            print(f"      Bid pressure:    near_5={bid_grad.get('near_5_pct', 0):.1f}%, concentration={bid_grad.get('concentration', 'N/A')}")
-            print(f"      Ask pressure:    near_5={ask_grad.get('near_5_pct', 0):.1f}%, concentration={ask_grad.get('concentration', 'N/A')}")
+            # v11.12: 修正字段路径 (平面结构，不是嵌套结构)
+            bid_near_5 = gradient.get('bid_near_5', 0) * 100  # 转换为百分比
+            ask_near_5 = gradient.get('ask_near_5', 0) * 100
+            bid_conc = gradient.get('bid_concentration', 'N/A')
+            ask_conc = gradient.get('ask_concentration', 'N/A')
+            print(f"      Bid pressure:    near_5={bid_near_5:.1f}%, concentration={bid_conc}")
+            print(f"      Ask pressure:    near_5={ask_near_5:.1f}%, concentration={ask_conc}")
 
             print(f"      Spread:          {liquidity.get('spread_pct', 0):.4f}%")
         else:
@@ -2708,15 +2715,17 @@ if not SUMMARY_MODE:
                             else:
                                 print(f"        Dynamics: 首次运行，无历史数据")
 
-                            # Pressure Gradient
+                            # Pressure Gradient (v11.12: 修正字段路径)
                             gradient = ob_result.get('pressure_gradient', {})
-                            bid_grad = gradient.get('bid', {})
-                            ask_grad = gradient.get('ask', {})
+                            bid_near_5 = gradient.get('bid_near_5', 0) * 100
+                            bid_near_10 = gradient.get('bid_near_10', 0) * 100
+                            ask_near_5 = gradient.get('ask_near_5', 0) * 100
+                            ask_near_10 = gradient.get('ask_near_10', 0) * 100
                             print(f"        Pressure Gradient:")
-                            print(f"          - Bid: near_5={bid_grad.get('near_5_pct', 0):.1f}%, near_10={bid_grad.get('near_10_pct', 0):.1f}%")
-                            print(f"          - Ask: near_5={ask_grad.get('near_5_pct', 0):.1f}%, near_10={ask_grad.get('near_10_pct', 0):.1f}%")
+                            print(f"          - Bid: near_5={bid_near_5:.1f}%, near_10={bid_near_10:.1f}%")
+                            print(f"          - Ask: near_5={ask_near_5:.1f}%, near_10={ask_near_10:.1f}%")
 
-                            # 流动性
+                            # 流动性 (v11.12: 修正字段路径)
                             liquidity = ob_result.get('liquidity', {})
                             print(f"        Liquidity:")
                             print(f"          - Spread: {liquidity.get('spread_pct', 0):.4f}%")
@@ -2724,8 +2733,9 @@ if not SUMMARY_MODE:
                             if slippage:
                                 for amount, data in slippage.items():
                                     if isinstance(data, dict):
-                                        pct = data.get('pct', 0)
-                                        conf = data.get('confidence_pct', 0)
+                                        # v11.12: 修正字段名: estimated (不是 pct), confidence (不是 confidence_pct)
+                                        pct = data.get('estimated', 0) or 0
+                                        conf = (data.get('confidence', 0) or 0) * 100  # 转换为百分比
                                         print(f"          - Slippage ({amount}): {pct:.4f}% [conf={conf:.0f}%]")
 
                             # 异常检测
