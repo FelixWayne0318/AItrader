@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.12 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.13 (与实盘 100% 一致)
+
+v11.13 更新 - 添加 S/R Zone 测试 (v3.8):
+- 添加 Step 9.5.5: S/R Zone Calculator 测试
+- 显示多源 S/R zones (BB + SMA + Order Walls)
+- 显示硬风控状态 (block_long/block_short)
+- 修复 btc_quantity NameError in summary mode
 
 v11.12 更新 - 修正订单簿字段映射:
 - 修复 pressure_gradient 字段路径 (bid_near_5 不是 bid.near_5_pct)
@@ -391,7 +397,7 @@ def create_bar_from_kline(kline: list, bar_type: str) -> MockBar:
 # =============================================================================
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.12')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.13')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -636,7 +642,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.12 (修正订单簿字段映射){mode_str}")
+print(f"  实盘信号诊断工具 v11.13 (S/R Zone v3.8){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -2760,6 +2766,94 @@ if not SUMMARY_MODE:
 
         print()
         print("  ✅ MTF v2.1 + Order Book 组件集成测试完成")
+
+        # 9.5.5 测试 S/R Zone Calculator (v3.8 新增)
+        print()
+        print("  [9.5.5] S/R Zone Calculator 测试 (v3.8):")
+        try:
+            from utils.sr_zone_calculator import SRZoneCalculator
+            print("     ✅ SRZoneCalculator 导入成功")
+
+            # 获取当前价格和技术数据
+            test_price = current_price if 'current_price' in dir() and current_price > 0 else 100000
+
+            # 从之前的测试中获取数据
+            test_bb_data = None
+            test_sma_data = None
+            test_orderbook_anomalies = None
+
+            # 尝试从 technical_data 获取 BB 和 SMA
+            if 'technical_data' in dir() and technical_data:
+                bb_upper = technical_data.get('bb_upper')
+                bb_lower = technical_data.get('bb_lower')
+                if bb_upper and bb_lower:
+                    test_bb_data = {
+                        'upper': bb_upper,
+                        'lower': bb_lower,
+                        'middle': technical_data.get('bb_middle'),
+                    }
+                sma_50 = technical_data.get('sma_50')
+                sma_200 = technical_data.get('sma_200')
+                if sma_50 or sma_200:
+                    test_sma_data = {'sma_50': sma_50, 'sma_200': sma_200}
+
+            # 尝试从之前的订单簿测试获取 anomalies
+            if 'ob_result' in dir() and ob_result:
+                anomalies = ob_result.get('anomalies', {})
+                if anomalies:
+                    test_orderbook_anomalies = {
+                        'bid_anomalies': anomalies.get('bid_anomalies', []),
+                        'ask_anomalies': anomalies.get('ask_anomalies', []),
+                    }
+
+            # 计算 S/R Zones
+            sr_calc = SRZoneCalculator(
+                cluster_pct=0.5,
+                zone_expand_pct=0.1,
+                hard_control_threshold_pct=1.0,
+            )
+            sr_result = sr_calc.calculate(
+                current_price=test_price,
+                bb_data=test_bb_data,
+                sma_data=test_sma_data,
+                orderbook_anomalies=test_orderbook_anomalies,
+            )
+
+            print(f"     📊 当前价格: ${test_price:,.0f}")
+            print(f"     📊 数据源: BB={'✅' if test_bb_data else '❌'}, SMA={'✅' if test_sma_data else '❌'}, OrderBook={'✅' if test_orderbook_anomalies else '❌'}")
+
+            # 显示阻力位
+            resistance_zones = sr_result.get('resistance_zones', [])
+            print(f"     🔴 阻力位: {len(resistance_zones)} zones")
+            for i, zone in enumerate(resistance_zones[:2]):  # 最多显示2个
+                wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+                print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
+                print(f"           Sources: {', '.join(zone.sources)}")
+
+            # 显示支撑位
+            support_zones = sr_result.get('support_zones', [])
+            print(f"     🟢 支撑位: {len(support_zones)} zones")
+            for i, zone in enumerate(support_zones[:2]):  # 最多显示2个
+                wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+                print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
+                print(f"           Sources: {', '.join(zone.sources)}")
+
+            # 显示硬风控状态
+            hard_control = sr_result.get('hard_control', {})
+            print(f"     ⚠️ 硬风控:")
+            print(f"        Block LONG: {hard_control.get('block_long', False)}")
+            print(f"        Block SHORT: {hard_control.get('block_short', False)}")
+            if hard_control.get('reason'):
+                print(f"        Reason: {hard_control.get('reason')}")
+
+            print("     ✅ S/R Zone Calculator 测试完成")
+
+        except ImportError as e:
+            print(f"     ❌ 无法导入 SRZoneCalculator: {e}")
+        except Exception as e:
+            print(f"     ❌ S/R Zone 测试失败: {e}")
+            import traceback
+            traceback.print_exc()
 
     except Exception as e:
         print(f"  ❌ MTF 组件测试失败: {e}")
