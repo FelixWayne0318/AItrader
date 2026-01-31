@@ -19,6 +19,7 @@ import {
   Cpu,
   Globe,
   ChevronRight,
+  Users,
 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
@@ -270,18 +271,18 @@ export default function HomePage() {
                 <span className="text-foreground font-medium">multi-agent decision system</span>.
               </p>
 
-              {/* CTA Buttons - Consistent styling */}
+              {/* CTA Buttons - Consistent styling with same width */}
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 mb-10 sm:mb-12 lg:mb-16">
                 <Link href="/copy" className="w-full sm:w-auto">
-                  <Button size="lg" className="text-base sm:text-lg px-6 sm:px-8 h-12 sm:h-14 w-full sm:w-auto bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-lg shadow-primary/25 border border-primary/20">
-                    Start Copy Trading
-                    <ArrowRight className="ml-2 h-4 w-4 sm:h-5 sm:w-5" />
+                  <Button size="lg" className="text-base sm:text-lg h-12 sm:h-14 w-full sm:w-[200px] bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-lg shadow-primary/25 border border-primary/20 justify-center">
+                    <Users className="mr-2 h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0" />
+                    <span>Copy Trading</span>
                   </Button>
                 </Link>
                 <Link href="/chart" className="w-full sm:w-auto">
-                  <Button size="lg" className="text-base sm:text-lg px-6 sm:px-8 h-12 sm:h-14 w-full sm:w-auto bg-background/60 backdrop-blur-xl border border-border/50 hover:bg-background/80 hover:border-primary/30 text-foreground">
-                    <BarChart3 className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
-                    Live Chart
+                  <Button size="lg" className="text-base sm:text-lg h-12 sm:h-14 w-full sm:w-[200px] bg-background/60 backdrop-blur-xl border border-border/50 hover:bg-background/80 hover:border-primary/30 text-foreground justify-center">
+                    <BarChart3 className="mr-2 h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0" />
+                    <span>Live Chart</span>
                   </Button>
                 </Link>
               </div>

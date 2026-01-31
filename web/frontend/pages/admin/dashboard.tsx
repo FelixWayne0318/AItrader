@@ -27,8 +27,10 @@ import {
   FileText,
 } from "lucide-react";
 
+import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useTranslation, type Locale } from "@/lib/i18n";
 
 // Dynamic imports for animated components (SSR disabled)
 const EquityCurve = dynamic(
@@ -89,6 +91,8 @@ function CardSkeleton() {
  */
 export default function AdminDashboard() {
   const router = useRouter();
+  const locale = (router.locale || "en") as Locale;
+  const { t } = useTranslation(locale);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -365,45 +369,37 @@ export default function AdminDashboard() {
       </Head>
 
       <div className="min-h-screen gradient-bg">
-        {/* Header */}
-        <header className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-lg">
-          <div className="container mx-auto px-4">
-            <div className="flex h-16 items-center justify-between">
-              <div className="flex items-center gap-4">
-                {siteSettings.logo_url ? (
-                  <img
-                    src={siteSettings.logo_url}
-                    alt={siteSettings.site_name || "AlgVex"}
-                    className="h-8 w-8 rounded-lg object-contain"
-                  />
-                ) : (
-                  <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-                    <span className="text-primary-foreground font-bold">A</span>
-                  </div>
-                )}
-                <span className="font-semibold">{siteSettings.site_name || "AlgVex"} Admin</span>
+        {/* Main Site Header */}
+        <Header locale={locale} t={t} />
+
+        {/* Admin Toolbar - positioned below the main navbar */}
+        <div className="fixed top-20 inset-x-0 z-40 px-4">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-center justify-between px-4 py-2 bg-background/80 backdrop-blur-xl border border-border/40 rounded-xl">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-primary">Admin Panel</span>
                 {serviceStatus?.running && (
-                  <span className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-500/10 text-green-500 text-xs">
+                  <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-500/10 text-green-500 text-xs">
                     <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                     Live
                   </span>
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" className="relative">
-                  <Bell className="h-5 w-5" />
+                <Button variant="ghost" size="icon" className="relative h-8 w-8">
+                  <Bell className="h-4 w-4" />
                   {pendingRestart && (
                     <span className="absolute top-1 right-1 w-2 h-2 bg-yellow-500 rounded-full" />
                   )}
                 </Button>
-                <Button variant="ghost" size="sm" onClick={handleLogout}>
+                <Button variant="ghost" size="sm" onClick={handleLogout} className="h-8">
                   <LogOut className="h-4 w-4 mr-2" />
                   <span className="hidden sm:inline">Logout</span>
                 </Button>
               </div>
             </div>
           </div>
-        </header>
+        </div>
 
         {/* Message Toast */}
         {message && (
@@ -418,8 +414,8 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* Main Content */}
-        <main className="container mx-auto px-4 py-6">
+        {/* Main Content - pt-36 accounts for main navbar (h-14 + top-4) + admin toolbar */}
+        <main className="container mx-auto px-4 pt-36 pb-6">
           {/* Tabs */}
           <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
             {tabs.map((tab) => {
