@@ -1254,7 +1254,9 @@ ORDER FLOW (Binance Taker Data):
         """
         Format order book depth data for AI prompts.
 
-        v3.7.1: Fixed field mappings to match OrderBookProcessor.process() output
+        v3.7.2: Fully compliant with ORDER_BOOK_IMPLEMENTATION_PLAN.md v2.0 spec
+
+        Spec reference: docs/ORDER_BOOK_IMPLEMENTATION_PLAN.md section 3.3
 
         Parameters
         ----------
@@ -1264,38 +1266,60 @@ ORDER FLOW (Binance Taker Data):
         Returns
         -------
         str
-            Formatted order book report for AI prompts
+            Formatted order book report for AI prompts (v2.0 format)
         """
         if not data:
             return "ORDER BOOK DEPTH: Data not available"
 
         # Check data status
         status = data.get('_status', {})
-        if status.get('code') != 'OK':
+        status_code = status.get('code', 'UNKNOWN')
+
+        # v2.0: NO_DATA status handling
+        if status_code == 'NO_DATA':
+            return f"""ORDER BOOK DEPTH (Binance /fapi/v1/depth):
+Status: NO_DATA
+Reason: {status.get('message', 'Unknown')}
+
+[All metrics unavailable - AI should not assume neutral market]"""
+
+        if status_code != 'OK':
             return f"ORDER BOOK DEPTH: {status.get('message', 'Error occurred')}"
 
-        parts = [f"ORDER BOOK DEPTH (Status: OK, {status.get('history_samples', 0)} history samples):"]
+        # ========== Header ==========
+        levels = status.get('levels_analyzed', 100)
+        history_samples = status.get('history_samples', 0)
+        parts = [
+            f"ORDER BOOK DEPTH (Binance /fapi/v1/depth, {levels} levels):",
+            f"Status: OK ({history_samples} history samples)",
+            "",
+        ]
 
-        # ========== OBI (Order Book Imbalance) ==========
+        # ========== IMBALANCE Section ==========
         obi = data.get('obi', {})
         simple_obi = obi.get('simple', 0)
         weighted_obi = obi.get('weighted', 0)
         adaptive_obi = obi.get('adaptive_weighted', weighted_obi)
+        decay_used = obi.get('decay_used', 0.8)
 
-        parts.append(f"- Simple OBI: {simple_obi:+.3f} ({'Buy pressure' if simple_obi > 0 else 'Sell pressure' if simple_obi < 0 else 'Balanced'})")
-        parts.append(f"- Weighted OBI: {weighted_obi:+.3f} (Adaptive: {adaptive_obi:+.3f}, decay={obi.get('decay_used', 0.8):.2f})")
-
-        # Volume
         bid_vol_usd = obi.get('bid_volume_usd', 0)
         ask_vol_usd = obi.get('ask_volume_usd', 0)
         bid_vol_btc = obi.get('bid_volume_btc', 0)
         ask_vol_btc = obi.get('ask_volume_btc', 0)
-        parts.append(f"- Bid Volume: ${bid_vol_usd:,.0f} ({bid_vol_btc:.2f} BTC)")
-        parts.append(f"- Ask Volume: ${ask_vol_usd:,.0f} ({ask_vol_btc:.2f} BTC)")
 
-        # ========== Dynamics (v2.0 Critical) ==========
+        parts.append("IMBALANCE:")
+        parts.append(f"  Simple OBI: {simple_obi:+.2f}")
+        parts.append(f"  Weighted OBI: {weighted_obi:+.2f} (decay={decay_used:.2f}, adaptive)")
+        parts.append(f"  Bid Volume: ${bid_vol_usd/1e6:.1f}M ({bid_vol_btc:.1f} BTC)")
+        parts.append(f"  Ask Volume: ${ask_vol_usd/1e6:.1f}M ({ask_vol_btc:.1f} BTC)")
+        parts.append("")
+
+        # ========== DYNAMICS Section (v2.0 Critical) ==========
         dynamics = data.get('dynamics', {})
-        if dynamics and dynamics.get('samples_count', 0) > 0:
+        samples_count = dynamics.get('samples_count', 0) if dynamics else 0
+
+        parts.append("DYNAMICS (vs previous snapshot):")
+        if samples_count > 0:
             obi_change = dynamics.get('obi_change')
             obi_change_pct = dynamics.get('obi_change_pct')
             bid_depth_change = dynamics.get('bid_depth_change_pct')
@@ -1303,51 +1327,53 @@ ORDER FLOW (Binance Taker Data):
             spread_change = dynamics.get('spread_change_pct')
             trend = dynamics.get('trend', 'N/A')
 
-            parts.append("- Dynamics (vs previous):")
             if obi_change is not None:
-                parts.append(f"  - OBI Change: {obi_change:+.4f} ({obi_change_pct:+.1f}%)" if obi_change_pct else f"  - OBI Change: {obi_change:+.4f}")
+                pct_str = f" ({obi_change_pct:+.1f}%)" if obi_change_pct is not None else ""
+                parts.append(f"  OBI Change: {obi_change:+.2f}{pct_str}")
             if bid_depth_change is not None:
-                parts.append(f"  - Bid Depth Change: {bid_depth_change:+.1f}%")
+                parts.append(f"  Bid Depth Change: {bid_depth_change:+.1f}%")
             if ask_depth_change is not None:
-                parts.append(f"  - Ask Depth Change: {ask_depth_change:+.1f}%")
+                parts.append(f"  Ask Depth Change: {ask_depth_change:+.1f}%")
             if spread_change is not None:
-                parts.append(f"  - Spread Change: {spread_change:+.1f}%")
-            parts.append(f"  - Trend: {trend}")
+                parts.append(f"  Spread Change: {spread_change:+.1f}%")
+            parts.append(f"  Trend: {trend}")
         else:
-            parts.append("- Dynamics: First snapshot, no history")
+            parts.append("  [First snapshot - no historical data yet]")
+        parts.append("")
 
-        # ========== Pressure Gradient (v2.0) ==========
+        # ========== PRESSURE GRADIENT Section (v2.0) ==========
         gradient = data.get('pressure_gradient', {})
         if gradient:
-            bid_near_5 = gradient.get('bid_near_5', 0) * 100  # Convert to percentage
+            # Convert to percentage (values are 0-1 ratios)
+            bid_near_5 = gradient.get('bid_near_5', 0) * 100
             bid_near_10 = gradient.get('bid_near_10', 0) * 100
+            bid_near_20 = gradient.get('bid_near_20', 0) * 100
             ask_near_5 = gradient.get('ask_near_5', 0) * 100
             ask_near_10 = gradient.get('ask_near_10', 0) * 100
+            ask_near_20 = gradient.get('ask_near_20', 0) * 100
             bid_conc = gradient.get('bid_concentration', 'N/A')
             ask_conc = gradient.get('ask_concentration', 'N/A')
-            parts.append(f"- Pressure Gradient:")
-            parts.append(f"  - Bid: {bid_near_5:.1f}% near-5, {bid_near_10:.1f}% near-10 [{bid_conc}]")
-            parts.append(f"  - Ask: {ask_near_5:.1f}% near-5, {ask_near_10:.1f}% near-10 [{ask_conc}]")
 
-        # ========== Liquidity ==========
-        liquidity = data.get('liquidity', {})
-        if liquidity:
-            spread_pct = liquidity.get('spread_pct', 0)
-            spread_usd = liquidity.get('spread_usd', 0)
-            parts.append(f"- Spread: ${spread_usd:.2f} ({spread_pct:.4f}%)")
+            parts.append("PRESSURE GRADIENT:")
+            parts.append(f"  Bid: {bid_near_5:.0f}% near-5, {bid_near_10:.0f}% near-10, {bid_near_20:.0f}% near-20 [{bid_conc} concentration]")
+            parts.append(f"  Ask: {ask_near_5:.0f}% near-5, {ask_near_10:.0f}% near-10, {ask_near_20:.0f}% near-20 [{ask_conc} concentration]")
+            parts.append("")
 
-            # Slippage estimates
-            slippage = liquidity.get('slippage', {})
-            if slippage:
-                parts.append("- Slippage Estimates:")
-                for key, est in slippage.items():
-                    if isinstance(est, dict):
-                        pct = est.get('pct', 0)
-                        conf = est.get('confidence_pct', 0)
-                        # Parse key like "buy_0.1_btc" or "sell_1.0_btc"
-                        parts.append(f"  - {key}: {pct:.4f}% [conf={conf:.0f}%]")
+        # ========== DEPTH DISTRIBUTION Section (v2.0 - Previously Missing!) ==========
+        depth_dist = data.get('depth_distribution', {})
+        bands = depth_dist.get('bands', [])
+        if bands:
+            parts.append("DEPTH DISTRIBUTION (0.5% bands):")
+            for band in bands:
+                range_str = band.get('range', '')
+                side = band.get('side', '').upper()
+                volume_usd = band.get('volume_usd', 0)
+                # Format volume in millions with 1 decimal
+                vol_str = f"${volume_usd/1e6:.1f}M" if volume_usd >= 1e6 else f"${volume_usd/1e3:.0f}K"
+                parts.append(f"  {range_str}: {side} {vol_str}")
+            parts.append("")
 
-        # ========== Anomalies ==========
+        # ========== ANOMALIES Section ==========
         anomalies = data.get('anomalies', {})
         bid_anomalies = anomalies.get('bid_anomalies', [])
         ask_anomalies = anomalies.get('ask_anomalies', [])
@@ -1355,16 +1381,45 @@ ORDER FLOW (Binance Taker Data):
         threshold_reason = anomalies.get('threshold_reason', 'default')
 
         if bid_anomalies or ask_anomalies:
-            parts.append(f"- Large Orders (threshold={threshold:.1f}x, {threshold_reason}):")
-            for anom in bid_anomalies[:2]:  # Show up to 2 per side
+            parts.append(f"ANOMALIES (threshold={threshold:.1f}x, {threshold_reason}):")
+            for anom in bid_anomalies[:3]:  # Show up to 3 per side
                 price = anom.get('price', 0)
                 amount = anom.get('amount', 0)
                 multiple = anom.get('multiple', 0)
-                parts.append(f"  - BID: ${price:,.2f} x {amount:.4f} BTC ({multiple:.1f}x)")
-            for anom in ask_anomalies[:2]:
+                parts.append(f"  Bid: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
+            for anom in ask_anomalies[:3]:
                 price = anom.get('price', 0)
                 amount = anom.get('amount', 0)
                 multiple = anom.get('multiple', 0)
-                parts.append(f"  - ASK: ${price:,.2f} x {amount:.4f} BTC ({multiple:.1f}x)")
+                parts.append(f"  Ask: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
+            parts.append("")
+
+        # ========== LIQUIDITY Section ==========
+        liquidity = data.get('liquidity', {})
+        if liquidity:
+            spread_pct = liquidity.get('spread_pct', 0)
+            spread_usd = liquidity.get('spread_usd', 0)
+
+            parts.append("LIQUIDITY:")
+            parts.append(f"  Spread: {spread_pct:.2f}% (${spread_usd:.2f})")
+
+            # Slippage estimates with confidence and range (v2.0)
+            slippage = liquidity.get('slippage', {})
+            if slippage:
+                # Show 1 BTC slippage as the main indicator
+                for side in ['buy', 'sell']:
+                    key = f"{side}_1.0_btc"
+                    est = slippage.get(key, {})
+                    if isinstance(est, dict) and est.get('estimated') is not None:
+                        pct = est.get('estimated', 0)
+                        conf = est.get('confidence', 0)
+                        range_vals = est.get('range', [0, 0])
+                        range_low = range_vals[0] if range_vals[0] is not None else 0
+                        range_high = range_vals[1] if range_vals[1] is not None else 0
+                        side_label = "Buy" if side == "buy" else "Sell"
+                        parts.append(
+                            f"  Slippage ({side_label} 1 BTC): {pct:.2f}% "
+                            f"[confidence={conf:.0%}, range={range_low:.2f}%-{range_high:.2f}%]"
+                        )
 
         return "\n".join(parts)
