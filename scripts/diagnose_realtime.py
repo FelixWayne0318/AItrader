@@ -1574,7 +1574,17 @@ try:
                 max_retries=ob_api_cfg.get('max_retries', 2),
                 logger=None
             )
-            ob_processor = OrderBookProcessor(config=ob_proc_cfg, logger=None)
+            # v11.11: 正确传递参数
+            weighted_obi_cfg = ob_proc_cfg.get('weighted_obi', {})
+            anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
+            ob_processor = OrderBookProcessor(
+                price_band_pct=ob_proc_cfg.get('price_band_pct', 0.5),
+                base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
+                slippage_amounts=ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0]),
+                weighted_obi_config=weighted_obi_cfg if weighted_obi_cfg else None,
+                history_size=ob_proc_cfg.get('history', {}).get('size', 10),
+                logger=None
+            )
 
             raw_ob = ob_client.get_order_book(symbol="BTCUSDT", limit=ob_api_cfg.get('limit', 100))
             if raw_ob:
@@ -2518,8 +2528,15 @@ if not SUMMARY_MODE:
                             max_retries=ob_api_cfg.get('max_retries', 2),
                             logger=None
                         )
+                        # v11.11: 正确传递参数
+                        weighted_obi_cfg = ob_proc_cfg.get('weighted_obi', {})
+                        anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
                         ob_processor_for_assembler = OrderBookProcessor(
-                            config=ob_proc_cfg,
+                            price_band_pct=ob_proc_cfg.get('price_band_pct', 0.5),
+                            base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
+                            slippage_amounts=ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0]),
+                            weighted_obi_config=weighted_obi_cfg if weighted_obi_cfg else None,
+                            history_size=ob_proc_cfg.get('history', {}).get('size', 10),
                             logger=None
                         )
                     except ImportError:
@@ -2619,9 +2636,15 @@ if not SUMMARY_MODE:
                     )
                     print("     ✅ BinanceOrderBookClient 导入成功")
 
-                    # 初始化处理器
+                    # 初始化处理器 (v11.11: 正确传递参数)
+                    weighted_obi_cfg = ob_proc_cfg.get('weighted_obi', {})
+                    anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
                     ob_processor = OrderBookProcessor(
-                        config=ob_proc_cfg,
+                        price_band_pct=ob_proc_cfg.get('price_band_pct', 0.5),
+                        base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
+                        slippage_amounts=ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0]),
+                        weighted_obi_config=weighted_obi_cfg if weighted_obi_cfg else None,
+                        history_size=ob_proc_cfg.get('history', {}).get('size', 10),
                         logger=None
                     )
                     print("     ✅ OrderBookProcessor 导入成功")
