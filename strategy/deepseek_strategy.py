@@ -257,6 +257,12 @@ class DeepSeekAIStrategy(Strategy):
         self.latest_technical_data: Optional[Dict[str, Any]] = None
         self.latest_price_data: Optional[Dict[str, Any]] = None
 
+        # v3.6/3.7/3.8: Store latest indicator data for Telegram heartbeat
+        self.latest_order_flow_data: Optional[Dict[str, Any]] = None
+        self.latest_derivatives_data: Optional[Dict[str, Any]] = None
+        self.latest_orderbook_data: Optional[Dict[str, Any]] = None
+        self.latest_sr_zones_data: Optional[Dict[str, Any]] = None
+
         # OCO (One-Cancels-the-Other) - Now handled by NautilusTrader's bracket orders
         # No need for manual OCO manager anymore
         self.enable_oco = config.enable_oco  # Keep for config compatibility
@@ -1496,6 +1502,7 @@ class DeepSeekAIStrategy(Strategy):
                         )
                         if raw_klines:
                             order_flow_data = self.order_flow_processor.process_klines(raw_klines)
+                            self.latest_order_flow_data = order_flow_data  # v3.6: Store for heartbeat
                             self.log.info(
                                 f"📊 Order Flow: buy_ratio={order_flow_data.get('buy_ratio', 0):.1%}, "
                                 f"cvd_trend={order_flow_data.get('cvd_trend', 'N/A')}"
@@ -1510,6 +1517,7 @@ class DeepSeekAIStrategy(Strategy):
                 if self.coinalyze_client and self.coinalyze_client.is_enabled():
                     try:
                         derivatives_data = self.coinalyze_client.fetch_all()
+                        self.latest_derivatives_data = derivatives_data  # v3.6: Store for heartbeat
                         if derivatives_data.get('enabled'):
                             oi = derivatives_data.get('open_interest')
                             funding = derivatives_data.get('funding_rate')
@@ -1540,6 +1548,7 @@ class DeepSeekAIStrategy(Strategy):
                             )
                             # 提取关键指标用于日志 (v3.7.1: 修正字段路径)
                             if orderbook_data.get('_status', {}).get('code') == 'OK':
+                                self.latest_orderbook_data = orderbook_data  # v3.7: Store for heartbeat
                                 obi = orderbook_data.get('obi', {})
                                 simple_obi = obi.get('simple', 0)
                                 weighted_obi = obi.get('weighted', 0)
@@ -1568,6 +1577,10 @@ class DeepSeekAIStrategy(Strategy):
                     # ========== v3.7 新增参数 ==========
                     orderbook_report=orderbook_data,
                 )
+
+                # v3.8: Store S/R Zone data for heartbeat (from MultiAgentAnalyzer cache)
+                if hasattr(self.multi_agent, '_sr_zones_cache') and self.multi_agent._sr_zones_cache:
+                    self.latest_sr_zones_data = self.multi_agent._sr_zones_cache
 
                 # ========== TradingAgents v3.1: AI 完全自主决策 ==========
                 # 设计理念: "Autonomy is non-negotiable" - AI 像人类分析师一样思考
@@ -1782,7 +1795,44 @@ class DeepSeekAIStrategy(Strategy):
             signal = last_signal.get('signal') or 'PENDING'
             confidence = last_signal.get('confidence') or 'N/A'
 
-            # 8. 发送消息
+            # 8. 组装 v3.6/3.7/3.8 数据 (如果可用)
+            order_flow_heartbeat = None
+            if self.latest_order_flow_data:
+                order_flow_heartbeat = {
+                    'buy_ratio': self.latest_order_flow_data.get('buy_ratio'),
+                    'cvd_trend': self.latest_order_flow_data.get('cvd_trend'),
+                }
+
+            derivatives_heartbeat = None
+            if self.latest_derivatives_data and self.latest_derivatives_data.get('enabled'):
+                funding = self.latest_derivatives_data.get('funding_rate', {})
+                oi = self.latest_derivatives_data.get('open_interest', {})
+                derivatives_heartbeat = {
+                    'funding_rate': funding.get('value') if funding else None,
+                    'oi_change_pct': oi.get('change_pct') if oi else None,
+                }
+
+            orderbook_heartbeat = None
+            if self.latest_orderbook_data and self.latest_orderbook_data.get('_status', {}).get('code') == 'OK':
+                obi = self.latest_orderbook_data.get('obi', {})
+                dynamics = self.latest_orderbook_data.get('dynamics', {})
+                orderbook_heartbeat = {
+                    'weighted_obi': obi.get('weighted'),
+                    'obi_trend': dynamics.get('obi_trend'),
+                }
+
+            sr_zone_heartbeat = None
+            if self.latest_sr_zones_data:
+                zones = self.latest_sr_zones_data.get('zones', {})
+                hard_control = self.latest_sr_zones_data.get('hard_control', {})
+                sr_zone_heartbeat = {
+                    'nearest_support': zones.get('nearest_support'),
+                    'nearest_resistance': zones.get('nearest_resistance'),
+                    'block_long': hard_control.get('block_long', False),
+                    'block_short': hard_control.get('block_short', False),
+                }
+
+            # 9. 发送消息
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
@@ -1795,6 +1845,11 @@ class DeepSeekAIStrategy(Strategy):
                 'timer_count': getattr(self, '_timer_count', 0),
                 'equity': equity,
                 'uptime_str': uptime_str,
+                # v3.6/3.7/3.8 data
+                'order_flow': order_flow_heartbeat,
+                'derivatives': derivatives_heartbeat,
+                'order_book': orderbook_heartbeat,
+                'sr_zone': sr_zone_heartbeat,
             })
             self.telegram_bot.send_message_sync(heartbeat_msg)
             self.log.info(f"💓 Sent heartbeat #{self._timer_count}")
@@ -2353,6 +2408,7 @@ class DeepSeekAIStrategy(Strategy):
                         "highest_price": entry_price if side == OrderSide.BUY else None,
                         "lowest_price": entry_price if side == OrderSide.SELL else None,
                         "current_sl_price": stop_loss_price,
+                        "current_tp_price": tp_price,  # v3.8: Store TP price for notifications
                         "sl_order_id": str(sl_order.client_order_id),
                         "activated": False,
                         "side": "LONG" if side == OrderSide.BUY else "SHORT",
@@ -2483,6 +2539,15 @@ class DeepSeekAIStrategy(Strategy):
         # Send Telegram position opened notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
+                # Retrieve SL/TP prices from trailing_stop_state (v3.8)
+                instrument_key = str(self.instrument_id)
+                sl_price = None
+                tp_price = None
+                if instrument_key in self.trailing_stop_state:
+                    state = self.trailing_stop_state[instrument_key]
+                    sl_price = state.get("current_sl_price")
+                    tp_price = state.get("current_tp_price")
+
                 position_msg = self.telegram_bot.format_position_update({
                     'action': 'OPENED',
                     'side': event.side.name,
@@ -2491,6 +2556,8 @@ class DeepSeekAIStrategy(Strategy):
                     'current_price': float(event.avg_px_open),
                     'pnl': 0.0,
                     'pnl_pct': 0.0,
+                    'sl_price': sl_price,  # v3.8: Include SL price
+                    'tp_price': tp_price,  # v3.8: Include TP price
                 })
                 self.telegram_bot.send_message_sync(position_msg)
             except Exception as e:
@@ -2764,6 +2831,24 @@ class DeepSeekAIStrategy(Strategy):
             state["sl_order_id"] = str(new_sl_order.client_order_id)
 
             self.log.info(f"✅ New trailing SL order submitted @ ${new_sl_price:,.2f}")
+
+            # Send Telegram notification for trailing stop update
+            if self.telegram_bot and self.enable_telegram and old_sl_price:
+                try:
+                    entry_price = state.get("entry_price", 0)
+                    profit_pct = ((current_price - entry_price) / entry_price) if entry_price > 0 else 0
+                    if side == "SHORT":
+                        profit_pct = -profit_pct  # SHORT profit is inverse
+
+                    ts_msg = self.telegram_bot.format_trailing_stop_update({
+                        'old_sl_price': old_sl_price,
+                        'new_sl_price': new_sl_price,
+                        'current_price': current_price,
+                        'profit_pct': profit_pct,
+                    })
+                    self.telegram_bot.send_message_sync(ts_msg)
+                except Exception as te:
+                    self.log.warning(f"Failed to send trailing stop notification: {te}")
 
             # Note: OCO relationship is handled automatically by NautilusTrader
             # When the new SL is submitted, it will be linked to the existing TP orders

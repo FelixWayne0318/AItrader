@@ -388,28 +388,11 @@ class TelegramBot:
         formatted += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"
         
         return formatted
-    
-    def format_partial_tp_notification(self, tp_data: Dict[str, Any]) -> str:
-        """Format partial take profit notification."""
-        level = tp_data.get('level', 1)
-        quantity = tp_data.get('quantity', 0.0)
-        price = tp_data.get('price', 0.0)
-        profit_pct = tp_data.get('profit_pct', 0.0)
-        remaining = tp_data.get('remaining_quantity', 0.0)
-        
-        return f"""
-🎯 *Partial Take Profit - Level {level}*
 
-*Closed*: {quantity} BTC
-*Price*: ${price:,.2f}
-*Profit*: +{profit_pct*100:.1f}%
-*Remaining*: {remaining} BTC
+    # Note: format_partial_tp_notification was removed as enable_partial_tp is disabled
+    # and the feature is not implemented. If partial TP is implemented in the future,
+    # add a new formatter here.
 
-✅ Profit locked in, position partially closed.
-
-⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
-"""
-    
     def format_trailing_stop_update(self, ts_data: Dict[str, Any]) -> str:
         """Format trailing stop update notification."""
         old_sl = ts_data.get('old_sl_price', 0.0)
