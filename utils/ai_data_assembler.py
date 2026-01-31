@@ -206,19 +206,29 @@ class AIDataAssembler:
                 coinalyze_value = float(funding_raw.get('value', 0))
                 coinalyze_pct = round(coinalyze_value * 100, 4)
 
-                # 决定使用哪个数据源
-                # 如果 Coinalyze 值异常高 (>0.1%) 且 Binance 数据可用，优先使用 Binance
+                # 决定使用哪个数据源 (v3.7: 配置化)
+                # 读取配置
+                funding_config = self.config.get('coinalyze', {}).get('funding_rate', {})
+                prefer_binance = funding_config.get('prefer_binance_when_divergent', True)
+                max_ratio = funding_config.get('max_divergence_ratio', 10.0)
+                always_binance = funding_config.get('always_use_binance', False)
+
                 use_binance = False
                 binance_pct = None
                 if binance_funding:
                     binance_pct = binance_funding.get('funding_rate_pct', 0)
-                    # 如果 Coinalyze 和 Binance 差异超过 10 倍，记录警告
-                    if binance_pct > 0 and coinalyze_pct > 0:
+
+                    # 如果配置为始终使用 Binance
+                    if always_binance:
+                        use_binance = True
+                    # 否则检查差异
+                    elif prefer_binance and binance_pct > 0 and coinalyze_pct > 0:
                         ratio = coinalyze_pct / binance_pct
-                        if ratio > 10 or ratio < 0.1:
+                        if ratio > max_ratio or ratio < (1 / max_ratio):
                             self.logger.warning(
                                 f"⚠️ Funding rate 数据差异大: "
-                                f"Coinalyze={coinalyze_pct:.4f}%, Binance={binance_pct:.4f}%"
+                                f"Coinalyze={coinalyze_pct:.4f}%, Binance={binance_pct:.4f}%, "
+                                f"ratio={ratio:.2f} (threshold={max_ratio})"
                             )
                             # Coinalyze 异常时使用 Binance
                             use_binance = True

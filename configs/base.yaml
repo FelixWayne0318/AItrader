@@ -138,6 +138,11 @@ risk:
   rsi_extreme_threshold_lower: 30.0  # RSI 超卖阈值
   rsi_extreme_multiplier: 0.7
 
+  # ===== v3.7: BB 位置硬性检查 (Support/Resistance Risk Control) =====
+  bb_block_enabled: true                # 启用 BB 位置硬性检查
+  bb_block_threshold_pct: 2.0           # 距离 BB 边界 < 2% 时阻止交易
+  bb_high_confidence_override: false    # 高信心时允许突破 (默认 false，保守)
+
   # 止损止盈
   stop_loss:
     enabled: true
@@ -344,6 +349,13 @@ multi_timeframe:
     max_retry_attempts: 3             # 最大重试次数
 
 # =============================================================================
+# Binance 衍生品配置 (v3.7)
+# =============================================================================
+binance_derivatives:
+  trend_calculation:
+    threshold_pct: 5.0                # 趋势判断阈值 (% 变化)
+
+# =============================================================================
 # 订单流数据配置 (Order Flow) v3.2
 # =============================================================================
 order_flow:
@@ -374,6 +386,12 @@ order_flow:
     fallback_enabled: true
     fallback_oi_usd: 0
     fallback_funding_rate: 0
+
+    # ===== v3.7: Funding Rate 数据源配置 =====
+    funding_rate:
+      prefer_binance_when_divergent: true   # 差异大时使用 Binance
+      max_divergence_ratio: 10.0            # 差异超过 10x 视为异常
+      always_use_binance: false             # 始终使用 Binance (忽略 Coinalyze)
 
   # ---------------------------------------------------------------------------
   # 买卖比阈值

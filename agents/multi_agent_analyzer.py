@@ -410,6 +410,7 @@ class MultiAgentAnalyzer:
                 sentiment_report=sent_summary,
                 current_position=current_position,
                 current_price=current_price,
+                technical_data=technical_report,  # v3.7: Pass dict for BB checks
             )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
@@ -628,17 +629,82 @@ OUTPUT FORMAT (JSON only, no other text):
         sentiment_report: str,
         current_position: Optional[Dict[str, Any]],
         current_price: float,
+        technical_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Final risk evaluation and position sizing.
 
         Borrowed from: TradingAgents/agents/risk_mgmt/conservative_debator.py
         Simplified v3.0: Let AI determine SL/TP based on market structure
+        v3.7: Added BB position hardcoded checks for support/resistance risk control
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
         reasons = proposed_action.get("key_reasons", [])
         risks = proposed_action.get("acknowledged_risks", [])
+
+        # ========== v3.7: BB Position Hardcoded Check ==========
+        # Reference: Previous analysis identified that AI prompts alone are insufficient
+        # for reliable support/resistance risk control. Adding hardcoded checks.
+        if technical_data:
+            bb_upper = technical_data.get('bb_upper')
+            bb_lower = technical_data.get('bb_lower')
+
+            # Get configuration (with defaults)
+            risk_config = self.config.get('risk', {})
+            bb_block_enabled = risk_config.get('bb_block_enabled', True)
+            bb_block_threshold_pct = risk_config.get('bb_block_threshold_pct', 2.0)
+            bb_high_confidence_override = risk_config.get('bb_high_confidence_override', False)
+
+            # Only apply check if BB data is valid and feature is enabled
+            if bb_block_enabled and bb_upper and bb_lower and current_price > 0:
+                # Calculate distance to BB bands as percentage
+                distance_to_upper = (bb_upper - current_price) / current_price * 100
+                distance_to_lower = (current_price - bb_lower) / current_price * 100
+
+                # Allow override for HIGH confidence trades (optional)
+                apply_block = True
+                if bb_high_confidence_override and confidence == "HIGH":
+                    apply_block = False
+                    self.logger.info(f"BB block override: HIGH confidence allows trading near bands")
+
+                if apply_block:
+                    # Block LONG if too close to resistance (BB Upper)
+                    if action == "LONG" and distance_to_upper < bb_block_threshold_pct:
+                        self.logger.warning(
+                            f"⚠️ LONG blocked: Price too close to resistance "
+                            f"(BB Upper {distance_to_upper:.2f}% away, threshold {bb_block_threshold_pct}%)"
+                        )
+                        proposed_action["decision"] = "HOLD"
+                        proposed_action["confidence"] = "LOW"
+                        if isinstance(reasons, list):
+                            reasons = reasons.copy()
+                            reasons.append(
+                                f"Blocked: Price within {distance_to_upper:.1f}% of BB Upper resistance"
+                            )
+                        if isinstance(risks, list):
+                            risks = risks.copy()
+                            risks.append("Too close to resistance level")
+                        action = "HOLD"
+
+                    # Block SHORT if too close to support (BB Lower)
+                    elif action == "SHORT" and distance_to_lower < bb_block_threshold_pct:
+                        self.logger.warning(
+                            f"⚠️ SHORT blocked: Price too close to support "
+                            f"(BB Lower {distance_to_lower:.2f}% away, threshold {bb_block_threshold_pct}%)"
+                        )
+                        proposed_action["decision"] = "HOLD"
+                        proposed_action["confidence"] = "LOW"
+                        if isinstance(reasons, list):
+                            reasons = reasons.copy()
+                            reasons.append(
+                                f"Blocked: Price within {distance_to_lower:.1f}% of BB Lower support"
+                            )
+                        if isinstance(risks, list):
+                            risks = risks.copy()
+                            risks.append("Too close to support level")
+                        action = "HOLD"
+        # ========== End of BB Position Check ==========
 
         prompt = f"""As the Risk Manager, provide final trade parameters.
 

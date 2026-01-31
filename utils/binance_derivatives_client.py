@@ -33,9 +33,14 @@ class BinanceDerivativesClient:
         self,
         timeout: int = 10,
         logger: logging.Logger = None,
+        config: dict = None,
     ):
         self.timeout = timeout
         self.logger = logger or logging.getLogger(__name__)
+        self.config = config or {}
+        # v3.7: 读取趋势计算阈值配置
+        trend_config = self.config.get('binance_derivatives', {}).get('trend_calculation', {})
+        self.trend_threshold_pct = trend_config.get('threshold_pct', 5.0)
 
     def _request(self, endpoint: str, params: dict) -> Optional[Any]:
         """通用请求方法"""
@@ -386,9 +391,11 @@ class BinanceDerivativesClient:
 
             change_pct = (newest - oldest) / oldest * 100
 
-            if change_pct > 5:
+            # v3.7: 使用配置化阈值
+            threshold = self.trend_threshold_pct
+            if change_pct > threshold:
                 return "RISING"
-            elif change_pct < -5:
+            elif change_pct < -threshold:
                 return "FALLING"
             else:
                 return "STABLE"
