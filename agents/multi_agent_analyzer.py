@@ -104,6 +104,40 @@ OPEN INTEREST:
 - Rising OI + Rising Price = New longs entering (bullish)
 - Rising OI + Falling Price = New shorts entering (bearish)
 - Falling OI = Positions closing, trend weakening
+
+ORDER BOOK DEPTH (Microstructure):
+- OBI (Order Book Imbalance):
+  * +0.20 to +1.00 = Strong bid pressure (bullish)
+  * +0.05 to +0.20 = Mild bid pressure (slight bullish)
+  * -0.05 to +0.05 = Balanced
+  * -0.20 to -0.05 = Mild ask pressure (slight bearish)
+  * -1.00 to -0.20 = Strong ask pressure (bearish)
+  * Weighted OBI gives higher weight to orders near best price
+
+- ⭐ DYNAMICS (Critical for timing):
+  * OBI Change > +0.05 = Bids strengthening (momentum building)
+  * OBI Change < -0.05 = Asks strengthening (selling pressure building)
+  * Trend values: BID_STRENGTHENING / ASK_STRENGTHENING / STABLE
+  * Bid/Ask Depth Change: Large drops (< -5%) = Liquidity thinning (caution)
+
+- ⭐ PRESSURE GRADIENT (Order concentration):
+  * HIGH concentration (near_5 > 40%) = Orders clustered near best price
+    - If on bid side: Strong immediate support
+    - If on ask side: Strong immediate resistance
+  * LOW concentration (near_5 < 25%) = Orders spread out
+    - Gradual support/resistance, less likely to hold
+  * Compare bid vs ask concentration for directional bias
+
+- ANOMALIES (Large orders):
+  * Wall detected = Large order blocking price movement
+  * Bid wall = Support level, harder to break down
+  * Ask wall = Resistance level, harder to break up
+  * Recent pulls (walls removed) may signal trap
+
+- LIQUIDITY (Execution quality):
+  * Slippage < 0.05% = Deep book, safe for larger orders
+  * Slippage > 0.10% = Thin book, use smaller position size
+  * Low confidence slippage = Sparse data, be cautious
 """
 
 
