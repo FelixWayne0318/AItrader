@@ -1749,6 +1749,86 @@ class DeepSeekAIStrategy(Strategy):
                 json.dump(latest_signal, f, indent=2, default=str)
             self.log.debug(f"📡 Latest signal updated: {latest_signal_file}")
 
+            # 📊 Write latest_analysis.json for AI analysis page (Bull/Bear/Judge)
+            # This file is read by /api/public/ai-analysis endpoint
+            latest_analysis_file = 'logs/latest_analysis.json'
+
+            # Extract Bull/Bear arguments from debate transcript
+            debate_transcript = getattr(self.multi_agent, 'last_debate_transcript', '') if self.multi_agent else ''
+            bull_analysis = ''
+            bear_analysis = ''
+            if debate_transcript:
+                # Parse transcript to extract bull/bear sections
+                import re
+                bull_matches = re.findall(r'BULL ANALYST:\n(.*?)(?=\n\nBEAR ANALYST:|$)', debate_transcript, re.DOTALL)
+                bear_matches = re.findall(r'BEAR ANALYST:\n(.*?)(?=\n\n=== ROUND|$)', debate_transcript, re.DOTALL)
+                if bull_matches:
+                    bull_analysis = bull_matches[-1].strip()  # Get last round's argument
+                if bear_matches:
+                    bear_analysis = bear_matches[-1].strip()
+
+            # Get judge decision details
+            judge_decision = signal_data.get('judge_decision', {})
+            judge_reasons = judge_decision.get('key_reasons', []) if isinstance(judge_decision, dict) else []
+            judge_reasoning = '. '.join(judge_reasons) if judge_reasons else signal_data.get('reason', '')
+
+            # Calculate confidence score (HIGH=80, MEDIUM=60, LOW=40)
+            confidence_map = {'HIGH': 80, 'MEDIUM': 60, 'LOW': 40}
+            confidence_score = confidence_map.get(signal_data.get('confidence', 'MEDIUM'), 60)
+
+            # Get current price for entry
+            current_price = price_data.get('price') if price_data else None
+
+            latest_analysis = {
+                'signal': signal_data.get('signal', 'HOLD'),
+                'confidence': signal_data.get('confidence', 'MEDIUM'),
+                'confidence_score': confidence_score,
+                'bull_analysis': bull_analysis or 'No bull analysis available',
+                'bear_analysis': bear_analysis or 'No bear analysis available',
+                'judge_reasoning': judge_reasoning or 'No judge reasoning available',
+                'entry_price': current_price,
+                'stop_loss': signal_data.get('stop_loss'),
+                'take_profit': signal_data.get('take_profit'),
+                'technical_score': technical_data.get('rsi', 50) if technical_data else 50,  # Use RSI as proxy
+                'sentiment_score': sentiment_data.get('net_sentiment', 50) if sentiment_data else 50,
+                'timestamp': datetime.now().isoformat(),
+            }
+            with open(latest_analysis_file, 'w') as f:
+                json.dump(latest_analysis, f, indent=2, default=str)
+            self.log.debug(f"📊 Latest analysis updated: {latest_analysis_file}")
+
+            # 📜 Update signal_history.json (append mode, keep last 100 signals)
+            # This file is read by /api/public/signal-history endpoint
+            signal_history_file = 'logs/signal_history.json'
+            signal_entry = {
+                'signal': signal_data.get('signal', 'HOLD'),
+                'confidence': signal_data.get('confidence', 'MEDIUM'),
+                'reason': signal_data.get('reason', ''),
+                'timestamp': datetime.now().isoformat(),
+                'result': None,  # Will be updated later when trade completes
+                'stop_loss': signal_data.get('stop_loss'),
+                'take_profit': signal_data.get('take_profit'),
+            }
+
+            # Load existing history or create new
+            try:
+                if os.path.exists(signal_history_file):
+                    with open(signal_history_file, 'r') as f:
+                        history_data = json.load(f)
+                        signals = history_data.get('signals', []) if isinstance(history_data, dict) else history_data
+                else:
+                    signals = []
+            except Exception:
+                signals = []
+
+            # Prepend new signal and keep last 100
+            signals.insert(0, signal_entry)
+            signals = signals[:100]
+
+            with open(signal_history_file, 'w') as f:
+                json.dump({'signals': signals}, f, indent=2, default=str)
+            self.log.debug(f"📜 Signal history updated: {signal_history_file} ({len(signals)} signals)")
+
         except Exception as e:
             self.log.warning(f"Failed to save decision snapshot: {e}")
 

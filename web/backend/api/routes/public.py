@@ -171,17 +171,19 @@ async def get_latest_signal():
                         "reason": data.get("reason", ""),
                         "symbol": data.get("symbol", "BTCUSDT"),
                         "timestamp": data.get("timestamp", datetime.now().isoformat()),
+                        "data_source": "live",  # v3.8: Indicate real data
                     }
             except Exception:
                 pass
 
-    # Default response if no signal file found
+    # v3.8: Return clear "no data" status instead of fake data
     return {
-        "signal": "HOLD",
-        "confidence": "MEDIUM",
-        "reason": "Waiting for next analysis cycle",
+        "signal": "NO_DATA",
+        "confidence": "NONE",
+        "reason": "等待交易机器人生成信号 (Waiting for trading bot to generate signal)",
         "symbol": "BTCUSDT",
         "timestamp": datetime.now().isoformat(),
+        "data_source": "none",  # Clearly indicate no real data available
     }
 
 
@@ -207,22 +209,17 @@ async def get_signal_history(limit: int = 10):
                     return {
                         "signals": signals[:limit],
                         "total": len(signals),
+                        "data_source": "live",  # v3.8: Indicate real data
                     }
             except Exception:
                 pass
 
-    # Demo data if no history file found
+    # v3.8: Return empty array instead of fake data
     return {
-        "signals": [
-            {
-                "signal": "HOLD",
-                "confidence": "MEDIUM",
-                "reason": "Market consolidating, waiting for breakout",
-                "timestamp": datetime.now().isoformat(),
-                "result": None,
-            }
-        ],
-        "total": 1,
+        "signals": [],
+        "total": 0,
+        "data_source": "none",  # Clearly indicate no real data available
+        "message": "等待交易机器人生成信号历史 (Waiting for trading bot to generate signal history)",
     }
 
 
@@ -257,22 +254,24 @@ async def get_ai_analysis():
                         "technical_score": data.get("technical_score", 50),
                         "sentiment_score": data.get("sentiment_score", 50),
                         "timestamp": data.get("timestamp", datetime.now().isoformat()),
+                        "data_source": "live",  # v3.8: Indicate real data
                     }
             except Exception:
                 pass
 
-    # Demo data if no analysis file found
+    # v3.8: Return clear "no data" status instead of fake analysis
     return {
-        "signal": "HOLD",
-        "confidence": "MEDIUM",
-        "confidence_score": 55,
-        "bull_analysis": "RSI showing oversold conditions near key support. Volume increasing on bounces suggests accumulation phase.",
-        "bear_analysis": "Price below 200 SMA on daily. Resistance at $105,000 has rejected multiple times. Funding rate positive indicates crowded longs.",
-        "judge_reasoning": "Mixed signals warrant caution. Technical indicators suggest potential reversal but macro headwinds persist. Wait for confirmation.",
+        "signal": "NO_DATA",
+        "confidence": "NONE",
+        "confidence_score": 0,
+        "bull_analysis": "等待交易机器人生成分析 (Waiting for trading bot to generate analysis)",
+        "bear_analysis": "等待交易机器人生成分析 (Waiting for trading bot to generate analysis)",
+        "judge_reasoning": "交易机器人尚未运行分析周期 (Trading bot has not run an analysis cycle yet)",
         "entry_price": None,
         "stop_loss": None,
         "take_profit": None,
-        "technical_score": 60,
-        "sentiment_score": 45,
+        "technical_score": 0,
+        "sentiment_score": 0,
         "timestamp": datetime.now().isoformat(),
+        "data_source": "none",  # Clearly indicate no real data available
     }
