@@ -17,6 +17,11 @@ class AIDataAssembler:
     - 改为同步实现，兼容 on_timer() 回调
     - 支持双格式 K线输入
     - 添加数据新鲜度检查
+
+    v3.0 更新:
+    - 整合 BinanceDerivativesClient (大户数据、Taker 比等)
+    - 整合 Coinalyze 历史数据 (OI/Funding/多空比趋势)
+    - 添加 format_complete_report() 供 AI 使用
     """
 
     def __init__(
@@ -25,6 +30,10 @@ class AIDataAssembler:
         order_flow_processor,
         coinalyze_client,
         sentiment_client,
+        binance_derivatives_client=None,
+        binance_orderbook_client=None,
+        orderbook_processor=None,
+        config: Dict = None,
         logger: logging.Logger = None,
     ):
         """
@@ -40,11 +49,23 @@ class AIDataAssembler:
             Coinalyze 衍生品客户端
         sentiment_client : SentimentDataFetcher
             情绪数据客户端
+        binance_derivatives_client : BinanceDerivativesClient, optional
+            Binance 衍生品客户端 (大户数据等) - v3.0 新增
+        binance_orderbook_client : BinanceOrderBookClient, optional
+            Binance 订单簿客户端 - v3.7 新增
+        orderbook_processor : OrderBookProcessor, optional
+            订单簿处理器 - v3.7 新增
+        config : Dict, optional
+            配置字典 (用于获取配置参数)
         """
         self.binance_klines = binance_kline_client
         self.order_flow = order_flow_processor
         self.coinalyze = coinalyze_client
         self.sentiment = sentiment_client
+        self.binance_derivatives = binance_derivatives_client
+        self.binance_orderbook = binance_orderbook_client
+        self.orderbook_processor = orderbook_processor
+        self.config = config or {}
         self.logger = logger or logging.getLogger(__name__)
 
         # OI 变化率计算缓存
@@ -92,8 +113,9 @@ class AIDataAssembler:
             order_flow_data = self.order_flow._default_result()
             current_price = technical_data.get('price', 0)
 
-        # Step 3: 获取 Coinalyze 衍生品数据
-        coinalyze_data = self.coinalyze.fetch_all()
+        # Step 3: 获取 Coinalyze 衍生品数据 (包含历史)
+        # v3.0: 使用 fetch_all_with_history 获取完整数据
+        coinalyze_data = self.coinalyze.fetch_all_with_history(history_hours=4)
 
         # Step 4: 转换衍生品数据格式
         derivatives = self._convert_derivatives(
@@ -103,12 +125,47 @@ class AIDataAssembler:
             current_price=current_price,
         )
 
+        # v3.0: 添加 Coinalyze 趋势数据
+        derivatives["trends"] = coinalyze_data.get("trends", {})
+        derivatives["long_short_ratio_history"] = coinalyze_data.get("long_short_ratio_history")
+
         # Step 5: 获取情绪数据
         sentiment_data = self.sentiment.fetch()
         if sentiment_data is None:
             sentiment_data = self._default_sentiment()
 
-        # Step 6: 组装最终数据
+        # Step 6: 获取 Binance 衍生品数据 (大户数据等) - v3.0 新增
+        binance_derivatives_data = None
+        if self.binance_derivatives:
+            try:
+                binance_derivatives_data = self.binance_derivatives.fetch_all(
+                    symbol=symbol,
+                    period=interval,
+                    history_limit=10,
+                )
+            except Exception as e:
+                self.logger.warning(f"⚠️ Binance derivatives fetch error: {e}")
+
+        # Step 7: 获取订单簿数据 - v3.7 新增
+        orderbook_data = None
+        if self.binance_orderbook and self.orderbook_processor:
+            try:
+                raw_orderbook = self.binance_orderbook.get_order_book(symbol=symbol)
+                if raw_orderbook:
+                    # 获取波动率用于自适应调整
+                    volatility = self._get_recent_volatility(technical_data)
+                    orderbook_data = self.orderbook_processor.process(
+                        order_book=raw_orderbook,
+                        current_price=current_price,
+                        volatility=volatility,
+                    )
+                else:
+                    orderbook_data = self._no_data_orderbook("API returned None")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Order book fetch error: {e}")
+                orderbook_data = self._no_data_orderbook(str(e))
+
+        # Step 8: 组装最终数据
         return {
             "price": {
                 "current": current_price,
@@ -118,10 +175,15 @@ class AIDataAssembler:
             "order_flow": order_flow_data,
             "derivatives": derivatives,
             "sentiment": sentiment_data,
+            "binance_derivatives": binance_derivatives_data,  # v3.0 新增
+            "order_book": orderbook_data,  # v3.7 新增
             "current_position": position_data or {},
             "_metadata": {
                 "kline_source": "binance_raw" if raw_klines else "none",
                 "coinalyze_enabled": self.coinalyze.is_enabled(),
+                "binance_derivatives_enabled": self.binance_derivatives is not None,
+                "orderbook_enabled": self.binance_orderbook is not None,
+                "orderbook_status": orderbook_data.get("_status", {}).get("code") if orderbook_data else "DISABLED",
             },
         }
 
@@ -178,19 +240,29 @@ class AIDataAssembler:
                 coinalyze_value = float(funding_raw.get('value', 0))
                 coinalyze_pct = round(coinalyze_value * 100, 4)
 
-                # 决定使用哪个数据源
-                # 如果 Coinalyze 值异常高 (>0.1%) 且 Binance 数据可用，优先使用 Binance
+                # 决定使用哪个数据源 (v3.7: 配置化)
+                # 读取配置
+                funding_config = self.config.get('coinalyze', {}).get('funding_rate', {})
+                prefer_binance = funding_config.get('prefer_binance_when_divergent', True)
+                max_ratio = funding_config.get('max_divergence_ratio', 10.0)
+                always_binance = funding_config.get('always_use_binance', False)
+
                 use_binance = False
                 binance_pct = None
                 if binance_funding:
                     binance_pct = binance_funding.get('funding_rate_pct', 0)
-                    # 如果 Coinalyze 和 Binance 差异超过 10 倍，记录警告
-                    if binance_pct > 0 and coinalyze_pct > 0:
+
+                    # 如果配置为始终使用 Binance
+                    if always_binance:
+                        use_binance = True
+                    # 否则检查差异
+                    elif prefer_binance and binance_pct > 0 and coinalyze_pct > 0:
                         ratio = coinalyze_pct / binance_pct
-                        if ratio > 10 or ratio < 0.1:
+                        if ratio > max_ratio or ratio < (1 / max_ratio):
                             self.logger.warning(
                                 f"⚠️ Funding rate 数据差异大: "
-                                f"Coinalyze={coinalyze_pct:.4f}%, Binance={binance_pct:.4f}%"
+                                f"Coinalyze={coinalyze_pct:.4f}%, Binance={binance_pct:.4f}%, "
+                                f"ratio={ratio:.2f} (threshold={max_ratio})"
                             )
                             # Coinalyze 异常时使用 Binance
                             use_binance = True
@@ -289,4 +361,298 @@ class AIDataAssembler:
             'net_sentiment': 0.0,
             'long_short_ratio': 1.0,
             'source': 'default_neutral',
+        }
+
+    def format_complete_report(self, data: Dict[str, Any]) -> str:
+        """
+        格式化完整数据报告供 AI 分析 (v3.0 新增)
+
+        Parameters
+        ----------
+        data : Dict
+            assemble() 返回的完整数据
+
+        Returns
+        -------
+        str
+            格式化的完整市场数据报告
+        """
+        current_price = data.get("price", {}).get("current", 0)
+        parts = []
+
+        # =========================================================================
+        # 1. 价格和技术指标
+        # =========================================================================
+        parts.append("=" * 50)
+        parts.append("MARKET DATA REPORT")
+        parts.append("=" * 50)
+
+        price_data = data.get("price", {})
+        parts.append(f"\nPRICE: ${current_price:,.2f} ({price_data.get('change_pct', 0):+.2f}%)")
+
+        # =========================================================================
+        # 2. 订单流数据
+        # =========================================================================
+        order_flow = data.get("order_flow", {})
+        if order_flow:
+            parts.append("\nORDER FLOW (from Binance Klines):")
+            parts.append(f"  - Buy Ratio: {order_flow.get('buy_ratio', 0.5):.1%}")
+            parts.append(f"  - CVD Trend: {order_flow.get('cvd_trend', 'N/A')}")
+            parts.append(f"  - Avg Trade Size: ${order_flow.get('avg_trade_size', 0):,.0f}")
+
+        # =========================================================================
+        # 3. Coinalyze 衍生品数据 (含趋势)
+        # =========================================================================
+        derivatives = data.get("derivatives", {})
+        if derivatives:
+            parts.append("\nCOINALYZE DERIVATIVES:")
+            trends = derivatives.get("trends", {})
+
+            # OI
+            oi = derivatives.get("open_interest")
+            if oi:
+                oi_trend = trends.get("oi_trend", "N/A")
+                parts.append(
+                    f"  - Open Interest: {oi.get('total_btc', 0):,.0f} BTC "
+                    f"(${oi.get('total_usd', 0):,.0f}) [Trend: {oi_trend}]"
+                )
+
+            # Funding Rate
+            fr = derivatives.get("funding_rate")
+            if fr:
+                fr_trend = trends.get("funding_trend", "N/A")
+                parts.append(
+                    f"  - Funding Rate: {fr.get('current_pct', 0):.4f}% "
+                    f"({fr.get('interpretation', 'N/A')}) [Trend: {fr_trend}]"
+                )
+
+            # Liquidations
+            liq = derivatives.get("liquidations")
+            if liq:
+                parts.append(
+                    f"  - Liquidations (1h): Long ${liq.get('long_usd', 0):,.0f} / "
+                    f"Short ${liq.get('short_usd', 0):,.0f}"
+                )
+
+            # Long/Short Ratio (from Coinalyze)
+            ls_hist = derivatives.get("long_short_ratio_history")
+            if ls_hist and ls_hist.get("history"):
+                latest = ls_hist["history"][-1]
+                ls_trend = trends.get("long_short_trend", "N/A")
+                parts.append(
+                    f"  - Long/Short Ratio (Coinalyze): {latest.get('r', 1):.2f} "
+                    f"(Long {latest.get('l', 50):.1f}% / Short {latest.get('s', 50):.1f}%) "
+                    f"[Trend: {ls_trend}]"
+                )
+
+        # =========================================================================
+        # 4. Binance 衍生品数据 (大户数据、Taker 比)
+        # =========================================================================
+        binance_deriv = data.get("binance_derivatives")
+        if binance_deriv:
+            parts.append("\nBINANCE DERIVATIVES (Unique Data):")
+
+            # 大户持仓比
+            top_pos = binance_deriv.get("top_long_short_position", {})
+            latest = top_pos.get("latest")
+            if latest:
+                ratio = float(latest.get("longShortRatio", 1))
+                long_pct = float(latest.get("longAccount", 0.5)) * 100
+                trend = top_pos.get("trend", "N/A")
+                parts.append(
+                    f"  - Top Traders Position: Long {long_pct:.1f}% "
+                    f"(Ratio: {ratio:.2f}) [Trend: {trend}]"
+                )
+
+            # Taker 买卖比
+            taker = binance_deriv.get("taker_long_short", {})
+            latest = taker.get("latest")
+            if latest:
+                ratio = float(latest.get("buySellRatio", 1))
+                trend = taker.get("trend", "N/A")
+                parts.append(f"  - Taker Buy/Sell Ratio: {ratio:.3f} [Trend: {trend}]")
+
+            # OI 趋势 (Binance)
+            oi_hist = binance_deriv.get("open_interest_hist", {})
+            latest = oi_hist.get("latest")
+            if latest:
+                oi_usd = float(latest.get("sumOpenInterestValue", 0))
+                trend = oi_hist.get("trend", "N/A")
+                parts.append(f"  - OI (Binance): ${oi_usd:,.0f} [Trend: {trend}]")
+
+            # 24h 统计
+            ticker = binance_deriv.get("ticker_24hr")
+            if ticker:
+                change_pct = float(ticker.get("priceChangePercent", 0))
+                volume = float(ticker.get("quoteVolume", 0))
+                parts.append(
+                    f"  - 24h Stats: Change {change_pct:+.2f}%, Volume ${volume:,.0f}"
+                )
+
+        # =========================================================================
+        # 5. 市场情绪 (Binance 多空比)
+        # =========================================================================
+        sentiment = data.get("sentiment", {})
+        if sentiment:
+            parts.append("\nMARKET SENTIMENT (Binance Global L/S Ratio):")
+            parts.append(
+                f"  - Long: {sentiment.get('positive_ratio', 0.5):.1%} / "
+                f"Short: {sentiment.get('negative_ratio', 0.5):.1%}"
+            )
+            parts.append(f"  - Net Sentiment: {sentiment.get('net_sentiment', 0):+.3f}")
+            parts.append(f"  - L/S Ratio: {sentiment.get('long_short_ratio', 1):.2f}")
+
+        # =========================================================================
+        # 6. 数据源状态
+        # =========================================================================
+        metadata = data.get("_metadata", {})
+        parts.append("\nDATA SOURCES:")
+        parts.append(f"  - Klines: {metadata.get('kline_source', 'unknown')}")
+        parts.append(f"  - Coinalyze: {'enabled' if metadata.get('coinalyze_enabled') else 'disabled'}")
+        parts.append(f"  - Binance Derivatives: {'enabled' if metadata.get('binance_derivatives_enabled') else 'disabled'}")
+
+        # =========================================================================
+        # 7. 订单簿深度数据 (v3.7 新增)
+        # =========================================================================
+        order_book = data.get("order_book")
+        if order_book:
+            status = order_book.get("_status", {})
+            status_code = status.get("code", "UNKNOWN")
+
+            parts.append("\nORDER BOOK DEPTH (Binance, 100 levels):")
+            parts.append(f"  Status: {status_code}")
+
+            # v2.0: 处理 NO_DATA 状态
+            if status_code == "NO_DATA":
+                parts.append(f"  Reason: {status.get('message', 'Unknown')}")
+                parts.append("  [All metrics unavailable - do not assume neutral market]")
+            else:
+                # OBI
+                obi = order_book.get("obi", {})
+                if obi:
+                    parts.append(f"  Simple OBI: {obi.get('simple', 0):+.3f}")
+                    decay = obi.get('decay_used', 0.8)
+                    parts.append(f"  Weighted OBI: {obi.get('adaptive_weighted', 0):+.3f} (decay={decay})")
+                    parts.append(
+                        f"  Bid Volume: ${obi.get('bid_volume_usd', 0)/1e6:.1f}M "
+                        f"({obi.get('bid_volume_btc', 0):.1f} BTC)"
+                    )
+                    parts.append(
+                        f"  Ask Volume: ${obi.get('ask_volume_usd', 0)/1e6:.1f}M "
+                        f"({obi.get('ask_volume_btc', 0):.1f} BTC)"
+                    )
+
+                # v2.0: Dynamics
+                dynamics = order_book.get("dynamics", {})
+                if dynamics and dynamics.get("samples_count", 0) > 0:
+                    parts.append("  DYNAMICS (vs previous):")
+                    if dynamics.get("obi_change") is not None:
+                        parts.append(
+                            f"    OBI Change: {dynamics['obi_change']:+.4f} "
+                            f"({dynamics.get('obi_change_pct', 0):+.1f}%)"
+                        )
+                    if dynamics.get("bid_depth_change_pct") is not None:
+                        parts.append(f"    Bid Depth: {dynamics['bid_depth_change_pct']:+.1f}%")
+                    if dynamics.get("ask_depth_change_pct") is not None:
+                        parts.append(f"    Ask Depth: {dynamics['ask_depth_change_pct']:+.1f}%")
+                    parts.append(f"    Trend: {dynamics.get('trend', 'N/A')}")
+
+                # v2.0: Pressure Gradient
+                gradient = order_book.get("pressure_gradient", {})
+                if gradient:
+                    parts.append("  PRESSURE GRADIENT:")
+                    parts.append(
+                        f"    Bid: {gradient.get('bid_near_5', 0):.0%} near-5, "
+                        f"{gradient.get('bid_near_10', 0):.0%} near-10 "
+                        f"[{gradient.get('bid_concentration', 'N/A')}]"
+                    )
+                    parts.append(
+                        f"    Ask: {gradient.get('ask_near_5', 0):.0%} near-5, "
+                        f"{gradient.get('ask_near_10', 0):.0%} near-10 "
+                        f"[{gradient.get('ask_concentration', 'N/A')}]"
+                    )
+
+                # 异常
+                anomalies = order_book.get("anomalies", {})
+                if anomalies and anomalies.get("has_significant"):
+                    threshold = anomalies.get("threshold_used", 3.0)
+                    reason = anomalies.get("threshold_reason", "normal")
+                    parts.append(f"  ANOMALIES (threshold={threshold}x, {reason}):")
+                    for a in anomalies.get("bid_anomalies", [])[:3]:  # 最多显示3个
+                        parts.append(
+                            f"    Bid @ ${a['price']:,.0f}: {a['volume_btc']:.0f} BTC "
+                            f"({a['multiplier']:.1f}x)"
+                        )
+                    for a in anomalies.get("ask_anomalies", [])[:3]:  # 最多显示3个
+                        parts.append(
+                            f"    Ask @ ${a['price']:,.0f}: {a['volume_btc']:.0f} BTC "
+                            f"({a['multiplier']:.1f}x)"
+                        )
+
+                # v2.0: 滑点 (含置信度)
+                liquidity = order_book.get("liquidity", {})
+                if liquidity:
+                    parts.append(f"  Spread: {liquidity.get('spread_pct', 0):.3f}%")
+                    slippage = liquidity.get("slippage", {})
+                    if slippage.get("buy_1.0_btc"):
+                        s = slippage["buy_1.0_btc"]
+                        if s.get("estimated") is not None:
+                            parts.append(
+                                f"  Slippage (Buy 1 BTC): {s['estimated']:.3f}% "
+                                f"[conf={s['confidence']:.0%}, range={s['range'][0]:.3f}%-{s['range'][1]:.3f}%]"
+                            )
+
+        parts.append("\n" + "=" * 50)
+
+        return "\n".join(parts)
+
+    def _get_recent_volatility(self, technical_data: Dict) -> float:
+        """
+        获取近期波动率 (用于自适应参数)
+
+        Parameters
+        ----------
+        technical_data : Dict
+            技术指标数据
+
+        Returns
+        -------
+        float
+            相对波动率 (ATR / price)
+        """
+        atr = technical_data.get("atr", 0)
+        price = technical_data.get("price", 1)
+        if price > 0:
+            return atr / price  # 相对波动率
+        return 0.02  # 默认 2%
+
+    def _no_data_orderbook(self, reason: str) -> Dict:
+        """
+        返回 NO_DATA 状态订单簿 (v2.0 Critical)
+
+        避免 AI 将缺失数据误解为中性市场
+
+        Parameters
+        ----------
+        reason : str
+            数据不可用的原因
+
+        Returns
+        -------
+        Dict
+            NO_DATA 状态字典
+        """
+        import time
+        return {
+            "obi": None,
+            "dynamics": None,
+            "pressure_gradient": None,
+            "depth_distribution": None,
+            "anomalies": None,
+            "liquidity": None,
+            "_status": {
+                "code": "NO_DATA",
+                "message": f"Order book data unavailable: {reason}",
+                "timestamp": int(time.time() * 1000),
+            },
         }

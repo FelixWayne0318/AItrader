@@ -415,7 +415,6 @@ class TelegramBot:
         rsi = heartbeat_data.get('rsi') or 0
         timer_count = heartbeat_data.get('timer_count') or 0
         equity = heartbeat_data.get('equity') or 0
-        trend_status = heartbeat_data.get('trend_status') or 'N/A'
         uptime_str = heartbeat_data.get('uptime_str') or 'N/A'
 
         # 持仓信息（统一显示，无则显示 0 或 无）
@@ -426,9 +425,6 @@ class TelegramBot:
 
         # Signal emoji
         signal_emoji = {'BUY': '🟢', 'SELL': '🔴', 'HOLD': '⚪'}.get(signal, '❓')
-
-        # Trend emoji
-        trend_emoji = {'RISK_ON': '🟢', 'RISK_OFF': '🔴'}.get(trend_status, '⚪')
 
         # Position emoji
         if position_side == 'LONG':
@@ -445,7 +441,6 @@ class TelegramBot:
         msg = f"💓 *Heartbeat #{timer_count}*\n"
         msg += f"━━━━━━━━━━━━━━━━\n"
         msg += f"💵 价格: ${price:,.2f}\n"
-        msg += f"📊 趋势: {trend_emoji} {trend_status}\n"
         msg += f"📈 RSI: {rsi:.1f}\n"
         msg += f"🎯 信号: {signal_emoji} {signal} ({confidence})\n"
         msg += f"━━━━━━━━━━━━━━━━\n"

@@ -23,6 +23,9 @@ from datetime import datetime
 
 from openai import OpenAI
 
+# S/R Zone Calculator (v3.8: Multi-source support/resistance detection)
+from utils.sr_zone_calculator import SRZoneCalculator
+
 # Import shared constants for consistency (Phase 3: migrated to functions)
 from strategy.trading_logic import (
     get_min_sl_distance_pct,
@@ -104,6 +107,62 @@ OPEN INTEREST:
 - Rising OI + Rising Price = New longs entering (bullish)
 - Rising OI + Falling Price = New shorts entering (bearish)
 - Falling OI = Positions closing, trend weakening
+
+ORDER BOOK DEPTH (Microstructure):
+- OBI (Order Book Imbalance):
+  * +0.20 to +1.00 = Strong bid pressure (bullish)
+  * +0.05 to +0.20 = Mild bid pressure (slight bullish)
+  * -0.05 to +0.05 = Balanced
+  * -0.20 to -0.05 = Mild ask pressure (slight bearish)
+  * -1.00 to -0.20 = Strong ask pressure (bearish)
+  * Weighted OBI gives higher weight to orders near best price
+
+- ⭐ DYNAMICS (Critical for timing):
+  * OBI Change > +0.05 = Bids strengthening (momentum building)
+  * OBI Change < -0.05 = Asks strengthening (selling pressure building)
+  * Trend values: BID_STRENGTHENING / ASK_STRENGTHENING / STABLE
+  * Bid/Ask Depth Change: Large drops (< -5%) = Liquidity thinning (caution)
+
+- ⭐ PRESSURE GRADIENT (Order concentration):
+  * HIGH concentration (near_5 > 40%) = Orders clustered near best price
+    - If on bid side: Strong immediate support
+    - If on ask side: Strong immediate resistance
+  * LOW concentration (near_5 < 25%) = Orders spread out
+    - Gradual support/resistance, less likely to hold
+  * Compare bid vs ask concentration for directional bias
+
+- ANOMALIES (Large orders):
+  * Wall detected = Large order blocking price movement
+  * Bid wall = Support level, harder to break down
+  * Ask wall = Resistance level, harder to break up
+  * Recent pulls (walls removed) may signal trap
+
+- LIQUIDITY (Execution quality):
+  * Slippage < 0.05% = Deep book, safe for larger orders
+  * Slippage > 0.10% = Thin book, use smaller position size
+  * Low confidence slippage = Sparse data, be cautious
+
+SUPPORT/RESISTANCE ZONES (Multi-source S/R):
+- Zones are calculated from multiple sources for higher accuracy:
+  * Order Book Walls (most reliable) = Real orders at that price
+  * Bollinger Bands (dynamic) = Statistical price boundaries
+  * SMA_50/SMA_200 (trend) = Moving average support/resistance
+
+- Strength levels:
+  * HIGH = Multiple sources agree OR Order Wall present (strong confluence)
+  * MEDIUM = 2 sources agree
+  * LOW = Single source only
+
+- Trading implications:
+  * LONG near HIGH resistance = HIGH RISK (multiple barriers to break)
+  * SHORT near HIGH support = HIGH RISK (multiple buyers waiting)
+  * Distance < 1% to HIGH zone = Extreme caution
+  * Distance > 2% = Safer for directional trades
+
+- Zone usage:
+  * Use S/R zones for stop loss placement (beyond the zone)
+  * Use S/R zones for take profit targets (before the zone)
+  * Order Walls may be pulled (spoofed) - consider with other data
 """
 
 
@@ -167,6 +226,17 @@ class MultiAgentAnalyzer:
         # Retry configuration (same as DeepSeekAnalyzer)
         self.max_retries = 2
         self.retry_delay = 1.0
+
+        # v3.8: S/R Zone Calculator (multi-source support/resistance)
+        self.sr_calculator = SRZoneCalculator(
+            cluster_pct=0.5,              # 聚类阈值 0.5%
+            zone_expand_pct=0.1,          # Zone 扩展 0.1%
+            hard_control_threshold_pct=1.0,  # 硬风控阈值 1% (仅对 HIGH strength)
+            logger=self.logger,
+        )
+
+        # Cache for S/R zones (updated in analyze())
+        self._sr_zones_cache: Optional[Dict[str, Any]] = None
 
     def _call_api_with_retry(
         self,
@@ -283,6 +353,10 @@ class MultiAgentAnalyzer:
         # ========== MTF v2.1: Multi-Timeframe Support ==========
         order_flow_report: Optional[Dict[str, Any]] = None,
         derivatives_report: Optional[Dict[str, Any]] = None,
+        # ========== v3.0: Binance Derivatives (Top Traders, Taker Ratio) ==========
+        binance_derivatives_report: Optional[Dict[str, Any]] = None,
+        # ========== v3.7: Order Book Depth ==========
+        orderbook_report: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis with Bull/Bear debate.
@@ -312,6 +386,8 @@ class MultiAgentAnalyzer:
             Order flow data (buy/sell ratio, CVD trend) - MTF v2.1
         derivatives_report : Dict, optional
             Derivatives market data (OI, funding, liquidations) - MTF v2.1
+        binance_derivatives_report : Dict, optional
+            Binance-specific derivatives (top traders, taker ratio) - v3.0
 
         Returns
         -------
@@ -346,7 +422,20 @@ class MultiAgentAnalyzer:
 
             # MTF v2.1: Format order flow and derivatives for prompts
             order_flow_summary = self._format_order_flow_report(order_flow_report)
-            derivatives_summary = self._format_derivatives_report(derivatives_report, current_price)
+            derivatives_summary = self._format_derivatives_report(
+                derivatives_report, current_price, binance_derivatives_report
+            )
+            # v3.7: Format order book depth data
+            orderbook_summary = self._format_orderbook_report(orderbook_report)
+
+            # v3.8: Calculate S/R Zones (multi-source support/resistance)
+            sr_zones = self._calculate_sr_zones(
+                current_price=current_price,
+                technical_data=technical_report,
+                orderbook_data=orderbook_report,
+            )
+            self._sr_zones_cache = sr_zones  # Cache for _evaluate_risk()
+            sr_zones_summary = sr_zones.get('ai_report', '') if sr_zones else ''
 
             # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
@@ -364,6 +453,8 @@ class MultiAgentAnalyzer:
                     sentiment_report=sent_summary,
                     order_flow_report=order_flow_summary,      # MTF v2.1
                     derivatives_report=derivatives_summary,     # MTF v2.1
+                    orderbook_report=orderbook_summary,         # v3.7
+                    sr_zones_report=sr_zones_summary,           # v3.8
                     history=debate_history,
                     bear_argument=bear_argument,
                 )
@@ -376,6 +467,8 @@ class MultiAgentAnalyzer:
                     sentiment_report=sent_summary,
                     order_flow_report=order_flow_summary,      # MTF v2.1
                     derivatives_report=derivatives_summary,     # MTF v2.1
+                    orderbook_report=orderbook_summary,         # v3.7
+                    sr_zones_report=sr_zones_summary,           # v3.8
                     history=debate_history,
                     bull_argument=bull_argument,
                 )
@@ -404,6 +497,7 @@ class MultiAgentAnalyzer:
                 sentiment_report=sent_summary,
                 current_position=current_position,
                 current_price=current_price,
+                technical_data=technical_report,  # v3.7: Pass dict for BB checks
             )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
@@ -422,6 +516,8 @@ class MultiAgentAnalyzer:
         sentiment_report: str,
         order_flow_report: str,      # MTF v2.1
         derivatives_report: str,     # MTF v2.1
+        orderbook_report: str,       # v3.7
+        sr_zones_report: str,        # v3.8
         history: str,
         bear_argument: str,
     ) -> str:
@@ -430,6 +526,7 @@ class MultiAgentAnalyzer:
 
         Borrowed from: TradingAgents/agents/researchers/bull_researcher.py
         TradingAgents v3.3: Indicator definitions in system prompt (like TradingAgents)
+        v3.8: Added S/R zones report
         """
         # User prompt: Only data and task (no indicator definitions)
         prompt = f"""AVAILABLE DATA:
@@ -439,6 +536,10 @@ class MultiAgentAnalyzer:
 {order_flow_report}
 
 {derivatives_report}
+
+{orderbook_report}
+
+{sr_zones_report}
 
 {sentiment_report}
 
@@ -482,6 +583,8 @@ Focus on evidence from the data, not assumptions."""
         sentiment_report: str,
         order_flow_report: str,      # MTF v2.1
         derivatives_report: str,     # MTF v2.1
+        orderbook_report: str,       # v3.7
+        sr_zones_report: str,        # v3.8
         history: str,
         bull_argument: str,
     ) -> str:
@@ -490,6 +593,7 @@ Focus on evidence from the data, not assumptions."""
 
         Borrowed from: TradingAgents/agents/researchers/bear_researcher.py
         TradingAgents v3.3: AI interprets raw data using indicator definitions
+        v3.8: Added S/R zones report
         """
         # User prompt: Only data and task (no indicator definitions)
         prompt = f"""AVAILABLE DATA:
@@ -499,6 +603,10 @@ Focus on evidence from the data, not assumptions."""
 {order_flow_report}
 
 {derivatives_report}
+
+{orderbook_report}
+
+{sr_zones_report}
 
 {sentiment_report}
 
@@ -622,17 +730,55 @@ OUTPUT FORMAT (JSON only, no other text):
         sentiment_report: str,
         current_position: Optional[Dict[str, Any]],
         current_price: float,
+        technical_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Final risk evaluation and position sizing.
 
         Borrowed from: TradingAgents/agents/risk_mgmt/conservative_debator.py
         Simplified v3.0: Let AI determine SL/TP based on market structure
+        v3.7: Added BB position hardcoded checks for support/resistance risk control
+        v3.8: Replaced BB-only check with multi-source S/R Zone check
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
         reasons = proposed_action.get("key_reasons", [])
         risks = proposed_action.get("acknowledged_risks", [])
+
+        # ========== v3.8: S/R Zone Hard Control ==========
+        # Uses multi-source S/R zones (BB + SMA + Order Book Walls)
+        # Only blocks when near HIGH strength zones (confluence of multiple sources)
+        if self._sr_zones_cache:
+            hard_control = self._sr_zones_cache.get('hard_control', {})
+
+            # Block LONG if too close to HIGH strength resistance
+            if action == "LONG" and hard_control.get('block_long'):
+                reason = hard_control.get('reason', 'Too close to resistance')
+                self.logger.warning(f"⚠️ {reason}")
+                proposed_action["decision"] = "HOLD"
+                proposed_action["confidence"] = "LOW"
+                if isinstance(reasons, list):
+                    reasons = reasons.copy()
+                    reasons.append(f"Blocked: {reason}")
+                if isinstance(risks, list):
+                    risks = risks.copy()
+                    risks.append("Too close to HIGH strength resistance zone")
+                action = "HOLD"
+
+            # Block SHORT if too close to HIGH strength support
+            elif action == "SHORT" and hard_control.get('block_short'):
+                reason = hard_control.get('reason', 'Too close to support')
+                self.logger.warning(f"⚠️ {reason}")
+                proposed_action["decision"] = "HOLD"
+                proposed_action["confidence"] = "LOW"
+                if isinstance(reasons, list):
+                    reasons = reasons.copy()
+                    reasons.append(f"Blocked: {reason}")
+                if isinstance(risks, list):
+                    risks = risks.copy()
+                    risks.append("Too close to HIGH strength support zone")
+                action = "HOLD"
+        # ========== End of S/R Zone Hard Control ==========
 
         prompt = f"""As the Risk Manager, provide final trade parameters.
 
@@ -1027,69 +1173,409 @@ ORDER FLOW (Binance Taker Data):
 - Recent 10 Bars: [{recent_str}]
 """
 
-    def _format_derivatives_report(self, data: Optional[Dict[str, Any]], current_price: float = 0.0) -> str:
+    def _format_derivatives_report(
+        self,
+        data: Optional[Dict[str, Any]],
+        current_price: float = 0.0,
+        binance_derivatives: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """
         Format derivatives data for AI prompts.
 
         MTF v2.1: New method for derivatives integration
+        v3.0: Added binance_derivatives (top traders, taker ratio)
 
         Parameters
         ----------
         data : Dict, optional
-            Derivatives data (OI, funding rate, liquidations)
+            Coinalyze derivatives data (OI, funding rate, liquidations)
         current_price : float
             Current BTC price for converting liquidations from BTC to USD
+        binance_derivatives : Dict, optional
+            Binance-specific derivatives (top traders, taker ratio) - v3.0
 
         Returns
         -------
         str
             Formatted derivatives report for AI prompts
         """
-        if not data or not data.get('enabled', True):
-            return "DERIVATIVES: Data not available (Coinalyze API disabled or unavailable)"
+        parts = []
 
-        # v3.0: Pass raw data only, let AI interpret
-        parts = ["DERIVATIVES MARKET DATA:"]
+        # =========================================================================
+        # Section 1: Coinalyze Data
+        # =========================================================================
+        if data and data.get('enabled', True):
+            parts.append("COINALYZE DERIVATIVES:")
 
-        # Open Interest (raw value only)
-        oi = data.get('open_interest')
-        if oi:
-            oi_btc = oi.get('value', 0)
-            parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
-        else:
-            parts.append("- Open Interest: N/A")
+            # Open Interest with trend
+            oi = data.get('open_interest')
+            trends = data.get('trends', {})
+            if oi:
+                oi_btc = oi.get('value', 0)
+                oi_trend = trends.get('oi_trend', 'N/A')
+                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC [Trend: {oi_trend}]")
+            else:
+                parts.append("- Open Interest: N/A")
 
-        # Funding Rate (raw value only, no interpretation)
-        funding = data.get('funding_rate')
-        if funding:
-            rate = funding.get('value', 0)
-            rate_pct = rate * 100
-            parts.append(f"- Funding Rate: {rate_pct:.4f}%")
-        else:
-            parts.append("- Funding Rate: N/A")
+            # Funding Rate with trend
+            funding = data.get('funding_rate')
+            if funding:
+                rate = funding.get('value', 0)
+                rate_pct = rate * 100
+                fr_trend = trends.get('funding_trend', 'N/A')
+                parts.append(f"- Funding Rate: {rate_pct:.4f}% [Trend: {fr_trend}]")
+            else:
+                parts.append("- Funding Rate: N/A")
 
-        # Liquidations (raw values only)
-        liq = data.get('liquidations')
-        if liq:
-            history = liq.get('history', [])
-            if history:
-                item = history[-1]
-                long_liq_btc = float(item.get('l', 0))
-                short_liq_btc = float(item.get('s', 0))
-                total_btc = long_liq_btc + short_liq_btc
+            # Liquidations
+            liq = data.get('liquidations')
+            if liq:
+                history = liq.get('history', [])
+                if history:
+                    item = history[-1]
+                    long_liq_btc = float(item.get('l', 0))
+                    short_liq_btc = float(item.get('s', 0))
+                    total_btc = long_liq_btc + short_liq_btc
 
-                # Convert to USD
-                price_for_conversion = current_price if current_price > 0 else 88000
-                total_usd = total_btc * price_for_conversion
+                    price_for_conversion = current_price if current_price > 0 else 88000
+                    total_usd = total_btc * price_for_conversion
 
-                parts.append(f"- Liquidations (1h): {total_btc:.4f} BTC (${total_usd:,.0f})")
-                if total_btc > 0:
-                    long_ratio = long_liq_btc / total_btc
-                    parts.append(f"  - Long Liq: {long_liq_btc:.4f} BTC ({long_ratio:.0%})")
-                    parts.append(f"  - Short Liq: {short_liq_btc:.4f} BTC ({1-long_ratio:.0%})")
+                    parts.append(f"- Liquidations (1h): {total_btc:.4f} BTC (${total_usd:,.0f})")
+                    if total_btc > 0:
+                        long_ratio = long_liq_btc / total_btc
+                        parts.append(f"  - Long Liq: {long_liq_btc:.4f} BTC ({long_ratio:.0%})")
+                        parts.append(f"  - Short Liq: {short_liq_btc:.4f} BTC ({1-long_ratio:.0%})")
+                else:
+                    parts.append("- Liquidations (1h): N/A")
             else:
                 parts.append("- Liquidations (1h): N/A")
+
+            # Long/Short Ratio from Coinalyze
+            ls_hist = data.get('long_short_ratio_history')
+            if ls_hist and ls_hist.get('history'):
+                latest = ls_hist['history'][-1]
+                ls_ratio = float(latest.get('r', 1))
+                long_pct = float(latest.get('l', 50))
+                short_pct = float(latest.get('s', 50))
+                ls_trend = trends.get('long_short_trend', 'N/A')
+                parts.append(
+                    f"- Long/Short Ratio: {ls_ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%) "
+                    f"[Trend: {ls_trend}]"
+                )
         else:
-            parts.append("- Liquidations (1h): N/A")
+            parts.append("COINALYZE: Data not available")
+
+        # =========================================================================
+        # Section 2: Binance Derivatives (Unique Data)
+        # =========================================================================
+        if binance_derivatives:
+            parts.append("\nBINANCE DERIVATIVES (Top Traders & Taker):")
+
+            # Top Traders Position Ratio
+            top_pos = binance_derivatives.get('top_long_short_position', {})
+            latest = top_pos.get('latest')
+            if latest:
+                ratio = float(latest.get('longShortRatio', 1))
+                long_pct = float(latest.get('longAccount', 0.5)) * 100
+                short_pct = float(latest.get('shortAccount', 0.5)) * 100
+                trend = top_pos.get('trend', 'N/A')
+                parts.append(
+                    f"- Top Traders Position: Long {long_pct:.1f}% / Short {short_pct:.1f}% "
+                    f"(Ratio: {ratio:.2f}) [Trend: {trend}]"
+                )
+
+            # Taker Buy/Sell Ratio
+            taker = binance_derivatives.get('taker_long_short', {})
+            latest = taker.get('latest')
+            if latest:
+                ratio = float(latest.get('buySellRatio', 1))
+                trend = taker.get('trend', 'N/A')
+                parts.append(f"- Taker Buy/Sell Ratio: {ratio:.3f} [Trend: {trend}]")
+
+            # OI from Binance
+            oi_hist = binance_derivatives.get('open_interest_hist', {})
+            latest = oi_hist.get('latest')
+            if latest:
+                oi_usd = float(latest.get('sumOpenInterestValue', 0))
+                trend = oi_hist.get('trend', 'N/A')
+                parts.append(f"- OI (Binance): ${oi_usd:,.0f} [Trend: {trend}]")
+
+            # 24h Stats
+            ticker = binance_derivatives.get('ticker_24hr')
+            if ticker:
+                change_pct = float(ticker.get('priceChangePercent', 0))
+                volume = float(ticker.get('quoteVolume', 0))
+                parts.append(f"- 24h: Change {change_pct:+.2f}%, Volume ${volume:,.0f}")
+
+        if not parts:
+            return "DERIVATIVES: No data available"
+
+        return "\n".join(parts)
+
+    def _calculate_sr_zones(
+        self,
+        current_price: float,
+        technical_data: Optional[Dict[str, Any]],
+        orderbook_data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Calculate S/R Zones from multiple data sources (v3.8).
+
+        Combines:
+        - Bollinger Bands (BB Upper/Lower)
+        - SMA (SMA_50, SMA_200)
+        - Order Book Walls (bid/ask anomalies)
+
+        Parameters
+        ----------
+        current_price : float
+            Current market price
+        technical_data : Dict, optional
+            Technical indicator data containing BB and SMA values
+        orderbook_data : Dict, optional
+            Order book data containing anomalies (walls)
+
+        Returns
+        -------
+        Dict
+            S/R zones result from SRZoneCalculator
+        """
+        if current_price <= 0:
+            return self.sr_calculator._empty_result()
+
+        # Extract BB data
+        bb_data = None
+        if technical_data:
+            bb_upper = technical_data.get('bb_upper')
+            bb_lower = technical_data.get('bb_lower')
+            bb_middle = technical_data.get('bb_middle')
+            if bb_upper and bb_lower:
+                bb_data = {
+                    'upper': bb_upper,
+                    'lower': bb_lower,
+                    'middle': bb_middle,
+                }
+
+        # Extract SMA data
+        sma_data = None
+        if technical_data:
+            sma_50 = technical_data.get('sma_50')
+            sma_200 = technical_data.get('sma_200')
+            if sma_50 or sma_200:
+                sma_data = {
+                    'sma_50': sma_50,
+                    'sma_200': sma_200,
+                }
+
+        # Extract Order Book anomalies (walls)
+        orderbook_anomalies = None
+        if orderbook_data:
+            anomalies = orderbook_data.get('anomalies', {})
+            if anomalies:
+                orderbook_anomalies = {
+                    'bid_anomalies': anomalies.get('bid_anomalies', []),
+                    'ask_anomalies': anomalies.get('ask_anomalies', []),
+                }
+
+        # Calculate S/R zones
+        try:
+            result = self.sr_calculator.calculate(
+                current_price=current_price,
+                bb_data=bb_data,
+                sma_data=sma_data,
+                orderbook_anomalies=orderbook_anomalies,
+            )
+
+            # Log S/R zone detection
+            if result.get('nearest_resistance'):
+                r = result['nearest_resistance']
+                self.logger.debug(
+                    f"S/R Zone: Nearest Resistance ${r.price_center:,.0f} "
+                    f"({r.distance_pct:.1f}% away) [{r.strength}]"
+                )
+            if result.get('nearest_support'):
+                s = result['nearest_support']
+                self.logger.debug(
+                    f"S/R Zone: Nearest Support ${s.price_center:,.0f} "
+                    f"({s.distance_pct:.1f}% away) [{s.strength}]"
+                )
+
+            return result
+
+        except Exception as e:
+            self.logger.warning(f"S/R zone calculation failed: {e}")
+            return self.sr_calculator._empty_result()
+
+    def _format_orderbook_report(self, data: Optional[Dict[str, Any]]) -> str:
+        """
+        Format order book depth data for AI prompts.
+
+        v3.7.2: Fully compliant with ORDER_BOOK_IMPLEMENTATION_PLAN.md v2.0 spec
+
+        Spec reference: docs/ORDER_BOOK_IMPLEMENTATION_PLAN.md section 3.3
+
+        Parameters
+        ----------
+        data : Dict, optional
+            Order book depth data from OrderBookProcessor.process()
+
+        Returns
+        -------
+        str
+            Formatted order book report for AI prompts (v2.0 format)
+        """
+        if not data:
+            return "ORDER BOOK DEPTH: Data not available"
+
+        # Check data status
+        status = data.get('_status', {})
+        status_code = status.get('code', 'UNKNOWN')
+
+        # v2.0: NO_DATA status handling
+        if status_code == 'NO_DATA':
+            return f"""ORDER BOOK DEPTH (Binance /fapi/v1/depth):
+Status: NO_DATA
+Reason: {status.get('message', 'Unknown')}
+
+[All metrics unavailable - AI should not assume neutral market]"""
+
+        if status_code != 'OK':
+            return f"ORDER BOOK DEPTH: {status.get('message', 'Error occurred')}"
+
+        # ========== Header ==========
+        levels = status.get('levels_analyzed', 100)
+        history_samples = status.get('history_samples', 0)
+        parts = [
+            f"ORDER BOOK DEPTH (Binance /fapi/v1/depth, {levels} levels):",
+            f"Status: OK ({history_samples} history samples)",
+            "",
+        ]
+
+        # ========== IMBALANCE Section ==========
+        obi = data.get('obi', {})
+        simple_obi = obi.get('simple', 0)
+        weighted_obi = obi.get('weighted', 0)
+        adaptive_obi = obi.get('adaptive_weighted', weighted_obi)
+        decay_used = obi.get('decay_used', 0.8)
+
+        bid_vol_usd = obi.get('bid_volume_usd', 0)
+        ask_vol_usd = obi.get('ask_volume_usd', 0)
+        bid_vol_btc = obi.get('bid_volume_btc', 0)
+        ask_vol_btc = obi.get('ask_volume_btc', 0)
+
+        parts.append("IMBALANCE:")
+        parts.append(f"  Simple OBI: {simple_obi:+.2f}")
+        parts.append(f"  Weighted OBI: {weighted_obi:+.2f} (decay={decay_used:.2f}, adaptive)")
+        parts.append(f"  Bid Volume: ${bid_vol_usd/1e6:.1f}M ({bid_vol_btc:.1f} BTC)")
+        parts.append(f"  Ask Volume: ${ask_vol_usd/1e6:.1f}M ({ask_vol_btc:.1f} BTC)")
+        parts.append("")
+
+        # ========== DYNAMICS Section (v2.0 Critical) ==========
+        dynamics = data.get('dynamics', {})
+        samples_count = dynamics.get('samples_count', 0) if dynamics else 0
+
+        parts.append("⭐ DYNAMICS (vs previous snapshot):")
+        if samples_count > 0:
+            obi_change = dynamics.get('obi_change')
+            obi_change_pct = dynamics.get('obi_change_pct')
+            bid_depth_change = dynamics.get('bid_depth_change_pct')
+            ask_depth_change = dynamics.get('ask_depth_change_pct')
+            spread_change = dynamics.get('spread_change_pct')
+            trend = dynamics.get('trend', 'N/A')
+
+            if obi_change is not None:
+                pct_str = f" ({obi_change_pct:+.1f}%)" if obi_change_pct is not None else ""
+                parts.append(f"  OBI Change: {obi_change:+.2f}{pct_str}")
+            if bid_depth_change is not None:
+                parts.append(f"  Bid Depth Change: {bid_depth_change:+.1f}%")
+            if ask_depth_change is not None:
+                parts.append(f"  Ask Depth Change: {ask_depth_change:+.1f}%")
+            if spread_change is not None:
+                parts.append(f"  Spread Change: {spread_change:+.1f}%")
+            parts.append(f"  Trend: {trend}")
+        else:
+            parts.append("  [First snapshot - no historical data yet]")
+        parts.append("")
+
+        # ========== PRESSURE GRADIENT Section (v2.0) ==========
+        gradient = data.get('pressure_gradient', {})
+        if gradient:
+            # Convert to percentage (values are 0-1 ratios)
+            bid_near_5 = gradient.get('bid_near_5', 0) * 100
+            bid_near_10 = gradient.get('bid_near_10', 0) * 100
+            bid_near_20 = gradient.get('bid_near_20', 0) * 100
+            ask_near_5 = gradient.get('ask_near_5', 0) * 100
+            ask_near_10 = gradient.get('ask_near_10', 0) * 100
+            ask_near_20 = gradient.get('ask_near_20', 0) * 100
+            bid_conc = gradient.get('bid_concentration', 'N/A')
+            ask_conc = gradient.get('ask_concentration', 'N/A')
+
+            parts.append("⭐ PRESSURE GRADIENT:")
+            parts.append(f"  Bid: {bid_near_5:.0f}% near-5, {bid_near_10:.0f}% near-10, {bid_near_20:.0f}% near-20 [{bid_conc} concentration]")
+            parts.append(f"  Ask: {ask_near_5:.0f}% near-5, {ask_near_10:.0f}% near-10, {ask_near_20:.0f}% near-20 [{ask_conc} concentration]")
+            parts.append("")
+
+        # ========== DEPTH DISTRIBUTION Section (v2.0 - Previously Missing!) ==========
+        depth_dist = data.get('depth_distribution', {})
+        bands = depth_dist.get('bands', [])
+        if bands:
+            parts.append("DEPTH DISTRIBUTION (0.5% bands):")
+            for band in bands:
+                range_str = band.get('range', '')
+                side = band.get('side', '').upper()
+                volume_usd = band.get('volume_usd', 0)
+                # Format volume in millions with 1 decimal
+                vol_str = f"${volume_usd/1e6:.1f}M" if volume_usd >= 1e6 else f"${volume_usd/1e3:.0f}K"
+                parts.append(f"  {range_str}: {side} {vol_str}")
+            parts.append("")
+
+        # ========== ANOMALIES Section ==========
+        anomalies = data.get('anomalies', {})
+        bid_anomalies = anomalies.get('bid_anomalies', [])
+        ask_anomalies = anomalies.get('ask_anomalies', [])
+        threshold = anomalies.get('threshold_used', 3.0)
+        threshold_reason = anomalies.get('threshold_reason', 'default')
+
+        if bid_anomalies or ask_anomalies:
+            parts.append(f"ANOMALIES (threshold={threshold:.1f}x, {threshold_reason}):")
+            for anom in bid_anomalies[:3]:  # Show up to 3 per side
+                price = anom.get('price', 0)
+                amount = anom.get('amount', 0)
+                multiple = anom.get('multiple', 0)
+                parts.append(f"  Bid: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
+            for anom in ask_anomalies[:3]:
+                price = anom.get('price', 0)
+                amount = anom.get('amount', 0)
+                multiple = anom.get('multiple', 0)
+                parts.append(f"  Ask: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
+            parts.append("")
+
+        # ========== LIQUIDITY Section ==========
+        liquidity = data.get('liquidity', {})
+        if liquidity:
+            spread_pct = liquidity.get('spread_pct', 0)
+            spread_usd = liquidity.get('spread_usd', 0)
+
+            parts.append("LIQUIDITY:")
+            parts.append(f"  Spread: {spread_pct:.2f}% (${spread_usd:.2f})")
+
+            # Slippage estimates with confidence and range (v2.0)
+            slippage = liquidity.get('slippage', {})
+            if slippage:
+                # Show 1 BTC slippage as the main indicator
+                for side in ['buy', 'sell']:
+                    key = f"{side}_1.0_btc"
+                    est = slippage.get(key, {})
+                    if isinstance(est, dict) and est.get('estimated') is not None:
+                        pct = est.get('estimated', 0)
+                        conf = est.get('confidence', 0)
+                        range_vals = est.get('range', [0, 0])
+                        range_low = range_vals[0] if range_vals[0] is not None else 0
+                        range_high = range_vals[1] if range_vals[1] is not None else 0
+                        side_label = "Buy" if side == "buy" else "Sell"
+                        parts.append(
+                            f"  Slippage ({side_label} 1 BTC): {pct:.2f}% "
+                            f"[confidence={conf:.0%}, range={range_low:.2f}%-{range_high:.2f}%]"
+                        )
 
         return "\n".join(parts)

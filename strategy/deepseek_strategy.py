@@ -40,6 +40,8 @@ from agents.multi_agent_analyzer import MultiAgentAnalyzer
 from utils.binance_kline_client import BinanceKlineClient
 from utils.order_flow_processor import OrderFlowProcessor
 from utils.coinalyze_client import CoinalyzeClient
+from utils.binance_orderbook_client import BinanceOrderBookClient
+from utils.orderbook_processor import OrderBookProcessor
 from strategy.trading_logic import (
     check_confidence_threshold,
     calculate_position_size,
@@ -177,6 +179,18 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     mtf_decision_debate_rounds: int = 2    # Debate rounds for decision layer (4H)
     mtf_execution_rsi_entry_min: int = 35  # RSI entry range for execution layer (15M)
     mtf_execution_rsi_entry_max: int = 65
+
+    # Order Book Configuration (v3.7)
+    order_book_enabled: bool = False  # 启用订单簿深度数据 (默认关闭)
+    order_book_api_timeout: float = 10.0  # API 超时 (秒)
+    order_book_api_max_retries: int = 2  # 最大重试次数
+    order_book_api_retry_delay: float = 1.0  # 重试延迟 (秒)
+    order_book_price_band_pct: float = 0.5  # 价格带百分比 (深度分布)
+    order_book_anomaly_threshold: float = 3.0  # 异常检测阈值 (倍数)
+    order_book_slippage_amounts: Tuple[float, ...] = (0.1, 0.5, 1.0)  # 滑点估算数量 (BTC)
+    order_book_weighted_decay: float = 0.8  # 加权 OBI 衰减因子
+    order_book_adaptive_decay: bool = True  # 启用自适应衰减 (基于波动率)
+    order_book_history_size: int = 10  # 历史缓存大小 (用于计算变化率)
 
 
 class DeepSeekAIStrategy(Strategy):
@@ -316,7 +330,7 @@ class DeepSeekAIStrategy(Strategy):
 
         if self.mtf_enabled:
             try:
-                from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState, DecisionState
+                from indicators.multi_timeframe_manager import MultiTimeframeManager, DecisionState
 
                 # Build BarType objects for each layer
                 instrument_str = str(self.instrument_id)
@@ -352,7 +366,6 @@ class DeepSeekAIStrategy(Strategy):
                     logger=self.log,
                 )
                 # Store enums for use in on_timer (avoid import in hot path)
-                self._RiskState = RiskState
                 self._DecisionState = DecisionState
                 self.log.info(f"✅ MTF Manager initialized: trend={self.trend_bar_type}, decision={self.decision_bar_type}, exec={self.execution_bar_type}")
             except Exception as e:
@@ -548,11 +561,43 @@ class DeepSeekAIStrategy(Strategy):
                 self.coinalyze_client = None
                 self.log.info("Coinalyze client disabled by config")
 
+            # ========== Order Book Depth (v3.7) ==========
+            # 订单簿深度数据 (提供流动性、不平衡、滑点等指标)
+            order_book_enabled = config.order_book_enabled if hasattr(config, 'order_book_enabled') else False
+            if order_book_enabled:
+                # Binance 订单簿客户端
+                self.binance_orderbook_client = BinanceOrderBookClient(
+                    timeout=config.order_book_api_timeout if hasattr(config, 'order_book_api_timeout') else 10,
+                    max_retries=config.order_book_api_max_retries if hasattr(config, 'order_book_api_max_retries') else 2,
+                    retry_delay=config.order_book_api_retry_delay if hasattr(config, 'order_book_api_retry_delay') else 1.0,
+                    logger=self.log,
+                )
+
+                # 订单簿处理器 (计算 OBI、滑点、异常等)
+                self.orderbook_processor = OrderBookProcessor(
+                    price_band_pct=config.order_book_price_band_pct if hasattr(config, 'order_book_price_band_pct') else 0.5,
+                    base_anomaly_threshold=config.order_book_anomaly_threshold if hasattr(config, 'order_book_anomaly_threshold') else 3.0,
+                    slippage_amounts=config.order_book_slippage_amounts if hasattr(config, 'order_book_slippage_amounts') else [0.1, 0.5, 1.0],
+                    weighted_obi_config={
+                        'base_decay': config.order_book_weighted_decay if hasattr(config, 'order_book_weighted_decay') else 0.8,
+                        'adaptive': config.order_book_adaptive_decay if hasattr(config, 'order_book_adaptive_decay') else True,
+                    },
+                    history_size=config.order_book_history_size if hasattr(config, 'order_book_history_size') else 10,
+                    logger=self.log,
+                )
+                self.log.info("✅ Order Book clients initialized")
+            else:
+                self.binance_orderbook_client = None
+                self.orderbook_processor = None
+                self.log.info("Order Book disabled by config")
+
             self.log.info("✅ Order Flow & Derivatives clients initialized")
         else:
             self.binance_kline_client = None
             self.order_flow_processor = None
             self.coinalyze_client = None
+            self.binance_orderbook_client = None
+            self.orderbook_processor = None
             self.log.info("Order Flow disabled by config")
 
         # State tracking
@@ -1477,6 +1522,40 @@ class DeepSeekAIStrategy(Strategy):
                     except Exception as e:
                         self.log.warning(f"⚠️ Derivatives fetch failed: {e}")
 
+                # ========== 获取订单簿深度数据 (v3.7) ==========
+                orderbook_data = None
+                if self.binance_orderbook_client and self.orderbook_processor:
+                    try:
+                        # 获取订单簿数据
+                        raw_orderbook = self.binance_orderbook_client.get_order_book(
+                            symbol="BTCUSDT",
+                            limit=100,
+                        )
+                        if raw_orderbook:
+                            # 处理订单簿数据 (计算 OBI、滑点、异常等)
+                            orderbook_data = self.orderbook_processor.process(
+                                order_book=raw_orderbook,
+                                current_price=current_price,
+                                volatility=technical_data.get('bb_bandwidth', 0.02),  # 使用 BB 带宽作为波动率代理
+                            )
+                            # 提取关键指标用于日志 (v3.7.1: 修正字段路径)
+                            if orderbook_data.get('_status', {}).get('code') == 'OK':
+                                obi = orderbook_data.get('obi', {})
+                                simple_obi = obi.get('simple', 0)
+                                weighted_obi = obi.get('weighted', 0)
+                                spread_pct = orderbook_data.get('liquidity', {}).get('spread_pct', 0)
+                                self.log.info(
+                                    f"📖 Order Book: OBI={simple_obi:+.2f} (weighted={weighted_obi:+.2f}), "
+                                    f"spread={spread_pct:.4f}%"
+                                )
+                            else:
+                                status_msg = orderbook_data.get('_status', {}).get('message', 'Unknown error')
+                                self.log.warning(f"⚠️ Order Book: {status_msg}")
+                        else:
+                            self.log.warning("⚠️ Failed to get order book data")
+                    except Exception as e:
+                        self.log.warning(f"⚠️ Order book processing failed: {e}")
+
                 signal_data = self.multi_agent.analyze(
                     symbol="BTCUSDT",
                     technical_report=ai_technical_data,
@@ -1486,6 +1565,8 @@ class DeepSeekAIStrategy(Strategy):
                     # ========== MTF v2.1 新增参数 ==========
                     order_flow_report=order_flow_data,
                     derivatives_report=derivatives_data,
+                    # ========== v3.7 新增参数 ==========
+                    orderbook_report=orderbook_data,
                 )
 
                 # ========== TradingAgents v3.1: AI 完全自主决策 ==========
@@ -1661,17 +1742,7 @@ class DeepSeekAIStrategy(Strategy):
             except Exception:
                 pass
 
-            # 3. 获取趋势状态
-            trend_status = 'N/A'
-            try:
-                if self.mtf_enabled and self.mtf_manager:
-                    trend_result = self.mtf_manager.check_trend_filter(cached_price or 0)
-                    if trend_result:
-                        trend_status = 'RISK_ON' if trend_result.get('risk_on', False) else 'RISK_OFF'
-            except Exception:
-                pass
-
-            # 4. 获取账户余额
+            # 3. 获取账户余额
             equity = getattr(self, 'equity', 0) or 0
 
             # 5. 计算运行时长
@@ -1723,7 +1794,6 @@ class DeepSeekAIStrategy(Strategy):
                 'position_size': position_size,
                 'timer_count': getattr(self, '_timer_count', 0),
                 'equity': equity,
-                'trend_status': trend_status,
                 'uptime_str': uptime_str,
             })
             self.telegram_bot.send_message_sync(heartbeat_msg)

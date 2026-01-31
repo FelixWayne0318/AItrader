@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.10 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.12 (与实盘 100% 一致)
+
+v11.12 更新 - 修正订单簿字段映射:
+- 修复 pressure_gradient 字段路径 (bid_near_5 不是 bid.near_5_pct)
+- 修复 slippage 字段路径 (estimated 不是 pct, confidence 不是 confidence_pct)
+
+v11.11 更新 - 添加订单簿深度测试 (v3.7):
+- 添加 Step 9.5: 订单簿客户端和处理器测试
+- 添加订单簿配置检查 (order_book.enabled)
+- 更新 AIDataAssembler 测试包含 order_book 数据
+- 添加 OBI、Dynamics、Pressure Gradient、Slippage 指标显示
+- AI 输入数据验证新增订单簿完整数据
 
 v11.10 更新 - 修复 MTF 数据加载和 BB Position 显示:
 - 添加 fetch_binance_klines() 和 create_bar_from_kline() 辅助函数
@@ -29,7 +40,7 @@ v11.6 更新 - 修复 calculate_technical_sltp 调用签名:
 
 v11.5 更新 - 完整流程可视化:
 - 添加 AI Prompt 结构验证 (显示 System/User Prompt 内容)
-- 添加 MTF 状态估算 (基于当前数据估算 RISK_ON/OFF, ALLOW_LONG/SHORT)
+- 添加 MTF 状态估算 (基于当前数据估算趋势方向, ALLOW_LONG/SHORT)
 - 修复订单提交模拟类型错误 (safe_float 转换)
 - 添加 Funding Rate 差异原因标注 (Binance 8h vs Coinalyze 聚合)
 - 添加错误恢复机制验证 ([9.4/10] 新增步骤)
@@ -103,7 +114,7 @@ v11.6:
 
 v11.5:
 - 添加 AI Prompt 结构验证 (System/User Prompt 分离检查)
-- 添加 MTF 状态估算 (RISK_ON/OFF, ALLOW_LONG/SHORT)
+- 添加 MTF 状态估算 (趋势方向估算, ALLOW_LONG/SHORT)
 - 添加 safe_float() 类型转换
 - 添加 Funding Rate 差异标注 (Binance 8h vs Coinalyze)
 - 添加错误恢复机制验证
@@ -380,7 +391,7 @@ def create_bar_from_kline(kline: list, bar_type: str) -> MockBar:
 # =============================================================================
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.10')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.12')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -625,7 +636,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.10 (修复 MTF 数据加载 + BB Position){mode_str}")
+print(f"  实盘信号诊断工具 v11.12 (修正订单簿字段映射){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -758,11 +769,9 @@ try:
                 try:
                     from indicators.multi_timeframe_manager import (
                         MultiTimeframeManager,
-                        RiskState,
                         DecisionState
                     )
                     print("  ✅ MultiTimeframeManager 导入成功")
-                    print(f"     RiskState: {[s.name for s in RiskState]}")
                     print(f"     DecisionState: {[s.name for s in DecisionState]}")
                 except ImportError as e:
                     print(f"  ⚠️ MultiTimeframeManager 导入失败: {e}")
@@ -812,10 +821,10 @@ if not SUMMARY_MODE and mtf_enabled:
     print("-" * 70)
 
     try:
-        from indicators.multi_timeframe_manager import MultiTimeframeManager, RiskState, DecisionState
+        from indicators.multi_timeframe_manager import MultiTimeframeManager, DecisionState
 
-        # 检查 MTF 管理器的关键方法
-        mtf_methods = ['route_bar', 'is_initialized', 'get_risk_state', 'get_decision_state', 'evaluate_risk_state']
+        # 检查 MTF 管理器的关键方法 (v3.1: 移除了 RiskState 相关方法)
+        mtf_methods = ['route_bar', 'is_initialized', 'get_decision_state', 'set_decision_state']
         missing_methods = []
         for method in mtf_methods:
             if not hasattr(MultiTimeframeManager, method):
@@ -841,11 +850,11 @@ if not SUMMARY_MODE and mtf_enabled:
         print("     → 查看服务日志检查初始化状态:")
         print("       journalctl -u nautilus-trader | grep -i 'mtf\\|timeframe\\|initialized'")
 
-        # 检查 RiskState 和 DecisionState 枚举值
+        # 检查 DecisionState 枚举值 (v3.1: RiskState 已移除)
         print()
         print("  📋 MTF 状态枚举检查:")
-        print(f"     RiskState 值: {[s.name for s in RiskState]}")
         print(f"     DecisionState 值: {[s.name for s in DecisionState]}")
+        print("     (v3.1: RiskState 已移除，交易决策完全由 AI 控制)")
 
         # 检查预取配置
         print()
@@ -1549,6 +1558,88 @@ try:
         print("  [5] derivatives_report: None (未获取)")
     print()
 
+    # ========== 订单簿数据 (v11.11 新增) ==========
+    # 尝试获取订单簿数据用于显示
+    orderbook_display_data = None
+    try:
+        # 读取配置
+        ob_cfg = base_config.get('order_book', {}) if 'base_config' in dir() else {}
+        ob_enabled_for_display = ob_cfg.get('enabled', False)
+
+        if ob_enabled_for_display:
+            from utils.binance_orderbook_client import BinanceOrderBookClient
+            from utils.orderbook_processor import OrderBookProcessor
+
+            ob_api_cfg = ob_cfg.get('api', {})
+            ob_proc_cfg = ob_cfg.get('processing', {})
+
+            ob_client = BinanceOrderBookClient(
+                timeout=ob_api_cfg.get('timeout', 10),
+                max_retries=ob_api_cfg.get('max_retries', 2),
+                logger=None
+            )
+            # v11.11: 正确传递参数
+            weighted_obi_cfg = ob_proc_cfg.get('weighted_obi', {})
+            anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
+            ob_processor = OrderBookProcessor(
+                price_band_pct=ob_proc_cfg.get('price_band_pct', 0.5),
+                base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
+                slippage_amounts=ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0]),
+                weighted_obi_config=weighted_obi_cfg if weighted_obi_cfg else None,
+                history_size=ob_proc_cfg.get('history', {}).get('size', 10),
+                logger=None
+            )
+
+            raw_ob = ob_client.get_order_book(symbol="BTCUSDT", limit=ob_api_cfg.get('limit', 100))
+            if raw_ob:
+                orderbook_display_data = ob_processor.process(
+                    order_book=raw_ob,
+                    current_price=current_price,
+                    volatility=0.02
+                )
+    except Exception:
+        pass
+
+    if orderbook_display_data:
+        status = orderbook_display_data.get('_status', {})
+        status_code = status.get('code', 'UNKNOWN')
+        print(f"  [5.5] order_book_data (订单簿深度 v3.7) [状态: {status_code}]:")
+        if status_code == 'OK':
+            obi = orderbook_display_data.get('obi', {})
+            dynamics = orderbook_display_data.get('dynamics', {})
+            gradient = orderbook_display_data.get('pressure_gradient', {})
+            liquidity = orderbook_display_data.get('liquidity', {})
+
+            print(f"      OBI (simple):    {obi.get('simple', 0):+.4f}")
+            print(f"      OBI (weighted):  {obi.get('weighted', 0):+.4f}")
+            print(f"      OBI (adaptive):  {obi.get('adaptive_weighted', 0):+.4f}")
+
+            if dynamics.get('samples_count', 0) > 0:
+                print(f"      OBI change:      {dynamics.get('obi_change', 0):+.4f}")
+                print(f"      Depth change:    {dynamics.get('depth_change_pct', 0):+.2f}%")
+                print(f"      Trend:           {dynamics.get('trend', 'N/A')}")
+            else:
+                print(f"      Dynamics:        首次运行，无历史数据")
+
+            # v11.12: 修正字段路径 (平面结构，不是嵌套结构)
+            bid_near_5 = gradient.get('bid_near_5', 0) * 100  # 转换为百分比
+            ask_near_5 = gradient.get('ask_near_5', 0) * 100
+            bid_conc = gradient.get('bid_concentration', 'N/A')
+            ask_conc = gradient.get('ask_concentration', 'N/A')
+            print(f"      Bid pressure:    near_5={bid_near_5:.1f}%, concentration={bid_conc}")
+            print(f"      Ask pressure:    near_5={ask_near_5:.1f}%, concentration={ask_conc}")
+
+            print(f"      Spread:          {liquidity.get('spread_pct', 0):.4f}%")
+        else:
+            print(f"      reason:          {status.get('reason', 'Unknown')}")
+    else:
+        ob_cfg_check = base_config.get('order_book', {}) if 'base_config' in dir() else {}
+        if ob_cfg_check.get('enabled', False):
+            print("  [5.5] order_book_data: 获取失败")
+        else:
+            print("  [5.5] order_book_data: 未启用 (order_book.enabled = false)")
+    print()
+
     # ========== MTF 多时间框架数据 (v11.8 新增) ==========
     # 获取 4H 决策层数据
     mtf_decision_data = technical_data.get('mtf_decision_layer')
@@ -1604,6 +1695,7 @@ try:
         price_data=price_data,
         order_flow_report=order_flow_report,  # MTF v2.1
         derivatives_report=derivatives_report,  # MTF v2.1
+        orderbook_report=orderbook_display_data,  # v3.7.1: 添加订单簿数据
     )
 
     print()
@@ -1759,15 +1851,15 @@ print()
 print("  📊 MTF 状态估算 (基于当前数据，非实盘实时状态):")
 sma_200 = technical_data.get('sma_200', 0)
 if sma_200 > 0:
-    # 趋势层 (1D): 基于 SMA_200
+    # 趋势层 (1D): 基于 SMA_200 (仅供参考，实际决策由 AI 完成)
     price_vs_sma200 = current_price / sma_200 - 1 if sma_200 > 0 else 0
     if current_price > sma_200:
-        risk_state = "RISK_ON"
-        risk_reason = f"价格 > SMA_200 ({price_vs_sma200*100:+.2f}%)"
+        trend_estimate = "BULLISH"
+        trend_reason = f"价格 > SMA_200 ({price_vs_sma200*100:+.2f}%)"
     else:
-        risk_state = "RISK_OFF"
-        risk_reason = f"价格 < SMA_200 ({price_vs_sma200*100:+.2f}%)"
-    print(f"     趋势层 (1D): {risk_state} - {risk_reason}")
+        trend_estimate = "BEARISH"
+        trend_reason = f"价格 < SMA_200 ({price_vs_sma200*100:+.2f}%)"
+    print(f"     趋势层 (1D): {trend_estimate} - {trend_reason} (供 AI 参考)")
 
     # 决策层 (4H): 基于 SMA 排列和 RSI
     sma_5 = technical_data.get('sma_5', 0)
@@ -1795,8 +1887,7 @@ else:
 
 print()
 print("  ⚠️ 注意: 以上为基于当前数据的估算值")
-print("     实盘 MTF 状态需要历史 K 线初始化后才能获取真实值")
-print("     查看实盘状态: journalctl -u nautilus-trader | grep 'RISK_ON\\|RISK_OFF'")
+print("     v3.1: 所有交易决策由 AI (MultiAgent) 完成，本地不做趋势判断")
 print()
 print("  ✅ TradingAgents v3.4 架构验证完成")
 print()
@@ -2202,6 +2293,7 @@ if not SUMMARY_MODE:
         base_yaml_path = project_root / "configs" / "base.yaml"
         order_flow_enabled = False
         coinalyze_enabled = False
+        order_book_enabled = False  # v11.11: 订单簿配置
 
         if base_yaml_path.exists():
             with open(base_yaml_path) as f:
@@ -2210,6 +2302,9 @@ if not SUMMARY_MODE:
             order_flow_enabled = order_flow.get('enabled', False)
             coinalyze_cfg = order_flow.get('coinalyze', {})  # 正确路径: order_flow.coinalyze
             coinalyze_enabled = coinalyze_cfg.get('enabled', False)
+            # v11.11: 读取订单簿配置
+            order_book_cfg = base_config.get('order_book', {})
+            order_book_enabled = order_book_cfg.get('enabled', False)
 
         if not order_flow_enabled:
             print("  ℹ️ Order Flow 未启用，跳过 MTF 组件测试")
@@ -2426,11 +2521,42 @@ if not SUMMARY_MODE:
 
                 # 初始化所有组件
                 sentiment_client = SentimentDataFetcher()
+
+                # v11.11: 初始化订单簿组件 (如已启用)
+                ob_client_for_assembler = None
+                ob_processor_for_assembler = None
+                if order_book_enabled:
+                    try:
+                        from utils.binance_orderbook_client import BinanceOrderBookClient
+                        from utils.orderbook_processor import OrderBookProcessor
+                        ob_api_cfg = order_book_cfg.get('api', {})
+                        ob_proc_cfg = order_book_cfg.get('processing', {})
+                        ob_client_for_assembler = BinanceOrderBookClient(
+                            timeout=ob_api_cfg.get('timeout', 10),
+                            max_retries=ob_api_cfg.get('max_retries', 2),
+                            logger=None
+                        )
+                        # v11.11: 正确传递参数
+                        weighted_obi_cfg = ob_proc_cfg.get('weighted_obi', {})
+                        anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
+                        ob_processor_for_assembler = OrderBookProcessor(
+                            price_band_pct=ob_proc_cfg.get('price_band_pct', 0.5),
+                            base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
+                            slippage_amounts=ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0]),
+                            weighted_obi_config=weighted_obi_cfg if weighted_obi_cfg else None,
+                            history_size=ob_proc_cfg.get('history', {}).get('size', 10),
+                            logger=None
+                        )
+                    except ImportError:
+                        pass
+
                 assembler = AIDataAssembler(
                     binance_kline_client=kline_client,
                     order_flow_processor=processor,
                     coinalyze_client=coinalyze_client,
                     sentiment_client=sentiment_client,
+                    binance_orderbook_client=ob_client_for_assembler,  # v11.11
+                    orderbook_processor=ob_processor_for_assembler,    # v11.11
                     logger=None
                 )
                 print("     ✅ AIDataAssembler 导入成功")
@@ -2460,6 +2586,7 @@ if not SUMMARY_MODE:
                 print(f"        - 订单流: {assembled_data.get('order_flow') is not None}")
                 print(f"        - 衍生品: {assembled_data.get('derivatives') is not None}")
                 print(f"        - 情绪数据: {assembled_data.get('sentiment') is not None}")
+                print(f"        - 订单簿: {assembled_data.get('order_book') is not None}")  # v11.11
 
                 if assembled_data.get('order_flow'):
                     of = assembled_data['order_flow']
@@ -2475,6 +2602,15 @@ if not SUMMARY_MODE:
                     print(f"        - Derivatives OI Change: {oi_change if oi_change else 'N/A (首次)'}%")
                     print(f"        - Derivatives Funding Rate: {funding_pct:.4f}%")
 
+                # v11.11: 显示订单簿数据
+                if assembled_data.get('order_book'):
+                    ob = assembled_data['order_book']
+                    ob_status = ob.get('_status', {}).get('code', 'UNKNOWN')
+                    print(f"        - Order Book Status: {ob_status}")
+                    if ob_status == 'OK':
+                        obi = ob.get('obi', {})
+                        print(f"        - Order Book OBI (adaptive): {obi.get('adaptive_weighted', 0):+.4f}")
+
             except ImportError as e:
                 print(f"     ❌ 无法导入 AIDataAssembler: {e}")
             except Exception as e:
@@ -2482,8 +2618,145 @@ if not SUMMARY_MODE:
                 import traceback
                 traceback.print_exc()
 
+            print()
+
+            # ================================================================
+            # 9.5 测试 Order Book (订单簿深度) - v11.11 新增
+            # ================================================================
+            print("  [9.5] 测试 Order Book (v3.7)...")
+            if not order_book_enabled:
+                print("     ℹ️ Order Book 未启用 (order_book.enabled = false)")
+                print("     → 若要启用，修改 configs/base.yaml: order_book.enabled: true")
+            else:
+                try:
+                    from utils.binance_orderbook_client import BinanceOrderBookClient
+                    from utils.orderbook_processor import OrderBookProcessor
+
+                    # 读取订单簿配置
+                    ob_api_cfg = order_book_cfg.get('api', {})
+                    ob_proc_cfg = order_book_cfg.get('processing', {})
+
+                    # 初始化客户端
+                    ob_client = BinanceOrderBookClient(
+                        timeout=ob_api_cfg.get('timeout', 10),
+                        max_retries=ob_api_cfg.get('max_retries', 2),
+                        logger=None
+                    )
+                    print("     ✅ BinanceOrderBookClient 导入成功")
+
+                    # 初始化处理器 (v11.11: 正确传递参数)
+                    weighted_obi_cfg = ob_proc_cfg.get('weighted_obi', {})
+                    anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
+                    ob_processor = OrderBookProcessor(
+                        price_band_pct=ob_proc_cfg.get('price_band_pct', 0.5),
+                        base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
+                        slippage_amounts=ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0]),
+                        weighted_obi_config=weighted_obi_cfg if weighted_obi_cfg else None,
+                        history_size=ob_proc_cfg.get('history', {}).get('size', 10),
+                        logger=None
+                    )
+                    print("     ✅ OrderBookProcessor 导入成功")
+
+                    # 获取订单簿数据
+                    ob_limit = ob_api_cfg.get('limit', 100)
+                    print(f"     📊 获取 {symbol_clean} 订单簿 (limit={ob_limit})...")
+
+                    raw_orderbook = ob_client.get_order_book(
+                        symbol=symbol_clean,
+                        limit=ob_limit
+                    )
+
+                    if raw_orderbook:
+                        bids = raw_orderbook.get('bids', [])
+                        asks = raw_orderbook.get('asks', [])
+                        print(f"     ✅ 订单簿获取成功: {len(bids)} bids, {len(asks)} asks")
+
+                        # 显示盘口
+                        if bids and asks:
+                            best_bid = float(bids[0][0])
+                            best_ask = float(asks[0][0])
+                            spread = best_ask - best_bid
+                            spread_pct = (spread / best_bid) * 100
+                            print(f"        盘口: Bid ${best_bid:,.2f} | Ask ${best_ask:,.2f}")
+                            print(f"        Spread: ${spread:.2f} ({spread_pct:.4f}%)")
+
+                        # 处理订单簿
+                        print(f"     📊 处理订单簿数据...")
+                        # 使用诊断中已获取的价格作为当前价格
+                        current_price = snapshot_price
+                        # 估算波动率 (简化: 使用默认值)
+                        volatility = 0.02
+
+                        ob_result = ob_processor.process(
+                            order_book=raw_orderbook,
+                            current_price=current_price,
+                            volatility=volatility
+                        )
+
+                        if ob_result:
+                            status = ob_result.get('_status', {})
+                            status_code = status.get('code', 'UNKNOWN')
+                            print(f"     ✅ 订单簿处理完成 [状态: {status_code}]")
+
+                            # OBI 指标
+                            obi = ob_result.get('obi', {})
+                            print(f"        OBI:")
+                            print(f"          - Simple: {obi.get('simple', 0):+.4f}")
+                            print(f"          - Weighted: {obi.get('weighted', 0):+.4f}")
+                            print(f"          - Adaptive: {obi.get('adaptive_weighted', 0):+.4f}")
+
+                            # Dynamics (变化率)
+                            dynamics = ob_result.get('dynamics', {})
+                            if dynamics.get('samples_count', 0) > 0:
+                                print(f"        Dynamics:")
+                                print(f"          - OBI Change: {dynamics.get('obi_change', 0):+.4f}")
+                                print(f"          - Depth Change: {dynamics.get('depth_change_pct', 0):+.2f}%")
+                                print(f"          - Trend: {dynamics.get('trend', 'N/A')}")
+                            else:
+                                print(f"        Dynamics: 首次运行，无历史数据")
+
+                            # Pressure Gradient (v11.12: 修正字段路径)
+                            gradient = ob_result.get('pressure_gradient', {})
+                            bid_near_5 = gradient.get('bid_near_5', 0) * 100
+                            bid_near_10 = gradient.get('bid_near_10', 0) * 100
+                            ask_near_5 = gradient.get('ask_near_5', 0) * 100
+                            ask_near_10 = gradient.get('ask_near_10', 0) * 100
+                            print(f"        Pressure Gradient:")
+                            print(f"          - Bid: near_5={bid_near_5:.1f}%, near_10={bid_near_10:.1f}%")
+                            print(f"          - Ask: near_5={ask_near_5:.1f}%, near_10={ask_near_10:.1f}%")
+
+                            # 流动性 (v11.12: 修正字段路径)
+                            liquidity = ob_result.get('liquidity', {})
+                            print(f"        Liquidity:")
+                            print(f"          - Spread: {liquidity.get('spread_pct', 0):.4f}%")
+                            slippage = liquidity.get('slippage', {})
+                            if slippage:
+                                for amount, data in slippage.items():
+                                    if isinstance(data, dict):
+                                        # v11.12: 修正字段名: estimated (不是 pct), confidence (不是 confidence_pct)
+                                        pct = data.get('estimated', 0) or 0
+                                        conf = (data.get('confidence', 0) or 0) * 100  # 转换为百分比
+                                        print(f"          - Slippage ({amount}): {pct:.4f}% [conf={conf:.0f}%]")
+
+                            # 异常检测
+                            anomalies = ob_result.get('anomalies', {})
+                            bid_anom = anomalies.get('bid_anomalies', [])
+                            ask_anom = anomalies.get('ask_anomalies', [])
+                            print(f"        Anomalies: {len(bid_anom)} bid, {len(ask_anom)} ask")
+                        else:
+                            print("     ❌ 订单簿处理返回 None")
+                    else:
+                        print("     ❌ 订单簿获取失败")
+
+                except ImportError as e:
+                    print(f"     ❌ 无法导入订单簿模块: {e}")
+                except Exception as e:
+                    print(f"     ❌ Order Book 测试失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+
         print()
-        print("  ✅ MTF v2.1 组件集成测试完成")
+        print("  ✅ MTF v2.1 + Order Book 组件集成测试完成")
 
     except Exception as e:
         print(f"  ❌ MTF 组件测试失败: {e}")
@@ -2687,7 +2960,7 @@ if not SUMMARY_MODE:
             print(f"  [路由规则] Bar 类型 → 处理层:")
             print(f"     • {trend_tf.upper()} bar → 趋势层 (_handle_trend_bar)")
             print(f"       - 更新 SMA_200, MACD")
-            print(f"       - 计算 RISK_ON/RISK_OFF 状态")
+            print(f"       - 收集趋势数据供 AI 分析 (v3.1: 不做本地判断)")
             print(f"       - 设置 _mtf_trend_initialized = True")
             print()
             print(f"     • {decision_tf.upper()} bar → 决策层 (_handle_decision_bar)")

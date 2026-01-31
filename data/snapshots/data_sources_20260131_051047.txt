@@ -1,0 +1,153 @@
+
+======================================================================
+  数据源整合测试
+======================================================================
+⏰ 时间: 2026-01-31 05:10:39
+
+======================================================================
+  1. BinanceDerivativesClient 测试
+======================================================================
+
+获取所有 Binance 衍生品数据...
+
+  ✅ top_long_short_account:
+     Latest: {'symbol': 'BTCUSDT', 'longAccount': '0.7373', 'longShortRatio': '2.8066', 'shortAccount': '0.2627', 'timestamp': 1769827500000}
+     Trend: N/A
+
+  ✅ top_long_short_position:
+     Latest: {'symbol': 'BTCUSDT', 'longAccount': '0.6540', 'longShortRatio': '1.8901', 'shortAccount': '0.3460', 'timestamp': 1769827500000}
+     Trend: STABLE
+
+  ✅ taker_long_short:
+     Latest: {'buySellRatio': '2.4507', 'sellVol': '429.8560', 'buyVol': '1053.4420', 'timestamp': 1769826600000}
+     Trend: RISING
+
+  ✅ open_interest_hist:
+     Latest: {'symbol': 'BTCUSDT', 'sumOpenInterest': '102184.62800000', 'sumOpenInterestValue': '8593298039.36240000', 'CMCCirculatingSupply': '19982475.00000000', 'timestamp': 1769827500000}
+     Trend: STABLE
+
+  ✅ funding_rate_hist:
+     Latest: {'symbol': 'BTCUSDT', 'fundingTime': 1769558400000, 'fundingRate': '0.00006237', 'markPrice': '89203.89821739'}
+     Trend: N/A
+
+  ⚠️ ticker_24hr: {'symbol': 'BTCUSDT', 'priceChange': '938.20', 'priceChangePercent': '1.131', 'weightedAvgPrice': '83182.56', 'lastPrice': '83911.10', 'lastQty': '0.037', 'openPrice': '82972.90', 'highPrice': '84599.00', 'lowPrice': '81832.00', 'volume': '180337.605', 'quoteVolume': '15000943636.46', 'openTime': 1769749800000, 'closeTime': 1769836235420, 'firstId': 7153574524, 'lastId': 7159243342, 'count': 5661449}
+
+📄 格式化输出:
+BINANCE DERIVATIVES DATA (Unique to Binance):
+- Top Traders Position: Long 65.4% / Short 34.6% (Ratio: 1.89, Trend: STABLE)
+- Taker Buy/Sell Ratio: 2.451 (Trend: RISING)
+- Open Interest: $8,593,298,039 (Trend: STABLE)
+- 24h Stats: Change +1.13%, Volume $15,000,943,636, Range $81,832-$84,599
+
+======================================================================
+  2. CoinalyzeClient 历史数据测试
+======================================================================
+
+获取所有 Coinalyze 数据 (含历史)...
+
+  📊 趋势分析:
+     OI 趋势: STABLE
+     资金费率趋势: STABLE
+     多空比趋势: STABLE
+
+  ✅ OI 历史: 4 条记录
+  ✅ 资金费率历史: 4 条记录
+  ✅ 多空比历史: 4 条记录
+     最新: ratio=2.4106, long=70.68%, short=29.32%
+
+📄 格式化输出:
+COINALYZE DERIVATIVES DATA:
+- Open Interest: 101,985 BTC ($10,198,469,400) [Trend: STABLE]
+- Funding Rate: 0.9693% [Trend: STABLE]
+- Long/Short Ratio: 2.41 (Long 70.7% / Short 29.3%) [Trend: STABLE]
+
+======================================================================
+  3. AIDataAssembler 完整数据组装测试
+======================================================================
+
+组装完整数据...
+
+  📊 数据源状态:
+     K线来源: binance_raw
+     Coinalyze: ✅ 启用
+     Binance 衍生品: ✅ 启用
+
+  📈 趋势数据:
+     oi_trend: STABLE
+     funding_trend: STABLE
+     long_short_trend: STABLE
+
+  🏦 Binance 衍生品数据:
+     大户持仓比: 1.8901
+     Taker 买卖比: 2.4507
+
+📄 完整市场数据报告:
+==================================================
+MARKET DATA REPORT
+==================================================
+
+PRICE: $83,911.00 (+0.96%)
+
+ORDER FLOW (from Binance Klines):
+  - Buy Ratio: 40.5%
+  - CVD Trend: NEUTRAL
+  - Avg Trade Size: $0
+
+COINALYZE DERIVATIVES:
+  - Open Interest: 101,985 BTC ($8,557,668,873) [Trend: STABLE]
+  - Funding Rate: 0.0043% (NEUTRAL) [Trend: STABLE]
+  - Long/Short Ratio (Coinalyze): 2.41 (Long 70.7% / Short 29.3%) [Trend: STABLE]
+
+BINANCE DERIVATIVES (Unique Data):
+  - Top Traders Position: Long 65.4% (Ratio: 1.89) [Trend: STABLE]
+  - Taker Buy/Sell Ratio: 2.451 [Trend: RISING]
+  - OI (Binance): $8,593,298,039 [Trend: STABLE]
+  - 24h Stats: Change +1.13%, Volume $15,001,082,258
+
+MARKET SENTIMENT (Binance Global L/S Ratio):
+  - Long: 70.7% / Short: 29.3%
+  - Net Sentiment: +0.414
+  - L/S Ratio: 2.41
+
+DATA SOURCES:
+  - Klines: binance_raw
+  - Coinalyze: enabled
+  - Binance Derivatives: enabled
+
+==================================================
+
+======================================================================
+  4. 数据利用率统计
+======================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          v3.0 数据利用率                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  📊 Binance K线 12 列:                    8/12 = 66% → 保持                  │
+│                                                                              │
+│  📊 Binance 衍生品 API:                   1/6 → 6/6 = 100% ✅ 新增           │
+│     + 大户多空账户比 (topLongShortAccountRatio)                              │
+│     + 大户多空持仓比 (topLongShortPositionRatio) ⭐                          │
+│     + Taker 买卖比 (takerlongshortRatio) ⭐                                  │
+│     + OI 历史 (openInterestHist)                                            │
+│     + 资金费率历史 (fundingRate)                                            │
+│     + 24h 行情统计 (ticker/24hr)                                            │
+│                                                                              │
+│  📊 Coinalyze API:                        3/7 → 6/7 = 86% ✅ 新增            │
+│     + OI 历史 (/open-interest-history) ⭐                                    │
+│     + 资金费率历史 (/funding-rate-history) ⭐                                │
+│     + 多空比历史 (/long-short-ratio-history) ⭐                              │
+│                                                                              │
+│  📊 总体利用率:   35-40% → 80%+ ✅                                          │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+======================================================================
+  ✅ 所有数据源测试完成!
+======================================================================
+
+======================================================================
+  5. 导出数据
+======================================================================
