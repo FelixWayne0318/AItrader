@@ -1688,6 +1688,7 @@ try:
         price_data=price_data,
         order_flow_report=order_flow_report,  # MTF v2.1
         derivatives_report=derivatives_report,  # MTF v2.1
+        orderbook_report=orderbook_display_data,  # v3.7.1: 添加订单簿数据
     )
 
     print()

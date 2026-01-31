@@ -1538,14 +1538,15 @@ class DeepSeekAIStrategy(Strategy):
                                 current_price=current_price,
                                 volatility=technical_data.get('bb_bandwidth', 0.02),  # 使用 BB 带宽作为波动率代理
                             )
-                            # 提取关键指标用于日志
+                            # 提取关键指标用于日志 (v3.7.1: 修正字段路径)
                             if orderbook_data.get('_status', {}).get('code') == 'OK':
-                                simple_obi = orderbook_data.get('simple_obi', 0)
-                                weighted_obi = orderbook_data.get('weighted_obi', {}).get('value', 0)
-                                spread_pct = orderbook_data.get('spread', {}).get('pct', 0)
+                                obi = orderbook_data.get('obi', {})
+                                simple_obi = obi.get('simple', 0)
+                                weighted_obi = obi.get('weighted', 0)
+                                spread_pct = orderbook_data.get('liquidity', {}).get('spread_pct', 0)
                                 self.log.info(
                                     f"📖 Order Book: OBI={simple_obi:+.2f} (weighted={weighted_obi:+.2f}), "
-                                    f"spread={spread_pct:.3f}%"
+                                    f"spread={spread_pct:.4f}%"
                                 )
                             else:
                                 status_msg = orderbook_data.get('_status', {}).get('message', 'Unknown error')

@@ -1254,12 +1254,12 @@ ORDER FLOW (Binance Taker Data):
         """
         Format order book depth data for AI prompts.
 
-        v3.7: New method for order book depth integration
+        v3.7.1: Fixed field mappings to match OrderBookProcessor.process() output
 
         Parameters
         ----------
         data : Dict, optional
-            Order book depth data (OBI, spread, slippage, etc.)
+            Order book depth data from OrderBookProcessor.process()
 
         Returns
         -------
@@ -1274,68 +1274,97 @@ ORDER FLOW (Binance Taker Data):
         if status.get('code') != 'OK':
             return f"ORDER BOOK DEPTH: {status.get('message', 'Error occurred')}"
 
-        parts = ["ORDER BOOK DEPTH:"]
+        parts = [f"ORDER BOOK DEPTH (Status: OK, {status.get('history_samples', 0)} history samples):"]
 
-        # OBI (Order Book Imbalance)
-        simple_obi = data.get('simple_obi', 0)
-        weighted_obi_data = data.get('weighted_obi', {})
-        weighted_obi = weighted_obi_data.get('value', 0)
-        adaptive_obi = weighted_obi_data.get('adaptive_value', weighted_obi)
+        # ========== OBI (Order Book Imbalance) ==========
+        obi = data.get('obi', {})
+        simple_obi = obi.get('simple', 0)
+        weighted_obi = obi.get('weighted', 0)
+        adaptive_obi = obi.get('adaptive_weighted', weighted_obi)
 
         parts.append(f"- Simple OBI: {simple_obi:+.3f} ({'Buy pressure' if simple_obi > 0 else 'Sell pressure' if simple_obi < 0 else 'Balanced'})")
-        parts.append(f"- Weighted OBI: {weighted_obi:+.3f} (Adaptive: {adaptive_obi:+.3f})")
+        parts.append(f"- Weighted OBI: {weighted_obi:+.3f} (Adaptive: {adaptive_obi:+.3f}, decay={obi.get('decay_used', 0.8):.2f})")
 
-        # Spread
-        spread = data.get('spread', {})
-        if spread:
-            abs_spread = spread.get('absolute', 0)
-            pct_spread = spread.get('pct', 0)
-            parts.append(f"- Spread: ${abs_spread:.2f} ({pct_spread:.3f}%)")
+        # Volume
+        bid_vol_usd = obi.get('bid_volume_usd', 0)
+        ask_vol_usd = obi.get('ask_volume_usd', 0)
+        bid_vol_btc = obi.get('bid_volume_btc', 0)
+        ask_vol_btc = obi.get('ask_volume_btc', 0)
+        parts.append(f"- Bid Volume: ${bid_vol_usd:,.0f} ({bid_vol_btc:.2f} BTC)")
+        parts.append(f"- Ask Volume: ${ask_vol_usd:,.0f} ({ask_vol_btc:.2f} BTC)")
 
-        # Depth Distribution
-        depth_dist = data.get('depth_distribution', {})
-        if depth_dist:
-            bid_pct = depth_dist.get('bid_pct', 0)
-            ask_pct = depth_dist.get('ask_pct', 0)
-            total_usd = depth_dist.get('total_depth_usd', 0)
-            parts.append(f"- Depth Distribution: Bid {bid_pct:.1f}% / Ask {ask_pct:.1f}% (Total: ${total_usd:,.0f})")
+        # ========== Dynamics (v2.0 Critical) ==========
+        dynamics = data.get('dynamics', {})
+        if dynamics and dynamics.get('samples_count', 0) > 0:
+            obi_change = dynamics.get('obi_change')
+            obi_change_pct = dynamics.get('obi_change_pct')
+            bid_depth_change = dynamics.get('bid_depth_change_pct')
+            ask_depth_change = dynamics.get('ask_depth_change_pct')
+            spread_change = dynamics.get('spread_change_pct')
+            trend = dynamics.get('trend', 'N/A')
 
-        # Pressure Gradient (v2.0)
+            parts.append("- Dynamics (vs previous):")
+            if obi_change is not None:
+                parts.append(f"  - OBI Change: {obi_change:+.4f} ({obi_change_pct:+.1f}%)" if obi_change_pct else f"  - OBI Change: {obi_change:+.4f}")
+            if bid_depth_change is not None:
+                parts.append(f"  - Bid Depth Change: {bid_depth_change:+.1f}%")
+            if ask_depth_change is not None:
+                parts.append(f"  - Ask Depth Change: {ask_depth_change:+.1f}%")
+            if spread_change is not None:
+                parts.append(f"  - Spread Change: {spread_change:+.1f}%")
+            parts.append(f"  - Trend: {trend}")
+        else:
+            parts.append("- Dynamics: First snapshot, no history")
+
+        # ========== Pressure Gradient (v2.0) ==========
         gradient = data.get('pressure_gradient', {})
         if gradient:
-            near_bid = gradient.get('near_bid_pct', 0)
-            near_ask = gradient.get('near_ask_pct', 0)
-            far_bid = gradient.get('far_bid_pct', 0)
-            far_ask = gradient.get('far_ask_pct', 0)
-            parts.append(f"- Pressure Gradient: Near (Bid {near_bid:.1f}% / Ask {near_ask:.1f}%), Far (Bid {far_bid:.1f}% / Ask {far_ask:.1f}%)")
+            bid_near_5 = gradient.get('bid_near_5', 0) * 100  # Convert to percentage
+            bid_near_10 = gradient.get('bid_near_10', 0) * 100
+            ask_near_5 = gradient.get('ask_near_5', 0) * 100
+            ask_near_10 = gradient.get('ask_near_10', 0) * 100
+            bid_conc = gradient.get('bid_concentration', 'N/A')
+            ask_conc = gradient.get('ask_concentration', 'N/A')
+            parts.append(f"- Pressure Gradient:")
+            parts.append(f"  - Bid: {bid_near_5:.1f}% near-5, {bid_near_10:.1f}% near-10 [{bid_conc}]")
+            parts.append(f"  - Ask: {ask_near_5:.1f}% near-5, {ask_near_10:.1f}% near-10 [{ask_conc}]")
 
-        # Dynamics (v2.0 Critical)
-        dynamics = data.get('dynamics', {})
-        if dynamics:
-            obi_change = dynamics.get('obi_change', 'N/A')
-            depth_change = dynamics.get('depth_change', 'N/A')
-            spread_change = dynamics.get('spread_change', 'N/A')
-            parts.append(f"- Dynamics: OBI={obi_change}, Depth={depth_change}, Spread={spread_change}")
+        # ========== Liquidity ==========
+        liquidity = data.get('liquidity', {})
+        if liquidity:
+            spread_pct = liquidity.get('spread_pct', 0)
+            spread_usd = liquidity.get('spread_usd', 0)
+            parts.append(f"- Spread: ${spread_usd:.2f} ({spread_pct:.4f}%)")
 
-        # Slippage Estimates with Confidence (v2.0)
-        slippage = data.get('slippage_estimates', {})
-        if slippage:
-            parts.append("- Slippage Estimates:")
-            for amount, est in slippage.items():
-                if isinstance(est, dict):
-                    buy_slip = est.get('buy', {}).get('pct', 0)
-                    sell_slip = est.get('sell', {}).get('pct', 0)
-                    confidence = est.get('buy', {}).get('confidence', 'LOW')
-                    parts.append(f"  - {amount} BTC: Buy {buy_slip:.3f}%, Sell {sell_slip:.3f}% [Confidence: {confidence}]")
+            # Slippage estimates
+            slippage = liquidity.get('slippage', {})
+            if slippage:
+                parts.append("- Slippage Estimates:")
+                for key, est in slippage.items():
+                    if isinstance(est, dict):
+                        pct = est.get('pct', 0)
+                        conf = est.get('confidence_pct', 0)
+                        # Parse key like "buy_0.1_btc" or "sell_1.0_btc"
+                        parts.append(f"  - {key}: {pct:.4f}% [conf={conf:.0f}%]")
 
-        # Anomalies
-        anomalies = data.get('anomalies', [])
-        if anomalies:
-            parts.append(f"- Large Orders Detected: {len(anomalies)} anomalies")
-            for anom in anomalies[:3]:  # Show up to 3
-                side = anom.get('side', 'unknown')
+        # ========== Anomalies ==========
+        anomalies = data.get('anomalies', {})
+        bid_anomalies = anomalies.get('bid_anomalies', [])
+        ask_anomalies = anomalies.get('ask_anomalies', [])
+        threshold = anomalies.get('threshold_used', 3.0)
+        threshold_reason = anomalies.get('threshold_reason', 'default')
+
+        if bid_anomalies or ask_anomalies:
+            parts.append(f"- Large Orders (threshold={threshold:.1f}x, {threshold_reason}):")
+            for anom in bid_anomalies[:2]:  # Show up to 2 per side
                 price = anom.get('price', 0)
                 amount = anom.get('amount', 0)
-                parts.append(f"  - {side.upper()}: ${price:.2f} x {amount:.4f} BTC")
+                multiple = anom.get('multiple', 0)
+                parts.append(f"  - BID: ${price:,.2f} x {amount:.4f} BTC ({multiple:.1f}x)")
+            for anom in ask_anomalies[:2]:
+                price = anom.get('price', 0)
+                amount = anom.get('amount', 0)
+                multiple = anom.get('multiple', 0)
+                parts.append(f"  - ASK: ${price:,.2f} x {amount:.4f} BTC ({multiple:.1f}x)")
 
         return "\n".join(parts)
