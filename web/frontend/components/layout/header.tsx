@@ -81,8 +81,7 @@ export function Header({ locale, t }: HeaderProps) {
   return (
     <header className="fixed top-4 inset-x-0 z-50 px-4">
       {/* DipSway Style: Transparent header, each group has its own background */}
-      {/* On mobile landscape, allow horizontal scrolling if content overflows */}
-      <div className="max-w-7xl mx-auto flex h-14 items-center justify-between landscape:overflow-x-auto landscape:scrollbar-hide">
+      <div className="max-w-7xl mx-auto flex h-14 items-center justify-between">
 
         {/* Group 1: Logo - No background */}
         <Link href="/" className="flex items-center gap-2.5 group shrink-0">
@@ -97,15 +96,14 @@ export function Header({ locale, t }: HeaderProps) {
         </Link>
 
         {/* Group 2: Navigation - Own rounded background (Desktop + Landscape) */}
-        {/* lg: desktop, landscape: mobile landscape with smaller padding */}
-        <nav className="hidden lg:flex landscape:flex items-center gap-1 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl p-1 ml-8 landscape:ml-4 shrink-0">
+        <nav className="hidden lg:flex landscape:flex items-center gap-1 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl p-1 ml-8">
           {navItems.map((item) => {
             const isActive = router.pathname === item.href;
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`px-4 landscape:px-2.5 py-1.5 rounded-lg text-sm landscape:text-xs font-medium transition-all whitespace-nowrap ${
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
                   isActive
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground hover:bg-background/50"
@@ -121,33 +119,33 @@ export function Header({ locale, t }: HeaderProps) {
         <div className="hidden lg:block landscape:block flex-1" />
 
         {/* Metrics Group Container - smaller gaps between Bot/Signal/Markets */}
-        <div className="hidden lg:flex landscape:flex items-center gap-1.5 landscape:gap-1 shrink-0">
+        <div className="hidden lg:flex landscape:flex items-center gap-1.5">
           {/* Group 3: Bot Status */}
           {mounted && (
-            <div className="flex items-center gap-1.5 landscape:gap-1 px-3 landscape:px-2 py-2 landscape:py-1.5 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl">
-              <Bot className={`h-3.5 w-3.5 landscape:h-3 landscape:w-3 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
-              <span className="text-xs landscape:text-[10px] text-muted-foreground hidden lg:inline landscape:hidden">Bot:</span>
-              <span className={`text-xs landscape:text-[10px] font-medium ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`}>
-                {status?.trading_active ? "Running" : "Off"}
+            <div className="flex items-center gap-1.5 px-3 py-2 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl">
+              <Bot className={`h-3.5 w-3.5 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
+              <span className="text-xs text-muted-foreground">Bot:</span>
+              <span className={`text-xs font-medium ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`}>
+                {status?.trading_active ? "Running" : "Offline"}
               </span>
             </div>
           )}
 
           {/* Group 4: AI Signal */}
           {mounted && (
-            <div className={`flex items-center gap-1.5 landscape:gap-1 px-3 landscape:px-2 py-2 landscape:py-1.5 backdrop-blur-xl border border-border/30 rounded-xl ${
+            <div className={`flex items-center gap-1.5 px-3 py-2 backdrop-blur-xl border border-border/30 rounded-xl ${
               signal === "BUY" || signal === "LONG" ? "bg-green-500/10" :
               signal === "SELL" || signal === "SHORT" ? "bg-red-500/10" : "bg-background/60"
             }`}>
-              <Brain className={`h-3.5 w-3.5 landscape:h-3 landscape:w-3 ${getSignalColor(signal)}`} />
-              <span className="text-xs landscape:text-[10px] text-muted-foreground hidden lg:inline landscape:hidden">Signal:</span>
-              <span className={`text-xs landscape:text-[10px] font-semibold ${getSignalColor(signal)}`}>{signal}</span>
+              <Brain className={`h-3.5 w-3.5 ${getSignalColor(signal)}`} />
+              <span className="text-xs text-muted-foreground">Signal:</span>
+              <span className={`text-xs font-semibold ${getSignalColor(signal)}`}>{signal}</span>
             </div>
           )}
 
-          {/* Group 5: Markets Dropdown - hidden on landscape to save space */}
+          {/* Group 5: Markets Dropdown */}
           {mounted && (
-            <div ref={metricsRef} className="relative hidden lg:block">
+            <div ref={metricsRef} className="relative">
               <button
                 onClick={() => setMetricsExpanded(!metricsExpanded)}
                 className="flex items-center gap-1.5 px-3 py-2 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
@@ -195,18 +193,18 @@ export function Header({ locale, t }: HeaderProps) {
         </div>
 
         {/* Group 6: Language + CTA (Desktop + Landscape) */}
-        <div className="hidden lg:flex landscape:flex items-center gap-2 landscape:gap-1 ml-3 landscape:ml-2 shrink-0">
+        <div className="hidden lg:flex landscape:flex items-center gap-2 ml-3">
           <Button
             variant="ghost"
             size="sm"
             onClick={toggleLocale}
-            className="h-9 landscape:h-7 px-3 landscape:px-2 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl hover:bg-background/80"
+            className="h-9 px-3 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl hover:bg-background/80"
           >
-            <Globe className="h-4 w-4 landscape:h-3 landscape:w-3" />
-            <span className="ml-1.5 landscape:ml-1 text-xs landscape:text-[10px] font-medium">{locale.toUpperCase()}</span>
+            <Globe className="h-4 w-4" />
+            <span className="ml-1.5 text-xs font-medium">{locale.toUpperCase()}</span>
           </Button>
           <Link href="/copy">
-            <Button size="sm" className="h-9 landscape:h-7 rounded-xl px-4 landscape:px-2 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-md shadow-primary/20 text-sm landscape:text-xs whitespace-nowrap">
+            <Button size="sm" className="h-9 rounded-xl px-4 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-md shadow-primary/20">
               {t("hero.cta")}
             </Button>
           </Link>
