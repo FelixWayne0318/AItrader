@@ -21,12 +21,20 @@ import os
 import sys
 import json
 import argparse
+import requests
+import hmac
+import hashlib
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
+from urllib.parse import urlencode
 
 # 添加项目根目录到 path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Binance Futures API
+BINANCE_FUTURES_BASE = "https://fapi.binance.com"
 
 def load_env():
     """加载环境变量"""
@@ -39,21 +47,27 @@ def load_env():
                     key, value = line.split('=', 1)
                     os.environ.setdefault(key.strip(), value.strip())
 
-def get_binance_client():
-    """获取 Binance 客户端"""
-    try:
-        from binance.client import Client
-        api_key = os.environ.get('BINANCE_API_KEY')
-        api_secret = os.environ.get('BINANCE_API_SECRET')
-        if not api_key or not api_secret:
-            print("❌ 缺少 BINANCE_API_KEY 或 BINANCE_API_SECRET")
-            return None
-        return Client(api_key, api_secret)
-    except ImportError:
-        print("❌ 请安装 python-binance: pip install python-binance")
-        return None
+def get_signature(query_string: str, secret: str) -> str:
+    """生成 HMAC SHA256 签名"""
+    return hmac.new(secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
 
-def analyze_trade_history(client, symbol="BTCUSDT", days=30):
+def binance_request(endpoint: str, params: dict, api_key: str, api_secret: str) -> dict:
+    """发送签名请求到 Binance Futures API"""
+    params['timestamp'] = int(time.time() * 1000)
+    params['recvWindow'] = 10000
+
+    query_string = urlencode(params)
+    signature = get_signature(query_string, api_secret)
+    query_string += f"&signature={signature}"
+
+    url = f"{BINANCE_FUTURES_BASE}{endpoint}?{query_string}"
+    headers = {"X-MBX-APIKEY": api_key}
+
+    response = requests.get(url, headers=headers, timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+def analyze_trade_history(api_key: str, api_secret: str, symbol: str = "BTCUSDT", days: int = 30):
     """分析交易历史"""
 
     # 获取最近的交易记录
@@ -63,7 +77,11 @@ def analyze_trade_history(client, symbol="BTCUSDT", days=30):
 
     try:
         # 获取合约交易历史
-        trades = client.futures_account_trades(symbol=symbol, startTime=start_time)
+        trades = binance_request(
+            "/fapi/v1/userTrades",
+            {"symbol": symbol, "startTime": start_time, "limit": 1000},
+            api_key, api_secret
+        )
 
         if not trades:
             print("ℹ️ 没有找到交易记录")
@@ -72,7 +90,11 @@ def analyze_trade_history(client, symbol="BTCUSDT", days=30):
         print(f"✅ 找到 {len(trades)} 条交易记录")
 
         # 获取订单历史 (包含订单类型信息)
-        orders = client.futures_get_all_orders(symbol=symbol, startTime=start_time)
+        orders = binance_request(
+            "/fapi/v1/allOrders",
+            {"symbol": symbol, "startTime": start_time, "limit": 1000},
+            api_key, api_secret
+        )
 
         # 建立订单 ID 到订单信息的映射
         order_map = {str(o['orderId']): o for o in orders}
@@ -81,6 +103,8 @@ def analyze_trade_history(client, symbol="BTCUSDT", days=30):
 
     except Exception as e:
         print(f"❌ 获取交易记录失败: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def classify_close_reason(order):
@@ -337,13 +361,19 @@ def main():
     # 加载环境变量
     load_env()
 
-    # 获取 Binance 客户端
-    client = get_binance_client()
-    if not client:
+    # 获取 API 密钥
+    api_key = os.environ.get('BINANCE_API_KEY')
+    api_secret = os.environ.get('BINANCE_API_SECRET')
+
+    if not api_key or not api_secret:
+        print("❌ 缺少 BINANCE_API_KEY 或 BINANCE_API_SECRET")
+        print("   请检查 ~/.env.aitrader 文件")
         sys.exit(1)
 
+    print(f"✅ API Key: {api_key[:8]}...{api_key[-4:]}")
+
     # 获取交易历史
-    result = analyze_trade_history(client, args.symbol, args.days)
+    result = analyze_trade_history(api_key, api_secret, args.symbol, args.days)
     if not result:
         sys.exit(1)
 
