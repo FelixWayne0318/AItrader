@@ -283,6 +283,8 @@ class MultiAgentAnalyzer:
         # ========== MTF v2.1: Multi-Timeframe Support ==========
         order_flow_report: Optional[Dict[str, Any]] = None,
         derivatives_report: Optional[Dict[str, Any]] = None,
+        # ========== v3.0: Binance Derivatives (Top Traders, Taker Ratio) ==========
+        binance_derivatives_report: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis with Bull/Bear debate.
@@ -312,6 +314,8 @@ class MultiAgentAnalyzer:
             Order flow data (buy/sell ratio, CVD trend) - MTF v2.1
         derivatives_report : Dict, optional
             Derivatives market data (OI, funding, liquidations) - MTF v2.1
+        binance_derivatives_report : Dict, optional
+            Binance-specific derivatives (top traders, taker ratio) - v3.0
 
         Returns
         -------
@@ -346,7 +350,9 @@ class MultiAgentAnalyzer:
 
             # MTF v2.1: Format order flow and derivatives for prompts
             order_flow_summary = self._format_order_flow_report(order_flow_report)
-            derivatives_summary = self._format_derivatives_report(derivatives_report, current_price)
+            derivatives_summary = self._format_derivatives_report(
+                derivatives_report, current_price, binance_derivatives_report
+            )
 
             # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
@@ -1027,69 +1033,141 @@ ORDER FLOW (Binance Taker Data):
 - Recent 10 Bars: [{recent_str}]
 """
 
-    def _format_derivatives_report(self, data: Optional[Dict[str, Any]], current_price: float = 0.0) -> str:
+    def _format_derivatives_report(
+        self,
+        data: Optional[Dict[str, Any]],
+        current_price: float = 0.0,
+        binance_derivatives: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """
         Format derivatives data for AI prompts.
 
         MTF v2.1: New method for derivatives integration
+        v3.0: Added binance_derivatives (top traders, taker ratio)
 
         Parameters
         ----------
         data : Dict, optional
-            Derivatives data (OI, funding rate, liquidations)
+            Coinalyze derivatives data (OI, funding rate, liquidations)
         current_price : float
             Current BTC price for converting liquidations from BTC to USD
+        binance_derivatives : Dict, optional
+            Binance-specific derivatives (top traders, taker ratio) - v3.0
 
         Returns
         -------
         str
             Formatted derivatives report for AI prompts
         """
-        if not data or not data.get('enabled', True):
-            return "DERIVATIVES: Data not available (Coinalyze API disabled or unavailable)"
+        parts = []
 
-        # v3.0: Pass raw data only, let AI interpret
-        parts = ["DERIVATIVES MARKET DATA:"]
+        # =========================================================================
+        # Section 1: Coinalyze Data
+        # =========================================================================
+        if data and data.get('enabled', True):
+            parts.append("COINALYZE DERIVATIVES:")
 
-        # Open Interest (raw value only)
-        oi = data.get('open_interest')
-        if oi:
-            oi_btc = oi.get('value', 0)
-            parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
-        else:
-            parts.append("- Open Interest: N/A")
+            # Open Interest with trend
+            oi = data.get('open_interest')
+            trends = data.get('trends', {})
+            if oi:
+                oi_btc = oi.get('value', 0)
+                oi_trend = trends.get('oi_trend', 'N/A')
+                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC [Trend: {oi_trend}]")
+            else:
+                parts.append("- Open Interest: N/A")
 
-        # Funding Rate (raw value only, no interpretation)
-        funding = data.get('funding_rate')
-        if funding:
-            rate = funding.get('value', 0)
-            rate_pct = rate * 100
-            parts.append(f"- Funding Rate: {rate_pct:.4f}%")
-        else:
-            parts.append("- Funding Rate: N/A")
+            # Funding Rate with trend
+            funding = data.get('funding_rate')
+            if funding:
+                rate = funding.get('value', 0)
+                rate_pct = rate * 100
+                fr_trend = trends.get('funding_trend', 'N/A')
+                parts.append(f"- Funding Rate: {rate_pct:.4f}% [Trend: {fr_trend}]")
+            else:
+                parts.append("- Funding Rate: N/A")
 
-        # Liquidations (raw values only)
-        liq = data.get('liquidations')
-        if liq:
-            history = liq.get('history', [])
-            if history:
-                item = history[-1]
-                long_liq_btc = float(item.get('l', 0))
-                short_liq_btc = float(item.get('s', 0))
-                total_btc = long_liq_btc + short_liq_btc
+            # Liquidations
+            liq = data.get('liquidations')
+            if liq:
+                history = liq.get('history', [])
+                if history:
+                    item = history[-1]
+                    long_liq_btc = float(item.get('l', 0))
+                    short_liq_btc = float(item.get('s', 0))
+                    total_btc = long_liq_btc + short_liq_btc
 
-                # Convert to USD
-                price_for_conversion = current_price if current_price > 0 else 88000
-                total_usd = total_btc * price_for_conversion
+                    price_for_conversion = current_price if current_price > 0 else 88000
+                    total_usd = total_btc * price_for_conversion
 
-                parts.append(f"- Liquidations (1h): {total_btc:.4f} BTC (${total_usd:,.0f})")
-                if total_btc > 0:
-                    long_ratio = long_liq_btc / total_btc
-                    parts.append(f"  - Long Liq: {long_liq_btc:.4f} BTC ({long_ratio:.0%})")
-                    parts.append(f"  - Short Liq: {short_liq_btc:.4f} BTC ({1-long_ratio:.0%})")
+                    parts.append(f"- Liquidations (1h): {total_btc:.4f} BTC (${total_usd:,.0f})")
+                    if total_btc > 0:
+                        long_ratio = long_liq_btc / total_btc
+                        parts.append(f"  - Long Liq: {long_liq_btc:.4f} BTC ({long_ratio:.0%})")
+                        parts.append(f"  - Short Liq: {short_liq_btc:.4f} BTC ({1-long_ratio:.0%})")
+                else:
+                    parts.append("- Liquidations (1h): N/A")
             else:
                 parts.append("- Liquidations (1h): N/A")
+
+            # Long/Short Ratio from Coinalyze
+            ls_hist = data.get('long_short_ratio_history')
+            if ls_hist and ls_hist.get('history'):
+                latest = ls_hist['history'][-1]
+                ls_ratio = float(latest.get('r', 1))
+                long_pct = float(latest.get('l', 50))
+                short_pct = float(latest.get('s', 50))
+                ls_trend = trends.get('long_short_trend', 'N/A')
+                parts.append(
+                    f"- Long/Short Ratio: {ls_ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%) "
+                    f"[Trend: {ls_trend}]"
+                )
         else:
-            parts.append("- Liquidations (1h): N/A")
+            parts.append("COINALYZE: Data not available")
+
+        # =========================================================================
+        # Section 2: Binance Derivatives (Unique Data)
+        # =========================================================================
+        if binance_derivatives:
+            parts.append("\nBINANCE DERIVATIVES (Top Traders & Taker):")
+
+            # Top Traders Position Ratio
+            top_pos = binance_derivatives.get('top_long_short_position', {})
+            latest = top_pos.get('latest')
+            if latest:
+                ratio = float(latest.get('longShortRatio', 1))
+                long_pct = float(latest.get('longAccount', 0.5)) * 100
+                short_pct = float(latest.get('shortAccount', 0.5)) * 100
+                trend = top_pos.get('trend', 'N/A')
+                parts.append(
+                    f"- Top Traders Position: Long {long_pct:.1f}% / Short {short_pct:.1f}% "
+                    f"(Ratio: {ratio:.2f}) [Trend: {trend}]"
+                )
+
+            # Taker Buy/Sell Ratio
+            taker = binance_derivatives.get('taker_long_short', {})
+            latest = taker.get('latest')
+            if latest:
+                ratio = float(latest.get('buySellRatio', 1))
+                trend = taker.get('trend', 'N/A')
+                parts.append(f"- Taker Buy/Sell Ratio: {ratio:.3f} [Trend: {trend}]")
+
+            # OI from Binance
+            oi_hist = binance_derivatives.get('open_interest_hist', {})
+            latest = oi_hist.get('latest')
+            if latest:
+                oi_usd = float(latest.get('sumOpenInterestValue', 0))
+                trend = oi_hist.get('trend', 'N/A')
+                parts.append(f"- OI (Binance): ${oi_usd:,.0f} [Trend: {trend}]")
+
+            # 24h Stats
+            ticker = binance_derivatives.get('ticker_24hr')
+            if ticker:
+                change_pct = float(ticker.get('priceChangePercent', 0))
+                volume = float(ticker.get('quoteVolume', 0))
+                parts.append(f"- 24h: Change {change_pct:+.2f}%, Volume ${volume:,.0f}")
+
+        if not parts:
+            return "DERIVATIVES: No data available"
 
         return "\n".join(parts)

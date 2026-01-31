@@ -251,3 +251,339 @@ class CoinalyzeClient:
     def is_enabled(self) -> bool:
         """检查客户端是否启用"""
         return self._enabled
+
+    # =========================================================================
+    # 历史数据 API (新增)
+    # =========================================================================
+
+    def get_open_interest_history(
+        self,
+        symbol: str = None,
+        interval: str = "1hour",
+        hours: int = 4,
+    ) -> Optional[Dict]:
+        """
+        获取 OI 历史数据 (OHLC 格式)
+
+        Parameters
+        ----------
+        symbol : str
+            交易对 (默认 BTCUSDT_PERP.A)
+        interval : str
+            时间周期 (1hour, 4hour, daily)
+        hours : int
+            回溯小时数
+
+        Returns
+        -------
+        Dict or None
+            {
+                "symbol": "BTCUSDT_PERP.A",
+                "history": [
+                    {"t": 1769832000, "o": 101991.489, "h": 102006.154, "l": 101927.816, "c": 101936.021},
+                    ...
+                ]
+            }
+
+        注意:
+        - t = 时间戳 (秒)
+        - o/h/l/c = OI 的 开/高/低/收 (BTC 单位)
+        """
+        if not self._enabled:
+            return None
+
+        symbol = symbol or self.DEFAULT_SYMBOL
+        now = int(time.time())
+
+        return self._request_with_retry(
+            endpoint="/open-interest-history",
+            params={
+                "symbols": symbol,
+                "interval": interval,
+                "from": now - (hours * 3600),
+                "to": now,
+            },
+        )
+
+    def get_funding_rate_history(
+        self,
+        symbol: str = None,
+        interval: str = "1hour",
+        hours: int = 24,
+    ) -> Optional[Dict]:
+        """
+        获取资金费率历史数据 (OHLC 格式)
+
+        Parameters
+        ----------
+        symbol : str
+            交易对
+        interval : str
+            时间周期 (1hour, 4hour, daily)
+        hours : int
+            回溯小时数
+
+        Returns
+        -------
+        Dict or None
+            {
+                "symbol": "BTCUSDT_PERP.A",
+                "history": [
+                    {"t": 1769832000, "o": 0.009693, "h": 0.009693, "l": 0.009693, "c": 0.009693},
+                    ...
+                ]
+            }
+        """
+        if not self._enabled:
+            return None
+
+        symbol = symbol or self.DEFAULT_SYMBOL
+        now = int(time.time())
+
+        return self._request_with_retry(
+            endpoint="/funding-rate-history",
+            params={
+                "symbols": symbol,
+                "interval": interval,
+                "from": now - (hours * 3600),
+                "to": now,
+            },
+        )
+
+    def get_long_short_ratio_history(
+        self,
+        symbol: str = None,
+        interval: str = "1hour",
+        hours: int = 4,
+    ) -> Optional[Dict]:
+        """
+        获取多空比历史数据
+
+        Parameters
+        ----------
+        symbol : str
+            交易对
+        interval : str
+            时间周期
+        hours : int
+            回溯小时数
+
+        Returns
+        -------
+        Dict or None
+            {
+                "symbol": "BTCUSDT_PERP.A",
+                "history": [
+                    {"t": 1769832000, "r": 2.413, "l": 70.7, "s": 29.3},
+                    ...
+                ]
+            }
+
+        字段说明:
+        - t = 时间戳 (秒)
+        - r = 多空比 (Long/Short ratio)
+        - l = 多头占比 (%)
+        - s = 空头占比 (%)
+        """
+        if not self._enabled:
+            return None
+
+        symbol = symbol or self.DEFAULT_SYMBOL
+        now = int(time.time())
+
+        return self._request_with_retry(
+            endpoint="/long-short-ratio-history",
+            params={
+                "symbols": symbol,
+                "interval": interval,
+                "from": now - (hours * 3600),
+                "to": now,
+            },
+        )
+
+    def fetch_all_with_history(
+        self,
+        symbol: str = None,
+        history_hours: int = 4,
+    ) -> Dict[str, Any]:
+        """
+        获取所有数据 (包含历史数据)
+
+        Parameters
+        ----------
+        symbol : str
+            交易对
+        history_hours : int
+            历史数据回溯小时数
+
+        Returns
+        -------
+        Dict
+            {
+                # 当前值
+                "open_interest": {...},
+                "liquidations": {...},
+                "funding_rate": {...},
+
+                # 历史数据 (新增)
+                "open_interest_history": {...},
+                "funding_rate_history": {...},
+                "long_short_ratio_history": {...},
+
+                # 计算的趋势
+                "trends": {
+                    "oi_trend": "RISING" / "FALLING" / "STABLE",
+                    "funding_trend": "RISING" / "FALLING" / "STABLE",
+                    "long_short_trend": "RISING" / "FALLING" / "STABLE",
+                },
+
+                "enabled": True,
+            }
+        """
+        if not self._enabled:
+            return {
+                "open_interest": None,
+                "liquidations": None,
+                "funding_rate": None,
+                "open_interest_history": None,
+                "funding_rate_history": None,
+                "long_short_ratio_history": None,
+                "trends": {},
+                "enabled": False,
+            }
+
+        # 获取当前值
+        oi = self.get_open_interest(symbol)
+        liq = self.get_liquidations(symbol)
+        fr = self.get_funding_rate(symbol)
+
+        # 获取历史数据
+        oi_hist = self.get_open_interest_history(symbol, hours=history_hours)
+        fr_hist = self.get_funding_rate_history(symbol, hours=history_hours)
+        ls_hist = self.get_long_short_ratio_history(symbol, hours=history_hours)
+
+        # 计算趋势
+        trends = {
+            "oi_trend": self._calc_trend_from_history(oi_hist, "c"),
+            "funding_trend": self._calc_trend_from_history(fr_hist, "c"),
+            "long_short_trend": self._calc_trend_from_history(ls_hist, "r"),
+        }
+
+        return {
+            "open_interest": oi,
+            "liquidations": liq,
+            "funding_rate": fr,
+            "open_interest_history": oi_hist,
+            "funding_rate_history": fr_hist,
+            "long_short_ratio_history": ls_hist,
+            "trends": trends,
+            "enabled": True,
+        }
+
+    def _calc_trend_from_history(
+        self,
+        data: Optional[Dict],
+        value_key: str,
+    ) -> Optional[str]:
+        """
+        从历史数据计算趋势
+
+        Parameters
+        ----------
+        data : Dict
+            包含 history 数组的数据
+        value_key : str
+            要分析的字段名 (如 "c", "r")
+
+        Returns
+        -------
+        str or None
+            "RISING" / "FALLING" / "STABLE" / None
+        """
+        if not data or "history" not in data:
+            return None
+
+        history = data.get("history", [])
+        if len(history) < 2:
+            return None
+
+        try:
+            # history 按时间升序，[-1] 是最新的
+            oldest = float(history[0].get(value_key, 0))
+            newest = float(history[-1].get(value_key, 0))
+
+            if oldest == 0:
+                return None
+
+            change_pct = (newest - oldest) / oldest * 100
+
+            if change_pct > 3:
+                return "RISING"
+            elif change_pct < -3:
+                return "FALLING"
+            else:
+                return "STABLE"
+        except (ValueError, TypeError, KeyError):
+            return None
+
+    def format_for_ai(self, data: Dict[str, Any], current_price: float = 0.0) -> str:
+        """
+        格式化数据供 AI 分析
+
+        Parameters
+        ----------
+        data : Dict
+            fetch_all_with_history() 返回的数据
+        current_price : float
+            当前 BTC 价格 (用于 BTC → USD 转换)
+
+        Returns
+        -------
+        str
+            格式化的文本描述
+        """
+        parts = ["COINALYZE DERIVATIVES DATA:"]
+
+        # OI
+        oi = data.get("open_interest")
+        if oi:
+            oi_btc = float(oi.get("value", 0))
+            oi_usd = oi_btc * current_price if current_price > 0 else 0
+            oi_trend = data.get("trends", {}).get("oi_trend", "N/A")
+            parts.append(f"- Open Interest: {oi_btc:,.0f} BTC (${oi_usd:,.0f}) [Trend: {oi_trend}]")
+
+        # Funding Rate
+        fr = data.get("funding_rate")
+        if fr:
+            fr_value = float(fr.get("value", 0))
+            fr_pct = fr_value * 100
+            fr_trend = data.get("trends", {}).get("funding_trend", "N/A")
+            parts.append(f"- Funding Rate: {fr_pct:.4f}% [Trend: {fr_trend}]")
+
+        # Liquidations
+        liq = data.get("liquidations")
+        if liq:
+            history = liq.get("history", [])
+            if history:
+                total_long = sum(float(h.get("l", 0)) for h in history)
+                total_short = sum(float(h.get("s", 0)) for h in history)
+                total_usd = (total_long + total_short) * current_price if current_price > 0 else 0
+                parts.append(
+                    f"- Liquidations (1h): Long {total_long:.4f} BTC, Short {total_short:.4f} BTC "
+                    f"(Total: ${total_usd:,.0f})"
+                )
+
+        # Long/Short Ratio (from history)
+        ls_hist = data.get("long_short_ratio_history")
+        if ls_hist and ls_hist.get("history"):
+            latest = ls_hist["history"][-1]
+            ratio = float(latest.get("r", 1))
+            long_pct = float(latest.get("l", 50))
+            short_pct = float(latest.get("s", 50))
+            ls_trend = data.get("trends", {}).get("long_short_trend", "N/A")
+            parts.append(
+                f"- Long/Short Ratio: {ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%) "
+                f"[Trend: {ls_trend}]"
+            )
+
+        return "\n".join(parts) if len(parts) > 1 else "COINALYZE: No data available"

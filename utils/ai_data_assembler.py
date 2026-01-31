@@ -17,6 +17,11 @@ class AIDataAssembler:
     - 改为同步实现，兼容 on_timer() 回调
     - 支持双格式 K线输入
     - 添加数据新鲜度检查
+
+    v3.0 更新:
+    - 整合 BinanceDerivativesClient (大户数据、Taker 比等)
+    - 整合 Coinalyze 历史数据 (OI/Funding/多空比趋势)
+    - 添加 format_complete_report() 供 AI 使用
     """
 
     def __init__(
@@ -25,6 +30,7 @@ class AIDataAssembler:
         order_flow_processor,
         coinalyze_client,
         sentiment_client,
+        binance_derivatives_client=None,
         logger: logging.Logger = None,
     ):
         """
@@ -40,11 +46,14 @@ class AIDataAssembler:
             Coinalyze 衍生品客户端
         sentiment_client : SentimentDataFetcher
             情绪数据客户端
+        binance_derivatives_client : BinanceDerivativesClient, optional
+            Binance 衍生品客户端 (大户数据等) - v3.0 新增
         """
         self.binance_klines = binance_kline_client
         self.order_flow = order_flow_processor
         self.coinalyze = coinalyze_client
         self.sentiment = sentiment_client
+        self.binance_derivatives = binance_derivatives_client
         self.logger = logger or logging.getLogger(__name__)
 
         # OI 变化率计算缓存
@@ -92,8 +101,9 @@ class AIDataAssembler:
             order_flow_data = self.order_flow._default_result()
             current_price = technical_data.get('price', 0)
 
-        # Step 3: 获取 Coinalyze 衍生品数据
-        coinalyze_data = self.coinalyze.fetch_all()
+        # Step 3: 获取 Coinalyze 衍生品数据 (包含历史)
+        # v3.0: 使用 fetch_all_with_history 获取完整数据
+        coinalyze_data = self.coinalyze.fetch_all_with_history(history_hours=4)
 
         # Step 4: 转换衍生品数据格式
         derivatives = self._convert_derivatives(
@@ -103,12 +113,28 @@ class AIDataAssembler:
             current_price=current_price,
         )
 
+        # v3.0: 添加 Coinalyze 趋势数据
+        derivatives["trends"] = coinalyze_data.get("trends", {})
+        derivatives["long_short_ratio_history"] = coinalyze_data.get("long_short_ratio_history")
+
         # Step 5: 获取情绪数据
         sentiment_data = self.sentiment.fetch()
         if sentiment_data is None:
             sentiment_data = self._default_sentiment()
 
-        # Step 6: 组装最终数据
+        # Step 6: 获取 Binance 衍生品数据 (大户数据等) - v3.0 新增
+        binance_derivatives_data = None
+        if self.binance_derivatives:
+            try:
+                binance_derivatives_data = self.binance_derivatives.fetch_all(
+                    symbol=symbol,
+                    period=interval,
+                    history_limit=10,
+                )
+            except Exception as e:
+                self.logger.warning(f"⚠️ Binance derivatives fetch error: {e}")
+
+        # Step 7: 组装最终数据
         return {
             "price": {
                 "current": current_price,
@@ -118,10 +144,12 @@ class AIDataAssembler:
             "order_flow": order_flow_data,
             "derivatives": derivatives,
             "sentiment": sentiment_data,
+            "binance_derivatives": binance_derivatives_data,  # v3.0 新增
             "current_position": position_data or {},
             "_metadata": {
                 "kline_source": "binance_raw" if raw_klines else "none",
                 "coinalyze_enabled": self.coinalyze.is_enabled(),
+                "binance_derivatives_enabled": self.binance_derivatives is not None,
             },
         }
 
@@ -290,3 +318,155 @@ class AIDataAssembler:
             'long_short_ratio': 1.0,
             'source': 'default_neutral',
         }
+
+    def format_complete_report(self, data: Dict[str, Any]) -> str:
+        """
+        格式化完整数据报告供 AI 分析 (v3.0 新增)
+
+        Parameters
+        ----------
+        data : Dict
+            assemble() 返回的完整数据
+
+        Returns
+        -------
+        str
+            格式化的完整市场数据报告
+        """
+        current_price = data.get("price", {}).get("current", 0)
+        parts = []
+
+        # =========================================================================
+        # 1. 价格和技术指标
+        # =========================================================================
+        parts.append("=" * 50)
+        parts.append("MARKET DATA REPORT")
+        parts.append("=" * 50)
+
+        price_data = data.get("price", {})
+        parts.append(f"\nPRICE: ${current_price:,.2f} ({price_data.get('change_pct', 0):+.2f}%)")
+
+        # =========================================================================
+        # 2. 订单流数据
+        # =========================================================================
+        order_flow = data.get("order_flow", {})
+        if order_flow:
+            parts.append("\nORDER FLOW (from Binance Klines):")
+            parts.append(f"  - Buy Ratio: {order_flow.get('buy_ratio', 0.5):.1%}")
+            parts.append(f"  - CVD Trend: {order_flow.get('cvd_trend', 'N/A')}")
+            parts.append(f"  - Avg Trade Size: ${order_flow.get('avg_trade_size', 0):,.0f}")
+
+        # =========================================================================
+        # 3. Coinalyze 衍生品数据 (含趋势)
+        # =========================================================================
+        derivatives = data.get("derivatives", {})
+        if derivatives:
+            parts.append("\nCOINALYZE DERIVATIVES:")
+            trends = derivatives.get("trends", {})
+
+            # OI
+            oi = derivatives.get("open_interest")
+            if oi:
+                oi_trend = trends.get("oi_trend", "N/A")
+                parts.append(
+                    f"  - Open Interest: {oi.get('total_btc', 0):,.0f} BTC "
+                    f"(${oi.get('total_usd', 0):,.0f}) [Trend: {oi_trend}]"
+                )
+
+            # Funding Rate
+            fr = derivatives.get("funding_rate")
+            if fr:
+                fr_trend = trends.get("funding_trend", "N/A")
+                parts.append(
+                    f"  - Funding Rate: {fr.get('current_pct', 0):.4f}% "
+                    f"({fr.get('interpretation', 'N/A')}) [Trend: {fr_trend}]"
+                )
+
+            # Liquidations
+            liq = derivatives.get("liquidations")
+            if liq:
+                parts.append(
+                    f"  - Liquidations (1h): Long ${liq.get('long_usd', 0):,.0f} / "
+                    f"Short ${liq.get('short_usd', 0):,.0f}"
+                )
+
+            # Long/Short Ratio (from Coinalyze)
+            ls_hist = derivatives.get("long_short_ratio_history")
+            if ls_hist and ls_hist.get("history"):
+                latest = ls_hist["history"][-1]
+                ls_trend = trends.get("long_short_trend", "N/A")
+                parts.append(
+                    f"  - Long/Short Ratio (Coinalyze): {latest.get('r', 1):.2f} "
+                    f"(Long {latest.get('l', 50):.1f}% / Short {latest.get('s', 50):.1f}%) "
+                    f"[Trend: {ls_trend}]"
+                )
+
+        # =========================================================================
+        # 4. Binance 衍生品数据 (大户数据、Taker 比)
+        # =========================================================================
+        binance_deriv = data.get("binance_derivatives")
+        if binance_deriv:
+            parts.append("\nBINANCE DERIVATIVES (Unique Data):")
+
+            # 大户持仓比
+            top_pos = binance_deriv.get("top_long_short_position", {})
+            latest = top_pos.get("latest")
+            if latest:
+                ratio = float(latest.get("longShortRatio", 1))
+                long_pct = float(latest.get("longAccount", 0.5)) * 100
+                trend = top_pos.get("trend", "N/A")
+                parts.append(
+                    f"  - Top Traders Position: Long {long_pct:.1f}% "
+                    f"(Ratio: {ratio:.2f}) [Trend: {trend}]"
+                )
+
+            # Taker 买卖比
+            taker = binance_deriv.get("taker_long_short", {})
+            latest = taker.get("latest")
+            if latest:
+                ratio = float(latest.get("buySellRatio", 1))
+                trend = taker.get("trend", "N/A")
+                parts.append(f"  - Taker Buy/Sell Ratio: {ratio:.3f} [Trend: {trend}]")
+
+            # OI 趋势 (Binance)
+            oi_hist = binance_deriv.get("open_interest_hist", {})
+            latest = oi_hist.get("latest")
+            if latest:
+                oi_usd = float(latest.get("sumOpenInterestValue", 0))
+                trend = oi_hist.get("trend", "N/A")
+                parts.append(f"  - OI (Binance): ${oi_usd:,.0f} [Trend: {trend}]")
+
+            # 24h 统计
+            ticker = binance_deriv.get("ticker_24hr")
+            if ticker:
+                change_pct = float(ticker.get("priceChangePercent", 0))
+                volume = float(ticker.get("quoteVolume", 0))
+                parts.append(
+                    f"  - 24h Stats: Change {change_pct:+.2f}%, Volume ${volume:,.0f}"
+                )
+
+        # =========================================================================
+        # 5. 市场情绪 (Binance 多空比)
+        # =========================================================================
+        sentiment = data.get("sentiment", {})
+        if sentiment:
+            parts.append("\nMARKET SENTIMENT (Binance Global L/S Ratio):")
+            parts.append(
+                f"  - Long: {sentiment.get('positive_ratio', 0.5):.1%} / "
+                f"Short: {sentiment.get('negative_ratio', 0.5):.1%}"
+            )
+            parts.append(f"  - Net Sentiment: {sentiment.get('net_sentiment', 0):+.3f}")
+            parts.append(f"  - L/S Ratio: {sentiment.get('long_short_ratio', 1):.2f}")
+
+        # =========================================================================
+        # 6. 数据源状态
+        # =========================================================================
+        metadata = data.get("_metadata", {})
+        parts.append("\nDATA SOURCES:")
+        parts.append(f"  - Klines: {metadata.get('kline_source', 'unknown')}")
+        parts.append(f"  - Coinalyze: {'enabled' if metadata.get('coinalyze_enabled') else 'disabled'}")
+        parts.append(f"  - Binance Derivatives: {'enabled' if metadata.get('binance_derivatives_enabled') else 'disabled'}")
+
+        parts.append("\n" + "=" * 50)
+
+        return "\n".join(parts)
