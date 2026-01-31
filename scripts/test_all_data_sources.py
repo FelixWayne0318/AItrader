@@ -15,11 +15,13 @@
     # 仅显示
     python3 scripts/test_all_data_sources.py
 
-    # 导出到 logs/
+    # 导出到 data/snapshots/
     python3 scripts/test_all_data_sources.py --export
 
     # 导出并推送到 GitHub
     python3 scripts/test_all_data_sources.py --export --push
+
+注意: 必须先激活虚拟环境 (source venv/bin/activate)
 """
 
 import os
@@ -60,14 +62,14 @@ def print_header(title: str):
 
 
 def export_data(complete_data: dict, binance_data: dict, coinalyze_data: dict) -> Path:
-    """导出原始数据到 logs/ 目录"""
-    logs_dir = project_root / "logs"
-    logs_dir.mkdir(exist_ok=True)
+    """导出原始数据到 data/snapshots/ 目录 (便于后续分析)"""
+    snapshots_dir = project_root / "data" / "snapshots"
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # 导出完整数据 (JSON)
-    json_file = logs_dir / f"data_sources_{timestamp}.json"
+    json_file = snapshots_dir / f"data_sources_{timestamp}.json"
     export_data = {
         "timestamp": datetime.now().isoformat(),
         "binance_derivatives": binance_data,
@@ -85,7 +87,7 @@ def export_data(complete_data: dict, binance_data: dict, coinalyze_data: dict) -
         json.dump(export_data, f, indent=2, ensure_ascii=False, default=json_serializer)
 
     # 导出文本报告
-    txt_file = logs_dir / f"data_sources_{timestamp}.txt"
+    txt_file = snapshots_dir / f"data_sources_{timestamp}.txt"
     with open(txt_file, "w", encoding="utf-8") as f:
         f.write("\n".join(output_lines))
 
@@ -128,7 +130,7 @@ def push_to_github(files: list):
 def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="测试所有数据源整合")
-    parser.add_argument("--export", action="store_true", help="导出数据到 logs/ 目录")
+    parser.add_argument("--export", action="store_true", help="导出数据到 data/snapshots/ 目录")
     parser.add_argument("--push", action="store_true", help="推送到 GitHub (需要 --export)")
     args = parser.parse_args()
 

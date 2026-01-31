@@ -55,7 +55,8 @@ catalog/
 *.parquet
 
 # Data files
-data/
+data/*
+!data/snapshots/
 *.csv
 *.json.gz
 
