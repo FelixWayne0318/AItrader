@@ -140,7 +140,7 @@ export function Header({ locale, t }: HeaderProps) {
   return (
     <header className="fixed top-3 inset-x-0 z-50 px-4">
       {/* Main navbar - background and height on SAME element */}
-      <nav className="mx-auto max-w-7xl flex h-14 items-center justify-between px-4 bg-background/80 backdrop-blur-xl border border-border/40 rounded-2xl shadow-lg shadow-black/5">
+      <nav className="mx-auto max-w-7xl flex h-14 items-center justify-between px-4 bg-background/80 backdrop-blur-xl border border-border/40 rounded-2xl">
         {/* Logo - Dynamic from branding settings */}
         <Link href="/" className="flex items-center gap-2.5 group">
           {branding?.logo_url ? (
