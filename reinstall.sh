@@ -342,12 +342,17 @@ if $INSTALL_WEB; then
     npm run build 2>&1 | tail -10 || { print_error "npm build 失败"; exit 1; }
     print_success "前端已构建"
 
-    # 安装服务
+    # 安装 PM2 进程管理器 (Node.js 推荐)
+    if ! command -v pm2 &> /dev/null; then
+        print_warning "安装 PM2 进程管理器..."
+        sudo npm install -g pm2
+    fi
+
+    # 安装后端服务 (systemd)
     sudo cp "${WEB_DIR}/deploy/algvex-backend.service" /etc/systemd/system/
-    sudo cp "${WEB_DIR}/deploy/algvex-frontend.service" /etc/systemd/system/
     sudo systemctl daemon-reload
-    sudo systemctl enable ${WEB_BACKEND_SERVICE} ${WEB_FRONTEND_SERVICE}
-    sudo systemctl start ${WEB_BACKEND_SERVICE} ${WEB_FRONTEND_SERVICE}
+    sudo systemctl enable ${WEB_BACKEND_SERVICE}
+    sudo systemctl start ${WEB_BACKEND_SERVICE}
 
     if systemctl is-active --quiet ${WEB_BACKEND_SERVICE}; then
         print_success "Web 后端启动成功"
@@ -355,8 +360,15 @@ if $INSTALL_WEB; then
         print_error "Web 后端启动失败"
     fi
 
-    if systemctl is-active --quiet ${WEB_FRONTEND_SERVICE}; then
-        print_success "Web 前端启动成功"
+    # 启动前端服务 (PM2 - 自动重启、日志管理)
+    pm2 delete ${WEB_FRONTEND_SERVICE} 2>/dev/null || true
+    cd "${WEB_DIR}/frontend"
+    pm2 start npm --name "${WEB_FRONTEND_SERVICE}" -- start
+    pm2 startup systemd -u $USER --hp $HOME 2>/dev/null || true
+    pm2 save
+
+    if pm2 list | grep -q "${WEB_FRONTEND_SERVICE}.*online"; then
+        print_success "Web 前端启动成功 (PM2)"
     else
         print_error "Web 前端启动失败"
     fi
@@ -430,9 +442,9 @@ if $INSTALL_WEB; then
     else
         echo -e "  ${RED}●${NC} ${WEB_BACKEND_SERVICE}: ${RED}未运行${NC}"
     fi
-    STATUS=$(systemctl is-active ${WEB_FRONTEND_SERVICE} 2>/dev/null || echo "inactive")
-    if [ "$STATUS" = "active" ]; then
-        echo -e "  ${GREEN}●${NC} ${WEB_FRONTEND_SERVICE}: ${GREEN}运行中${NC}"
+    # 前端使用 PM2 检查状态
+    if pm2 list 2>/dev/null | grep -q "${WEB_FRONTEND_SERVICE}.*online"; then
+        echo -e "  ${GREEN}●${NC} ${WEB_FRONTEND_SERVICE}: ${GREEN}运行中 (PM2)${NC}"
     else
         echo -e "  ${RED}●${NC} ${WEB_FRONTEND_SERVICE}: ${RED}未运行${NC}"
     fi
