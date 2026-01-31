@@ -122,9 +122,9 @@ export function Header({ locale, t }: HeaderProps) {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/95 backdrop-blur-lg">
-      <div className="max-w-7xl mx-auto px-4">
-        <div className="flex h-14 items-center justify-between">
+    <header className="fixed top-4 inset-x-0 z-50 px-4">
+      {/* Floating rounded navbar - NOT full-width black background */}
+      <nav className="max-w-7xl mx-auto flex h-14 items-center justify-between px-6 bg-background/80 backdrop-blur-xl border border-border/40 rounded-2xl">
           {/* Logo - Always visible */}
           <Link href="/" className="flex items-center gap-2">
             {branding?.logo_url ? (
@@ -219,11 +219,11 @@ export function Header({ locale, t }: HeaderProps) {
           >
             {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
-        </div>
+      </nav>
 
-        {/* Mobile Navigation Menu - Only when open */}
-        {mobileMenuOpen && (
-          <div className="lg:hidden py-4 border-t border-border">
+      {/* Mobile Navigation Menu - Separate floating element */}
+      {mobileMenuOpen && (
+        <div className="lg:hidden mt-2 max-w-7xl mx-auto bg-background/95 backdrop-blur-xl border border-border/40 rounded-2xl p-4">
             {/* Navigation Links */}
             <nav className="flex flex-col gap-1 mb-4">
               {navItems.map((item) => {
@@ -288,10 +288,9 @@ export function Header({ locale, t }: HeaderProps) {
                   {t("hero.cta")}
                 </Button>
               </Link>
-            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </header>
   );
 }
