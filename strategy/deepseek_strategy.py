@@ -339,7 +339,7 @@ class DeepSeekAIStrategy(Strategy):
 
         if self.mtf_enabled:
             try:
-                from indicators.multi_timeframe_manager import MultiTimeframeManager, DecisionState
+                from indicators.multi_timeframe_manager import MultiTimeframeManager
 
                 # Build BarType objects for each layer
                 instrument_str = str(self.instrument_id)
@@ -374,8 +374,6 @@ class DeepSeekAIStrategy(Strategy):
                     execution_bar_type=self.execution_bar_type,
                     logger=self.log,
                 )
-                # Store enums for use in on_timer (avoid import in hot path)
-                self._DecisionState = DecisionState
                 self.log.info(f"✅ MTF Manager initialized: trend={self.trend_bar_type}, decision={self.decision_bar_type}, exec={self.execution_bar_type}")
             except Exception as e:
                 self.log.error(f"❌ Failed to initialize MTF Manager: {e}")
@@ -952,9 +950,8 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.debug(f"MTF: trend (1D) bar routed")
                 return
             elif layer == "decision":
-                # 决策层 (4H) 收盘时评估方向 - 核心 MTF 逻辑
-                self.log.info(f"[MTF] 4H bar 收盘，触发决策层评估...")
-                self._evaluate_decision_layer_on_bar_close(bar)
+                # 决策层 (4H) 数据由 AI 在 on_timer 中使用，这里只记录
+                self.log.debug(f"[MTF] 4H bar 收盘，数据已更新 (AI 将在 on_timer 中使用)")
                 return
             elif layer == "execution":
                 # Update cached price for execution layer
@@ -979,125 +976,6 @@ class DeepSeekAIStrategy(Strategy):
                 f"Bar #{self.bars_received}: "
                 f"O:{bar.open} H:{bar.high} L:{bar.low} C:{bar.close} V:{bar.volume}"
             )
-
-    def _evaluate_decision_layer_on_bar_close(self, bar: Bar):
-        """
-        评估决策层方向 (在 4H bar 收盘时调用)
-
-        根据设计文档 Section 1.5.4，决策层应该在 4H bar 收盘时评估，
-        使用技术指标规则确定方向 (ALLOW_LONG / ALLOW_SHORT / WAIT)。
-
-        这个方向状态将持续到下一个 4H bar 收盘，期间 on_timer 中的
-        交易信号必须符合此方向才能执行。
-
-        Parameters
-        ----------
-        bar : Bar
-            4H bar 数据
-        """
-        if not self.mtf_manager or not self.mtf_manager.decision_manager:
-            self.log.warning("[MTF] 决策层管理器未初始化")
-            return
-
-        current_price = float(bar.close)
-
-        # 获取 4H 决策层技术数据
-        try:
-            decision_data = self.mtf_manager.get_technical_data_for_layer("decision", current_price)
-
-            if not decision_data.get('_initialized', True):
-                self.log.warning("[MTF] 决策层指标未完全初始化，保持当前状态")
-                return
-
-            # 提取关键指标
-            macd = decision_data.get('macd', 0)
-            macd_signal = decision_data.get('macd_signal', 0)
-            rsi = decision_data.get('rsi', 50)
-            sma_20 = decision_data.get('sma_20', current_price)
-            sma_50 = decision_data.get('sma_50', current_price)
-            overall_trend = decision_data.get('overall_trend', 'NEUTRAL')
-
-            # 决策规则 (基于 4H 技术指标)
-            # 规则设计参考业界最佳实践：
-            # - MACD 金叉/死叉 作为主要方向信号
-            # - RSI 区间确认动量
-            # - 价格与均线关系确认趋势
-
-            bullish_signals = 0
-            bearish_signals = 0
-
-            # 规则 1: MACD 方向
-            if macd > macd_signal and macd > 0:
-                bullish_signals += 2  # MACD 金叉且为正，强看涨
-            elif macd > macd_signal:
-                bullish_signals += 1  # MACD 金叉但为负，弱看涨
-            elif macd < macd_signal and macd < 0:
-                bearish_signals += 2  # MACD 死叉且为负，强看跌
-            elif macd < macd_signal:
-                bearish_signals += 1  # MACD 死叉但为正，弱看跌
-
-            # 规则 2: RSI 区间
-            if rsi > 55:
-                bullish_signals += 1
-            elif rsi < 45:
-                bearish_signals += 1
-
-            # 规则 3: 价格与均线关系
-            if current_price > sma_20 and sma_20 > sma_50:
-                bullish_signals += 1  # 多头排列
-            elif current_price < sma_20 and sma_20 < sma_50:
-                bearish_signals += 1  # 空头排列
-
-            # 决定方向
-            old_state = self.mtf_manager.get_decision_state()
-
-            if bullish_signals >= 3 and bullish_signals > bearish_signals:
-                confidence = "HIGH" if bullish_signals >= 4 else "MEDIUM"
-                self.mtf_manager.set_decision_state(self._DecisionState.ALLOW_LONG, confidence)
-                self.log.info(
-                    f"[MTF] 4H 决策层评估: ALLOW_LONG ({confidence}) | "
-                    f"多头信号={bullish_signals}, 空头信号={bearish_signals} | "
-                    f"MACD={macd:.2f}, RSI={rsi:.1f}, Price vs SMA20={current_price:.2f}/{sma_20:.2f}"
-                )
-            elif bearish_signals >= 3 and bearish_signals > bullish_signals:
-                confidence = "HIGH" if bearish_signals >= 4 else "MEDIUM"
-                self.mtf_manager.set_decision_state(self._DecisionState.ALLOW_SHORT, confidence)
-                self.log.info(
-                    f"[MTF] 4H 决策层评估: ALLOW_SHORT ({confidence}) | "
-                    f"多头信号={bullish_signals}, 空头信号={bearish_signals} | "
-                    f"MACD={macd:.2f}, RSI={rsi:.1f}, Price vs SMA20={current_price:.2f}/{sma_20:.2f}"
-                )
-            else:
-                self.mtf_manager.set_decision_state(self._DecisionState.WAIT, "LOW")
-                self.log.info(
-                    f"[MTF] 4H 决策层评估: WAIT (方向不明确) | "
-                    f"多头信号={bullish_signals}, 空头信号={bearish_signals} | "
-                    f"MACD={macd:.2f}, RSI={rsi:.1f}"
-                )
-
-            # 如果状态变化，发送 Telegram 通知
-            new_state = self.mtf_manager.get_decision_state()
-            if old_state != new_state and self.telegram_bot and self.enable_telegram:
-                try:
-                    state_emoji = {
-                        self._DecisionState.ALLOW_LONG: "🟢",
-                        self._DecisionState.ALLOW_SHORT: "🔴",
-                        self._DecisionState.WAIT: "🟡",
-                    }
-                    emoji = state_emoji.get(new_state, "⚪")
-                    msg = (
-                        f"{emoji} [MTF 4H 方向更新]\n"
-                        f"方向: {old_state.value} → {new_state.value}\n"
-                        f"价格: ${current_price:,.2f}\n"
-                        f"MACD: {macd:.2f}\n"
-                        f"RSI: {rsi:.1f}"
-                    )
-                    self.telegram_bot.send_message_sync(msg)
-                except Exception as e:
-                    self.log.warning(f"Telegram 通知发送失败: {e}")
-
-        except Exception as e:
-            self.log.error(f"[MTF] 决策层评估失败: {e}")
 
     def on_historical_data(self, data):
         """
@@ -1636,8 +1514,6 @@ class DeepSeekAIStrategy(Strategy):
 
             # 📸 Fix C16/J43: Save complete decision snapshot for replay
             try:
-                mtf_perms = permissions if self.mtf_enabled and self.mtf_manager and 'permissions' in locals() else None
-                orig_sig = original_signal if 'original_signal' in locals() else None
                 self._save_decision_snapshot(
                     signal_data=signal_data,
                     technical_data=technical_data,
@@ -1646,8 +1522,6 @@ class DeepSeekAIStrategy(Strategy):
                     derivatives_data=derivatives_data if 'derivatives_data' in locals() else None,
                     current_position=current_position,
                     price_data=price_data,
-                    mtf_permissions=mtf_perms,
-                    original_signal=orig_sig,
                 )
             except Exception as e:
                 self.log.debug(f"Failed to save decision snapshot: {e}")
@@ -1677,14 +1551,15 @@ class DeepSeekAIStrategy(Strategy):
         derivatives_data: dict,
         current_position: dict,
         price_data: dict,
-        mtf_permissions: dict = None,
-        original_signal: str = None,
     ):
         """
         🔍 Fix C16/J43: Save complete decision snapshot for debugging and replay.
 
-        Saves all inputs, AI outputs, and filtering decisions to a JSON file.
+        Saves all inputs and AI outputs to a JSON file.
         This enables full replay of "why did the system make this decision?"
+
+        Note: All trading decisions are made by AI (Bull/Bear/Judge).
+        Local code only handles risk control (S/R proximity blocking).
         """
         try:
             import json
@@ -1717,12 +1592,6 @@ class DeepSeekAIStrategy(Strategy):
                     'reason': signal_data.get('reason'),
                     'debate_summary': signal_data.get('debate_summary'),
                     'judge_decision': signal_data.get('judge_decision'),
-                },
-                'mtf_filtering': {
-                    'original_signal': original_signal or signal_data.get('signal'),
-                    'final_signal': signal_data.get('signal'),
-                    'permissions': mtf_permissions,
-                    'filtered': original_signal != signal_data.get('signal') if original_signal else False,
                 },
             }
 
