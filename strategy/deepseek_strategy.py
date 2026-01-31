@@ -1731,6 +1731,24 @@ class DeepSeekAIStrategy(Strategy):
 
             self.log.debug(f"📸 Decision snapshot saved: {snapshot_file}")
 
+            # 📡 Write latest_signal.json for web frontend API
+            # This file is read by /api/public/latest-signal endpoint
+            latest_signal_file = 'logs/latest_signal.json'
+            latest_signal = {
+                'signal': signal_data.get('signal', 'HOLD'),
+                'confidence': signal_data.get('confidence', 'MEDIUM'),
+                'reason': signal_data.get('reason', ''),
+                'symbol': 'BTCUSDT',
+                'timestamp': datetime.now().isoformat(),
+                'risk_level': signal_data.get('risk_level', 'MEDIUM'),
+                'stop_loss': signal_data.get('stop_loss'),
+                'take_profit': signal_data.get('take_profit'),
+                'debate_summary': signal_data.get('debate_summary', ''),
+            }
+            with open(latest_signal_file, 'w') as f:
+                json.dump(latest_signal, f, indent=2, default=str)
+            self.log.debug(f"📡 Latest signal updated: {latest_signal_file}")
+
         except Exception as e:
             self.log.warning(f"Failed to save decision snapshot: {e}")
 
