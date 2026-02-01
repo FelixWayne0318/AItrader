@@ -411,7 +411,7 @@ def create_bar_from_kline(kline: list, bar_type: str) -> MockBar:
 # =============================================================================
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.14')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.15')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -3146,8 +3146,8 @@ if not SUMMARY_MODE:
                 for mem in memories[-3:]:
                     decision = mem.get('decision', 'N/A')
                     pnl = mem.get('pnl', 0)
-                    conditions = mem.get('conditions', 'N/A')[:50]
-                    timestamp = mem.get('timestamp', 'N/A')[:19]
+                    conditions = str(mem.get('conditions', 'N/A') or 'N/A')[:50]
+                    timestamp = str(mem.get('timestamp', 'N/A') or 'N/A')[:19]
                     emoji = '✅' if pnl > 0 else '❌'
                     print(f"     {emoji} [{timestamp}] {decision} → {pnl:+.2f}%")
                     print(f"        Conditions: {conditions}...")
@@ -3170,7 +3170,8 @@ if not SUMMARY_MODE:
         # 验证 MultiAgentAnalyzer 记忆系统
         print()
         print("  🧠 MultiAgentAnalyzer 记忆系统状态:")
-        if 'multi_agent' in dir():
+        # v11.15: 使用 globals() 检查全局变量
+        if 'multi_agent' in globals() and multi_agent is not None:
             mem_count = len(getattr(multi_agent, 'decision_memory', []))
             mem_file = getattr(multi_agent, 'memory_file', 'N/A')
             print(f"     → 已加载记忆: {mem_count} 条")
