@@ -1800,22 +1800,34 @@ class DeepSeekAIStrategy(Strategy):
             except Exception:
                 pass
 
-            # 6. 获取持仓信息
+            # 6. 获取持仓信息 (v4.2: 修复字段名 + 添加 SL/TP)
             position_side = None
             entry_price = 0
             position_size = 0
             position_pnl_pct = 0
+            sl_price = None
+            tp_price = None
             try:
                 pos_data = self._get_current_position_data(current_price=cached_price, from_telegram=True)
-                if pos_data and pos_data.get('size', 0) != 0:
-                    position_side = pos_data.get('side')
-                    entry_price = pos_data.get('entry_price') or 0
-                    position_size = abs(pos_data.get('size') or 0)
+                # Fix: _get_current_position_data returns 'quantity' not 'size', 'avg_px' not 'entry_price'
+                if pos_data and pos_data.get('quantity', 0) != 0:
+                    # Fix: side is lowercase ('long'/'short'), convert to uppercase for display
+                    raw_side = pos_data.get('side', '')
+                    position_side = raw_side.upper() if raw_side else None
+                    entry_price = pos_data.get('avg_px') or 0
+                    position_size = abs(pos_data.get('quantity') or 0)
                     if entry_price > 0 and cached_price:
                         if position_side == 'LONG':
                             position_pnl_pct = ((cached_price - entry_price) / entry_price) * 100
                         else:
                             position_pnl_pct = ((entry_price - cached_price) / entry_price) * 100
+
+                    # v4.2: Get SL/TP from trailing_stop_state
+                    instrument_key = str(self.instrument_id)
+                    if instrument_key in self.trailing_stop_state:
+                        ts_state = self.trailing_stop_state[instrument_key]
+                        sl_price = ts_state.get('current_sl_price')
+                        tp_price = ts_state.get('current_tp_price')
             except Exception:
                 pass
 
@@ -1864,7 +1876,7 @@ class DeepSeekAIStrategy(Strategy):
             # 9. 获取信号执行状态 (v4.1)
             signal_status_heartbeat = getattr(self, '_last_signal_status', None)
 
-            # 10. 发送消息
+            # 10. 发送消息 (v4.2: 添加 SL/TP)
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
@@ -1874,6 +1886,8 @@ class DeepSeekAIStrategy(Strategy):
                 'position_pnl_pct': position_pnl_pct,
                 'entry_price': entry_price,
                 'position_size': position_size,
+                'sl_price': sl_price,      # v4.2: Add stop loss
+                'tp_price': tp_price,      # v4.2: Add take profit
                 'timer_count': getattr(self, '_timer_count', 0),
                 'equity': equity,
                 'uptime_str': uptime_str,
@@ -2450,18 +2464,8 @@ class DeepSeekAIStrategy(Strategy):
             'action_taken': f'平{side_cn}仓 {current_qty:.4f} BTC',
         }
 
-        # Send Telegram notification
-        if self.telegram_bot and self.enable_telegram:
-            try:
-                msg = (
-                    f"🔴 **平仓信号执行**\n\n"
-                    f"📍 动作: 平{side_cn}仓\n"
-                    f"📦 数量: {current_qty:.4f} BTC\n"
-                    f"💡 原因: AI 发出 CLOSE 信号"
-                )
-                self.telegram_bot.send_message_sync(msg)
-            except Exception as e:
-                self.log.error(f"Failed to send Telegram notification: {e}")
+        # v4.2: Telegram notification moved to on_position_closed to avoid duplicate messages
+        # The on_position_closed event will send a single comprehensive close notification
 
     def _reduce_position(self, current_position: Dict[str, Any], target_pct: int):
         """
@@ -2549,19 +2553,8 @@ class DeepSeekAIStrategy(Strategy):
             'action_taken': f'减{side_cn}仓 {100-target_pct}% (-{reduce_qty:.4f} BTC)',
         }
 
-        # Send Telegram notification
-        if self.telegram_bot and self.enable_telegram:
-            try:
-                msg = (
-                    f"📉 **减仓信号执行**\n\n"
-                    f"📍 动作: 减{side_cn}仓 {100-target_pct}%\n"
-                    f"📦 减仓量: -{reduce_qty:.4f} BTC\n"
-                    f"📊 剩余仓位: {target_qty:.4f} BTC\n"
-                    f"💡 原因: AI 发出 REDUCE 信号"
-                )
-                self.telegram_bot.send_message_sync(msg)
-            except Exception as e:
-                self.log.error(f"Failed to send Telegram notification: {e}")
+        # v4.2: Telegram notification moved to on_position_changed events
+        # This avoids duplicate messages (order submission + position update)
 
     def _submit_order(
         self,
@@ -2878,6 +2871,15 @@ class DeepSeekAIStrategy(Strategy):
                     sl_price = state.get("current_sl_price")
                     tp_price = state.get("current_tp_price")
 
+                # v4.2: Retrieve S/R Zone data
+                sr_zone_data = None
+                if self.latest_sr_zones_data:
+                    zones = self.latest_sr_zones_data.get('zones', {})
+                    sr_zone_data = {
+                        'nearest_support': zones.get('nearest_support'),
+                        'nearest_resistance': zones.get('nearest_resistance'),
+                    }
+
                 # Build unified execution data from pending data + event data
                 execution_data = {
                     'side': event.side.name,
@@ -2885,6 +2887,7 @@ class DeepSeekAIStrategy(Strategy):
                     'entry_price': float(event.avg_px_open),
                     'sl_price': sl_price,
                     'tp_price': tp_price,
+                    'sr_zone': sr_zone_data,  # v4.2: Add S/R Zone
                 }
 
                 # Merge with pending execution data (signal info, technical indicators, AI analysis)
@@ -2936,6 +2939,15 @@ class DeepSeekAIStrategy(Strategy):
         # Send Telegram position closed notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
+                # v4.2: Retrieve S/R Zone data for close message
+                sr_zone_data = None
+                if self.latest_sr_zones_data:
+                    zones = self.latest_sr_zones_data.get('zones', {})
+                    sr_zone_data = {
+                        'nearest_support': zones.get('nearest_support'),
+                        'nearest_resistance': zones.get('nearest_resistance'),
+                    }
+
                 position_msg = self.telegram_bot.format_position_update({
                     'action': 'CLOSED',
                     'side': event.side.name,
@@ -2944,6 +2956,7 @@ class DeepSeekAIStrategy(Strategy):
                     'current_price': exit_price,
                     'pnl': pnl,
                     'pnl_pct': pnl_pct,
+                    'sr_zone': sr_zone_data,  # v4.2: Add S/R Zone
                 })
                 self.telegram_bot.send_message_sync(position_msg)
             except Exception as e:
