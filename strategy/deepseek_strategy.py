@@ -314,6 +314,14 @@ class DeepSeekAIStrategy(Strategy):
         # v4.0: Store pending execution data for unified Telegram notification
         # This allows on_position_opened to send a comprehensive message with signal + fill + position
         self._pending_execution_data: Optional[Dict[str, Any]] = None
+
+        # v4.1: Track signal execution status for heartbeat display
+        # Shows whether the signal was actually executed and why not if blocked
+        self._last_signal_status: Dict[str, Any] = {
+            'executed': False,       # Whether trade was executed
+            'reason': '',            # Reason if not executed
+            'action_taken': '',      # What action was taken (if any)
+        }
         # Format: {
         #   "instrument_id": {
         #       "entry_price": float,
@@ -1856,7 +1864,10 @@ class DeepSeekAIStrategy(Strategy):
                     'block_short': hard_control.get('block_short', False),
                 }
 
-            # 9. 发送消息
+            # 9. 获取信号执行状态 (v4.1)
+            signal_status_heartbeat = getattr(self, '_last_signal_status', None)
+
+            # 10. 发送消息
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
@@ -1874,6 +1885,8 @@ class DeepSeekAIStrategy(Strategy):
                 'derivatives': derivatives_heartbeat,
                 'order_book': orderbook_heartbeat,
                 'sr_zone': sr_zone_heartbeat,
+                # v4.1 signal execution status
+                'signal_status': signal_status_heartbeat,
             })
             self.telegram_bot.send_message_sync(heartbeat_msg)
             self.log.info(f"💓 Sent heartbeat #{self._timer_count}")
@@ -2014,13 +2027,19 @@ class DeepSeekAIStrategy(Strategy):
         with self._state_lock:
             if self.is_trading_paused:
                 self.log.info("⏸️ Trading is paused - skipping signal execution")
+                # v4.1: Update signal status
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': '交易已暂停',
+                    'action_taken': '',
+                }
                 return
-        
+
         # Store signal and technical data for SL/TP calculation
         self.latest_signal_data = signal_data
         self.latest_technical_data = technical_data
         self.latest_price_data = price_data
-        
+
         signal = signal_data['signal']
         confidence = signal_data['confidence']
 
@@ -2033,11 +2052,23 @@ class DeepSeekAIStrategy(Strategy):
             self.log.warning(
                 f"⚠️ Signal confidence {confidence} below minimum {self.min_confidence}, skipping trade"
             )
+            # v4.1: Update signal status
+            self._last_signal_status = {
+                'executed': False,
+                'reason': f'信心不足 ({confidence} < {self.min_confidence})',
+                'action_taken': '',
+            }
             return
 
         # Handle HOLD signal
         if signal == 'HOLD':
             self.log.info("📊 Signal: HOLD - No action taken")
+            # v4.1: Update signal status
+            self._last_signal_status = {
+                'executed': False,
+                'reason': 'AI 建议观望',
+                'action_taken': '',
+            }
             return
 
         # Calculate target position size
@@ -2047,6 +2078,12 @@ class DeepSeekAIStrategy(Strategy):
 
         if target_quantity == 0:
             self.log.warning("⚠️ Calculated position size is 0, skipping trade")
+            # v4.1: Update signal status
+            self._last_signal_status = {
+                'executed': False,
+                'reason': '仓位计算为0 (余额不足)',
+                'action_taken': '',
+            }
 
             # Notify user about insufficient position size (helpful for low-balance accounts)
             if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
@@ -2159,6 +2196,13 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.info(
                     f"✅ Position size appropriate ({current_qty:.3f} BTC), no adjustment needed"
                 )
+                # v4.1: Update signal status - same direction, holding
+                side_cn = '多' if current_side == 'long' else '空'
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': f'已持有{side_cn}仓 ({current_qty:.4f} BTC)',
+                    'action_taken': '维持现有仓位',
+                }
                 return
 
             if size_diff > 0:
@@ -2175,6 +2219,12 @@ class DeepSeekAIStrategy(Strategy):
                     f"📈 Adding to {target_side} position: {abs(size_diff):.3f} BTC "
                     f"({current_qty:.3f} → {target_quantity:.3f})"
                 )
+                # v4.1: Update signal status - adding to position
+                self._last_signal_status = {
+                    'executed': True,
+                    'reason': '',
+                    'action_taken': f'加仓 +{abs(size_diff):.4f} BTC',
+                }
             else:
                 # Reduce position
                 self._submit_order(
@@ -2186,6 +2236,12 @@ class DeepSeekAIStrategy(Strategy):
                     f"📉 Reducing {target_side} position: {abs(size_diff):.3f} BTC "
                     f"({current_qty:.3f} → {target_quantity:.3f})"
                 )
+                # v4.1: Update signal status - reducing position
+                self._last_signal_status = {
+                    'executed': True,
+                    'reason': '',
+                    'action_taken': f'减仓 -{abs(size_diff):.4f} BTC',
+                }
 
         # Opposite direction - reverse position
         elif self.allow_reversals:
@@ -2195,6 +2251,13 @@ class DeepSeekAIStrategy(Strategy):
                     f"🔒 Reversal requires HIGH confidence, got {confidence}. "
                     f"Keeping {current_side} position."
                 )
+                # v4.1: Update signal status - reversal blocked
+                side_cn = '多' if current_side == 'long' else '空'
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': f'反转需HIGH信心 (当前{confidence})',
+                    'action_taken': f'保持{side_cn}仓',
+                }
                 return
 
             self.log.info(f"🔄 Reversing position: {current_side} → {target_side}")
@@ -2216,12 +2279,28 @@ class DeepSeekAIStrategy(Strategy):
             self.log.info(
                 f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC (with bracket SL/TP)"
             )
+            # v4.1: Update signal status - reversal executed
+            old_side_cn = '多' if current_side == 'long' else '空'
+            new_side_cn = '多' if target_side == 'long' else '空'
+            self._last_signal_status = {
+                'executed': True,
+                'reason': '',
+                'action_taken': f'反转: {old_side_cn}→{new_side_cn}',
+            }
 
         else:
             self.log.warning(
                 f"⚠️ Signal suggests {target_side} but have {current_side} position. "
                 f"Reversals disabled."
             )
+            # v4.1: Update signal status - reversal disabled
+            current_cn = '多' if current_side == 'long' else '空'
+            target_cn = '多' if target_side == 'long' else '空'
+            self._last_signal_status = {
+                'executed': False,
+                'reason': f'禁止反转 (持有{current_cn}仓)',
+                'action_taken': '',
+            }
 
     def _open_new_position(self, side: str, quantity: float):
         """
@@ -2243,6 +2322,14 @@ class DeepSeekAIStrategy(Strategy):
         )
 
         self.log.info(f"🚀 Opening {side} position: {quantity:.3f} BTC (with bracket SL/TP)")
+
+        # v4.1: Update signal status - new position opened
+        side_cn = '多' if side == 'long' else '空'
+        self._last_signal_status = {
+            'executed': True,
+            'reason': '',
+            'action_taken': f'开{side_cn}仓 {quantity:.4f} BTC',
+        }
 
     def _submit_order(
         self,

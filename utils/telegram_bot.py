@@ -778,6 +778,25 @@ class TelegramBot:
         msg += f"📈 RSI: {rsi:.1f}\n"
         msg += f"🎯 信号: {signal_emoji} {signal} ({confidence})\n"
 
+        # v4.1 Signal Execution Status (if available)
+        signal_status = heartbeat_data.get('signal_status') or {}
+        if signal_status:
+            executed = signal_status.get('executed', False)
+            reason = signal_status.get('reason', '')
+            action_taken = signal_status.get('action_taken', '')
+
+            if executed:
+                status_emoji = '✅'
+                status_text = f'已执行 ({action_taken})' if action_taken else '已执行'
+            elif reason:
+                status_emoji = '⏸️'
+                status_text = f'未执行 ({reason})'
+            else:
+                status_emoji = '⏳'
+                status_text = '等待中'
+
+            msg += f"📋 状态: {status_emoji} {status_text}\n"
+
         # v3.8 S/R Zone Hard Control (if available)
         if nearest_support is not None or nearest_resistance is not None:
             msg += f"━━━━━━━━━━━━━━━━\n"
