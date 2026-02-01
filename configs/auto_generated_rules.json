@@ -2129,12 +2129,72 @@
       "pattern_type": "import",
       "created": "2026-02-01T09:26:28.502348",
       "auto_generated": true
+    },
+    {
+      "id": "6aa6a858e944",
+      "commit": "a648c49",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(order): Cancel pending orders before reversal/close to prevent -2022 ReduceOnly rejection",
+      "pattern": "reduce_only_orders = [o for o in open_orders if o.is_reduce_only]",
+      "pattern_type": "contains",
+      "created": "2026-02-01T12:32:54.129810",
+      "auto_generated": true
+    },
+    {
+      "id": "55fb421f901a",
+      "commit": "6ae6c83",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(memory): Fix entry conditions recording - was calling non-existent get_rsi()",
+      "pattern": "if hasattr(self, '_cached_current_price') and self._cached_current_price:",
+      "pattern_type": "contains",
+      "created": "2026-02-01T12:32:54.187470",
+      "auto_generated": true
+    },
+    {
+      "id": "612201322d1b",
+      "commit": "13beb13",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(telegram): Remove help message from startup notification",
+      "pattern": "# Note: Help message removed - users can use /help command if needed",
+      "pattern_type": "contains",
+      "created": "2026-02-01T12:32:54.227895",
+      "auto_generated": true
+    },
+    {
+      "id": "c3bc30cadbd5",
+      "commit": "ad50ae6",
+      "file": "utils/telegram_bot.py",
+      "message": "fix(telegram): Add missing queue_send_interval parameter to TelegramBot",
+      "pattern": "queue_send_interval: float = 0.5,  # v2.0: Interval between sends (rate limit)",
+      "pattern_type": "contains",
+      "created": "2026-02-01T12:32:54.303594",
+      "auto_generated": true
+    },
+    {
+      "id": "98ce7e053ff9",
+      "commit": "3fc8008",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(telegram): Reduce message spam and fix incorrect displays",
+      "pattern": "if '15-MINUTE' in bar_type_str:",
+      "pattern_type": "contains",
+      "created": "2026-02-01T12:32:54.346645",
+      "auto_generated": true
+    },
+    {
+      "id": "8e48b3e00a0a",
+      "commit": "3fc8008",
+      "file": "utils/telegram_bot.py",
+      "message": "fix(telegram): Reduce message spam and fix incorrect displays",
+      "pattern": "format_trade_execution",
+      "pattern_type": "function_exists",
+      "created": "2026-02-01T12:32:54.368010",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-01T09:26:34.632380",
-    "count": 213,
+    "updated": "2026-02-01T12:33:00.700750",
+    "count": 219,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }

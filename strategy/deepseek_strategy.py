@@ -2781,6 +2781,153 @@ class DeepSeekAIStrategy(Strategy):
         except Exception as e:
             self.log.warning(f"Failed to record trade outcome: {e}")
 
+    def on_order_canceled(self, event):
+        """
+        Handle order canceled events.
+
+        v3.10: Track order cancellations for better order lifecycle management.
+        This helps with:
+        - Detecting manual cancellations vs system-initiated cancellations
+        - Tracking SL/TP order cancellations before position changes
+        - Debugging order flow issues
+        """
+        client_order_id = str(event.client_order_id)[:8] if hasattr(event, 'client_order_id') else 'N/A'
+
+        self.log.info(
+            f"🗑️ Order canceled: {client_order_id}... "
+            f"(instrument: {getattr(event, 'instrument_id', self.instrument_id)})"
+        )
+
+        # Track in metrics if available
+        if hasattr(self, '_order_cancel_count'):
+            self._order_cancel_count += 1
+        else:
+            self._order_cancel_count = 1
+
+    def on_order_expired(self, event):
+        """
+        Handle order expired events.
+
+        v3.10: Track GTC order expirations (e.g., SL/TP orders that expire due to
+        position close or market conditions).
+
+        Common causes:
+        - GTC orders reaching exchange time limits
+        - Orders expiring due to market close (crypto: shouldn't happen)
+        - Manual order expiration settings
+        """
+        client_order_id = str(event.client_order_id)[:8] if hasattr(event, 'client_order_id') else 'N/A'
+
+        self.log.warning(
+            f"⏰ Order expired: {client_order_id}... "
+            f"(instrument: {getattr(event, 'instrument_id', self.instrument_id)})"
+        )
+
+        # Send Telegram alert for unexpected expirations
+        if self.telegram_bot and self.enable_telegram:
+            try:
+                alert_msg = self.telegram_bot.format_error_alert({
+                    'level': 'WARNING',
+                    'message': f"Order Expired: {client_order_id}...",
+                    'context': "GTC order expired unexpectedly",
+                })
+                self.telegram_bot.send_message_sync(alert_msg)
+            except Exception as e:
+                self.log.warning(f"Failed to send Telegram alert for order expiration: {e}")
+
+    def on_order_denied(self, event):
+        """
+        Handle order denied events (system-level denial, before reaching exchange).
+
+        v3.10: This is CRITICAL for bracket/contingent orders where partial failures
+        can leave positions unprotected.
+
+        Common causes:
+        - Insufficient margin
+        - Risk limit exceeded
+        - Rate limiting
+        - System pre-trade checks failed
+
+        NautilusTrader docs: "Always handle OrderDenied and OrderRejected events
+        in your strategy, especially for contingent orders where partial failures
+        can leave positions unprotected."
+        """
+        reason = getattr(event, 'reason', 'Unknown reason')
+        client_order_id = str(event.client_order_id)[:8] if hasattr(event, 'client_order_id') else 'N/A'
+
+        self.log.error(f"🚫 Order DENIED (pre-exchange): {client_order_id}... - {reason}")
+
+        # 🚨 CRITICAL: Send immediate Telegram alert
+        if self.telegram_bot and self.enable_telegram:
+            try:
+                alert_msg = self.telegram_bot.format_error_alert({
+                    'level': 'CRITICAL',
+                    'message': f"Order DENIED: {reason}",
+                    'context': f"Order ID: {client_order_id}... (pre-exchange denial)",
+                })
+                self.telegram_bot.send_message_sync(alert_msg)
+                self.log.info("📱 Telegram alert sent for order denial")
+            except Exception as e:
+                self.log.warning(f"Failed to send Telegram alert for order denial: {e}")
+
+        # Check if this leaves a position unprotected
+        try:
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            if positions:
+                self.log.error(
+                    f"⚠️ CRITICAL: Position exists but order was denied! "
+                    f"Position may be unprotected. Manual intervention recommended."
+                )
+
+                # Try to send additional critical alert
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        alert_msg = self.telegram_bot.format_error_alert({
+                            'level': 'CRITICAL',
+                            'message': "Position may be UNPROTECTED!",
+                            'context': f"Order denial while position open. Check SL/TP orders manually.",
+                        })
+                        self.telegram_bot.send_message_sync(alert_msg)
+                    except Exception:
+                        pass
+        except Exception as e:
+            self.log.warning(f"Failed to check position status after denial: {e}")
+
+    def on_position_changed(self, event):
+        """
+        Handle position quantity change events (partial fills, partial closes).
+
+        v3.10: Track position size changes that don't result in full open/close.
+        This is important for:
+        - Detecting partial fills that may need SL/TP quantity adjustments
+        - Tracking position scaling (adding to or reducing from position)
+        - Debugging position synchronization issues
+        """
+        self.log.info(
+            f"📊 Position changed: {event.side.name} "
+            f"qty {event.quantity} (signed: {getattr(event, 'signed_qty', 'N/A')})"
+        )
+
+        # Update trailing stop state if position size changed
+        if self.enable_trailing_stop:
+            instrument_key = str(self.instrument_id)
+            if instrument_key in self.trailing_stop_state:
+                new_qty = float(event.quantity)
+                old_qty = self.trailing_stop_state[instrument_key].get("quantity", 0)
+
+                if new_qty != old_qty:
+                    self.trailing_stop_state[instrument_key]["quantity"] = new_qty
+                    self.log.info(
+                        f"📊 Updated trailing stop quantity: {old_qty} → {new_qty}"
+                    )
+
+                    # Warning: SL/TP orders may need adjustment if position size changed
+                    if new_qty < old_qty:
+                        self.log.warning(
+                            f"⚠️ Position reduced. Existing SL/TP orders may have larger "
+                            f"quantity than current position. Consider adjusting manually."
+                        )
+
     def _format_entry_conditions(self) -> str:
         """
         Format current market conditions for memory recording.
