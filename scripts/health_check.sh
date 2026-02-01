@@ -232,7 +232,7 @@ echo ""
 echo ">> 8. 检查配置文件"
 cd "$INSTALL_DIR"
 
-# 检查关键配置文件是否存在
+# 检查关键配置文件是否存在并验证语法
 for CONFIG_FILE in configs/base.yaml configs/production.yaml; do
     if [ -f "$CONFIG_FILE" ]; then
         # 尝试用 Python 验证 YAML 语法
@@ -245,15 +245,18 @@ for CONFIG_FILE in configs/base.yaml configs/production.yaml; do
         else
             info "$CONFIG_FILE 存在 (未验证语法)"
         fi
+    else
+        check_warn "$CONFIG_FILE 不存在"
+    fi
+done
 
-        # 检查仪器加载超时配置 (仅 production.yaml 或 base.yaml)
-        if echo "$CONFIG_FILE" | grep -q "production\|base"; then
-            # 使用 Python 正确解析嵌套 YAML 并提取 network.instrument_discovery.max_retries
-            if command -v python3 &> /dev/null; then
-                RETRIES=$(python3 -c "
+# 检查仪器加载超时配置 (production.yaml 优先，base.yaml 作为后备)
+if command -v python3 &> /dev/null; then
+    # 先检查 production.yaml
+    PROD_RETRIES=$(python3 -c "
 import yaml
 try:
-    with open('$CONFIG_FILE') as f:
+    with open('configs/production.yaml') as f:
         config = yaml.safe_load(f)
     retries = config.get('network', {}).get('instrument_discovery', {}).get('max_retries')
     if retries is not None:
@@ -262,19 +265,39 @@ except:
     pass
 " 2>/dev/null || echo "")
 
-                if [ -n "$RETRIES" ] && [ "$RETRIES" != "" ]; then
-                    if [ "$RETRIES" -ge 180 ]; then
-                        check_pass "仪器加载超时已配置为 ${RETRIES} 秒 ($CONFIG_FILE)"
-                    else
-                        check_warn "仪器加载超时仅为 ${RETRIES} 秒 (建议 180) ($CONFIG_FILE)"
-                    fi
-                fi
-            fi
-        fi
+    # 再检查 base.yaml (作为后备)
+    BASE_RETRIES=$(python3 -c "
+import yaml
+try:
+    with open('configs/base.yaml') as f:
+        config = yaml.safe_load(f)
+    retries = config.get('network', {}).get('instrument_discovery', {}).get('max_retries')
+    if retries is not None:
+        print(retries)
+except:
+    pass
+" 2>/dev/null || echo "")
+
+    # production.yaml 优先
+    if [ -n "$PROD_RETRIES" ] && [ "$PROD_RETRIES" != "" ]; then
+        RETRIES="$PROD_RETRIES"
+        CONFIG_SOURCE="configs/production.yaml"
+    elif [ -n "$BASE_RETRIES" ] && [ "$BASE_RETRIES" != "" ]; then
+        RETRIES="$BASE_RETRIES"
+        CONFIG_SOURCE="configs/base.yaml"
     else
-        check_warn "$CONFIG_FILE 不存在"
+        RETRIES=""
+        CONFIG_SOURCE=""
     fi
-done
+
+    if [ -n "$RETRIES" ]; then
+        if [ "$RETRIES" -ge 180 ]; then
+            check_pass "仪器加载超时已配置为 ${RETRIES} 秒 ($CONFIG_SOURCE)"
+        else
+            check_warn "仪器加载超时仅为 ${RETRIES} 秒 (建议 180) ($CONFIG_SOURCE)"
+        fi
+    fi
+fi
 
 # 9. 检查 Git 分支和版本
 echo ""
