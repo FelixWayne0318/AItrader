@@ -341,68 +341,182 @@ def calculate_position_size(
     technical_data: Dict[str, Any],
     config: Dict[str, Any],
     logger: Optional[logging.Logger] = None,
+    risk_multiplier: float = 1.0,
 ) -> Tuple[float, Dict[str, Any]]:
     """
     Calculate intelligent position size.
 
+    v3.12: Supports multiple sizing methods:
+    - fixed_pct: Original confidence-based sizing
+    - atr_based: ATR-based risk-adjusted sizing
+    - ai_controlled: AI specifies position_size_pct directly
+
     Parameters
     ----------
     signal_data : Dict
-        AI-generated signal with 'confidence'
+        AI-generated signal with 'confidence', 'position_size_pct' (v3.12)
     price_data : Dict
         Current price data with 'price'
     technical_data : Dict
-        Technical indicators with 'overall_trend', 'rsi'
+        Technical indicators with 'overall_trend', 'rsi', 'atr' (v3.12)
     config : Dict
         Configuration with keys:
         - base_usdt: Base USDT amount
         - equity: Total equity
-        - high_confidence_multiplier
-        - medium_confidence_multiplier
-        - low_confidence_multiplier
-        - trend_strength_multiplier
-        - rsi_extreme_multiplier
-        - rsi_extreme_upper
-        - rsi_extreme_lower
+        - position_sizing.method: 'fixed_pct' | 'atr_based' | 'ai_controlled'
+        - position_sizing.atr_based.*: ATR sizing parameters
         - max_position_ratio
         - min_trade_amount
     logger : Logger, optional
         Logger for output messages
+    risk_multiplier : float, optional
+        Multiplier from RiskController (0.0-1.0), default 1.0
 
     Returns
     -------
     Tuple[float, Dict]
         (btc_quantity, calculation_details)
     """
-    # Base USDT amount
-    base_usdt = config['base_usdt']
+    current_price = price_data.get('price', 0)
+    if current_price <= 0:
+        if logger:
+            logger.error("Invalid price for position sizing")
+        return 0.0, {'error': 'Invalid price'}
 
-    # Confidence multiplier
-    confidence = signal_data.get('confidence', 'MEDIUM').lower()
-    conf_mult = config.get(f'{confidence}_confidence_multiplier', 1.0)
+    equity = config.get('equity', 1000)
+    max_position_ratio = config.get('max_position_ratio', 0.30)
+    max_usdt = equity * max_position_ratio
 
-    # Trend multiplier
-    trend = technical_data.get('overall_trend', '震荡整理')
-    trend_mult = (
-        config['trend_strength_multiplier']
-        if trend in ['强势上涨', '强势下跌']
-        else 1.0
-    )
+    # v3.12: Determine sizing method
+    sizing_config = config.get('position_sizing', {})
+    method = sizing_config.get('method', 'fixed_pct')
 
-    # RSI multiplier (reduce size in extreme RSI)
-    rsi = technical_data.get('rsi', 50)
-    rsi_mult = (
-        config['rsi_extreme_multiplier']
-        if rsi > config['rsi_extreme_upper'] or rsi < config['rsi_extreme_lower']
-        else 1.0
-    )
+    # v3.12: Check if AI specified position_size_pct
+    ai_size_pct = signal_data.get('position_size_pct')
+    if ai_size_pct is not None and ai_size_pct >= 0:
+        # AI-controlled sizing: use position_size_pct directly
+        method = 'ai_controlled'
 
-    # Calculate suggested USDT
-    suggested_usdt = base_usdt * conf_mult * trend_mult * rsi_mult
+    if method == 'atr_based':
+        # ATR-Based Position Sizing
+        atr_config = sizing_config.get('atr_based', {})
+        risk_per_trade = atr_config.get('risk_per_trade_pct', 0.01)
+        atr_multiplier = atr_config.get('atr_multiplier', 2.0)
 
-    # Apply max position ratio limit
-    max_usdt = config['equity'] * config['max_position_ratio']
-    final_usdt = min(suggested_usdt, max_usdt)
+        # Get ATR from technical data
+        atr = technical_data.get('atr', 0)
+        if atr <= 0:
+            # Fallback: estimate ATR as 2% of price
+            atr = current_price * 0.02
+            if logger:
+                logger.warning(f"ATR not available, using estimate: ${atr:.2f}")
+
+        # Calculate dollar risk
+        dollar_risk = equity * risk_per_trade
+
+        # Calculate stop distance
+        stop_distance = atr * atr_multiplier
+
+        # Position size = Risk / (Stop Distance as % of price)
+        stop_pct = stop_distance / current_price
+        if stop_pct > 0:
+            position_usdt = dollar_risk / stop_pct
+        else:
+            position_usdt = max_usdt
+
+        # Apply risk multiplier from RiskController
+        position_usdt *= risk_multiplier
+
+        # Apply max limit
+        final_usdt = min(position_usdt, max_usdt)
+
+        details = {
+            'method': 'atr_based',
+            'equity': equity,
+            'risk_per_trade_pct': risk_per_trade,
+            'dollar_risk': dollar_risk,
+            'atr': atr,
+            'atr_multiplier': atr_multiplier,
+            'stop_distance': stop_distance,
+            'stop_pct': stop_pct * 100,
+            'risk_multiplier': risk_multiplier,
+            'position_usdt': position_usdt,
+            'max_usdt': max_usdt,
+            'final_usdt': final_usdt,
+        }
+
+    elif method == 'ai_controlled':
+        # v3.12: AI specifies target position as percentage
+        size_pct = float(ai_size_pct) / 100.0  # Convert 0-100 to 0-1
+
+        # Calculate target USDT based on percentage of max allowed
+        position_usdt = max_usdt * size_pct
+
+        # Apply risk multiplier
+        position_usdt *= risk_multiplier
+
+        final_usdt = position_usdt
+
+        details = {
+            'method': 'ai_controlled',
+            'ai_size_pct': ai_size_pct,
+            'equity': equity,
+            'max_usdt': max_usdt,
+            'risk_multiplier': risk_multiplier,
+            'final_usdt': final_usdt,
+        }
+
+        if logger:
+            logger.info(f"📊 AI-controlled sizing: {ai_size_pct}% of max = ${final_usdt:.2f}")
+
+    else:
+        # Original fixed_pct method (legacy)
+        base_usdt = config.get('base_usdt', 100)
+
+        # Confidence multiplier
+        confidence = signal_data.get('confidence', 'MEDIUM').lower()
+        conf_mult = config.get(f'{confidence}_confidence_multiplier', 1.0)
+
+        # Trend multiplier
+        trend = technical_data.get('overall_trend', '震荡整理')
+        trend_mult = (
+            config.get('trend_strength_multiplier', 1.2)
+            if trend in ['强势上涨', '强势下跌']
+            else 1.0
+        )
+
+        # RSI multiplier (reduce size in extreme RSI)
+        rsi = technical_data.get('rsi', 50)
+        rsi_extreme_upper = config.get('rsi_extreme_upper', 70)
+        rsi_extreme_lower = config.get('rsi_extreme_lower', 30)
+        rsi_mult = (
+            config.get('rsi_extreme_multiplier', 0.7)
+            if rsi > rsi_extreme_upper or rsi < rsi_extreme_lower
+            else 1.0
+        )
+
+        # Calculate suggested USDT
+        suggested_usdt = base_usdt * conf_mult * trend_mult * rsi_mult
+
+        # Apply risk multiplier
+        suggested_usdt *= risk_multiplier
+
+        # Apply max position ratio limit
+        final_usdt = min(suggested_usdt, max_usdt)
+
+        details = {
+            'method': 'fixed_pct',
+            'base_usdt': base_usdt,
+            'conf_mult': conf_mult,
+            'trend_mult': trend_mult,
+            'trend': trend,
+            'rsi_mult': rsi_mult,
+            'rsi': rsi,
+            'risk_multiplier': risk_multiplier,
+            'suggested_usdt': suggested_usdt,
+            'max_usdt': max_usdt,
+            'final_usdt': final_usdt,
+        }
 
     # Get Binance limits from config (禁止硬编码 - Reference: CLAUDE.md)
     min_notional_usdt = get_min_notional_usdt()
@@ -412,9 +526,9 @@ def calculate_position_size(
     # Enforce Binance minimum notional requirement
     if final_usdt < min_notional_usdt:
         final_usdt = min_notional_usdt
+        details['final_usdt'] = final_usdt
 
     # Convert to BTC quantity
-    current_price = price_data['price']
     btc_quantity = final_usdt / current_price
 
     # Apply minimum trade amount
@@ -449,30 +563,19 @@ def calculate_position_size(
     # Calculate final notional
     notional = btc_quantity * current_price
 
+    # Update details with final values
+    details['btc_quantity'] = btc_quantity
+    details['notional'] = notional
+    details['adjusted'] = adjusted
+
     # Log calculation details
     if logger:
+        method_name = details.get('method', 'unknown')
         logger.info(
-            f"📊 Position Sizing: "
-            f"Base:{base_usdt} × Conf:{conf_mult} × Trend:{trend_mult} × RSI:{rsi_mult} "
-            f"= ${final_usdt:.2f} = {btc_quantity:.3f} BTC "
-            f"(notional: ${notional:.2f})"
+            f"📊 Position Sizing ({method_name}): "
+            f"${final_usdt:.2f} = {btc_quantity:.3f} BTC "
+            f"(notional: ${notional:.2f}, risk_mult: {risk_multiplier:.1f})"
         )
-
-    # Return calculation details for diagnostic display
-    details = {
-        'base_usdt': base_usdt,
-        'conf_mult': conf_mult,
-        'trend_mult': trend_mult,
-        'trend': trend,
-        'rsi_mult': rsi_mult,
-        'rsi': rsi,
-        'suggested_usdt': suggested_usdt,
-        'max_usdt': max_usdt,
-        'final_usdt': final_usdt,
-        'btc_quantity': btc_quantity,
-        'notional': notional,
-        'adjusted': adjusted,
-    }
 
     return btc_quantity, details
 

@@ -2040,27 +2040,32 @@ class DeepSeekAIStrategy(Strategy):
         signal = signal_data['signal']
         confidence = signal_data['confidence']
 
-        # Check minimum confidence
-        confidence_levels = {'LOW': 0, 'MEDIUM': 1, 'HIGH': 2}
-        min_conf_level = confidence_levels.get(self.min_confidence, 1)
-        signal_conf_level = confidence_levels.get(confidence, 1)
+        # v3.12: Normalize legacy signals (BUY→LONG, SELL→SHORT)
+        legacy_mapping = {'BUY': 'LONG', 'SELL': 'SHORT'}
+        if signal in legacy_mapping:
+            signal = legacy_mapping[signal]
+            signal_data['signal'] = signal  # Update for downstream use
 
-        if signal_conf_level < min_conf_level:
-            self.log.warning(
-                f"⚠️ Signal confidence {confidence} below minimum {self.min_confidence}, skipping trade"
-            )
-            # v4.1: Update signal status
-            self._last_signal_status = {
-                'executed': False,
-                'reason': f'信心不足 ({confidence} < {self.min_confidence})',
-                'action_taken': '',
-            }
-            return
+        # Check minimum confidence (skip for CLOSE and REDUCE - always allow risk reduction)
+        if signal not in ('CLOSE', 'REDUCE', 'HOLD'):
+            confidence_levels = {'LOW': 0, 'MEDIUM': 1, 'HIGH': 2}
+            min_conf_level = confidence_levels.get(self.min_confidence, 1)
+            signal_conf_level = confidence_levels.get(confidence, 1)
+
+            if signal_conf_level < min_conf_level:
+                self.log.warning(
+                    f"⚠️ Signal confidence {confidence} below minimum {self.min_confidence}, skipping trade"
+                )
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': f'信心不足 ({confidence} < {self.min_confidence})',
+                    'action_taken': '',
+                }
+                return
 
         # Handle HOLD signal
         if signal == 'HOLD':
             self.log.info("📊 Signal: HOLD - No action taken")
-            # v4.1: Update signal status
             self._last_signal_status = {
                 'executed': False,
                 'reason': 'AI 建议观望',
@@ -2068,21 +2073,51 @@ class DeepSeekAIStrategy(Strategy):
             }
             return
 
-        # Calculate target position size
+        # v3.12: Handle CLOSE signal - close position without opening opposite
+        if signal == 'CLOSE':
+            if not current_position:
+                self.log.info("📊 Signal: CLOSE - No position to close")
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': '无持仓可平',
+                    'action_taken': '',
+                }
+                return
+
+            # Close the existing position
+            self._close_position_only(current_position)
+            return
+
+        # v3.12: Handle REDUCE signal - reduce position size but keep direction
+        if signal == 'REDUCE':
+            if not current_position:
+                self.log.info("📊 Signal: REDUCE - No position to reduce")
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': '无持仓可减',
+                    'action_taken': '',
+                }
+                return
+
+            # Calculate target size from position_size_pct
+            position_size_pct = signal_data.get('position_size_pct', 50)
+            self._reduce_position(current_position, position_size_pct)
+            return
+
+        # For LONG/SHORT signals, calculate target position size
         target_quantity = self._calculate_position_size(
             signal_data, price_data, technical_data, current_position
         )
 
         if target_quantity == 0:
             self.log.warning("⚠️ Calculated position size is 0, skipping trade")
-            # v4.1: Update signal status
             self._last_signal_status = {
                 'executed': False,
                 'reason': '仓位计算为0 (余额不足)',
                 'action_taken': '',
             }
 
-            # Notify user about insufficient position size (helpful for low-balance accounts)
+            # Notify user about insufficient position size
             if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
                 try:
                     current_price = price_data.get('price', 0) if price_data else 0
@@ -2098,8 +2133,8 @@ class DeepSeekAIStrategy(Strategy):
 
             return
 
-        # Determine order side
-        target_side = 'long' if signal == 'BUY' else 'short'
+        # v3.12: Determine order side from normalized signal
+        target_side = 'long' if signal == 'LONG' else 'short'
 
         # v4.0: Store execution data for unified Telegram notification in on_position_opened
         # This replaces the separate signal/fill/position notifications with one comprehensive message
@@ -2373,6 +2408,160 @@ class DeepSeekAIStrategy(Strategy):
             'reason': '',
             'action_taken': f'开{side_cn}仓 {quantity:.4f} BTC',
         }
+
+    def _close_position_only(self, current_position: Dict[str, Any]):
+        """
+        v3.12: Close position without opening opposite side.
+
+        This is used when AI sends CLOSE signal, meaning:
+        - Close the current position completely
+        - Do NOT open any new position
+        - Cancel all pending SL/TP orders first
+
+        Different from reversal which closes then opens opposite.
+        """
+        current_side = current_position['side']
+        current_qty = current_position['quantity']
+        side_cn = '多' if current_side == 'long' else '空'
+
+        self.log.info(f"🔴 Closing {current_side} position: {current_qty:.4f} BTC (CLOSE signal)")
+
+        # Cancel all pending orders (SL/TP) before closing
+        try:
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            if open_orders:
+                self.log.info(f"🗑️ Cancelling {len(open_orders)} pending orders before close")
+                self.cancel_all_orders(self.instrument_id)
+        except Exception as e:
+            self.log.warning(f"⚠️ Failed to cancel some orders: {e}, continuing with close")
+
+        # Submit close order (reduce_only=True)
+        close_side = OrderSide.SELL if current_side == 'long' else OrderSide.BUY
+        self._submit_order(
+            side=close_side,
+            quantity=current_qty,
+            reduce_only=True,
+        )
+
+        # Update signal status
+        self._last_signal_status = {
+            'executed': True,
+            'reason': '',
+            'action_taken': f'平{side_cn}仓 {current_qty:.4f} BTC',
+        }
+
+        # Send Telegram notification
+        if self.telegram_bot and self.enable_telegram:
+            try:
+                msg = (
+                    f"🔴 **平仓信号执行**\n\n"
+                    f"📍 动作: 平{side_cn}仓\n"
+                    f"📦 数量: {current_qty:.4f} BTC\n"
+                    f"💡 原因: AI 发出 CLOSE 信号"
+                )
+                self.telegram_bot.send_message_sync(msg)
+            except Exception as e:
+                self.log.error(f"Failed to send Telegram notification: {e}")
+
+    def _reduce_position(self, current_position: Dict[str, Any], target_pct: int):
+        """
+        v3.12: Reduce position to target percentage.
+
+        This is used when AI sends REDUCE signal with position_size_pct:
+        - REDUCE with position_size_pct=50 means keep 50% of current position
+        - REDUCE with position_size_pct=0 is equivalent to CLOSE
+
+        Args:
+            current_position: Current position info dict
+            target_pct: Target position size as percentage (0-100)
+                       0 = close all, 50 = keep half, 100 = no change
+        """
+        current_side = current_position['side']
+        current_qty = current_position['quantity']
+        side_cn = '多' if current_side == 'long' else '空'
+
+        # Validate and calculate target quantity
+        target_pct = max(0, min(100, target_pct))  # Clamp to 0-100
+
+        if target_pct >= 100:
+            self.log.info(f"📊 REDUCE signal with 100% - no action needed")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': '减仓比例=100%',
+                'action_taken': '维持现有仓位',
+            }
+            return
+
+        if target_pct == 0:
+            # Equivalent to CLOSE
+            self.log.info(f"📊 REDUCE signal with 0% - equivalent to CLOSE")
+            self._close_position_only(current_position)
+            return
+
+        # Calculate reduction amount
+        target_qty = current_qty * (target_pct / 100.0)
+        reduce_qty = current_qty - target_qty
+
+        # Check minimum trade amount
+        if reduce_qty < self.position_config['min_trade_amount']:
+            self.log.warning(
+                f"⚠️ Reduce quantity {reduce_qty:.4f} below minimum "
+                f"{self.position_config['min_trade_amount']:.4f}, skipping"
+            )
+            self._last_signal_status = {
+                'executed': False,
+                'reason': f'减仓量低于最小交易量',
+                'action_taken': '',
+            }
+            return
+
+        self.log.info(
+            f"📉 Reducing {current_side} position by {100-target_pct}%: "
+            f"{current_qty:.4f} → {target_qty:.4f} BTC"
+        )
+
+        # Cancel SL/TP orders before reducing (they have old quantity)
+        try:
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
+            if reduce_only_orders:
+                self.log.info(f"🗑️ Cancelling {len(reduce_only_orders)} SL/TP orders before reduce")
+                for order in reduce_only_orders:
+                    try:
+                        self.cancel_order(order)
+                    except Exception as e:
+                        self.log.warning(f"Failed to cancel order: {e}")
+        except Exception as e:
+            self.log.warning(f"⚠️ Failed to cancel some orders: {e}, continuing with reduce")
+
+        # Submit reduce order
+        reduce_side = OrderSide.SELL if current_side == 'long' else OrderSide.BUY
+        self._submit_order(
+            side=reduce_side,
+            quantity=reduce_qty,
+            reduce_only=True,
+        )
+
+        # Update signal status
+        self._last_signal_status = {
+            'executed': True,
+            'reason': '',
+            'action_taken': f'减{side_cn}仓 {100-target_pct}% (-{reduce_qty:.4f} BTC)',
+        }
+
+        # Send Telegram notification
+        if self.telegram_bot and self.enable_telegram:
+            try:
+                msg = (
+                    f"📉 **减仓信号执行**\n\n"
+                    f"📍 动作: 减{side_cn}仓 {100-target_pct}%\n"
+                    f"📦 减仓量: -{reduce_qty:.4f} BTC\n"
+                    f"📊 剩余仓位: {target_qty:.4f} BTC\n"
+                    f"💡 原因: AI 发出 REDUCE 信号"
+                )
+                self.telegram_bot.send_message_sync(msg)
+            except Exception as e:
+                self.log.error(f"Failed to send Telegram notification: {e}")
 
     def _submit_order(
         self,

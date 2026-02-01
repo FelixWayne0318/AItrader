@@ -172,6 +172,72 @@ risk:
       - {profit_pct: 0.02, position_pct: 0.5}  # 盈利2%时平50%仓位
       - {profit_pct: 0.04, position_pct: 0.5}  # 盈利4%时平剩余50%仓位
 
+  # ===== v3.12: 风险熔断控制 (Risk Circuit Breakers) =====
+  # 参考: Two Sigma / Citadel 机构级风控标准
+  circuit_breakers:
+    enabled: true
+
+    # 最大回撤控制
+    max_drawdown:
+      enabled: true
+      reduce_threshold_pct: 0.10    # 10% 回撤: 仓位减半
+      halt_threshold_pct: 0.15      # 15% 回撤: 停止交易
+      recovery_threshold_pct: 0.05  # 回撤恢复到 5% 后恢复交易
+
+    # 日亏损限制
+    daily_loss:
+      enabled: true
+      max_loss_pct: 0.03            # 单日最大亏损 3%
+      reset_hour_utc: 0             # UTC 0 点重置
+
+    # 连续亏损保护
+    consecutive_losses:
+      enabled: true
+      max_losses: 3                 # 连续 3 次亏损
+      cooldown_hours: 4             # 冷却 4 小时
+      recovery_wins_needed: 1       # 需要 1 次盈利恢复
+
+    # 波动率熔断
+    volatility:
+      enabled: true
+      normal_atr_pct: 0.02          # 正常 ATR (2%)
+      halt_multiplier: 3.0          # ATR > 3x 正常值停止交易
+
+    # 交易频率限制
+    frequency:
+      enabled: true
+      min_interval_minutes: 30      # 最少 30 分钟间隔
+      max_trades_per_day: 10        # 每日最多 10 笔
+
+  # ===== v3.12: ATR-Based 仓位计算 =====
+  position_sizing:
+    method: "atr_based"             # fixed_pct | atr_based | kelly
+
+    # ATR-Based 参数
+    atr_based:
+      risk_per_trade_pct: 0.01      # 每笔风险 1% of equity
+      atr_period: 14                # ATR 周期
+      atr_multiplier: 2.0           # 止损距离 = 2 × ATR
+
+    # Kelly Criterion 参数 (可选，需要足够历史数据)
+    kelly:
+      enabled: false
+      lookback_trades: 30           # 回看交易数
+      fraction: 0.25                # 1/4 Kelly (保守)
+      min_trades_required: 20       # 最少历史交易数
+
+  # ===== v3.12: 扩展信号类型 =====
+  # LONG: 开多/加多
+  # SHORT: 开空/加空
+  # CLOSE: 平仓 (不开反向)
+  # HOLD: 观望
+  # REDUCE: 减仓 (保留方向)
+  signals:
+    valid_types: ["LONG", "SHORT", "CLOSE", "HOLD", "REDUCE"]
+    legacy_mapping:                 # 兼容旧信号
+      BUY: "LONG"
+      SELL: "SHORT"
+
 # =============================================================================
 # 网络配置
 # =============================================================================

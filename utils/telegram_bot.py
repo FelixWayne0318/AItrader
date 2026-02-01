@@ -396,7 +396,7 @@ class TelegramBot:
 """
     
     def format_trade_signal(self, signal_data: Dict[str, Any]) -> str:
-        """Format trading signal notification (v2.0 - TradingAgents enhanced)."""
+        """Format trading signal notification (v3.12 - Extended signal types)."""
         signal = signal_data.get('signal', 'UNKNOWN')
         confidence = signal_data.get('confidence', 'UNKNOWN')
         price = signal_data.get('price', 0.0)
@@ -415,11 +415,23 @@ class TelegramBot:
         winning_side = signal_data.get('winning_side', '')
         debate_summary = signal_data.get('debate_summary', '')
 
-        # Signal emoji
-        signal_emoji = "🟢" if signal == "BUY" else "🔴" if signal == "SELL" else "⚪"
+        # v3.12: Extended signal emoji mapping
+        signal_emoji_map = {
+            'LONG': '🟢', 'BUY': '🟢',
+            'SHORT': '🔴', 'SELL': '🔴',
+            'CLOSE': '🔵', 'REDUCE': '🟡',
+            'HOLD': '⚪'
+        }
+        signal_emoji = signal_emoji_map.get(signal, '❓')
 
-        # 信号中文映射
-        signal_cn = {'BUY': '买入', 'SELL': '卖出', 'HOLD': '观望'}.get(signal, signal)
+        # v3.12: Extended signal Chinese mapping
+        signal_cn_map = {
+            'LONG': '做多', 'BUY': '买入',
+            'SHORT': '做空', 'SELL': '卖出',
+            'CLOSE': '平仓', 'REDUCE': '减仓',
+            'HOLD': '观望'
+        }
+        signal_cn = signal_cn_map.get(signal, signal)
         confidence_cn = {'HIGH': '高', 'MEDIUM': '中', 'LOW': '低'}.get(confidence, confidence)
 
         # Build message
@@ -578,10 +590,24 @@ class TelegramBot:
         # v3.11: Specific action taken (开多/平空/反转/加仓/减仓)
         action_taken = execution_data.get('action_taken', '')
 
-        # Emojis and translations
-        signal_emoji = "🟢" if signal == "BUY" else "🔴" if signal == "SELL" else "⚪"
+        # v3.12: Extended signal emoji mapping
+        signal_emoji_map = {
+            'LONG': '🟢', 'BUY': '🟢',
+            'SHORT': '🔴', 'SELL': '🔴',
+            'CLOSE': '🔵', 'REDUCE': '🟡',
+            'HOLD': '⚪'
+        }
+        signal_emoji = signal_emoji_map.get(signal, '⚪')
         side_cn = "多" if side == "LONG" else "空" if side == "SHORT" else side
         confidence_cn = {'HIGH': '高', 'MEDIUM': '中', 'LOW': '低'}.get(confidence, confidence)
+
+        # v3.12: Extended signal Chinese mapping for action display
+        signal_cn_map = {
+            'LONG': '做多', 'BUY': '买入',
+            'SHORT': '做空', 'SELL': '卖出',
+            'CLOSE': '平仓', 'REDUCE': '减仓',
+            'HOLD': '观望'
+        }
 
         # v3.11: Determine action display
         # Priority: action_taken > generic signal translation
@@ -589,8 +615,8 @@ class TelegramBot:
             # Use specific action (e.g., "开多仓 0.001 BTC", "反转: 多→空")
             action_display = action_taken
         else:
-            # Fallback to generic signal
-            action_display = f"{'开多' if signal == 'BUY' else '开空'}"
+            # Fallback to generic signal (v3.12 extended)
+            action_display = signal_cn_map.get(signal, signal)
 
         # Build message
         msg = f"""{signal_emoji} *交易执行成功*
@@ -765,8 +791,13 @@ class TelegramBot:
         block_long = sr_zone.get('block_long', False)
         block_short = sr_zone.get('block_short', False)
 
-        # Signal emoji
-        signal_emoji = {'BUY': '🟢', 'SELL': '🔴', 'HOLD': '⚪'}.get(signal, '❓')
+        # v3.12: Extended signal emoji mapping
+        signal_emoji = {
+            'LONG': '🟢', 'BUY': '🟢',
+            'SHORT': '🔴', 'SELL': '🔴',
+            'CLOSE': '🔵', 'REDUCE': '🟡',
+            'HOLD': '⚪'
+        }.get(signal, '❓')
 
         # Position emoji
         if position_side == 'LONG':

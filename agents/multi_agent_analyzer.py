@@ -412,16 +412,23 @@ class MultiAgentAnalyzer:
         Dict
             Final trading decision with structure:
             {
-                "signal": "BUY|SELL|HOLD",
+                "signal": "LONG|SHORT|CLOSE|HOLD|REDUCE",  # v3.12: Extended signals
                 "confidence": "HIGH|MEDIUM|LOW",
                 "risk_level": "LOW|MEDIUM|HIGH",
-                "position_size_pct": 25|50|100,
+                "position_size_pct": 0-100,  # Target position as % of max allowed
                 "stop_loss": float,
                 "take_profit": float,
                 "reason": str,
                 "debate_summary": str,
                 "timestamp": str
             }
+
+            Signal types (v3.12):
+            - LONG: Open/add to long position
+            - SHORT: Open/add to short position
+            - CLOSE: Close current position (no reverse)
+            - HOLD: No action, maintain current state
+            - REDUCE: Reduce current position size (keep direction)
         """
         try:
             self.logger.info("Starting multi-agent analysis (TradingAgents architecture)...")
@@ -816,21 +823,32 @@ YOUR TASK:
 1. Evaluate if the proposed trade makes sense given the market data
 2. Determine stop loss based on market structure
 3. Determine take profit based on potential targets
-4. Determine position size based on your risk assessment
+4. Determine position size (position_size_pct) based on your risk assessment
+
+SIGNAL TYPES (v3.12 - choose the most appropriate):
+- LONG: Open new long or add to existing long position
+- SHORT: Open new short or add to existing short position
+- CLOSE: Close current position completely (do NOT open opposite position)
+- HOLD: No action, maintain current state
+- REDUCE: Reduce current position size but keep direction (use with lower position_size_pct)
+
+POSITION SIZE RULES:
+- position_size_pct: Target position as percentage of maximum allowed (0-100)
+- 100 = full position, 50 = half position, 0 = close all
+- For REDUCE signal: set position_size_pct to desired remaining size (e.g., 50 = reduce to half)
+- For CLOSE signal: position_size_pct should be 0
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
-    "signal": "BUY|SELL|HOLD",
+    "signal": "LONG|SHORT|CLOSE|HOLD|REDUCE",
     "confidence": "HIGH|MEDIUM|LOW",
     "risk_level": "LOW|MEDIUM|HIGH",
-    "position_size_pct": <number 25-100>,
+    "position_size_pct": <number 0-100>,
     "stop_loss": <price_number>,
     "take_profit": <price_number>,
     "reason": "<one sentence explaining the final decision>",
     "debate_summary": "<brief summary of bull vs bear debate>"
-}}
-
-MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
+}}"""
 
         system_prompt = "You are a Risk Manager. Analyze the market data and set appropriate trade parameters based on market structure and risk/reward."
 
@@ -855,6 +873,9 @@ MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
             decision["debate_rounds"] = self.debate_rounds
             decision["judge_decision"] = proposed_action
 
+            # v3.12: Normalize signal type (handle legacy BUY/SELL)
+            decision = self._normalize_signal(decision)
+
             # Validate stop loss / take profit
             decision = self._validate_sl_tp(decision, current_price)
 
@@ -863,6 +884,64 @@ MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
         # Fallback if all retries failed
         self.logger.warning("Risk evaluation parsing failed after retries, using fallback")
         return self._create_fallback_signal({"price": current_price})
+
+    def _normalize_signal(self, decision: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize signal type to v3.12 format.
+
+        Handles legacy BUY/SELL signals and converts to LONG/SHORT.
+        Valid signals: LONG, SHORT, CLOSE, HOLD, REDUCE
+
+        Parameters
+        ----------
+        decision : Dict
+            Raw decision from AI
+
+        Returns
+        -------
+        Dict
+            Decision with normalized signal
+        """
+        signal = decision.get("signal", "HOLD").upper().strip()
+
+        # Legacy mapping
+        legacy_mapping = {
+            "BUY": "LONG",
+            "SELL": "SHORT",
+        }
+
+        # Valid v3.12 signals
+        valid_signals = {"LONG", "SHORT", "CLOSE", "HOLD", "REDUCE"}
+
+        # Check if legacy signal
+        if signal in legacy_mapping:
+            new_signal = legacy_mapping[signal]
+            self.logger.info(f"Signal normalized: {signal} → {new_signal}")
+            decision["signal"] = new_signal
+            decision["original_signal"] = signal  # Keep original for debugging
+        elif signal in valid_signals:
+            decision["signal"] = signal
+        else:
+            # Unknown signal, default to HOLD
+            self.logger.warning(f"Unknown signal '{signal}', defaulting to HOLD")
+            decision["signal"] = "HOLD"
+            decision["original_signal"] = signal
+
+        # Validate position_size_pct
+        size_pct = decision.get("position_size_pct", 100)
+        try:
+            size_pct = float(size_pct)
+            size_pct = max(0, min(100, size_pct))  # Clamp to 0-100
+        except (ValueError, TypeError):
+            size_pct = 100 if decision["signal"] in {"LONG", "SHORT"} else 0
+
+        # Special handling for CLOSE signal
+        if decision["signal"] == "CLOSE":
+            size_pct = 0
+
+        decision["position_size_pct"] = size_pct
+
+        return decision
 
     def _validate_sl_tp(self, decision: Dict[str, Any], current_price: float) -> Dict[str, Any]:
         """Validate and fix stop loss / take profit values."""

@@ -1966,7 +1966,9 @@ final_sl = None
 final_tp = None
 sltp_source = "N/A"
 
-if final_signal in ['BUY', 'SELL']:
+# v3.12: Support new signal types (LONG, SHORT) and legacy (BUY, SELL)
+tradable_signals = ['BUY', 'SELL', 'LONG', 'SHORT']
+if final_signal in tradable_signals:
     print("  📊 SL/TP 验证 (模拟 _submit_bracket_order 逻辑):")
     print("-" * 70)
 
@@ -2073,18 +2075,21 @@ if not passes_threshold:
 else:
     would_trade = True
 
-# 2. 检查是否 HOLD
+# 2. 检查信号类型 (v3.12: Support LONG/SHORT/CLOSE/REDUCE/HOLD)
 if final_signal == 'HOLD':
     print("  ℹ️ Signal is HOLD → No action")
     would_trade = False
-elif final_signal in ['BUY', 'SELL']:
+elif final_signal in ['CLOSE', 'REDUCE']:
+    print(f"  ℹ️ Signal is {final_signal} → Position adjustment (close/reduce)")
+    would_trade = False  # 平仓/减仓不需要计算新仓位
+elif final_signal in tradable_signals:
     print(f"  ✅ Signal is {final_signal} → Actionable")
 else:
     print(f"  ❌ Signal is {final_signal} → Error state")
     would_trade = False
 
 # 3. 计算仓位大小 (使用共享模块 calculate_position_size - 100% 一致)
-if would_trade and final_signal in ['BUY', 'SELL']:
+if would_trade and final_signal in tradable_signals:
     print()
     print("  模拟仓位计算 (调用共享 calculate_position_size):")
 
@@ -2212,7 +2217,7 @@ else:
     print(f"  📊 Current Position: None")
 print()
 
-if would_trade and final_signal in ['BUY', 'SELL']:
+if would_trade and final_signal in tradable_signals:
     print(f"  🟢 WOULD EXECUTE: {final_signal} {btc_quantity:.4f} BTC @ ${current_price:,.2f}")
     print(f"     Notional: ${btc_quantity * current_price:.2f}")
     # 显示最终的 SL/TP (经过验证或技术分析计算)
@@ -2226,11 +2231,19 @@ elif final_signal == 'HOLD':
     print("  🟡 NO TRADE: Judge recommends HOLD")
     reason = signal_data.get('reason', 'N/A')
     print(f"     Reason: {reason[:100]}..." if len(reason) > 100 else f"     Reason: {reason}")
-elif not would_trade and final_signal in ['BUY', 'SELL']:
-    # 信号是 BUY/SELL 但因为持仓原因不会执行
+elif final_signal in ['CLOSE', 'REDUCE']:
+    # v3.12: CLOSE/REDUCE signals
+    print(f"  🔵 POSITION ADJUSTMENT: {final_signal}")
+    if final_signal == 'CLOSE':
+        print(f"     → 将平仓所有持仓")
+    else:
+        position_size_pct = signal_data.get('position_size_pct', 50)
+        print(f"     → 将减仓到 {position_size_pct}%")
+elif not would_trade and final_signal in tradable_signals:
+    # 信号是交易信号但因为持仓原因不会执行
     print(f"  🔴 NO TRADE: Signal={final_signal}, but blocked by position management")
     if current_position:
-        target_side = 'long' if final_signal == 'BUY' else 'short'
+        target_side = 'long' if final_signal in ['BUY', 'LONG'] else 'short'
         if current_position['side'] == target_side:
             print(f"     → 已有同方向持仓 ({current_position['side'].upper()} {current_position['quantity']:.4f} BTC)")
             print(f"     → 仓位差异低于调整阈值，无需操作")
@@ -2249,7 +2262,9 @@ print("  📱 实盘执行流程:")
 print("-" * 70)
 print()
 
-if final_signal in ['BUY', 'SELL']:
+# v3.12: Support all signal types
+all_signals = tradable_signals + ['CLOSE', 'REDUCE', 'HOLD']
+if final_signal in tradable_signals:
     print(f"  Step 1: AI 分析完成 → Signal = {final_signal}")
     print(f"  Step 2: 📱 发送 Telegram 信号通知")
     print(f"          → 此时你会收到交易信号消息")
@@ -2264,9 +2279,18 @@ if final_signal in ['BUY', 'SELL']:
     else:
         print(f"          → ❌ 被持仓管理阻止")
         print(f"          → 🔴 交易被跳过，但 Telegram 信号已发送!")
-else:
+elif final_signal in ['CLOSE', 'REDUCE']:
+    # v3.12: CLOSE/REDUCE signals
     print(f"  Step 1: AI 分析完成 → Signal = {final_signal}")
-    print(f"  Step 2: ❌ 非 BUY/SELL 信号，不发送 Telegram")
+    print(f"  Step 2: 📱 发送 Telegram 通知 (平仓/减仓)")
+    if final_signal == 'CLOSE':
+        print(f"  Step 3: 调用 _close_position_only() 平仓")
+    else:
+        print(f"  Step 3: 调用 _reduce_position() 减仓")
+else:
+    # HOLD or unknown signals
+    print(f"  Step 1: AI 分析完成 → Signal = {final_signal}")
+    print(f"  Step 2: ❌ HOLD 信号，不执行交易")
     print(f"  Step 3: _execute_trade 直接返回")
 
 print()
