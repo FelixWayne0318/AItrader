@@ -143,6 +143,7 @@ class MultiAgentAnalyzer:
         debate_rounds: int = 2,
         retry_delay: float = 1.0,  # Configurable retry delay
         json_parse_max_retries: int = 2,  # Configurable JSON parse retries
+        memory_file: str = "data/trading_memory.json",  # v3.12: Persistent memory
     ):
         """
         Initialize the multi-agent analyzer.
@@ -174,8 +175,10 @@ class MultiAgentAnalyzer:
         # Setup logger
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
-        # Memory for learning from past decisions (borrowed from TradingAgents)
-        self.decision_memory: List[Dict] = []
+        # v3.12: Persistent memory for learning from past decisions
+        # Based on TradingGroup paper: label outcomes, compile experience summary
+        self.memory_file = memory_file
+        self.decision_memory: List[Dict] = self._load_memory()
 
         # Track debate history for debugging
         self.last_debate_transcript: str = ""
@@ -997,21 +1000,83 @@ Avg Entry: ${avg_px:,.2f}
 Unrealized P&L: ${unrealized_pnl:,.2f}
 """
 
+    # =========================================================================
+    # v3.12: Persistent Memory System (TradingGroup-style experience summary)
+    # =========================================================================
+
+    def _load_memory(self) -> List[Dict]:
+        """Load memory from JSON file."""
+        import os
+        try:
+            if os.path.exists(self.memory_file):
+                with open(self.memory_file, 'r') as f:
+                    data = json.load(f)
+                    self.logger.info(f"📚 Loaded {len(data)} memories from {self.memory_file}")
+                    return data
+        except Exception as e:
+            self.logger.warning(f"Failed to load memory: {e}")
+        return []
+
+    def _save_memory(self):
+        """Save memory to JSON file."""
+        import os
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self.memory_file), exist_ok=True)
+            with open(self.memory_file, 'w') as f:
+                json.dump(self.decision_memory, f, indent=2)
+            self.logger.debug(f"💾 Saved {len(self.decision_memory)} memories")
+        except Exception as e:
+            self.logger.warning(f"Failed to save memory: {e}")
+
     def _get_past_memories(self) -> str:
-        """Get past decision memories for learning."""
+        """
+        Get past decision memories formatted for AI learning.
+
+        Based on TradingGroup paper: show both successes and failures
+        to help AI identify patterns and avoid repeating mistakes.
+        """
         if not self.decision_memory:
             return ""
 
-        memories = []
-        for mem in self.decision_memory[-5:]:  # Last 5 decisions
-            outcome = "PROFIT" if mem.get('pnl', 0) > 0 else "LOSS"
-            memories.append(
-                f"- {mem.get('decision')}: {outcome} ({mem.get('pnl', 0):+.2f}%) | "
-                f"Lesson: {mem.get('lesson', 'N/A')}"
-            )
-        return "\n".join(memories)
+        # Separate successes and failures
+        successes = [m for m in self.decision_memory if m.get('pnl', 0) > 0]
+        failures = [m for m in self.decision_memory if m.get('pnl', 0) <= 0]
 
-    def record_outcome(self, decision: str, pnl: float, lesson: str = ""):
+        # Take most recent 3 of each
+        recent_successes = successes[-3:] if successes else []
+        recent_failures = failures[-3:] if failures else []
+
+        lines = []
+
+        if recent_successes:
+            lines.append("SUCCESSFUL TRADES (learn from these):")
+            for mem in recent_successes:
+                conditions = mem.get('conditions', 'N/A')
+                lines.append(
+                    f"  ✅ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}% | "
+                    f"Conditions: {conditions}"
+                )
+
+        if recent_failures:
+            lines.append("FAILED TRADES (avoid repeating):")
+            for mem in recent_failures:
+                conditions = mem.get('conditions', 'N/A')
+                lesson = mem.get('lesson', 'N/A')
+                lines.append(
+                    f"  ❌ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}% | "
+                    f"Conditions: {conditions} | Lesson: {lesson}"
+                )
+
+        return "\n".join(lines)
+
+    def record_outcome(
+        self,
+        decision: str,
+        pnl: float,
+        conditions: str = "",
+        lesson: str = "",
+    ):
         """
         Record trade outcome for learning.
 
@@ -1023,29 +1088,43 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
             The decision that was made (BUY/SELL/HOLD)
         pnl : float
             Percentage profit/loss
+        conditions : str
+            Market conditions at entry (e.g., "RSI=65, trend=UP, funding=0.01%")
         lesson : str
-            Lesson learned from this trade
+            Lesson learned from this trade (auto-generated if empty)
         """
+        # Auto-generate lesson based on outcome
         if not lesson:
-            if pnl < -1:
-                lesson = f"Lost {abs(pnl):.1f}% - be more cautious in similar conditions"
-            elif pnl > 1:
-                lesson = f"Gained {pnl:.1f}% - this setup worked well"
+            if pnl < -2:
+                lesson = "Significant loss - review entry conditions carefully"
+            elif pnl < 0:
+                lesson = "Small loss - timing or direction may need adjustment"
+            elif pnl > 2:
+                lesson = "Good profit - this setup worked well"
+            elif pnl > 0:
+                lesson = "Small profit - consider holding longer or tighter stops"
             else:
-                lesson = "Marginal result - entry/exit timing could improve"
+                lesson = "Breakeven - entry/exit timing needs improvement"
 
         self.decision_memory.append({
             "decision": decision,
-            "pnl": pnl,
+            "pnl": round(pnl, 2),
+            "conditions": conditions,
             "lesson": lesson,
             "timestamp": datetime.now().isoformat(),
         })
 
-        # Keep only last 20 memories
-        if len(self.decision_memory) > 20:
+        # Keep only last 50 memories (enough for pattern recognition)
+        if len(self.decision_memory) > 50:
             self.decision_memory.pop(0)
 
-        self.logger.info(f"Recorded outcome: {decision} -> {pnl:+.2f}% | Lesson: {lesson}")
+        # Persist to file
+        self._save_memory()
+
+        self.logger.info(
+            f"📝 Recorded: {decision} → {pnl:+.2f}% | "
+            f"Conditions: {conditions[:50]}... | Lesson: {lesson}"
+        )
 
     def _create_fallback_signal(self, price_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create conservative fallback signal when analysis fails."""

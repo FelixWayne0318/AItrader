@@ -2474,6 +2474,9 @@ class DeepSeekAIStrategy(Strategy):
             f"{event.quantity} @ {event.avg_px_open}"
         )
 
+        # v3.12: Store entry conditions for memory system
+        self._last_entry_conditions = self._format_entry_conditions()
+
         # Update trailing stop state with actual entry price if it exists
         # (bracket order already initialized it with estimated price)
         if self.enable_trailing_stop:
@@ -2573,7 +2576,70 @@ class DeepSeekAIStrategy(Strategy):
                 self.telegram_bot.send_message_sync(position_msg)
             except Exception as e:
                 self.log.warning(f"Failed to send Telegram position closed notification: {e}")
-    
+
+        # v3.12: Record outcome for AI learning
+        try:
+            if hasattr(self, 'ai_analyzer') and self.ai_analyzer:
+                # Get decision from last signal
+                decision = "UNKNOWN"
+                if hasattr(self, 'last_signal') and self.last_signal:
+                    signal = self.last_signal.get('signal', '')
+                    if signal == 'BUY':
+                        decision = 'LONG'
+                    elif signal == 'SELL':
+                        decision = 'SHORT'
+                    else:
+                        decision = signal
+
+                # Get entry conditions
+                conditions = getattr(self, '_last_entry_conditions', 'N/A')
+
+                # Record the outcome
+                self.ai_analyzer.record_outcome(
+                    decision=decision,
+                    pnl=pnl_pct,
+                    conditions=conditions,
+                )
+                self.log.info(f"📝 Trade outcome recorded for AI learning")
+        except Exception as e:
+            self.log.warning(f"Failed to record trade outcome: {e}")
+
+    def _format_entry_conditions(self) -> str:
+        """
+        Format current market conditions for memory recording.
+
+        v3.12: Captures key indicators at entry for pattern learning.
+        """
+        try:
+            parts = []
+
+            # Get RSI
+            if hasattr(self, 'indicator_manager') and self.indicator_manager:
+                rsi = self.indicator_manager.get_rsi()
+                if rsi is not None:
+                    parts.append(f"RSI={rsi:.0f}")
+
+            # Get trend from last signal
+            if hasattr(self, 'last_signal') and self.last_signal:
+                confidence = self.last_signal.get('confidence', 'N/A')
+                parts.append(f"confidence={confidence}")
+
+                # Get judge decision info
+                judge = self.last_signal.get('judge_decision', {})
+                if judge:
+                    winning = judge.get('winning_side', 'N/A')
+                    parts.append(f"winning_side={winning}")
+
+            # Get cached price for context
+            if hasattr(self, '_cached_current_price') and self._cached_current_price:
+                parts.append(f"price=${self._cached_current_price:,.0f}")
+
+            return ", ".join(parts) if parts else "N/A"
+
+        except Exception as e:
+            self.log.debug(f"Failed to format entry conditions: {e}")
+            return "N/A"
+
     def _cleanup_oco_orphans(self):
         """
         Clean up orphan orders.
