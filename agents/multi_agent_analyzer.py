@@ -1291,23 +1291,20 @@ ORDER FLOW (Binance Taker Data):
         if data and data.get('enabled', True):
             parts.append("COINALYZE DERIVATIVES:")
 
-            # Open Interest with trend
+            # Open Interest (v3.9: removed trend label for AI autonomy)
             oi = data.get('open_interest')
-            trends = data.get('trends', {})
             if oi:
                 oi_btc = oi.get('value', 0)
-                oi_trend = trends.get('oi_trend', 'N/A')
-                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC [Trend: {oi_trend}]")
+                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
             else:
                 parts.append("- Open Interest: N/A")
 
-            # Funding Rate with trend
+            # Funding Rate (v3.9: removed trend label for AI autonomy)
             funding = data.get('funding_rate')
             if funding:
                 rate = funding.get('value', 0)
                 rate_pct = rate * 100
-                fr_trend = trends.get('funding_trend', 'N/A')
-                parts.append(f"- Funding Rate: {rate_pct:.4f}% [Trend: {fr_trend}]")
+                parts.append(f"- Funding Rate: {rate_pct:.4f}%")
             else:
                 parts.append("- Funding Rate: N/A")
 
@@ -1334,17 +1331,15 @@ ORDER FLOW (Binance Taker Data):
             else:
                 parts.append("- Liquidations (1h): N/A")
 
-            # Long/Short Ratio from Coinalyze
+            # Long/Short Ratio from Coinalyze (v3.9: removed trend label)
             ls_hist = data.get('long_short_ratio_history')
             if ls_hist and ls_hist.get('history'):
                 latest = ls_hist['history'][-1]
                 ls_ratio = float(latest.get('r', 1))
                 long_pct = float(latest.get('l', 50))
                 short_pct = float(latest.get('s', 50))
-                ls_trend = trends.get('long_short_trend', 'N/A')
                 parts.append(
-                    f"- Long/Short Ratio: {ls_ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%) "
-                    f"[Trend: {ls_trend}]"
+                    f"- Long/Short Ratio: {ls_ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%)"
                 )
         else:
             parts.append("COINALYZE: Data not available")
@@ -1355,34 +1350,31 @@ ORDER FLOW (Binance Taker Data):
         if binance_derivatives:
             parts.append("\nBINANCE DERIVATIVES (Top Traders & Taker):")
 
-            # Top Traders Position Ratio
+            # Top Traders Position Ratio (v3.9: removed trend label)
             top_pos = binance_derivatives.get('top_long_short_position', {})
             latest = top_pos.get('latest')
             if latest:
                 ratio = float(latest.get('longShortRatio', 1))
                 long_pct = float(latest.get('longAccount', 0.5)) * 100
                 short_pct = float(latest.get('shortAccount', 0.5)) * 100
-                trend = top_pos.get('trend', 'N/A')
                 parts.append(
                     f"- Top Traders Position: Long {long_pct:.1f}% / Short {short_pct:.1f}% "
-                    f"(Ratio: {ratio:.2f}) [Trend: {trend}]"
+                    f"(Ratio: {ratio:.2f})"
                 )
 
-            # Taker Buy/Sell Ratio
+            # Taker Buy/Sell Ratio (v3.9: removed trend label)
             taker = binance_derivatives.get('taker_long_short', {})
             latest = taker.get('latest')
             if latest:
                 ratio = float(latest.get('buySellRatio', 1))
-                trend = taker.get('trend', 'N/A')
-                parts.append(f"- Taker Buy/Sell Ratio: {ratio:.3f} [Trend: {trend}]")
+                parts.append(f"- Taker Buy/Sell Ratio: {ratio:.3f}")
 
-            # OI from Binance
+            # OI from Binance (v3.9: removed trend label)
             oi_hist = binance_derivatives.get('open_interest_hist', {})
             latest = oi_hist.get('latest')
             if latest:
                 oi_usd = float(latest.get('sumOpenInterestValue', 0))
-                trend = oi_hist.get('trend', 'N/A')
-                parts.append(f"- OI (Binance): ${oi_usd:,.0f} [Trend: {trend}]")
+                parts.append(f"- OI (Binance): ${oi_usd:,.0f}")
 
             # 24h Stats
             ticker = binance_derivatives.get('ticker_24hr')
