@@ -36,93 +36,148 @@ from strategy.trading_logic import (
 
 
 # =============================================================================
-# TradingAgents v3.11: Indicator Definitions for AI
+# TradingAgents v3.12: Indicator Definitions for AI
 # Borrowed from: TradingAgents/agents/analysts/market_analyst.py
 #
-# These definitions teach AI how to interpret raw indicator values.
-# AI receives raw numbers and uses these definitions to form its own judgment.
-# NOTE: Only definitions and usage - NO trading rules. Let AI decide autonomously.
+# Philosophy: "Teach AI WHAT indicators mean, not HOW to use them"
+# - Provide calculation methods and mathematical definitions
+# - Explain what values represent, not trading rules
+# - Let AI form its own interpretation based on raw data
+# - Aligned with TradingAgents "授人以渔" (授人以渔) principle
 # =============================================================================
 INDICATOR_DEFINITIONS = """
-INDICATOR REFERENCE (How to interpret the data):
+TECHNICAL INDICATOR REFERENCE (Calculation and Meaning):
 
-MOVING AVERAGES:
-- SMA (Simple Moving Average): Medium/long-term trend indicator
-  * Usage: Identify trend direction, serve as dynamic support/resistance
-  * Price vs SMA relationship indicates trend bias
-  * Multiple SMA alignment (5/20/50) shows trend strength
+MOVING AVERAGES (SMA):
+- Simple Moving Average of closing prices over N periods
+- Calculation: Sum of last N closing prices / N
+- Common periods: 5 (short-term), 20 (medium-term), 50/200 (long-term)
+- Interpretation: Higher values = higher average price over that period
+- Multiple SMAs show different timeframe averages simultaneously
 
 RSI (Relative Strength Index):
-- Momentum oscillator measuring speed of price changes
+- Momentum oscillator measuring magnitude and velocity of price changes
+- Calculation: 100 - (100 / (1 + RS)), where RS = Avg Gain / Avg Loss (14 periods)
 - Range: 0-100
-- Usage: Identify overbought/oversold conditions, spot divergences
-- Thresholds: 70 (overbought), 30 (oversold), 40-60 (neutral)
+  * 0 = Maximum downward momentum (all periods were losses)
+  * 100 = Maximum upward momentum (all periods were gains)
+  * 50 = Equal gains and losses (neutral momentum)
+- Time sensitivity: Standard period is 14 bars, longer periods = smoother values
 
 MACD (Moving Average Convergence Divergence):
-- Trend-following momentum indicator
-- Components: MACD line, Signal line, Histogram
-- Usage: Identify trend changes via crossovers and divergences
-- Histogram shows momentum strength and direction
+- Trend-following momentum indicator comparing two exponential moving averages
+- Components:
+  * MACD Line: EMA(12) - EMA(26)
+  * Signal Line: EMA(9) of MACD Line
+  * Histogram: MACD Line - Signal Line
+- Interpretation:
+  * Positive MACD = short-term average above long-term average
+  * Negative MACD = short-term average below long-term average
+  * Histogram magnitude = strength of divergence/convergence
+  * Histogram direction = rate of change in divergence
 
 BOLLINGER BANDS:
-- Volatility indicator with upper/middle/lower bands
-- Usage: Identify volatility levels and potential price boundaries
-- Band width indicates volatility (narrow = low, wide = high)
-- Middle band (SMA_20) serves as dynamic mean
+- Volatility indicator based on standard deviation from moving average
+- Components:
+  * Middle Band: SMA(20)
+  * Upper Band: SMA(20) + (2 × Standard Deviation)
+  * Lower Band: SMA(20) - (2 × Standard Deviation)
+- Band Width: Measures current volatility level
+  * Narrow bands = low volatility period
+  * Wide bands = high volatility period
+- BB Position: Price location within bands (0% = lower band, 100% = upper band)
+- Statistical meaning: ~95% of price action falls within 2 standard deviations
 
 VOLUME:
-- Measures trading activity and interest
-- Usage: Confirm price moves and identify breakout validity
-- Volume Ratio compares current to average volume
+- Number of contracts/coins traded in a given time period
+- Volume Ratio: Current volume / Average volume over recent periods
+- Interpretation:
+  * Ratio > 1.0 = more trading activity than usual
+  * Ratio < 1.0 = less trading activity than usual
+  * Higher ratio = more market participants engaged
 
 ORDER FLOW (Taker Buy/Sell Ratio):
-- Measures aggressive buyer vs seller activity
-- Usage: Identify which side is more aggressive in the market
-- Calculated from taker buy volume / total volume
+- Measures aggressive buying vs selling pressure from market takers
+- Calculation: Taker buy volume / Total volume
+- Range: 0-100%
+  * >50% = more aggressive buying (market buy orders)
+  * <50% = more aggressive selling (market sell orders)
+  * 50% = balanced aggressive activity
+- CVD (Cumulative Volume Delta): Running sum of (buy volume - sell volume)
+- Data source: Binance taker buy/sell volume from kline data
 
 FUNDING RATE (Perpetual Futures):
-- Periodic payment between longs and shorts
-- Usage: Gauge market sentiment and positioning crowdedness
-- Positive = longs pay shorts, Negative = shorts pay longs
+- Periodic payment mechanism between long and short position holders
+- Purpose: Keep perpetual contract price anchored to spot price
+- Calculation: Based on premium/discount of perpetual vs spot + interest rate component
+- Settlement: Every 8 hours (00:00, 08:00, 16:00 UTC) for Binance
+- Interpretation:
+  * Positive rate = longs pay shorts (indicating more long positions)
+  * Negative rate = shorts pay longs (indicating more short positions)
+  * Magnitude shows degree of position imbalance
+- Note: Binance 8h funding rate is the actual rate traders pay/receive
 
-OPEN INTEREST:
-- Total outstanding derivative contracts
-- Usage: Measure new money entering/exiting the market
-- Rising OI = new positions, Falling OI = positions closing
+OPEN INTEREST (OI):
+- Total number of outstanding derivative contracts (sum of all open positions)
+- Units: Number of contracts or BTC equivalent
+- Change interpretation:
+  * Rising OI + rising price = new long positions entering
+  * Rising OI + falling price = new short positions entering
+  * Falling OI + price move = position closing (profit taking or stop loss)
+  * Stable OI + price move = position rotation between traders
+- Does NOT indicate direction, only total exposure
 
 ORDER BOOK DEPTH:
-- OBI (Order Book Imbalance): Bid vs ask volume ratio
+- Distribution of buy (bid) and sell (ask) limit orders at various price levels
+- Data source: Binance /fapi/v1/depth API (100 levels analyzed)
+
+- OBI (Order Book Imbalance):
+  * Calculation: (Bid Volume - Ask Volume) / (Bid Volume + Ask Volume)
   * Range: -1.0 (all asks) to +1.0 (all bids)
-  * Usage: Measure immediate buy/sell pressure
+  * Simple OBI: Equal weight to all levels
+  * Weighted OBI: Exponential decay, closer levels weighted higher (decay factor ~0.8)
+  * Adaptive OBI: Decay factor adjusts based on market volatility
 
-- Dynamics: Track changes in OBI and depth over time
-  * Usage: Identify momentum shifts and liquidity changes
+- Dynamics (vs Previous Snapshot):
+  * OBI Change: Shift in bid/ask balance over time
+  * Depth Change: Change in total volume at bid/ask side
+  * Trend: Direction of imbalance movement (STRENGTHENING_BIDS, WEAKENING_BIDS, etc.)
+  * Note: Requires historical snapshots; first snapshot shows "no historical data"
 
-- Pressure Gradient: Order concentration near best price
-  * Usage: Assess how strongly levels may hold
+- Pressure Gradient:
+  * Measures concentration of orders near best bid/ask
+  * Near-5/10/20: Percentage of volume within 0.5%/1.0%/2.0% of current price
+  * Higher percentage = orders clustered close to market price
+  * Concentration level: LOW/MEDIUM/HIGH based on near-5 percentage
 
-- Anomalies: Unusually large orders (walls)
-  * Usage: Identify significant price levels with heavy orders
+- Anomalies (Order Walls):
+  * Orders significantly larger than average (threshold: 3-4x mean size)
+  * Dynamic threshold adjusts based on volatility
+  * Shows price level, size in BTC, and multiplier vs average
 
-- Slippage Estimate: Expected execution cost for given size
-  * Usage: Assess market depth and liquidity quality
+- Slippage Estimate:
+  * Expected price impact when executing a market order of given size
+  * Includes confidence level and range (best/worst case)
+  * Based on actual order book depth distribution
 
 SUPPORT/RESISTANCE ZONES:
-- Calculated from multiple sources:
-  * Order Book Walls: Real orders at specific prices
-  * Bollinger Bands: Statistical price boundaries
+- Price levels identified from multiple independent data sources
+- Sources:
+  * Order Book Walls: Large real limit orders (>2 BTC) at specific prices
+  * Bollinger Bands: Upper/lower bands as statistical boundaries
   * SMA_50/SMA_200: Moving average levels
-  * Pivot Points: Mathematical price levels
+  * Pivot Points: Mathematical price levels calculated from high/low/close
 
-- Strength levels based on source confluence:
-  * HIGH: Multiple sources agree or Order Wall present
+- Zone Strength (based on source confluence):
+  * HIGH: Multiple sources agree (≥3) OR large order wall present (>2 BTC)
   * MEDIUM: Two sources agree
   * LOW: Single source only
 
-- Usage: Identify key price levels for analysis
-  * Stop loss placement considerations
-  * Take profit target identification
-  * Entry timing optimization
+- Zone Properties:
+  * Price Center: Midpoint of the zone
+  * Distance: Percentage distance from current price
+  * Sources: Which indicators contributed to this zone
+  * Width: Range of the zone (expanded by 0.1% from center)
 """
 
 
