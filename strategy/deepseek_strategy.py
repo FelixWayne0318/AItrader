@@ -149,6 +149,21 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     telegram_notify_errors: bool = True
     telegram_notify_heartbeat: bool = True  # v2.1: 每次 on_timer 发送心跳状态
 
+    # Telegram Queue (v4.0 - Non-blocking message sending)
+    telegram_queue_enabled: bool = True  # 启用消息队列 (默认开启)
+    telegram_queue_db_path: str = "data/telegram_queue.db"  # SQLite 持久化路径
+    telegram_queue_max_retries: int = 3  # 最大重试次数
+    telegram_queue_alert_cooldown: int = 300  # 告警收敛冷却时间 (秒)
+    telegram_queue_send_interval: float = 0.5  # 发送间隔 (秒)
+
+    # Telegram Security (v4.0 - Enhanced authentication)
+    telegram_security_enable_pin: bool = True  # 启用 PIN 码验证
+    telegram_security_pin_code: str = ""  # PIN 码 (空则自动生成)
+    telegram_security_pin_expiry_seconds: int = 60  # PIN 过期时间 (秒)
+    telegram_security_rate_limit_per_minute: int = 30  # 每分钟速率限制
+    telegram_security_enable_audit: bool = True  # 启用审计日志
+    telegram_security_audit_log_dir: str = "logs/audit"  # 审计日志目录
+
     # Execution
     position_adjustment_threshold: float = 0.001
 
@@ -295,6 +310,18 @@ class DeepSeekAIStrategy(Strategy):
         # Throttle trailing stop notifications (5 minutes = 300 seconds)
         self._last_trailing_stop_notify_time: float = 0.0
         self._trailing_stop_notify_throttle: float = 300.0  # seconds
+
+        # v4.0: Store pending execution data for unified Telegram notification
+        # This allows on_position_opened to send a comprehensive message with signal + fill + position
+        self._pending_execution_data: Optional[Dict[str, Any]] = None
+
+        # v4.1: Track signal execution status for heartbeat display
+        # Shows whether the signal was actually executed and why not if blocked
+        self._last_signal_status: Dict[str, Any] = {
+            'executed': False,       # Whether trade was executed
+            'reason': '',            # Reason if not executed
+            'action_taken': '',      # What action was taken (if any)
+        }
         # Format: {
         #   "instrument_id": {
         #       "entry_price": float,
@@ -410,7 +437,13 @@ class DeepSeekAIStrategy(Strategy):
                         chat_id=chat_id,
                         logger=self.log,
                         enabled=True,
-                        message_timeout=config.network_telegram_message_timeout
+                        message_timeout=config.network_telegram_message_timeout,
+                        # v4.0 Queue configuration (non-blocking message sending)
+                        use_queue=config.telegram_queue_enabled,
+                        queue_db_path=config.telegram_queue_db_path,
+                        queue_max_retries=config.telegram_queue_max_retries,
+                        queue_alert_cooldown=config.telegram_queue_alert_cooldown,
+                        queue_send_interval=config.telegram_queue_send_interval,
                     )
                     # Store notification preferences
                     self.telegram_notify_signals = config.telegram_notify_signals
@@ -443,6 +476,13 @@ class DeepSeekAIStrategy(Strategy):
                             startup_delay=config.network_telegram_startup_delay,
                             polling_max_retries=config.network_telegram_polling_max_retries,
                             polling_base_delay=config.network_telegram_polling_base_delay,
+                            # v4.0 Security configuration (PIN verification + audit logging)
+                            enable_pin=config.telegram_security_enable_pin,
+                            pin_code=config.telegram_security_pin_code or None,
+                            pin_expiry_seconds=config.telegram_security_pin_expiry_seconds,
+                            rate_limit_per_minute=config.telegram_security_rate_limit_per_minute,
+                            enable_audit=config.telegram_security_enable_audit,
+                            audit_log_dir=config.telegram_security_audit_log_dir,
                         )
 
                         # Start command handler in background thread with isolated event loop
@@ -714,20 +754,38 @@ class DeepSeekAIStrategy(Strategy):
         # Send Telegram startup notification
         if self.telegram_bot and self.enable_telegram:
             try:
+                # v4.0: Extract timeframe from bar_type for display
+                bar_type_str = str(self.bar_type)
+                if '15-MINUTE' in bar_type_str:
+                    timeframe = '15m'
+                elif '5-MINUTE' in bar_type_str:
+                    timeframe = '5m'
+                elif '1-MINUTE' in bar_type_str:
+                    timeframe = '1m'
+                elif '30-MINUTE' in bar_type_str:
+                    timeframe = '30m'
+                elif '1-HOUR' in bar_type_str:
+                    timeframe = '1h'
+                elif '4-HOUR' in bar_type_str:
+                    timeframe = '4h'
+                elif '1-DAY' in bar_type_str:
+                    timeframe = '1d'
+                else:
+                    timeframe = '15m'  # Default
+
                 startup_msg = self.telegram_bot.format_startup_message(
                     instrument_id=str(self.instrument_id),
                     config={
+                        'timeframe': timeframe,
                         'enable_auto_sl_tp': self.enable_auto_sl_tp,
                         'enable_oco': self.enable_oco,
                         'enable_trailing_stop': self.enable_trailing_stop,
-                        'enable_partial_tp': hasattr(self, 'enable_partial_tp') and getattr(self, 'enable_partial_tp', False),
+                        'mtf_enabled': getattr(self, 'mtf_enabled', False),
+                        'sr_hard_control_enabled': True,  # Always enabled in current version
                     }
                 )
                 self.telegram_bot.send_message_sync(startup_msg)
-
-                # Send command help message
-                help_msg = self.telegram_bot.format_help_response()
-                self.telegram_bot.send_message_sync(help_msg)
+                # Note: Help message removed - users can use /help command if needed
 
             except Exception as e:
                 self.log.warning(f"Failed to send Telegram startup notification: {e}")
@@ -1803,7 +1861,10 @@ class DeepSeekAIStrategy(Strategy):
                     'block_short': hard_control.get('block_short', False),
                 }
 
-            # 9. 发送消息
+            # 9. 获取信号执行状态 (v4.1)
+            signal_status_heartbeat = getattr(self, '_last_signal_status', None)
+
+            # 10. 发送消息
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
@@ -1821,6 +1882,8 @@ class DeepSeekAIStrategy(Strategy):
                 'derivatives': derivatives_heartbeat,
                 'order_book': orderbook_heartbeat,
                 'sr_zone': sr_zone_heartbeat,
+                # v4.1 signal execution status
+                'signal_status': signal_status_heartbeat,
             })
             self.telegram_bot.send_message_sync(heartbeat_msg)
             self.log.info(f"💓 Sent heartbeat #{self._timer_count}")
@@ -1961,41 +2024,100 @@ class DeepSeekAIStrategy(Strategy):
         with self._state_lock:
             if self.is_trading_paused:
                 self.log.info("⏸️ Trading is paused - skipping signal execution")
+                # v4.1: Update signal status
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': '交易已暂停',
+                    'action_taken': '',
+                }
                 return
-        
+
         # Store signal and technical data for SL/TP calculation
         self.latest_signal_data = signal_data
         self.latest_technical_data = technical_data
         self.latest_price_data = price_data
-        
+
         signal = signal_data['signal']
         confidence = signal_data['confidence']
 
-        # Check minimum confidence
-        confidence_levels = {'LOW': 0, 'MEDIUM': 1, 'HIGH': 2}
-        min_conf_level = confidence_levels.get(self.min_confidence, 1)
-        signal_conf_level = confidence_levels.get(confidence, 1)
+        # v3.12: Normalize legacy signals (BUY→LONG, SELL→SHORT)
+        legacy_mapping = {'BUY': 'LONG', 'SELL': 'SHORT'}
+        if signal in legacy_mapping:
+            signal = legacy_mapping[signal]
+            signal_data['signal'] = signal  # Update for downstream use
 
-        if signal_conf_level < min_conf_level:
-            self.log.warning(
-                f"⚠️ Signal confidence {confidence} below minimum {self.min_confidence}, skipping trade"
-            )
-            return
+        # Check minimum confidence (skip for CLOSE and REDUCE - always allow risk reduction)
+        if signal not in ('CLOSE', 'REDUCE', 'HOLD'):
+            confidence_levels = {'LOW': 0, 'MEDIUM': 1, 'HIGH': 2}
+            min_conf_level = confidence_levels.get(self.min_confidence, 1)
+            signal_conf_level = confidence_levels.get(confidence, 1)
+
+            if signal_conf_level < min_conf_level:
+                self.log.warning(
+                    f"⚠️ Signal confidence {confidence} below minimum {self.min_confidence}, skipping trade"
+                )
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': f'信心不足 ({confidence} < {self.min_confidence})',
+                    'action_taken': '',
+                }
+                return
 
         # Handle HOLD signal
         if signal == 'HOLD':
             self.log.info("📊 Signal: HOLD - No action taken")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': 'AI 建议观望',
+                'action_taken': '',
+            }
             return
 
-        # Calculate target position size
+        # v3.12: Handle CLOSE signal - close position without opening opposite
+        if signal == 'CLOSE':
+            if not current_position:
+                self.log.info("📊 Signal: CLOSE - No position to close")
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': '无持仓可平',
+                    'action_taken': '',
+                }
+                return
+
+            # Close the existing position
+            self._close_position_only(current_position)
+            return
+
+        # v3.12: Handle REDUCE signal - reduce position size but keep direction
+        if signal == 'REDUCE':
+            if not current_position:
+                self.log.info("📊 Signal: REDUCE - No position to reduce")
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': '无持仓可减',
+                    'action_taken': '',
+                }
+                return
+
+            # Calculate target size from position_size_pct
+            position_size_pct = signal_data.get('position_size_pct', 50)
+            self._reduce_position(current_position, position_size_pct)
+            return
+
+        # For LONG/SHORT signals, calculate target position size
         target_quantity = self._calculate_position_size(
             signal_data, price_data, technical_data, current_position
         )
 
         if target_quantity == 0:
             self.log.warning("⚠️ Calculated position size is 0, skipping trade")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': '仓位计算为0 (余额不足)',
+                'action_taken': '',
+            }
 
-            # Notify user about insufficient position size (helpful for low-balance accounts)
+            # Notify user about insufficient position size
             if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
                 try:
                     current_price = price_data.get('price', 0) if price_data else 0
@@ -2011,8 +2133,23 @@ class DeepSeekAIStrategy(Strategy):
 
             return
 
-        # Determine order side
-        target_side = 'long' if signal == 'BUY' else 'short'
+        # v3.12: Determine order side from normalized signal
+        target_side = 'long' if signal == 'LONG' else 'short'
+
+        # v4.0: Store execution data for unified Telegram notification in on_position_opened
+        # This replaces the separate signal/fill/position notifications with one comprehensive message
+        if self.telegram_bot and self.enable_telegram:
+            judge_info = signal_data.get('judge_decision', {})
+            self._pending_execution_data = {
+                'signal': signal,
+                'confidence': confidence,
+                'target_quantity': target_quantity,
+                'price': price_data.get('price', 0),
+                'rsi': technical_data.get('rsi'),
+                'macd': technical_data.get('macd'),
+                'winning_side': judge_info.get('winning_side', ''),
+                'reasoning': signal_data.get('reason', ''),
+            }
 
         # Execute position management logic
         if current_position:
@@ -2022,31 +2159,14 @@ class DeepSeekAIStrategy(Strategy):
         else:
             self._open_new_position(target_side, target_quantity)
 
-        # Send Telegram notification AFTER execution (符合 TradingAgents 意图)
-        # This prevents "signal sent but not executed" confusion
-        if self.telegram_bot and self.enable_telegram and self.telegram_notify_signals:
-            try:
-                judge_info = signal_data.get('judge_decision', {})
-                winning_side = judge_info.get('winning_side', 'N/A')
-                debate_summary = signal_data.get('debate_summary', '')
+        # v3.11: Add action_taken to pending execution data for Telegram notification
+        # This allows Telegram to show specific action (开多/平空/反转 etc.) instead of just BUY/SELL
+        if self._pending_execution_data and self._last_signal_status:
+            self._pending_execution_data['action_taken'] = self._last_signal_status.get('action_taken', '')
+            self._pending_execution_data['was_executed'] = self._last_signal_status.get('executed', False)
 
-                signal_notification = self.telegram_bot.format_trade_signal({
-                    'signal': signal,
-                    'confidence': confidence,
-                    'price': price_data['price'],
-                    'timestamp': price_data['timestamp'],
-                    'rsi': technical_data.get('rsi', 0),
-                    'macd': technical_data.get('macd', 0),
-                    'support': technical_data.get('support', 0),
-                    'resistance': technical_data.get('resistance', 0),
-                    'reasoning': signal_data.get('reason', ''),
-                    'winning_side': winning_side,
-                    'debate_summary': debate_summary[:100] if debate_summary else '',
-                })
-                self.telegram_bot.send_message_sync(signal_notification)
-                self.log.info("✅ Telegram notification sent after execution")
-            except Exception as e:
-                self.log.warning(f"Failed to send Telegram signal notification: {e}")
+        # Note: Telegram notification is now sent in on_position_opened for new positions
+        # This ensures we have accurate fill price and SL/TP info
 
     def _calculate_position_size(
         self,
@@ -2114,6 +2234,13 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.info(
                     f"✅ Position size appropriate ({current_qty:.3f} BTC), no adjustment needed"
                 )
+                # v4.1: Update signal status - same direction, holding
+                side_cn = '多' if current_side == 'long' else '空'
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': f'已持有{side_cn}仓 ({current_qty:.4f} BTC)',
+                    'action_taken': '维持现有仓位',
+                }
                 return
 
             if size_diff > 0:
@@ -2130,8 +2257,37 @@ class DeepSeekAIStrategy(Strategy):
                     f"📈 Adding to {target_side} position: {abs(size_diff):.3f} BTC "
                     f"({current_qty:.3f} → {target_quantity:.3f})"
                 )
+                # v4.1: Update signal status - adding to position
+                self._last_signal_status = {
+                    'executed': True,
+                    'reason': '',
+                    'action_taken': f'加仓 +{abs(size_diff):.4f} BTC',
+                }
             else:
                 # Reduce position
+                # v3.10: Cancel pending SL/TP before reducing to prevent quantity mismatch
+                # Old SL/TP might have larger quantity than reduced position
+                cancel_failed = False
+                try:
+                    open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                    reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
+                    if reduce_only_orders:
+                        self.log.info(f"🗑️ Cancelling {len(reduce_only_orders)} SL/TP orders before reduce")
+                        for order in reduce_only_orders:
+                            try:
+                                self.cancel_order(order)
+                            except Exception as e:
+                                self.log.warning(f"Failed to cancel order: {e}")
+                                cancel_failed = True
+                except Exception as e:
+                    self.log.error(f"❌ Failed to cancel SL/TP orders: {e}")
+                    cancel_failed = True
+
+                if cancel_failed:
+                    # v3.10: Warn but continue - reduce is less risky than reversal
+                    # Orphan cleanup will handle remaining orders later
+                    self.log.warning("⚠️ Some orders failed to cancel, continuing with reduce (orphan cleanup will handle)")
+
                 self._submit_order(
                     side=OrderSide.SELL if target_side == 'long' else OrderSide.BUY,
                     quantity=abs(size_diff),
@@ -2141,6 +2297,12 @@ class DeepSeekAIStrategy(Strategy):
                     f"📉 Reducing {target_side} position: {abs(size_diff):.3f} BTC "
                     f"({current_qty:.3f} → {target_quantity:.3f})"
                 )
+                # v4.1: Update signal status - reducing position
+                self._last_signal_status = {
+                    'executed': True,
+                    'reason': '',
+                    'action_taken': f'减仓 -{abs(size_diff):.4f} BTC',
+                }
 
         # Opposite direction - reverse position
         elif self.allow_reversals:
@@ -2150,9 +2312,33 @@ class DeepSeekAIStrategy(Strategy):
                     f"🔒 Reversal requires HIGH confidence, got {confidence}. "
                     f"Keeping {current_side} position."
                 )
+                # v4.1: Update signal status - reversal blocked
+                side_cn = '多' if current_side == 'long' else '空'
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': f'反转需HIGH信心 (当前{confidence})',
+                    'action_taken': f'保持{side_cn}仓',
+                }
                 return
 
             self.log.info(f"🔄 Reversing position: {current_side} → {target_side}")
+
+            # v3.10: Cancel all pending orders BEFORE reversing to prevent -2022 ReduceOnly rejection
+            # Old position's SL/TP orders are reduce_only=True, they'll be rejected if position closes first
+            try:
+                open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                if open_orders:
+                    self.log.info(f"🗑️ Cancelling {len(open_orders)} pending orders before reversal")
+                    self.cancel_all_orders(self.instrument_id)
+            except Exception as e:
+                # v3.10: ABORT reversal if cancel fails - continuing would cause -2022 errors
+                self.log.error(f"❌ Failed to cancel pending orders, aborting reversal: {e}")
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': f'取消挂单失败: {str(e)[:30]}',
+                    'action_taken': '中止反转',
+                }
+                return
 
             # Close current position
             self._submit_order(
@@ -2171,12 +2357,28 @@ class DeepSeekAIStrategy(Strategy):
             self.log.info(
                 f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC (with bracket SL/TP)"
             )
+            # v4.1: Update signal status - reversal executed
+            old_side_cn = '多' if current_side == 'long' else '空'
+            new_side_cn = '多' if target_side == 'long' else '空'
+            self._last_signal_status = {
+                'executed': True,
+                'reason': '',
+                'action_taken': f'反转: {old_side_cn}→{new_side_cn}',
+            }
 
         else:
             self.log.warning(
                 f"⚠️ Signal suggests {target_side} but have {current_side} position. "
                 f"Reversals disabled."
             )
+            # v4.1: Update signal status - reversal disabled
+            current_cn = '多' if current_side == 'long' else '空'
+            target_cn = '多' if target_side == 'long' else '空'
+            self._last_signal_status = {
+                'executed': False,
+                'reason': f'禁止反转 (持有{current_cn}仓)',
+                'action_taken': '',
+            }
 
     def _open_new_position(self, side: str, quantity: float):
         """
@@ -2198,6 +2400,168 @@ class DeepSeekAIStrategy(Strategy):
         )
 
         self.log.info(f"🚀 Opening {side} position: {quantity:.3f} BTC (with bracket SL/TP)")
+
+        # v4.1: Update signal status - new position opened
+        side_cn = '多' if side == 'long' else '空'
+        self._last_signal_status = {
+            'executed': True,
+            'reason': '',
+            'action_taken': f'开{side_cn}仓 {quantity:.4f} BTC',
+        }
+
+    def _close_position_only(self, current_position: Dict[str, Any]):
+        """
+        v3.12: Close position without opening opposite side.
+
+        This is used when AI sends CLOSE signal, meaning:
+        - Close the current position completely
+        - Do NOT open any new position
+        - Cancel all pending SL/TP orders first
+
+        Different from reversal which closes then opens opposite.
+        """
+        current_side = current_position['side']
+        current_qty = current_position['quantity']
+        side_cn = '多' if current_side == 'long' else '空'
+
+        self.log.info(f"🔴 Closing {current_side} position: {current_qty:.4f} BTC (CLOSE signal)")
+
+        # Cancel all pending orders (SL/TP) before closing
+        try:
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            if open_orders:
+                self.log.info(f"🗑️ Cancelling {len(open_orders)} pending orders before close")
+                self.cancel_all_orders(self.instrument_id)
+        except Exception as e:
+            self.log.warning(f"⚠️ Failed to cancel some orders: {e}, continuing with close")
+
+        # Submit close order (reduce_only=True)
+        close_side = OrderSide.SELL if current_side == 'long' else OrderSide.BUY
+        self._submit_order(
+            side=close_side,
+            quantity=current_qty,
+            reduce_only=True,
+        )
+
+        # Update signal status
+        self._last_signal_status = {
+            'executed': True,
+            'reason': '',
+            'action_taken': f'平{side_cn}仓 {current_qty:.4f} BTC',
+        }
+
+        # Send Telegram notification
+        if self.telegram_bot and self.enable_telegram:
+            try:
+                msg = (
+                    f"🔴 **平仓信号执行**\n\n"
+                    f"📍 动作: 平{side_cn}仓\n"
+                    f"📦 数量: {current_qty:.4f} BTC\n"
+                    f"💡 原因: AI 发出 CLOSE 信号"
+                )
+                self.telegram_bot.send_message_sync(msg)
+            except Exception as e:
+                self.log.error(f"Failed to send Telegram notification: {e}")
+
+    def _reduce_position(self, current_position: Dict[str, Any], target_pct: int):
+        """
+        v3.12: Reduce position to target percentage.
+
+        This is used when AI sends REDUCE signal with position_size_pct:
+        - REDUCE with position_size_pct=50 means keep 50% of current position
+        - REDUCE with position_size_pct=0 is equivalent to CLOSE
+
+        Args:
+            current_position: Current position info dict
+            target_pct: Target position size as percentage (0-100)
+                       0 = close all, 50 = keep half, 100 = no change
+        """
+        current_side = current_position['side']
+        current_qty = current_position['quantity']
+        side_cn = '多' if current_side == 'long' else '空'
+
+        # Validate and calculate target quantity
+        target_pct = max(0, min(100, target_pct))  # Clamp to 0-100
+
+        if target_pct >= 100:
+            self.log.info(f"📊 REDUCE signal with 100% - no action needed")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': '减仓比例=100%',
+                'action_taken': '维持现有仓位',
+            }
+            return
+
+        if target_pct == 0:
+            # Equivalent to CLOSE
+            self.log.info(f"📊 REDUCE signal with 0% - equivalent to CLOSE")
+            self._close_position_only(current_position)
+            return
+
+        # Calculate reduction amount
+        target_qty = current_qty * (target_pct / 100.0)
+        reduce_qty = current_qty - target_qty
+
+        # Check minimum trade amount
+        if reduce_qty < self.position_config['min_trade_amount']:
+            self.log.warning(
+                f"⚠️ Reduce quantity {reduce_qty:.4f} below minimum "
+                f"{self.position_config['min_trade_amount']:.4f}, skipping"
+            )
+            self._last_signal_status = {
+                'executed': False,
+                'reason': f'减仓量低于最小交易量',
+                'action_taken': '',
+            }
+            return
+
+        self.log.info(
+            f"📉 Reducing {current_side} position by {100-target_pct}%: "
+            f"{current_qty:.4f} → {target_qty:.4f} BTC"
+        )
+
+        # Cancel SL/TP orders before reducing (they have old quantity)
+        try:
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
+            if reduce_only_orders:
+                self.log.info(f"🗑️ Cancelling {len(reduce_only_orders)} SL/TP orders before reduce")
+                for order in reduce_only_orders:
+                    try:
+                        self.cancel_order(order)
+                    except Exception as e:
+                        self.log.warning(f"Failed to cancel order: {e}")
+        except Exception as e:
+            self.log.warning(f"⚠️ Failed to cancel some orders: {e}, continuing with reduce")
+
+        # Submit reduce order
+        reduce_side = OrderSide.SELL if current_side == 'long' else OrderSide.BUY
+        self._submit_order(
+            side=reduce_side,
+            quantity=reduce_qty,
+            reduce_only=True,
+        )
+
+        # Update signal status
+        self._last_signal_status = {
+            'executed': True,
+            'reason': '',
+            'action_taken': f'减{side_cn}仓 {100-target_pct}% (-{reduce_qty:.4f} BTC)',
+        }
+
+        # Send Telegram notification
+        if self.telegram_bot and self.enable_telegram:
+            try:
+                msg = (
+                    f"📉 **减仓信号执行**\n\n"
+                    f"📍 动作: 减{side_cn}仓 {100-target_pct}%\n"
+                    f"📦 减仓量: -{reduce_qty:.4f} BTC\n"
+                    f"📊 剩余仓位: {target_qty:.4f} BTC\n"
+                    f"💡 原因: AI 发出 REDUCE 信号"
+                )
+                self.telegram_bot.send_message_sync(msg)
+            except Exception as e:
+                self.log.error(f"Failed to send Telegram notification: {e}")
 
     def _submit_order(
         self,
@@ -2423,18 +2787,9 @@ class DeepSeekAIStrategy(Strategy):
             f"(ID: {filled_order_id[:8]}...)"
         )
 
-        # Send Telegram order fill notification
-        if self.telegram_bot and self.enable_telegram and self.telegram_notify_fills:
-            try:
-                fill_msg = self.telegram_bot.format_order_fill({
-                    'side': event.order_side.name,
-                    'quantity': float(event.last_qty),
-                    'price': float(event.last_px),
-                    'order_type': 'MARKET',  # Could extract from order if needed
-                })
-                self.telegram_bot.send_message_sync(fill_msg)
-            except Exception as e:
-                self.log.warning(f"Failed to send Telegram fill notification: {e}")
+        # v4.0: Order fill notification is now combined with position notification
+        # See on_position_opened for unified trade execution message
+        # This reduces message spam (3 messages -> 1 comprehensive message)
     
 
     def on_order_rejected(self, event):
@@ -2510,7 +2865,8 @@ class DeepSeekAIStrategy(Strategy):
                     f"📊 Trailing stop initialized for {event.side.name} position @ ${entry_price:,.2f}"
                 )
 
-        # Send Telegram position opened notification
+        # v4.0: Send unified trade execution notification (combines signal + fill + position)
+        # This replaces 3 separate messages with 1 comprehensive notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
                 # Retrieve SL/TP prices from trailing_stop_state (v3.8)
@@ -2522,20 +2878,38 @@ class DeepSeekAIStrategy(Strategy):
                     sl_price = state.get("current_sl_price")
                     tp_price = state.get("current_tp_price")
 
-                position_msg = self.telegram_bot.format_position_update({
-                    'action': 'OPENED',
+                # Build unified execution data from pending data + event data
+                execution_data = {
                     'side': event.side.name,
                     'quantity': float(event.quantity),
                     'entry_price': float(event.avg_px_open),
-                    'current_price': float(event.avg_px_open),
-                    'pnl': 0.0,
-                    'pnl_pct': 0.0,
-                    'sl_price': sl_price,  # v3.8: Include SL price
-                    'tp_price': tp_price,  # v3.8: Include TP price
-                })
-                self.telegram_bot.send_message_sync(position_msg)
+                    'sl_price': sl_price,
+                    'tp_price': tp_price,
+                }
+
+                # Merge with pending execution data (signal info, technical indicators, AI analysis)
+                if self._pending_execution_data:
+                    execution_data.update({
+                        'signal': self._pending_execution_data.get('signal', 'BUY' if event.side.name == 'LONG' else 'SELL'),
+                        'confidence': self._pending_execution_data.get('confidence', 'MEDIUM'),
+                        'rsi': self._pending_execution_data.get('rsi'),
+                        'macd': self._pending_execution_data.get('macd'),
+                        'winning_side': self._pending_execution_data.get('winning_side', ''),
+                        'reasoning': self._pending_execution_data.get('reasoning', ''),
+                    })
+                    # Clear pending data after use
+                    self._pending_execution_data = None
+                else:
+                    # Fallback if no pending data (shouldn't happen normally)
+                    execution_data['signal'] = 'BUY' if event.side.name == 'LONG' else 'SELL'
+                    execution_data['confidence'] = 'MEDIUM'
+
+                # Send unified message
+                execution_msg = self.telegram_bot.format_trade_execution(execution_data)
+                self.telegram_bot.send_message_sync(execution_msg)
+                self.log.info("✅ Sent unified trade execution notification")
             except Exception as e:
-                self.log.warning(f"Failed to send Telegram position opened notification: {e}")
+                self.log.warning(f"Failed to send Telegram trade execution notification: {e}")
 
     def on_position_closed(self, event):
         """Handle position closed events."""
@@ -2582,12 +2956,9 @@ class DeepSeekAIStrategy(Strategy):
                 decision = "UNKNOWN"
                 if hasattr(self, 'last_signal') and self.last_signal:
                     signal = self.last_signal.get('signal', '')
-                    if signal == 'BUY':
-                        decision = 'LONG'
-                    elif signal == 'SELL':
-                        decision = 'SHORT'
-                    else:
-                        decision = signal
+                    # v3.12: Handle both legacy (BUY/SELL) and new (LONG/SHORT) formats
+                    legacy_mapping = {'BUY': 'LONG', 'SELL': 'SHORT'}
+                    decision = legacy_mapping.get(signal, signal)
 
                 # Get entry conditions
                 conditions = getattr(self, '_last_entry_conditions', 'N/A')
@@ -2602,6 +2973,153 @@ class DeepSeekAIStrategy(Strategy):
         except Exception as e:
             self.log.warning(f"Failed to record trade outcome: {e}")
 
+    def on_order_canceled(self, event):
+        """
+        Handle order canceled events.
+
+        v3.10: Track order cancellations for better order lifecycle management.
+        This helps with:
+        - Detecting manual cancellations vs system-initiated cancellations
+        - Tracking SL/TP order cancellations before position changes
+        - Debugging order flow issues
+        """
+        client_order_id = str(event.client_order_id)[:8] if hasattr(event, 'client_order_id') else 'N/A'
+
+        self.log.info(
+            f"🗑️ Order canceled: {client_order_id}... "
+            f"(instrument: {getattr(event, 'instrument_id', self.instrument_id)})"
+        )
+
+        # Track in metrics if available
+        if hasattr(self, '_order_cancel_count'):
+            self._order_cancel_count += 1
+        else:
+            self._order_cancel_count = 1
+
+    def on_order_expired(self, event):
+        """
+        Handle order expired events.
+
+        v3.10: Track GTC order expirations (e.g., SL/TP orders that expire due to
+        position close or market conditions).
+
+        Common causes:
+        - GTC orders reaching exchange time limits
+        - Orders expiring due to market close (crypto: shouldn't happen)
+        - Manual order expiration settings
+        """
+        client_order_id = str(event.client_order_id)[:8] if hasattr(event, 'client_order_id') else 'N/A'
+
+        self.log.warning(
+            f"⏰ Order expired: {client_order_id}... "
+            f"(instrument: {getattr(event, 'instrument_id', self.instrument_id)})"
+        )
+
+        # Send Telegram alert for unexpected expirations
+        if self.telegram_bot and self.enable_telegram:
+            try:
+                alert_msg = self.telegram_bot.format_error_alert({
+                    'level': 'WARNING',
+                    'message': f"Order Expired: {client_order_id}...",
+                    'context': "GTC order expired unexpectedly",
+                })
+                self.telegram_bot.send_message_sync(alert_msg)
+            except Exception as e:
+                self.log.warning(f"Failed to send Telegram alert for order expiration: {e}")
+
+    def on_order_denied(self, event):
+        """
+        Handle order denied events (system-level denial, before reaching exchange).
+
+        v3.10: This is CRITICAL for bracket/contingent orders where partial failures
+        can leave positions unprotected.
+
+        Common causes:
+        - Insufficient margin
+        - Risk limit exceeded
+        - Rate limiting
+        - System pre-trade checks failed
+
+        NautilusTrader docs: "Always handle OrderDenied and OrderRejected events
+        in your strategy, especially for contingent orders where partial failures
+        can leave positions unprotected."
+        """
+        reason = getattr(event, 'reason', 'Unknown reason')
+        client_order_id = str(event.client_order_id)[:8] if hasattr(event, 'client_order_id') else 'N/A'
+
+        self.log.error(f"🚫 Order DENIED (pre-exchange): {client_order_id}... - {reason}")
+
+        # 🚨 CRITICAL: Send immediate Telegram alert
+        if self.telegram_bot and self.enable_telegram:
+            try:
+                alert_msg = self.telegram_bot.format_error_alert({
+                    'level': 'CRITICAL',
+                    'message': f"Order DENIED: {reason}",
+                    'context': f"Order ID: {client_order_id}... (pre-exchange denial)",
+                })
+                self.telegram_bot.send_message_sync(alert_msg)
+                self.log.info("📱 Telegram alert sent for order denial")
+            except Exception as e:
+                self.log.warning(f"Failed to send Telegram alert for order denial: {e}")
+
+        # Check if this leaves a position unprotected
+        try:
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            if positions:
+                self.log.error(
+                    f"⚠️ CRITICAL: Position exists but order was denied! "
+                    f"Position may be unprotected. Manual intervention recommended."
+                )
+
+                # Try to send additional critical alert
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        alert_msg = self.telegram_bot.format_error_alert({
+                            'level': 'CRITICAL',
+                            'message': "Position may be UNPROTECTED!",
+                            'context': f"Order denial while position open. Check SL/TP orders manually.",
+                        })
+                        self.telegram_bot.send_message_sync(alert_msg)
+                    except Exception:
+                        pass
+        except Exception as e:
+            self.log.warning(f"Failed to check position status after denial: {e}")
+
+    def on_position_changed(self, event):
+        """
+        Handle position quantity change events (partial fills, partial closes).
+
+        v3.10: Track position size changes that don't result in full open/close.
+        This is important for:
+        - Detecting partial fills that may need SL/TP quantity adjustments
+        - Tracking position scaling (adding to or reducing from position)
+        - Debugging position synchronization issues
+        """
+        self.log.info(
+            f"📊 Position changed: {event.side.name} "
+            f"qty {event.quantity} (signed: {getattr(event, 'signed_qty', 'N/A')})"
+        )
+
+        # Update trailing stop state if position size changed
+        if self.enable_trailing_stop:
+            instrument_key = str(self.instrument_id)
+            if instrument_key in self.trailing_stop_state:
+                new_qty = float(event.quantity)
+                old_qty = self.trailing_stop_state[instrument_key].get("quantity", 0)
+
+                if new_qty != old_qty:
+                    self.trailing_stop_state[instrument_key]["quantity"] = new_qty
+                    self.log.info(
+                        f"📊 Updated trailing stop quantity: {old_qty} → {new_qty}"
+                    )
+
+                    # Warning: SL/TP orders may need adjustment if position size changed
+                    if new_qty < old_qty:
+                        self.log.warning(
+                            f"⚠️ Position reduced. Existing SL/TP orders may have larger "
+                            f"quantity than current position. Consider adjusting manually."
+                        )
+
     def _format_entry_conditions(self) -> str:
         """
         Format current market conditions for memory recording.
@@ -2611,26 +3129,49 @@ class DeepSeekAIStrategy(Strategy):
         try:
             parts = []
 
-            # Get RSI
-            if hasattr(self, 'indicator_manager') and self.indicator_manager:
-                rsi = self.indicator_manager.get_rsi()
-                if rsi is not None:
-                    parts.append(f"RSI={rsi:.0f}")
-
-            # Get trend from last signal
-            if hasattr(self, 'last_signal') and self.last_signal:
-                confidence = self.last_signal.get('confidence', 'N/A')
-                parts.append(f"confidence={confidence}")
-
-                # Get judge decision info
-                judge = self.last_signal.get('judge_decision', {})
-                if judge:
-                    winning = judge.get('winning_side', 'N/A')
-                    parts.append(f"winning_side={winning}")
-
             # Get cached price for context
             if hasattr(self, '_cached_current_price') and self._cached_current_price:
                 parts.append(f"price=${self._cached_current_price:,.0f}")
+
+            # Get technical indicators from indicator_manager
+            if hasattr(self, 'indicator_manager') and self.indicator_manager:
+                # RSI
+                if hasattr(self.indicator_manager, 'rsi') and self.indicator_manager.rsi.initialized:
+                    rsi = self.indicator_manager.rsi.value * 100
+                    parts.append(f"RSI={rsi:.0f}")
+
+                # MACD direction
+                if hasattr(self.indicator_manager, 'macd') and self.indicator_manager.macd.initialized:
+                    macd = self.indicator_manager.macd.value
+                    macd_signal = self.indicator_manager.macd_signal.value if hasattr(self.indicator_manager, 'macd_signal') else 0
+                    macd_dir = "bullish" if macd > macd_signal else "bearish"
+                    parts.append(f"MACD={macd_dir}")
+
+                # BB position (requires current price)
+                if hasattr(self, '_cached_current_price') and self._cached_current_price:
+                    try:
+                        tech_data = self.indicator_manager.get_technical_data(self._cached_current_price)
+                        bb_pos = tech_data.get('bb_position', 0.5) * 100
+                        parts.append(f"BB={bb_pos:.0f}%")
+                    except Exception:
+                        pass
+
+            # Get confidence and winning side from last signal
+            if hasattr(self, 'last_signal') and self.last_signal:
+                confidence = self.last_signal.get('confidence', 'N/A')
+                parts.append(f"conf={confidence}")
+
+                judge = self.last_signal.get('judge_decision', {})
+                if judge:
+                    winning = judge.get('winning_side', 'N/A')
+                    parts.append(f"winner={winning}")
+
+            # Get sentiment data if available
+            if hasattr(self, 'latest_sentiment_data') and self.latest_sentiment_data:
+                ls_ratio = self.latest_sentiment_data.get('long_short_ratio')
+                if ls_ratio:
+                    sentiment = "crowded_long" if ls_ratio > 2.0 else "crowded_short" if ls_ratio < 0.5 else "neutral"
+                    parts.append(f"sentiment={sentiment}")
 
             return ", ".join(parts) if parts else "N/A"
 
@@ -2914,6 +3455,7 @@ class DeepSeekAIStrategy(Strategy):
                             'new_sl_price': new_sl_price,
                             'current_price': current_price,
                             'profit_pct': profit_pct,
+                            'side': side,  # v4.0: Pass side for direction-aware message
                         })
                         self.telegram_bot.send_message_sync(ts_msg)
                         self._last_trailing_stop_notify_time = current_time
@@ -3160,6 +3702,20 @@ class DeepSeekAIStrategy(Strategy):
             else:
                 close_side = OrderSide.BUY
                 side_str = "SHORT"
+
+            # v3.10: Cancel all pending orders BEFORE closing to prevent -2022 ReduceOnly rejection
+            try:
+                open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                if open_orders:
+                    self.log.info(f"🗑️ Cancelling {len(open_orders)} pending orders before close")
+                    self.cancel_all_orders(self.instrument_id)
+            except Exception as e:
+                # v3.10: ABORT close if cancel fails - user should retry
+                self.log.error(f"❌ Failed to cancel pending orders, aborting close: {e}")
+                return {
+                    'success': False,
+                    'error': f"Failed to cancel pending orders: {str(e)[:50]}. Please try again."
+                }
 
             # Submit close order
             self._submit_order(

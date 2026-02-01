@@ -3,6 +3,12 @@ Telegram Bot for Trading Notifications
 
 Provides real-time notifications for trading signals, order fills,
 position updates, and system status via Telegram.
+
+v2.0 Improvements (2026-02):
+- Async message queue (non-blocking)
+- Message persistence with SQLite
+- Alert convergence (deduplication)
+- Reduced timeout for faster failure detection
 """
 
 import asyncio
@@ -20,27 +26,42 @@ except ImportError:
     Bot = None
     TelegramError = Exception
 
+# Import message queue (optional, graceful degradation if not available)
+try:
+    from utils.telegram_queue import TelegramMessageQueue, MessagePriority
+    QUEUE_AVAILABLE = True
+except ImportError:
+    QUEUE_AVAILABLE = False
+    TelegramMessageQueue = None
+    MessagePriority = None
+
 
 class TelegramBot:
     """
     Telegram Bot for sending trading notifications.
-    
+
     Features:
     - Send formatted trading signals
     - Send order fill notifications
     - Send position updates
     - Send error/warning alerts
-    - Async message sending
-    - Rate limiting support
+    - Async message queue (v2.0 - non-blocking)
+    - Message persistence and retry (v2.0)
+    - Alert convergence (v2.0)
     """
-    
+
     def __init__(
         self,
         token: str,
         chat_id: str,
         logger: Optional[logging.Logger] = None,
         enabled: bool = True,
-        message_timeout: float = 30.0
+        message_timeout: float = 5.0,  # v2.0: Reduced from 30s to 5s
+        use_queue: bool = True,  # v2.0: Use async message queue
+        queue_db_path: str = "data/telegram_queue.db",
+        queue_max_retries: int = 3,
+        queue_alert_cooldown: int = 300,  # 5 minutes
+        queue_send_interval: float = 0.5,  # v2.0: Interval between sends (rate limit)
     ):
         """
         Initialize Telegram Bot.
@@ -56,7 +77,17 @@ class TelegramBot:
         enabled : bool
             Whether the bot is enabled (default: True)
         message_timeout : float
-            Timeout for sending messages (seconds), default: 30.0
+            Timeout for sending messages (seconds), default: 5.0
+        use_queue : bool
+            Use async message queue for non-blocking sends (default: True)
+        queue_db_path : str
+            Path to SQLite database for message persistence
+        queue_max_retries : int
+            Maximum retry attempts for failed messages
+        queue_alert_cooldown : int
+            Cooldown period for alert convergence (seconds)
+        queue_send_interval : float
+            Interval between sends in seconds (rate limiting), default: 0.5
         """
         if not TELEGRAM_AVAILABLE:
             raise ImportError(
@@ -78,6 +109,27 @@ class TelegramBot:
             self.logger.error(f"❌ Failed to initialize Telegram Bot: {e}")
             self.enabled = False
             raise
+
+        # v2.0: Initialize message queue
+        self.message_queue: Optional[TelegramMessageQueue] = None
+        self.use_queue = use_queue and QUEUE_AVAILABLE
+
+        if self.use_queue:
+            try:
+                self.message_queue = TelegramMessageQueue(
+                    send_func=self._send_direct,
+                    db_path=queue_db_path,
+                    max_retries=queue_max_retries,
+                    alert_cooldown=queue_alert_cooldown,
+                    send_interval=queue_send_interval,
+                    logger=self.logger,
+                )
+                self.message_queue.start()
+                self.logger.info("✅ Telegram message queue initialized")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Message queue init failed, using direct send: {e}")
+                self.message_queue = None
+                self.use_queue = False
 
     @staticmethod
     def escape_markdown(text: str) -> str:
@@ -161,21 +213,75 @@ class TelegramBot:
             self.logger.error(f"❌ Failed to send Telegram message: {e}")
             return False
     
-    def send_message_sync(self, message: str, **kwargs) -> bool:
+    def send_message_sync(
+        self,
+        message: str,
+        priority: Optional[int] = None,
+        use_queue: Optional[bool] = None,
+        **kwargs
+    ) -> bool:
         """
         Synchronous method to send Telegram message.
 
-        Uses the `requests` library to call Telegram API directly.
-        This is the recommended approach for sending messages from
-        synchronous code, as python-telegram-bot v20+ is fully async
-        and not thread-safe.
+        v2.0: Uses async message queue by default (non-blocking).
+        Falls back to direct send if queue not available.
 
-        Reference: https://github.com/python-telegram-bot/python-telegram-bot/discussions/4096
+        Parameters
+        ----------
+        message : str
+            Message text to send
+        priority : int, optional
+            Message priority (0=LOW, 1=NORMAL, 2=HIGH, 3=CRITICAL)
+            Higher priority messages are sent first.
+        use_queue : bool, optional
+            Override queue usage for this message.
+            Set to False for immediate blocking send.
+        **kwargs
+            Additional arguments (parse_mode, disable_notification)
+
+        Returns
+        -------
+        bool
+            True if enqueued/sent successfully
         """
         if not self.enabled:
             self.logger.debug("Telegram bot is disabled, skipping message")
             return False
 
+        # Determine whether to use queue
+        should_use_queue = use_queue if use_queue is not None else self.use_queue
+
+        # v2.0: Use queue for non-blocking send
+        if should_use_queue and self.message_queue:
+            # Convert priority to MessagePriority enum
+            if priority is None:
+                priority = 1  # NORMAL
+            if QUEUE_AVAILABLE and MessagePriority:
+                try:
+                    msg_priority = MessagePriority(priority)
+                except ValueError:
+                    msg_priority = MessagePriority.NORMAL
+            else:
+                msg_priority = priority
+
+            return self.message_queue.enqueue(
+                message=message,
+                priority=msg_priority,
+                **kwargs
+            )
+
+        # Fallback: Direct send (blocking)
+        return self._send_direct(message, **kwargs)
+
+    def _send_direct(self, message: str, **kwargs) -> bool:
+        """
+        Direct (blocking) message send via requests.
+
+        This is the actual send implementation used by both
+        direct calls and the message queue background thread.
+
+        Reference: https://github.com/python-telegram-bot/python-telegram-bot/discussions/4096
+        """
         import requests
 
         parse_mode = kwargs.get('parse_mode', 'Markdown')
@@ -195,7 +301,7 @@ class TelegramBot:
             result = response.json()
 
             if result.get('ok'):
-                self.logger.info(f"📱 Telegram message sent: {message[:50]}...")
+                self.logger.debug(f"📱 Telegram message sent: {message[:50]}...")
                 return True
 
             # Handle Markdown parse errors - retry without formatting
@@ -217,31 +323,80 @@ class TelegramBot:
         except Exception as e:
             self.logger.error(f"❌ Error sending Telegram message: {e}")
             return False
+
+    def get_queue_stats(self) -> Dict[str, Any]:
+        """Get message queue statistics (v2.0)."""
+        if self.message_queue:
+            return self.message_queue.get_stats()
+        return {"queue_enabled": False}
+
+    def stop_queue(self):
+        """Stop the message queue (call on shutdown)."""
+        if self.message_queue:
+            self.message_queue.stop()
+            self.logger.info("🛑 Telegram message queue stopped")
     
     # Message Formatters
     
     def format_startup_message(self, instrument_id: str, config: Dict[str, Any]) -> str:
-        """Format strategy startup notification."""
+        """
+        Format strategy startup notification (v4.0 - dynamic content).
+
+        Parameters
+        ----------
+        instrument_id : str
+            Trading instrument identifier
+        config : dict
+            Strategy configuration containing:
+            - timeframe: str (e.g., "15m", "1m", "4h")
+            - enable_auto_sl_tp: bool
+            - enable_trailing_stop: bool
+            - enable_bracket_orders: bool (implied by enable_oco)
+            - mtf_enabled: bool
+            - sr_hard_control_enabled: bool
+        """
         safe_instrument = self.escape_markdown(str(instrument_id))
+
+        # Extract timeframe from config (default to 15m)
+        timeframe = config.get('timeframe', '15m')
+        # Convert to Chinese display format
+        timeframe_map = {
+            '1m': '1 分钟', '5m': '5 分钟', '15m': '15 分钟', '30m': '30 分钟',
+            '1h': '1 小时', '4h': '4 小时', '1d': '1 天',
+        }
+        timeframe_cn = timeframe_map.get(timeframe, timeframe)
+
+        # Build feature list dynamically based on config
+        features = []
+        if config.get('enable_auto_sl_tp', True):
+            features.append("• 自动止损/止盈")
+        if config.get('enable_oco', True):
+            features.append("• Bracket Orders (NautilusTrader)")
+        if config.get('enable_trailing_stop', False):
+            features.append("• 移动止损")
+        if config.get('mtf_enabled', False):
+            features.append("• 多时间框架分析 (MTF)")
+        if config.get('sr_hard_control_enabled', True):
+            features.append("• S/R Zone 硬风控 (v3.8)")
+        features.append("• TradingAgents AI 决策")  # Always enabled
+
+        features_str = '\n'.join(features) if features else "• 基础策略"
+
         return f"""
 🚀 *策略已启动*
 
 📊 *交易对*: {safe_instrument}
-⏰ *周期*: 15 分钟
+⏰ *周期*: {timeframe_cn}
 🕐 *时间*: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
 
 ✅ *已启用功能*:
-• 自动止损/止盈
-• Bracket Orders (NautilusTrader)
-• 移动止损
-• S/R Zone 硬风控 (v3.8)
-• TradingAgents AI 决策
+{features_str}
 
 🎯 策略正在监控市场...
 """
     
     def format_trade_signal(self, signal_data: Dict[str, Any]) -> str:
-        """Format trading signal notification (v2.0 - TradingAgents enhanced)."""
+        """Format trading signal notification (v3.12 - Extended signal types)."""
         signal = signal_data.get('signal', 'UNKNOWN')
         confidence = signal_data.get('confidence', 'UNKNOWN')
         price = signal_data.get('price', 0.0)
@@ -260,11 +415,23 @@ class TelegramBot:
         winning_side = signal_data.get('winning_side', '')
         debate_summary = signal_data.get('debate_summary', '')
 
-        # Signal emoji
-        signal_emoji = "🟢" if signal == "BUY" else "🔴" if signal == "SELL" else "⚪"
+        # v3.12: Extended signal emoji mapping
+        signal_emoji_map = {
+            'LONG': '🟢', 'BUY': '🟢',
+            'SHORT': '🔴', 'SELL': '🔴',
+            'CLOSE': '🔵', 'REDUCE': '🟡',
+            'HOLD': '⚪'
+        }
+        signal_emoji = signal_emoji_map.get(signal, '❓')
 
-        # 信号中文映射
-        signal_cn = {'BUY': '买入', 'SELL': '卖出', 'HOLD': '观望'}.get(signal, signal)
+        # v3.12: Extended signal Chinese mapping
+        signal_cn_map = {
+            'LONG': '做多', 'BUY': '买入',
+            'SHORT': '做空', 'SELL': '卖出',
+            'CLOSE': '平仓', 'REDUCE': '减仓',
+            'HOLD': '观望'
+        }
+        signal_cn = signal_cn_map.get(signal, signal)
         confidence_cn = {'HIGH': '高', 'MEDIUM': '中', 'LOW': '低'}.get(confidence, confidence)
 
         # Build message
@@ -377,7 +544,127 @@ class TelegramBot:
         message += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
 
         return message
-    
+
+    def format_trade_execution(self, execution_data: Dict[str, Any]) -> str:
+        """
+        Format unified trade execution notification (v4.0).
+
+        Combines signal, fill, and position info into a single comprehensive message.
+        Replaces separate signal/fill/position notifications to reduce message spam.
+
+        Parameters
+        ----------
+        execution_data : dict
+            Contains:
+            - signal: BUY/SELL
+            - confidence: HIGH/MEDIUM/LOW
+            - side: LONG/SHORT
+            - quantity: float (BTC)
+            - entry_price: float
+            - sl_price: float (optional)
+            - tp_price: float (optional)
+            - rsi: float (optional)
+            - macd: float (optional)
+            - winning_side: str (Bull/Bear, optional)
+            - reasoning: str (optional)
+            - action_taken: str (optional, v3.11) - specific action like 开多/反转/加仓
+        """
+        signal = execution_data.get('signal', 'UNKNOWN')
+        confidence = execution_data.get('confidence', 'UNKNOWN')
+        side = execution_data.get('side', 'UNKNOWN')
+        quantity = execution_data.get('quantity', 0.0)
+        entry_price = execution_data.get('entry_price', 0.0)
+
+        # Risk management
+        sl_price = execution_data.get('sl_price')
+        tp_price = execution_data.get('tp_price')
+
+        # Technical (optional)
+        rsi = execution_data.get('rsi')
+        macd = execution_data.get('macd')
+
+        # AI analysis (optional)
+        winning_side = execution_data.get('winning_side', '')
+        reasoning = execution_data.get('reasoning', '')
+
+        # v3.11: Specific action taken (开多/平空/反转/加仓/减仓)
+        action_taken = execution_data.get('action_taken', '')
+
+        # v3.12: Extended signal emoji mapping
+        signal_emoji_map = {
+            'LONG': '🟢', 'BUY': '🟢',
+            'SHORT': '🔴', 'SELL': '🔴',
+            'CLOSE': '🔵', 'REDUCE': '🟡',
+            'HOLD': '⚪'
+        }
+        signal_emoji = signal_emoji_map.get(signal, '⚪')
+        side_cn = "多" if side == "LONG" else "空" if side == "SHORT" else side
+        confidence_cn = {'HIGH': '高', 'MEDIUM': '中', 'LOW': '低'}.get(confidence, confidence)
+
+        # v3.12: Extended signal Chinese mapping for action display
+        signal_cn_map = {
+            'LONG': '做多', 'BUY': '买入',
+            'SHORT': '做空', 'SELL': '卖出',
+            'CLOSE': '平仓', 'REDUCE': '减仓',
+            'HOLD': '观望'
+        }
+
+        # v3.11: Determine action display
+        # Priority: action_taken > generic signal translation
+        if action_taken:
+            # Use specific action (e.g., "开多仓 0.001 BTC", "反转: 多→空")
+            action_display = action_taken
+        else:
+            # Fallback to generic signal (v3.12 extended)
+            action_display = signal_cn_map.get(signal, signal)
+
+        # Build message
+        signal_cn = signal_cn_map.get(signal, signal)
+        msg = f"""{signal_emoji} *交易执行成功*
+
+*动作*: {action_display}
+*信号*: {signal_cn} (信心: {confidence_cn})
+*成交*: {quantity:.4f} BTC @ ${entry_price:,.2f}
+*金额*: ${quantity * entry_price:,.2f}
+"""
+
+        # Add technical indicators if available
+        if rsi is not None or macd is not None:
+            msg += "\n📊 *技术指标*:\n"
+            if rsi is not None:
+                msg += f"  • RSI: {rsi:.1f}\n"
+            if macd is not None:
+                msg += f"  • MACD: {macd:.4f}\n"
+
+        # Add risk management
+        if sl_price or tp_price:
+            msg += "\n🛡️ *风险管理*:\n"
+            if sl_price:
+                sl_pct = ((sl_price / entry_price) - 1) * 100 if entry_price > 0 else 0
+                if side == "SHORT":
+                    sl_pct = -sl_pct  # SHORT position: SL above entry is positive distance
+                msg += f"  • 止损: ${sl_price:,.2f} ({abs(sl_pct):.2f}%)\n"
+            if tp_price:
+                tp_pct = ((tp_price / entry_price) - 1) * 100 if entry_price > 0 else 0
+                if side == "SHORT":
+                    tp_pct = -tp_pct  # SHORT position: TP below entry is positive profit
+                msg += f"  • 止盈: ${tp_price:,.2f} (+{abs(tp_pct):.2f}%)\n"
+
+        # Add AI analysis if available
+        if winning_side or reasoning:
+            msg += "\n🤖 *AI 分析*:\n"
+            if winning_side:
+                side_emoji_ai = "🐂" if winning_side.upper() == "BULL" else "🐻" if winning_side.upper() == "BEAR" else "⚖️"
+                side_cn_ai = "多方" if winning_side.upper() == "BULL" else "空方" if winning_side.upper() == "BEAR" else winning_side
+                msg += f"  {side_emoji_ai} {side_cn_ai}胜出\n"
+            if reasoning:
+                safe_reasoning = self.escape_markdown(reasoning[:100])
+                msg += f"  {safe_reasoning}{'...' if len(reasoning) > 100 else ''}\n"
+
+        msg += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+
+        return msg
+
     def format_error_alert(self, error_data: Dict[str, Any]) -> str:
         """Format error/warning notification."""
         level = error_data.get('level', 'ERROR')  # ERROR, WARNING, CRITICAL
@@ -412,11 +699,34 @@ class TelegramBot:
     # add a new formatter here.
 
     def format_trailing_stop_update(self, ts_data: Dict[str, Any]) -> str:
-        """Format trailing stop update notification."""
+        """
+        Format trailing stop update notification (v4.0 - direction aware).
+
+        Parameters
+        ----------
+        ts_data : dict
+            Contains:
+            - old_sl_price: float
+            - new_sl_price: float
+            - current_price: float
+            - profit_pct: float
+            - side: str (LONG or SHORT, optional)
+        """
         old_sl = ts_data.get('old_sl_price', 0.0)
         new_sl = ts_data.get('new_sl_price', 0.0)
         current_price = ts_data.get('current_price', 0.0)
         profit_pct = ts_data.get('profit_pct', 0.0)
+        side = ts_data.get('side', 'LONG')  # Default to LONG for backward compatibility
+
+        # Direction-aware emoji and text
+        if side == 'SHORT':
+            # SHORT position: stop loss moves DOWN to lock profit
+            direction_emoji = "⬇️"
+            direction_text = "止损已下移，锁定更多利润！"
+        else:
+            # LONG position: stop loss moves UP to lock profit
+            direction_emoji = "⬆️"
+            direction_text = "止损已上移，锁定更多利润！"
 
         return f"""
 🔄 *移动止损更新*
@@ -426,9 +736,9 @@ class TelegramBot:
 
 *止损价*:
   原: ${old_sl:,.2f}
-  新: ${new_sl:,.2f} ⬆️
+  新: ${new_sl:,.2f} {direction_emoji}
 
-🛡️ 止损已上移，锁定更多利润！
+🛡️ {direction_text}
 
 ⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
 """
@@ -482,8 +792,13 @@ class TelegramBot:
         block_long = sr_zone.get('block_long', False)
         block_short = sr_zone.get('block_short', False)
 
-        # Signal emoji
-        signal_emoji = {'BUY': '🟢', 'SELL': '🔴', 'HOLD': '⚪'}.get(signal, '❓')
+        # v3.12: Extended signal emoji mapping
+        signal_emoji = {
+            'LONG': '🟢', 'BUY': '🟢',
+            'SHORT': '🔴', 'SELL': '🔴',
+            'CLOSE': '🔵', 'REDUCE': '🟡',
+            'HOLD': '⚪'
+        }.get(signal, '❓')
 
         # Position emoji
         if position_side == 'LONG':
@@ -512,6 +827,25 @@ class TelegramBot:
         msg += f"💵 价格: ${price:,.2f}\n"
         msg += f"📈 RSI: {rsi:.1f}\n"
         msg += f"🎯 信号: {signal_emoji} {signal} ({confidence})\n"
+
+        # v4.1 Signal Execution Status (if available)
+        signal_status = heartbeat_data.get('signal_status') or {}
+        if signal_status:
+            executed = signal_status.get('executed', False)
+            reason = signal_status.get('reason', '')
+            action_taken = signal_status.get('action_taken', '')
+
+            if executed:
+                status_emoji = '✅'
+                status_text = f'已执行 ({action_taken})' if action_taken else '已执行'
+            elif reason:
+                status_emoji = '⏸️'
+                status_text = f'未执行 ({reason})'
+            else:
+                status_emoji = '⏳'
+                status_text = '等待中'
+
+            msg += f"📋 状态: {status_emoji} {status_text}\n"
 
         # v3.8 S/R Zone Hard Control (if available)
         if nearest_support is not None or nearest_resistance is not None:

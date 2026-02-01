@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.15 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.16 (与实盘 100% 一致)
+
+v11.16 更新 - S/R Zone v2.0 增强显示:
+- 使用 calculate_with_detailed_report() 获取详细报告
+- 显示 S/R Zone level (MAJOR/INTERMEDIATE/MINOR)
+- 显示 S/R Zone source_type (ORDER_FLOW/TECHNICAL/STRUCTURAL)
+- 添加 AI 详细报告预览 (前 15 行)
+- 支持 AI 验证 S/R 计算结果
 
 v11.15 更新 - 添加记忆系统和提示词验证 (v3.12):
 - 添加 [9.6/14] 记忆系统健康检查 (memory_file 加载/保存/格式验证)
@@ -82,22 +89,29 @@ v11.3 更新 - TradingAgents v3.3 数据标准化:
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
-3. 使用 TradingAgents 层级决策架构 (v3.4)
+3. 使用 TradingAgents 层级决策架构 (v3.12)
 4. 检查 Binance 真实持仓
 5. 模拟完整的 _execute_trade 流程
 6. 输出实盘环境下会产生的真实结果
 
-当前架构 (TradingAgents v3.4 - Prompt 结构优化):
+当前架构 (TradingAgents v3.12 - AI 完全自主决策):
 - System Prompt: 角色定义 + INDICATOR_DEFINITIONS (知识背景)
-- User Prompt: 原始数据 + 任务指令 (当前任务)
+- User Prompt: 原始数据 + S/R Zone v2.0 + 任务指令
 - Phase 1: Bull/Bear 辩论 (2 AI calls) - AI 自主分析数据
 - Phase 2: Judge 决策 (1 AI call) - AI 自主评估辩论，做出决策
 - Phase 3: Risk 评估 (1 AI call) - AI 自主设定 SL/TP/仓位
-- 本地风控: S/R Zone Block (执行层风控，防止追墙下单)
+- 本地风控: S/R Zone v2.0 Block (执行层风控，含 level/source_type)
 - 设计理念: "Autonomy is non-negotiable" - AI 应像人类分析师思考
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
-Prompt 结构 (v3.4):
+信号类型 (v3.12):
+- LONG: 开多/加仓 (替代旧版 BUY)
+- SHORT: 开空/加仓 (替代旧版 SELL)
+- CLOSE: 完全平仓 (不反向开仓)
+- REDUCE: 部分减仓 (保持方向)
+- HOLD: 不操作
+
+Prompt 结构 (v3.12):
 ┌─────────────────────────────────────────┐
 │ System Prompt                           │
 │ ├─ 角色定义 (Bull/Bear/Judge Analyst)   │
@@ -109,15 +123,16 @@ Prompt 结构 (v3.4):
 │ └─ TASK (任务指令)                      │
 └─────────────────────────────────────────┘
 
-传给 AI 的数据 (v3.4):
-- 技术指标: price, SMA 5/20/50, RSI, MACD, BB (原始数值)
-- 订单流: buy_ratio, recent_10_bars (原始数值)
+传给 AI 的数据 (v3.12):
+- 技术指标: price, SMA 5/20/50/200, RSI, MACD, BB (原始数值)
+- 订单流: buy_ratio, recent_10_bars, volume_usdt (原始数值)
 - 衍生品: OI, funding_rate, liquidations (原始数值)
 - 情绪: long/short ratio (原始数值)
+- S/R Zones: level, source_type, order_walls (v2.0 详细数据)
 
-职责划分 (v3.4):
+职责划分 (v3.12):
 - AI 职责: 所有判断 (趋势、支撑阻力、信号方向、SL/TP)
-- 本地职责: 只收集原始数据，不做预解读
+- 本地职责: 只收集原始数据 + S/R Zone 计算 + 执行层风控
 
 历史更新:
 v11.7:
@@ -409,7 +424,7 @@ def create_bar_from_kline(kline: list, bar_type: str) -> MockBar:
 # =============================================================================
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.15')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.16')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -654,7 +669,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.14 (S/R Zone v3.8){mode_str}")
+print(f"  实盘信号诊断工具 v11.16 (S/R Zone v2.0){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -865,14 +880,11 @@ if not SUMMARY_MODE and mtf_enabled:
         print("     → 查看服务日志检查初始化状态:")
         print("       journalctl -u nautilus-trader | grep -i 'mtf\\|timeframe\\|initialized'")
 
-        # v3.3 架构更新说明
+        # v3.3 架构说明
         print()
-        print("  📋 MTF v3.3 架构更新:")
-        print("     ❌ 已移除: DecisionState 枚举 (ALLOW_LONG/SHORT/WAIT)")
-        print("     ❌ 已移除: get_decision_state(), set_decision_state()")
-        print("     ❌ 已移除: get_summary(), check_execution_confirmation()")
-        print("     ✅ 保留: 三层数据收集 (1D/4H/15M)")
-        print("     ✅ 保留: get_technical_data_for_layer() - 仅提供原始数据")
+        print("  📋 MTF v3.3 架构说明:")
+        print("     ✅ 三层数据收集 (1D/4H/15M)")
+        print("     ✅ get_technical_data_for_layer() - 仅提供原始数据")
         print("     → 设计理念: 所有决策交由 AI 完成，本地仅提供数据")
 
         # 检查预取配置
@@ -1869,19 +1881,7 @@ mtf_filter_reason = None
 print("  📊 TradingAgents v3.3 设计理念:")
 print("     \"Autonomy is non-negotiable\" - AI 像人类分析师一样思考")
 print("     AI 接收原始数值 + INDICATOR_DEFINITIONS 自主解读")
-print()
-print("  ✅ 已移除的本地硬编码规则:")
-print("     ❌ 趋势方向权限检查 (allow_long/allow_short)")
-print("     ❌ 支撑/阻力位边界检查 (proximity_threshold)")
-print("     ❌ RSI 入场范围限制")
-print("     ❌ 确认计数框架 (bullish_count/bearish_count)")
-print()
-print("  ✅ 不再传给 AI 的预计算标签 (v3.3 移除):")
-print("     ❌ support/resistance - AI 用 SMA_50/BB 作动态支撑阻力")
-print("        (但仍保留用于技术回退计算 calculate_technical_sltp)")
-print("     ❌ cvd_trend - AI 从 recent_10_bars 推断")
-print("     ❌ overall_trend - AI 从 SMA 关系推断")
-print("     ❌ Interpretation: Bullish/Bearish - AI 从原始比例推断")
+print("     本地仅提供数据，不做规则判断或信号过滤")
 print()
 print("  📋 AI 接收的数据 (原始数值，由 AI 自主解读):")
 print(f"     - Price: ${current_price:,.2f}")
@@ -1933,7 +1933,7 @@ print("     - 本地: 仅收集三层时间框架数据 (1D/4H/15M)")
 print("     - AI: 所有交易决策由 MultiAgent 完成 (Bull/Bear/Judge)")
 print("     - 无本地决策逻辑 (已移除 DecisionState/ALLOW_LONG/SHORT/WAIT)")
 print()
-print("  ✅ TradingAgents v3.4 架构验证完成")
+print("  ✅ TradingAgents v3.12 架构验证完成")
 print()
 
 # =============================================================================
@@ -1966,7 +1966,9 @@ final_sl = None
 final_tp = None
 sltp_source = "N/A"
 
-if final_signal in ['BUY', 'SELL']:
+# v3.12: Support new signal types (LONG, SHORT) and legacy (BUY, SELL)
+tradable_signals = ['BUY', 'SELL', 'LONG', 'SHORT']
+if final_signal in tradable_signals:
     print("  📊 SL/TP 验证 (模拟 _submit_bracket_order 逻辑):")
     print("-" * 70)
 
@@ -2073,18 +2075,21 @@ if not passes_threshold:
 else:
     would_trade = True
 
-# 2. 检查是否 HOLD
+# 2. 检查信号类型 (v3.12: Support LONG/SHORT/CLOSE/REDUCE/HOLD)
 if final_signal == 'HOLD':
     print("  ℹ️ Signal is HOLD → No action")
     would_trade = False
-elif final_signal in ['BUY', 'SELL']:
+elif final_signal in ['CLOSE', 'REDUCE']:
+    print(f"  ℹ️ Signal is {final_signal} → Position adjustment (close/reduce)")
+    would_trade = False  # 平仓/减仓不需要计算新仓位
+elif final_signal in tradable_signals:
     print(f"  ✅ Signal is {final_signal} → Actionable")
 else:
     print(f"  ❌ Signal is {final_signal} → Error state")
     would_trade = False
 
 # 3. 计算仓位大小 (使用共享模块 calculate_position_size - 100% 一致)
-if would_trade and final_signal in ['BUY', 'SELL']:
+if would_trade and final_signal in tradable_signals:
     print()
     print("  模拟仓位计算 (调用共享 calculate_position_size):")
 
@@ -2112,16 +2117,44 @@ if would_trade and final_signal in ['BUY', 'SELL']:
         logger=None,  # 静默模式，我们手动打印
     )
 
-    # 显示计算详情
-    print(f"     Base: ${calc_details['base_usdt']}")
-    print(f"     × Confidence Mult: {calc_details['conf_mult']}")
-    print(f"     × Trend Mult: {calc_details['trend_mult']} (trend={calc_details['trend']})")
-    print(f"     × RSI Mult: {calc_details['rsi_mult']} (RSI={calc_details['rsi']:.1f})")
-    print(f"     = ${calc_details['suggested_usdt']:.2f}")
-    print(f"     Max allowed: ${calc_details['max_usdt']:.2f}")
-    print(f"     Final: ${calc_details['final_usdt']:.2f}")
+    # 显示计算详情 (根据 method 显示不同内容)
+    method = calc_details.get('method', 'unknown')
+    print(f"     Method: {method}")
+
+    if method == 'hybrid_atr_ai':
+        # v3.13 Hybrid ATR-AI 方法
+        print(f"     Equity: ${calc_details.get('equity', 0):,.2f}")
+        print(f"     Risk/Trade: {calc_details.get('risk_per_trade_pct', 0)*100:.1f}%")
+        print(f"     Dollar Risk: ${calc_details.get('dollar_risk', 0):,.2f}")
+        print(f"     ATR: ${calc_details.get('atr', 0):,.2f}")
+        print(f"     Stop Distance: ${calc_details.get('stop_distance', 0):,.2f} ({calc_details.get('stop_pct', 0):.2f}%)")
+        print(f"     ATR Position: ${calc_details.get('atr_position_usdt', 0):,.2f}")
+        print(f"     AI Size: {calc_details.get('ai_size_pct', 'N/A')}% ({calc_details.get('ai_source', 'unknown')})")
+        print(f"     AI Multiplier: {calc_details.get('ai_multiplier', 1.0):.2f}")
+        print(f"     Risk Multiplier: {calc_details.get('risk_multiplier', 1.0):.2f}")
+    elif method == 'atr_based':
+        # ATR-Based 方法
+        print(f"     Equity: ${calc_details.get('equity', 0):,.2f}")
+        print(f"     Risk/Trade: {calc_details.get('risk_per_trade_pct', 0)*100:.1f}%")
+        print(f"     ATR: ${calc_details.get('atr', 0):,.2f}")
+        print(f"     Stop Distance: ${calc_details.get('stop_distance', 0):,.2f} ({calc_details.get('stop_pct', 0):.2f}%)")
+        print(f"     Position USDT: ${calc_details.get('position_usdt', 0):,.2f}")
+    elif method == 'ai_controlled':
+        # AI 控制方法
+        print(f"     Equity: ${calc_details.get('equity', 0):,.2f}")
+        print(f"     AI Size: {calc_details.get('ai_size_pct', 0)}%")
+    else:
+        # Legacy fixed_pct 方法
+        print(f"     Base: ${calc_details.get('base_usdt', 100)}")
+        print(f"     × Confidence Mult: {calc_details.get('conf_mult', 1.0)}")
+        print(f"     × Trend Mult: {calc_details.get('trend_mult', 1.0)} (trend={calc_details.get('trend', 'N/A')})")
+        print(f"     × RSI Mult: {calc_details.get('rsi_mult', 1.0)} (RSI={calc_details.get('rsi', 50):.1f})")
+        print(f"     = ${calc_details.get('suggested_usdt', 0):.2f}")
+
+    print(f"     Max allowed: ${calc_details.get('max_usdt', 0):,.2f}")
+    print(f"     Final: ${calc_details.get('final_usdt', 0):,.2f}")
     print(f"     BTC Quantity: {btc_quantity:.4f} BTC")
-    print(f"     Notional: ${calc_details['notional']:.2f}")
+    print(f"     Notional: ${calc_details.get('notional', btc_quantity * price_data.get('price', 0)):,.2f}")
     if calc_details.get('adjusted'):
         print(f"     ⚠️ Quantity adjusted to meet minimum notional")
 
@@ -2136,7 +2169,7 @@ if would_trade and final_signal in ['BUY', 'SELL']:
     # 4. 检查现有持仓 (与 _manage_existing_position 逻辑一致)
     print()
     print("  模拟持仓管理检查:")
-    target_side = 'long' if final_signal == 'BUY' else 'short'
+    target_side = 'long' if final_signal in ['BUY', 'LONG'] else 'short'
 
     if current_position:
         current_side = current_position['side']
@@ -2186,13 +2219,13 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents v3.8 - AI 决策 + 执行层风控)")
+print("  诊断总结 (TradingAgents v3.12 - AI 决策 + S/R Zone v2.0 风控)")
 print("=" * 70)
 print()
 
-# 显示架构状态 (v3.8: S/R Zone 执行层风控)
-print(f"  📊 架构: TradingAgents v3.8 - AI 决策 + 执行层风控")
-print(f"     本地风控: S/R Zone Block (执行层，非方向预测)")
+# 显示架构状态 (S/R Zone v2.0 执行层风控)
+print(f"  📊 架构: TradingAgents v3.12 - AI 决策 + S/R Zone v2.0 风控")
+print(f"     本地风控: S/R Zone v2.0 Block (执行层，含 level/source_type)")
 print()
 
 # TradingAgents: Judge 决策即最终决策
@@ -2212,7 +2245,7 @@ else:
     print(f"  📊 Current Position: None")
 print()
 
-if would_trade and final_signal in ['BUY', 'SELL']:
+if would_trade and final_signal in tradable_signals:
     print(f"  🟢 WOULD EXECUTE: {final_signal} {btc_quantity:.4f} BTC @ ${current_price:,.2f}")
     print(f"     Notional: ${btc_quantity * current_price:.2f}")
     # 显示最终的 SL/TP (经过验证或技术分析计算)
@@ -2226,11 +2259,19 @@ elif final_signal == 'HOLD':
     print("  🟡 NO TRADE: Judge recommends HOLD")
     reason = signal_data.get('reason', 'N/A')
     print(f"     Reason: {reason[:100]}..." if len(reason) > 100 else f"     Reason: {reason}")
-elif not would_trade and final_signal in ['BUY', 'SELL']:
-    # 信号是 BUY/SELL 但因为持仓原因不会执行
+elif final_signal in ['CLOSE', 'REDUCE']:
+    # v3.12: CLOSE/REDUCE signals
+    print(f"  🔵 POSITION ADJUSTMENT: {final_signal}")
+    if final_signal == 'CLOSE':
+        print(f"     → 将平仓所有持仓")
+    else:
+        position_size_pct = signal_data.get('position_size_pct', 50)
+        print(f"     → 将减仓到 {position_size_pct}%")
+elif not would_trade and final_signal in tradable_signals:
+    # 信号是交易信号但因为持仓原因不会执行
     print(f"  🔴 NO TRADE: Signal={final_signal}, but blocked by position management")
     if current_position:
-        target_side = 'long' if final_signal == 'BUY' else 'short'
+        target_side = 'long' if final_signal in ['BUY', 'LONG'] else 'short'
         if current_position['side'] == target_side:
             print(f"     → 已有同方向持仓 ({current_position['side'].upper()} {current_position['quantity']:.4f} BTC)")
             print(f"     → 仓位差异低于调整阈值，无需操作")
@@ -2249,7 +2290,9 @@ print("  📱 实盘执行流程:")
 print("-" * 70)
 print()
 
-if final_signal in ['BUY', 'SELL']:
+# v3.12: Support all signal types
+all_signals = tradable_signals + ['CLOSE', 'REDUCE', 'HOLD']
+if final_signal in tradable_signals:
     print(f"  Step 1: AI 分析完成 → Signal = {final_signal}")
     print(f"  Step 2: 📱 发送 Telegram 信号通知")
     print(f"          → 此时你会收到交易信号消息")
@@ -2264,9 +2307,18 @@ if final_signal in ['BUY', 'SELL']:
     else:
         print(f"          → ❌ 被持仓管理阻止")
         print(f"          → 🔴 交易被跳过，但 Telegram 信号已发送!")
-else:
+elif final_signal in ['CLOSE', 'REDUCE']:
+    # v3.12: CLOSE/REDUCE signals
     print(f"  Step 1: AI 分析完成 → Signal = {final_signal}")
-    print(f"  Step 2: ❌ 非 BUY/SELL 信号，不发送 Telegram")
+    print(f"  Step 2: 📱 发送 Telegram 通知 (平仓/减仓)")
+    if final_signal == 'CLOSE':
+        print(f"  Step 3: 调用 _close_position_only() 平仓")
+    else:
+        print(f"  Step 3: 调用 _reduce_position() 减仓")
+else:
+    # HOLD or unknown signals
+    print(f"  Step 1: AI 分析完成 → Signal = {final_signal}")
+    print(f"  Step 2: ❌ HOLD 信号，不执行交易")
     print(f"  Step 3: _execute_trade 直接返回")
 
 print()
@@ -2809,12 +2861,13 @@ if not SUMMARY_MODE:
         print()
         print("  ✅ MTF v2.1 + Order Book 组件集成测试完成")
 
-        # 9.5.5 测试 S/R Zone Calculator (v3.8 新增)
+        # 9.5.5 测试 S/R Zone Calculator (v2.0 新增 level/source_type)
         print()
-        print("  [9.5.5] S/R Zone Calculator 测试 (v3.8):")
+        print("  [9.5.5] S/R Zone Calculator 测试 (v2.0):")
         try:
-            from utils.sr_zone_calculator import SRZoneCalculator
+            from utils.sr_zone_calculator import SRZoneCalculator, SRLevel, SRSourceType
             print("     ✅ SRZoneCalculator 导入成功")
+            print(f"     ✅ SRLevel/SRSourceType 类可用")
 
             # 获取当前价格和技术数据
             test_price = current_price if 'current_price' in dir() and current_price > 0 else 100000
@@ -2848,13 +2901,13 @@ if not SUMMARY_MODE:
                         'ask_anomalies': anomalies.get('ask_anomalies', []),
                     }
 
-            # 计算 S/R Zones
+            # 计算 S/R Zones (v2.0: 使用详细报告方法)
             sr_calc = SRZoneCalculator(
                 cluster_pct=0.5,
                 zone_expand_pct=0.1,
                 hard_control_threshold_pct=1.0,
             )
-            sr_result = sr_calc.calculate(
+            sr_result = sr_calc.calculate_with_detailed_report(
                 current_price=test_price,
                 bb_data=test_bb_data,
                 sma_data=test_sma_data,
@@ -2864,23 +2917,25 @@ if not SUMMARY_MODE:
             print(f"     📊 当前价格: ${test_price:,.0f}")
             print(f"     📊 数据源: BB={'✅' if test_bb_data else '❌'}, SMA={'✅' if test_sma_data else '❌'}, OrderBook={'✅' if test_orderbook_anomalies else '❌'}")
 
-            # 显示阻力位
+            # 显示阻力位 (v2.0: 增加 level 和 source_type)
             resistance_zones = sr_result.get('resistance_zones', [])
             print(f"     🔴 阻力位: {len(resistance_zones)} zones")
             for i, zone in enumerate(resistance_zones[:2]):  # 最多显示2个
                 wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
                 print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
+                print(f"           Level: {zone.level} | Type: {zone.source_type}")
                 print(f"           Sources: {', '.join(zone.sources)}")
 
-            # 显示支撑位
+            # 显示支撑位 (v2.0: 增加 level 和 source_type)
             support_zones = sr_result.get('support_zones', [])
             print(f"     🟢 支撑位: {len(support_zones)} zones")
             for i, zone in enumerate(support_zones[:2]):  # 最多显示2个
                 wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
                 print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
+                print(f"           Level: {zone.level} | Type: {zone.source_type}")
                 print(f"           Sources: {', '.join(zone.sources)}")
 
-            # v11.14: 显示硬风控状态，增加触发说明
+            # v11.14/v11.16: 显示硬风控状态，增加触发说明 (支持 LONG/SHORT 和 BUY/SELL)
             hard_control = sr_result.get('hard_control', {})
             block_long = hard_control.get('block_long', False)
             block_short = hard_control.get('block_short', False)
@@ -2888,10 +2943,10 @@ if not SUMMARY_MODE:
 
             print(f"     ⚠️ 硬风控状态:")
 
-            # Block LONG 状态和触发情况
+            # Block LONG 状态和触发情况 (v3.12: 支持 LONG 和 BUY)
             if block_long:
-                if ai_signal == 'BUY':
-                    print(f"        Block LONG: True → ✅ 已触发 (AI 输出 BUY 被阻止)")
+                if ai_signal in ('LONG', 'BUY'):
+                    print(f"        Block LONG: True → ✅ 已触发 (AI 输出 {ai_signal} 被阻止)")
                 elif ai_signal == 'HOLD':
                     print(f"        Block LONG: True (AI 输出 HOLD，未触发)")
                 else:
@@ -2899,10 +2954,10 @@ if not SUMMARY_MODE:
             else:
                 print(f"        Block LONG: False")
 
-            # Block SHORT 状态和触发情况
+            # Block SHORT 状态和触发情况 (v3.12: 支持 SHORT 和 SELL)
             if block_short:
-                if ai_signal == 'SELL':
-                    print(f"        Block SHORT: True → ✅ 已触发 (AI 输出 SELL 被阻止)")
+                if ai_signal in ('SHORT', 'SELL'):
+                    print(f"        Block SHORT: True → ✅ 已触发 (AI 输出 {ai_signal} 被阻止)")
                 elif ai_signal == 'HOLD':
                     print(f"        Block SHORT: True (AI 输出 HOLD，未触发)")
                 else:
@@ -2917,7 +2972,19 @@ if not SUMMARY_MODE:
             if block_long or block_short:
                 print(f"        📝 说明: Block 仅在 AI 输出对应方向时触发")
 
-            print("     ✅ S/R Zone Calculator 测试完成")
+            # v2.0: 显示详细 AI 报告预览
+            ai_detailed_report = sr_result.get('ai_detailed_report', '')
+            if ai_detailed_report:
+                print()
+                print("     📄 AI 详细报告预览 (v2.0):")
+                # 只显示前 15 行作为预览
+                report_lines = ai_detailed_report.split('\n')
+                for line in report_lines[:15]:
+                    print(f"        {line}")
+                if len(report_lines) > 15:
+                    print(f"        ... (还有 {len(report_lines) - 15} 行)")
+
+            print("     ✅ S/R Zone Calculator 测试完成 (v2.0)")
 
         except ImportError as e:
             print(f"     ❌ 无法导入 SRZoneCalculator: {e}")
@@ -3754,8 +3821,8 @@ if not SUMMARY_MODE:
     print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
     print()
 
-    print(f"  架构: TradingAgents v3.8 - AI 决策 + 执行层风控")
-    print(f"  本地风控: S/R Zone Block (执行层，非方向预测)")
+    print(f"  架构: TradingAgents v3.12 - AI 决策 + S/R Zone v2.0 风控")
+    print(f"  本地风控: S/R Zone v2.0 Block (执行层，含 level/source_type)")
     print()
     print(f"  AI 决策: {signal_data.get('signal')} (Confidence: {signal_data.get('confidence')})")
     print(f"  Winning Side: {signal_data.get('judge_decision', {}).get('winning_side', 'N/A')}")
@@ -3787,15 +3854,16 @@ rsi_upper = getattr(strategy_config, 'rsi_extreme_threshold_upper', 70)
 rsi_lower = getattr(strategy_config, 'rsi_extreme_threshold_lower', 30)
 
 print(f"  RSI: {rsi:.2f}")
-print(f"    配置阈值: 超卖<{rsi_lower}, 超买>{rsi_upper}")
+print(f"    参考阈值: 超卖<{rsi_lower}, 超买>{rsi_upper}")
 if rsi > rsi_upper:
-    print(f"    → 🔴 超买区 (>{rsi_upper}) - 可能触发 SELL")
+    print(f"    → 🔴 超买区 (>{rsi_upper}) - AI 可能倾向 SHORT")
 elif rsi < rsi_lower:
-    print(f"    → 🟢 超卖区 (<{rsi_lower}) - 可能触发 BUY")
+    print(f"    → 🟢 超卖区 (<{rsi_lower}) - AI 可能倾向 LONG")
 else:
-    print(f"    → ⚪ 中性区间 ({rsi_lower}-{rsi_upper}) - 无明确方向")
+    print(f"    → ⚪ 中性区间 ({rsi_lower}-{rsi_upper}) - AI 综合其他因素判断")
     print(f"    → 距离超买: {rsi_upper - rsi:.2f} 点")
     print(f"    → 距离超卖: {rsi - rsi_lower:.2f} 点")
+print(f"    📝 注: v3.12 架构中 AI 自主解读 RSI，不使用硬编码规则")
 
 macd = technical_data.get('macd', 0)
 macd_signal = technical_data.get('macd_signal', 0)
@@ -3929,25 +3997,32 @@ print(f"  🗣️ 辩论摘要:")
 debate_summary = signal_data.get('debate_summary', 'N/A')
 print_wrapped(str(debate_summary))
 
-# 5. 触发交易的条件 (基于更新后的提示词)
+# 5. AI 决策参考因素 (v3.12 架构 - AI 自主决策)
 print()
-print("[分析5] 触发交易所需条件 (最新提示词)")
+print("[分析5] AI 决策参考因素 (v3.12 TradingAgents 架构)")
 print("-" * 50)
 
-print("  要触发 BUY 信号 (ANY 2 of these is sufficient):")
-print(f"    • 价格在 SMA5/SMA20 上方 (当前: {'✅' if current_price > sma_5 and current_price > sma_20 else '❌'})")
-print(f"    • RSI < 60 且不超买 (当前: {rsi:.2f}, {'✅' if rsi < 60 else '❌'})")
-print(f"    • MACD 金叉或柱状图为正 (当前: {'✅' if macd > macd_signal or macd_hist > 0 else '❌'})")
-print(f"    • 价格接近支撑或 BB 下轨 (当前位置: {bb_position:.1f}%)")
+print("  📊 AI 分析流程 (Bull/Bear 辩论 → Judge 决策):")
+print("     1. Bull Analyst: 寻找做多理由 (价格、动量、支撑)")
+print("     2. Bear Analyst: 寻找做空理由 (阻力、超买、风险)")
+print("     3. Judge: 评估双方论据，做出 LONG/SHORT/HOLD 决策")
+print("     4. Risk Manager: 设定 SL/TP，参考 S/R Zone v2.0")
 print()
-print("  要触发 SELL 信号 (ANY 2 of these is sufficient):")
-print(f"    • 价格在 SMA5/SMA20 下方 (当前: {'✅' if current_price < sma_5 and current_price < sma_20 else '❌'})")
-print(f"    • RSI > 40 且显示弱势 (当前: {rsi:.2f}, {'✅' if rsi > 40 else '❌'})")
-print(f"    • MACD 死叉或柱状图为负 (当前: {'✅' if macd < macd_signal or macd_hist < 0 else '❌'})")
-print(f"    • 价格接近阻力或 BB 上轨 (当前位置: {bb_position:.1f}%)")
+print("  📈 看多因素 (AI 自主评估权重):")
+print(f"    • 价格 vs SMA: {'上方' if current_price > sma_5 else '下方'} SMA5, {'上方' if current_price > sma_20 else '下方'} SMA20")
+print(f"    • RSI 状态: {rsi:.2f} ({'超卖区' if rsi < rsi_lower else '超买区' if rsi > rsi_upper else '中性'})")
+print(f"    • MACD: {'金叉' if macd > macd_signal else '死叉'}, 柱状图 {'+' if macd_hist > 0 else ''}{macd_hist:.4f}")
+print(f"    • BB 位置: {bb_position:.1f}% ({'接近下轨' if bb_position < 20 else '接近上轨' if bb_position > 80 else '中间区域'})")
 print()
-print("  📌 提示词更新后，HOLD 仅在信号真正冲突时使用")
-print(f"     当前 min_confidence_to_trade: {strategy_config.min_confidence_to_trade}")
+print("  📉 看空因素 (AI 自主评估权重):")
+print(f"    • S/R Zone: AI 参考阻力位设定 TP，支撑位设定 SL")
+print(f"    • 订单流: AI 分析 buy_ratio 判断资金流向")
+print(f"    • 衍生品: AI 参考 funding rate 和 OI 变化")
+print()
+print("  ⚠️ v3.12 架构说明:")
+print("     • AI 自主决策，无硬编码规则触发信号")
+print("     • HOLD 由 AI 判断何时使用，非规则强制")
+print(f"     • min_confidence_to_trade: {strategy_config.min_confidence_to_trade} (信心过滤)")
 
 # 6. 建议
 print()
@@ -4045,7 +4120,7 @@ else:
 
     elif not would_trade and current_position:
         print(f"  📌 有信号 ({final_signal}) 但未执行")
-        target_side = 'long' if final_signal == 'BUY' else 'short'
+        target_side = 'long' if final_signal in ['BUY', 'LONG'] else 'short'
         if current_position['side'] == target_side:
             print(f"  原因: 已有同向持仓，仓位差异低于调整阈值")
             print()

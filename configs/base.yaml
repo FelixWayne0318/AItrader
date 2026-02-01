@@ -172,6 +172,84 @@ risk:
       - {profit_pct: 0.02, position_pct: 0.5}  # 盈利2%时平50%仓位
       - {profit_pct: 0.04, position_pct: 0.5}  # 盈利4%时平剩余50%仓位
 
+  # ===== v3.12: 风险熔断控制 (Risk Circuit Breakers) =====
+  # 参考: Two Sigma / Citadel 机构级风控标准
+  circuit_breakers:
+    enabled: true
+
+    # 最大回撤控制
+    max_drawdown:
+      enabled: true
+      reduce_threshold_pct: 0.10    # 10% 回撤: 仓位减半
+      halt_threshold_pct: 0.15      # 15% 回撤: 停止交易
+      recovery_threshold_pct: 0.05  # 回撤恢复到 5% 后恢复交易
+
+    # 日亏损限制
+    daily_loss:
+      enabled: true
+      max_loss_pct: 0.03            # 单日最大亏损 3%
+      reset_hour_utc: 0             # UTC 0 点重置
+
+    # 连续亏损保护
+    consecutive_losses:
+      enabled: true
+      max_losses: 3                 # 连续 3 次亏损
+      cooldown_hours: 4             # 冷却 4 小时
+      recovery_wins_needed: 1       # 需要 1 次盈利恢复
+
+    # 波动率熔断
+    volatility:
+      enabled: true
+      normal_atr_pct: 0.02          # 正常 ATR (2%)
+      halt_multiplier: 3.0          # ATR > 3x 正常值停止交易
+
+    # 交易频率限制
+    frequency:
+      enabled: true
+      min_interval_minutes: 30      # 最少 30 分钟间隔
+      max_trades_per_day: 10        # 每日最多 10 笔
+
+  # ===== v3.13: Hybrid ATR-AI 仓位计算 =====
+  # 公式: 最终仓位 = ATR仓位 × AI调节系数
+  # - ATR 提供风险上限 (波动率适应)
+  # - AI 只能减仓，不能加仓 (风险可控)
+  position_sizing:
+    method: "hybrid_atr_ai"         # fixed_pct | atr_based | kelly | hybrid_atr_ai
+
+    # ATR-Based 参数 (也用于 hybrid_atr_ai 的上限计算)
+    atr_based:
+      risk_per_trade_pct: 0.01      # 每笔风险 1% of equity
+      atr_period: 14                # ATR 周期
+      atr_multiplier: 2.0           # 止损距离 = 2 × ATR
+
+    # v3.13: Hybrid ATR-AI 参数
+    # AI调节系数 = min_mult + ai_weight × (AI_pct / 100), 范围 [min, max]
+    hybrid_atr_ai:
+      enabled: true
+      min_multiplier: 0.3           # AI 最低系数 (保底 30%)
+      max_multiplier: 1.0           # AI 最高系数 (不超过 ATR)
+      ai_weight: 0.7                # AI 影响权重
+      fallback_to_atr: true         # AI 未提供仓位时，使用纯 ATR
+
+    # Kelly Criterion 参数 (可选，需要足够历史数据)
+    kelly:
+      enabled: false
+      lookback_trades: 30           # 回看交易数
+      fraction: 0.25                # 1/4 Kelly (保守)
+      min_trades_required: 20       # 最少历史交易数
+
+  # ===== v3.12: 扩展信号类型 =====
+  # LONG: 开多/加多
+  # SHORT: 开空/加空
+  # CLOSE: 平仓 (不开反向)
+  # HOLD: 观望
+  # REDUCE: 减仓 (保留方向)
+  signals:
+    valid_types: ["LONG", "SHORT", "CLOSE", "HOLD", "REDUCE"]
+    legacy_mapping:                 # 兼容旧信号
+      BUY: "LONG"
+      SELL: "SHORT"
+
 # =============================================================================
 # 网络配置
 # =============================================================================
@@ -202,7 +280,7 @@ network:
     startup_delay: 5              # 启动延迟 (秒)
     polling_max_retries: 3        # 轮询最大重试次数
     polling_base_delay: 10        # 轮询重试基础延迟 (秒)
-    message_timeout: 30           # 消息发送超时 (秒)
+    message_timeout: 5            # v2.0: 消息发送超时 (秒) - 降低到 5 秒减少阻塞
 
 # =============================================================================
 # Telegram 通知
@@ -220,6 +298,23 @@ telegram:
     positions: true
     errors: true
     heartbeat: true           # v2.1: 每次 on_timer 运行发送心跳状态 (测试阶段推荐开启)
+
+  # v2.0: 消息队列配置 (异步非阻塞发送)
+  queue:
+    enabled: true                 # 启用异步消息队列 (推荐)
+    db_path: "data/telegram_queue.db"  # SQLite 持久化路径
+    max_retries: 3                # 失败消息最大重试次数
+    alert_cooldown: 300           # 告警收敛冷却时间 (秒)
+    send_interval: 0.5            # 发送间隔 (秒，防止速率限制)
+
+  # v2.0: 安全配置
+  security:
+    enable_pin: true              # 控制命令需要 PIN 验证 (pause/resume/close)
+    pin_code: ""                  # 固定 PIN 码 (空 = 每次随机生成)
+    pin_expiry_seconds: 60        # PIN 有效期 (秒)
+    rate_limit_per_minute: 30     # 每分钟最大命令数
+    enable_audit: true            # 启用审计日志
+    audit_log_dir: "logs/audit"   # 审计日志目录
 
 # =============================================================================
 # 执行配置

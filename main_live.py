@@ -273,6 +273,21 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         telegram_notify_errors=config_manager.get('telegram', 'notify', 'errors', default=True),
         telegram_notify_heartbeat=config_manager.get('telegram', 'notify', 'heartbeat', default=True),  # v2.1
 
+        # Telegram Queue (v4.0 - Non-blocking message sending)
+        telegram_queue_enabled=config_manager.get('telegram', 'queue', 'enabled', default=True),
+        telegram_queue_db_path=config_manager.get('telegram', 'queue', 'db_path', default='data/telegram_queue.db'),
+        telegram_queue_max_retries=config_manager.get('telegram', 'queue', 'max_retries', default=3),
+        telegram_queue_alert_cooldown=config_manager.get('telegram', 'queue', 'alert_cooldown', default=300),
+        telegram_queue_send_interval=config_manager.get('telegram', 'queue', 'send_interval', default=0.5),
+
+        # Telegram Security (v4.0 - PIN verification + audit logging)
+        telegram_security_enable_pin=config_manager.get('telegram', 'security', 'enable_pin', default=True),
+        telegram_security_pin_code=config_manager.get('telegram', 'security', 'pin_code', default=''),
+        telegram_security_pin_expiry_seconds=config_manager.get('telegram', 'security', 'pin_expiry_seconds', default=60),
+        telegram_security_rate_limit_per_minute=config_manager.get('telegram', 'security', 'rate_limit_per_minute', default=30),
+        telegram_security_enable_audit=config_manager.get('telegram', 'security', 'enable_audit', default=True),
+        telegram_security_audit_log_dir=config_manager.get('telegram', 'security', 'audit_log_dir', default='logs/audit'),
+
         # Network configuration
         network_telegram_startup_delay=config_manager.get('network', 'telegram', 'startup_delay', default=5.0),
         network_telegram_polling_max_retries=config_manager.get('network', 'telegram', 'polling_max_retries', default=3),

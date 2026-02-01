@@ -160,7 +160,7 @@ ORDER BOOK DEPTH:
   * Includes confidence level and range (best/worst case)
   * Based on actual order book depth distribution
 
-SUPPORT/RESISTANCE ZONES:
+SUPPORT/RESISTANCE ZONES (v2.0):
 - Price levels identified from multiple independent data sources
 - Sources:
   * Order Book Walls: Large real limit orders (>2 BTC) at specific prices
@@ -173,11 +173,26 @@ SUPPORT/RESISTANCE ZONES:
   * MEDIUM: Two sources agree
   * LOW: Single source only
 
+- Zone Level (timeframe significance, v2.0):
+  * MAJOR: Daily/weekly significance (SMA_200, weekly BB) - strongest
+  * INTERMEDIATE: 4H significance (SMA_50, 4H BB) - moderate
+  * MINOR: 15M/1H significance (SMA_20, 15M BB, Order Walls) - short-term
+
+- Zone Source Type (data reliability, v2.0):
+  * ORDER_FLOW: Real-time order book data - most current but can change
+  * TECHNICAL: Calculated indicators (SMA, BB) - widely followed
+  * STRUCTURAL: Historical price levels (Pivot) - time-tested
+
 - Zone Properties:
   * Price Center: Midpoint of the zone
   * Distance: Percentage distance from current price
   * Sources: Which indicators contributed to this zone
   * Width: Range of the zone (expanded by 0.1% from center)
+
+- Trading Implications:
+  * Zones with ORDER_FLOW type are real orders that can be eaten through
+  * MAJOR level zones are more significant for longer-term trades
+  * Multiple overlapping sources increase confidence in the zone
 """
 
 
@@ -412,16 +427,23 @@ class MultiAgentAnalyzer:
         Dict
             Final trading decision with structure:
             {
-                "signal": "BUY|SELL|HOLD",
+                "signal": "LONG|SHORT|CLOSE|HOLD|REDUCE",  # v3.12: Extended signals
                 "confidence": "HIGH|MEDIUM|LOW",
                 "risk_level": "LOW|MEDIUM|HIGH",
-                "position_size_pct": 25|50|100,
+                "position_size_pct": 0-100,  # Target position as % of max allowed
                 "stop_loss": float,
                 "take_profit": float,
                 "reason": str,
                 "debate_summary": str,
                 "timestamp": str
             }
+
+            Signal types (v3.12):
+            - LONG: Open/add to long position
+            - SHORT: Open/add to short position
+            - CLOSE: Close current position (no reverse)
+            - HOLD: No action, maintain current state
+            - REDUCE: Reduce current position size (keep direction)
         """
         try:
             self.logger.info("Starting multi-agent analysis (TradingAgents architecture)...")
@@ -447,13 +469,17 @@ class MultiAgentAnalyzer:
             orderbook_summary = self._format_orderbook_report(orderbook_report)
 
             # v3.8: Calculate S/R Zones (multi-source support/resistance)
+            # v2.0: Use detailed report with raw data for AI verification
             sr_zones = self._calculate_sr_zones(
                 current_price=current_price,
                 technical_data=technical_report,
                 orderbook_data=orderbook_report,
             )
             self._sr_zones_cache = sr_zones  # Cache for _evaluate_risk()
-            sr_zones_summary = sr_zones.get('ai_report', '') if sr_zones else ''
+            # v2.0: Use detailed report (includes raw data + level/source_type)
+            sr_zones_summary = sr_zones.get('ai_detailed_report', '') if sr_zones else ''
+            if not sr_zones_summary:
+                sr_zones_summary = sr_zones.get('ai_report', '') if sr_zones else ''
 
             # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
@@ -793,6 +819,13 @@ OUTPUT FORMAT (JSON only, no other text):
         # Format strategic actions for prompt
         actions_str = ', '.join(strategic_actions) if strategic_actions else 'None specified'
 
+        # v2.0: Get S/R zones summary for SL/TP reference
+        sr_zones_for_risk = ""
+        if self._sr_zones_cache:
+            sr_zones_for_risk = self._sr_zones_cache.get('ai_detailed_report', '')
+            if not sr_zones_for_risk:
+                sr_zones_for_risk = self._sr_zones_cache.get('ai_report', '')
+
         prompt = f"""As the Risk Manager, provide final trade parameters.
 
 PROPOSED TRADE:
@@ -807,6 +840,8 @@ MARKET DATA:
 
 {sentiment_report}
 
+{sr_zones_for_risk}
+
 CURRENT POSITION:
 {self._format_position(current_position)}
 
@@ -814,23 +849,38 @@ CURRENT PRICE: ${current_price:,.2f}
 
 YOUR TASK:
 1. Evaluate if the proposed trade makes sense given the market data
-2. Determine stop loss based on market structure
-3. Determine take profit based on potential targets
-4. Determine position size based on your risk assessment
+2. Determine stop loss using S/R zones as reference:
+   - For LONG: Place SL below nearest SUPPORT zone (preferably with ORDER_FLOW or HIGH strength)
+   - For SHORT: Place SL above nearest RESISTANCE zone (preferably with ORDER_FLOW or HIGH strength)
+3. Determine take profit using S/R zones as reference:
+   - For LONG: Target nearest RESISTANCE zone as TP (consider zone Level: MAJOR > INTERMEDIATE > MINOR)
+   - For SHORT: Target nearest SUPPORT zone as TP
+4. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
+
+SIGNAL TYPES (v3.12 - choose the most appropriate):
+- LONG: Open new long or add to existing long position
+- SHORT: Open new short or add to existing short position
+- CLOSE: Close current position completely (do NOT open opposite position)
+- HOLD: No action, maintain current state
+- REDUCE: Reduce current position size but keep direction (use with lower position_size_pct)
+
+POSITION SIZE RULES:
+- position_size_pct: Target position as percentage of maximum allowed (0-100)
+- 100 = full position, 50 = half position, 0 = close all
+- For REDUCE signal: set position_size_pct to desired remaining size (e.g., 50 = reduce to half)
+- For CLOSE signal: position_size_pct should be 0
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
-    "signal": "BUY|SELL|HOLD",
+    "signal": "LONG|SHORT|CLOSE|HOLD|REDUCE",
     "confidence": "HIGH|MEDIUM|LOW",
     "risk_level": "LOW|MEDIUM|HIGH",
-    "position_size_pct": <number 25-100>,
+    "position_size_pct": <number 0-100>,
     "stop_loss": <price_number>,
     "take_profit": <price_number>,
     "reason": "<one sentence explaining the final decision>",
     "debate_summary": "<brief summary of bull vs bear debate>"
-}}
-
-MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
+}}"""
 
         system_prompt = "You are a Risk Manager. Analyze the market data and set appropriate trade parameters based on market structure and risk/reward."
 
@@ -855,6 +905,9 @@ MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
             decision["debate_rounds"] = self.debate_rounds
             decision["judge_decision"] = proposed_action
 
+            # v3.12: Normalize signal type (handle legacy BUY/SELL)
+            decision = self._normalize_signal(decision)
+
             # Validate stop loss / take profit
             decision = self._validate_sl_tp(decision, current_price)
 
@@ -863,6 +916,64 @@ MAPPING: LONG→BUY, SHORT→SELL, HOLD→HOLD"""
         # Fallback if all retries failed
         self.logger.warning("Risk evaluation parsing failed after retries, using fallback")
         return self._create_fallback_signal({"price": current_price})
+
+    def _normalize_signal(self, decision: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize signal type to v3.12 format.
+
+        Handles legacy BUY/SELL signals and converts to LONG/SHORT.
+        Valid signals: LONG, SHORT, CLOSE, HOLD, REDUCE
+
+        Parameters
+        ----------
+        decision : Dict
+            Raw decision from AI
+
+        Returns
+        -------
+        Dict
+            Decision with normalized signal
+        """
+        signal = decision.get("signal", "HOLD").upper().strip()
+
+        # Legacy mapping
+        legacy_mapping = {
+            "BUY": "LONG",
+            "SELL": "SHORT",
+        }
+
+        # Valid v3.12 signals
+        valid_signals = {"LONG", "SHORT", "CLOSE", "HOLD", "REDUCE"}
+
+        # Check if legacy signal
+        if signal in legacy_mapping:
+            new_signal = legacy_mapping[signal]
+            self.logger.info(f"Signal normalized: {signal} → {new_signal}")
+            decision["signal"] = new_signal
+            decision["original_signal"] = signal  # Keep original for debugging
+        elif signal in valid_signals:
+            decision["signal"] = signal
+        else:
+            # Unknown signal, default to HOLD
+            self.logger.warning(f"Unknown signal '{signal}', defaulting to HOLD")
+            decision["signal"] = "HOLD"
+            decision["original_signal"] = signal
+
+        # Validate position_size_pct
+        size_pct = decision.get("position_size_pct", 100)
+        try:
+            size_pct = float(size_pct)
+            size_pct = max(0, min(100, size_pct))  # Clamp to 0-100
+        except (ValueError, TypeError):
+            size_pct = 100 if decision["signal"] in {"LONG", "SHORT"} else 0
+
+        # Special handling for CLOSE signal
+        if decision["signal"] == "CLOSE":
+            size_pct = 0
+
+        decision["position_size_pct"] = size_pct
+
+        return decision
 
     def _validate_sl_tp(self, decision: Dict[str, Any], current_price: float) -> Dict[str, Any]:
         """Validate and fix stop loss / take profit values."""
@@ -1291,23 +1402,20 @@ ORDER FLOW (Binance Taker Data):
         if data and data.get('enabled', True):
             parts.append("COINALYZE DERIVATIVES:")
 
-            # Open Interest with trend
+            # Open Interest (v3.9: removed trend label for AI autonomy)
             oi = data.get('open_interest')
-            trends = data.get('trends', {})
             if oi:
                 oi_btc = oi.get('value', 0)
-                oi_trend = trends.get('oi_trend', 'N/A')
-                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC [Trend: {oi_trend}]")
+                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
             else:
                 parts.append("- Open Interest: N/A")
 
-            # Funding Rate with trend
+            # Funding Rate (v3.9: removed trend label for AI autonomy)
             funding = data.get('funding_rate')
             if funding:
                 rate = funding.get('value', 0)
                 rate_pct = rate * 100
-                fr_trend = trends.get('funding_trend', 'N/A')
-                parts.append(f"- Funding Rate: {rate_pct:.4f}% [Trend: {fr_trend}]")
+                parts.append(f"- Funding Rate: {rate_pct:.4f}%")
             else:
                 parts.append("- Funding Rate: N/A")
 
@@ -1334,17 +1442,15 @@ ORDER FLOW (Binance Taker Data):
             else:
                 parts.append("- Liquidations (1h): N/A")
 
-            # Long/Short Ratio from Coinalyze
+            # Long/Short Ratio from Coinalyze (v3.9: removed trend label)
             ls_hist = data.get('long_short_ratio_history')
             if ls_hist and ls_hist.get('history'):
                 latest = ls_hist['history'][-1]
                 ls_ratio = float(latest.get('r', 1))
                 long_pct = float(latest.get('l', 50))
                 short_pct = float(latest.get('s', 50))
-                ls_trend = trends.get('long_short_trend', 'N/A')
                 parts.append(
-                    f"- Long/Short Ratio: {ls_ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%) "
-                    f"[Trend: {ls_trend}]"
+                    f"- Long/Short Ratio: {ls_ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%)"
                 )
         else:
             parts.append("COINALYZE: Data not available")
@@ -1355,34 +1461,31 @@ ORDER FLOW (Binance Taker Data):
         if binance_derivatives:
             parts.append("\nBINANCE DERIVATIVES (Top Traders & Taker):")
 
-            # Top Traders Position Ratio
+            # Top Traders Position Ratio (v3.9: removed trend label)
             top_pos = binance_derivatives.get('top_long_short_position', {})
             latest = top_pos.get('latest')
             if latest:
                 ratio = float(latest.get('longShortRatio', 1))
                 long_pct = float(latest.get('longAccount', 0.5)) * 100
                 short_pct = float(latest.get('shortAccount', 0.5)) * 100
-                trend = top_pos.get('trend', 'N/A')
                 parts.append(
                     f"- Top Traders Position: Long {long_pct:.1f}% / Short {short_pct:.1f}% "
-                    f"(Ratio: {ratio:.2f}) [Trend: {trend}]"
+                    f"(Ratio: {ratio:.2f})"
                 )
 
-            # Taker Buy/Sell Ratio
+            # Taker Buy/Sell Ratio (v3.9: removed trend label)
             taker = binance_derivatives.get('taker_long_short', {})
             latest = taker.get('latest')
             if latest:
                 ratio = float(latest.get('buySellRatio', 1))
-                trend = taker.get('trend', 'N/A')
-                parts.append(f"- Taker Buy/Sell Ratio: {ratio:.3f} [Trend: {trend}]")
+                parts.append(f"- Taker Buy/Sell Ratio: {ratio:.3f}")
 
-            # OI from Binance
+            # OI from Binance (v3.9: removed trend label)
             oi_hist = binance_derivatives.get('open_interest_hist', {})
             latest = oi_hist.get('latest')
             if latest:
                 oi_usd = float(latest.get('sumOpenInterestValue', 0))
-                trend = oi_hist.get('trend', 'N/A')
-                parts.append(f"- OI (Binance): ${oi_usd:,.0f} [Trend: {trend}]")
+                parts.append(f"- OI (Binance): ${oi_usd:,.0f}")
 
             # 24h Stats
             ticker = binance_derivatives.get('ticker_24hr')
@@ -1461,9 +1564,9 @@ ORDER FLOW (Binance Taker Data):
                     'ask_anomalies': anomalies.get('ask_anomalies', []),
                 }
 
-        # Calculate S/R zones
+        # Calculate S/R zones with detailed report (v2.0)
         try:
-            result = self.sr_calculator.calculate(
+            result = self.sr_calculator.calculate_with_detailed_report(
                 current_price=current_price,
                 bb_data=bb_data,
                 sma_data=sma_data,
