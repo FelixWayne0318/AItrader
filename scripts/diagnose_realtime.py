@@ -2132,16 +2132,44 @@ if would_trade and final_signal in tradable_signals:
         logger=None,  # 静默模式，我们手动打印
     )
 
-    # 显示计算详情
-    print(f"     Base: ${calc_details['base_usdt']}")
-    print(f"     × Confidence Mult: {calc_details['conf_mult']}")
-    print(f"     × Trend Mult: {calc_details['trend_mult']} (trend={calc_details['trend']})")
-    print(f"     × RSI Mult: {calc_details['rsi_mult']} (RSI={calc_details['rsi']:.1f})")
-    print(f"     = ${calc_details['suggested_usdt']:.2f}")
-    print(f"     Max allowed: ${calc_details['max_usdt']:.2f}")
-    print(f"     Final: ${calc_details['final_usdt']:.2f}")
+    # 显示计算详情 (根据 method 显示不同内容)
+    method = calc_details.get('method', 'unknown')
+    print(f"     Method: {method}")
+
+    if method == 'hybrid_atr_ai':
+        # v3.13 Hybrid ATR-AI 方法
+        print(f"     Equity: ${calc_details.get('equity', 0):,.2f}")
+        print(f"     Risk/Trade: {calc_details.get('risk_per_trade_pct', 0)*100:.1f}%")
+        print(f"     Dollar Risk: ${calc_details.get('dollar_risk', 0):,.2f}")
+        print(f"     ATR: ${calc_details.get('atr', 0):,.2f}")
+        print(f"     Stop Distance: ${calc_details.get('stop_distance', 0):,.2f} ({calc_details.get('stop_pct', 0):.2f}%)")
+        print(f"     ATR Position: ${calc_details.get('atr_position_usdt', 0):,.2f}")
+        print(f"     AI Size: {calc_details.get('ai_size_pct', 'N/A')}% ({calc_details.get('ai_source', 'unknown')})")
+        print(f"     AI Multiplier: {calc_details.get('ai_multiplier', 1.0):.2f}")
+        print(f"     Risk Multiplier: {calc_details.get('risk_multiplier', 1.0):.2f}")
+    elif method == 'atr_based':
+        # ATR-Based 方法
+        print(f"     Equity: ${calc_details.get('equity', 0):,.2f}")
+        print(f"     Risk/Trade: {calc_details.get('risk_per_trade_pct', 0)*100:.1f}%")
+        print(f"     ATR: ${calc_details.get('atr', 0):,.2f}")
+        print(f"     Stop Distance: ${calc_details.get('stop_distance', 0):,.2f} ({calc_details.get('stop_pct', 0):.2f}%)")
+        print(f"     Position USDT: ${calc_details.get('position_usdt', 0):,.2f}")
+    elif method == 'ai_controlled':
+        # AI 控制方法
+        print(f"     Equity: ${calc_details.get('equity', 0):,.2f}")
+        print(f"     AI Size: {calc_details.get('ai_size_pct', 0)}%")
+    else:
+        # Legacy fixed_pct 方法
+        print(f"     Base: ${calc_details.get('base_usdt', 100)}")
+        print(f"     × Confidence Mult: {calc_details.get('conf_mult', 1.0)}")
+        print(f"     × Trend Mult: {calc_details.get('trend_mult', 1.0)} (trend={calc_details.get('trend', 'N/A')})")
+        print(f"     × RSI Mult: {calc_details.get('rsi_mult', 1.0)} (RSI={calc_details.get('rsi', 50):.1f})")
+        print(f"     = ${calc_details.get('suggested_usdt', 0):.2f}")
+
+    print(f"     Max allowed: ${calc_details.get('max_usdt', 0):,.2f}")
+    print(f"     Final: ${calc_details.get('final_usdt', 0):,.2f}")
     print(f"     BTC Quantity: {btc_quantity:.4f} BTC")
-    print(f"     Notional: ${calc_details['notional']:.2f}")
+    print(f"     Notional: ${calc_details.get('notional', btc_quantity * price_data.get('price', 0)):,.2f}")
     if calc_details.get('adjusted'):
         print(f"     ⚠️ Quantity adjusted to meet minimum notional")
 
@@ -2156,7 +2184,7 @@ if would_trade and final_signal in tradable_signals:
     # 4. 检查现有持仓 (与 _manage_existing_position 逻辑一致)
     print()
     print("  模拟持仓管理检查:")
-    target_side = 'long' if final_signal == 'BUY' else 'short'
+    target_side = 'long' if final_signal in ['BUY', 'LONG'] else 'short'
 
     if current_position:
         current_side = current_position['side']
@@ -4107,7 +4135,7 @@ else:
 
     elif not would_trade and current_position:
         print(f"  📌 有信号 ({final_signal}) 但未执行")
-        target_side = 'long' if final_signal == 'BUY' else 'short'
+        target_side = 'long' if final_signal in ['BUY', 'LONG'] else 'short'
         if current_position['side'] == target_side:
             print(f"  原因: 已有同向持仓，仓位差异低于调整阈值")
             print()
