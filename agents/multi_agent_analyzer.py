@@ -748,7 +748,10 @@ OUTPUT FORMAT (JSON only, no other text):
         # ========== v3.8: S/R Zone Hard Control ==========
         # Uses multi-source S/R zones (BB + SMA + Order Book Walls)
         # Only blocks when near HIGH strength zones (confluence of multiple sources)
-        if self._sr_zones_cache:
+        # v3.9: Can be disabled via sr_hard_control_enabled config
+        sr_hard_control_enabled = getattr(self, 'sr_hard_control_enabled', True)
+
+        if sr_hard_control_enabled and self._sr_zones_cache:
             hard_control = self._sr_zones_cache.get('hard_control', {})
 
             # Block LONG if too close to HIGH strength resistance
