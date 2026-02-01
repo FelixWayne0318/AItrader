@@ -248,17 +248,27 @@ for CONFIG_FILE in configs/base.yaml configs/production.yaml; do
 
         # 检查仪器加载超时配置 (仅 production.yaml 或 base.yaml)
         if echo "$CONFIG_FILE" | grep -q "production\|base"; then
-            # 提取 max_retries 值 (兼容有无空格的格式)
-            RETRIES=$(grep -E "^\s*max_retries:\s*[0-9]+" "$CONFIG_FILE" | grep -oE '[0-9]+' | head -1)
+            # 使用 Python 正确解析嵌套 YAML 并提取 network.instrument_discovery.max_retries
+            if command -v python3 &> /dev/null; then
+                RETRIES=$(python3 -c "
+import yaml
+try:
+    with open('$CONFIG_FILE') as f:
+        config = yaml.safe_load(f)
+    retries = config.get('network', {}).get('instrument_discovery', {}).get('max_retries')
+    if retries is not None:
+        print(retries)
+except:
+    pass
+" 2>/dev/null || echo "")
 
-            if [ -n "$RETRIES" ]; then
-                if [ "$RETRIES" -ge 180 ]; then
-                    check_pass "仪器加载超时已配置为 ${RETRIES} 秒"
-                else
-                    check_warn "仪器加载超时仅为 ${RETRIES} 秒 (建议 180)"
+                if [ -n "$RETRIES" ] && [ "$RETRIES" != "" ]; then
+                    if [ "$RETRIES" -ge 180 ]; then
+                        check_pass "仪器加载超时已配置为 ${RETRIES} 秒 ($CONFIG_FILE)"
+                    else
+                        check_warn "仪器加载超时仅为 ${RETRIES} 秒 (建议 180) ($CONFIG_FILE)"
+                    fi
                 fi
-            else
-                check_warn "未找到 instrument_discovery.max_retries 配置 (建议设为 180)"
             fi
         fi
     else
