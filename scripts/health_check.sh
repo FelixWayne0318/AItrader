@@ -1,5 +1,5 @@
 #!/bin/bash
-# 服务器健康检查脚本 (v2.0 - 崩溃诊断增强版)
+# 服务器健康检查脚本 (v2.1 - 配置和启动诊断增强版)
 # 用法: ./scripts/health_check.sh
 
 set -e
@@ -20,8 +20,8 @@ WARNINGS=0
 CRITICAL=0
 
 echo "========================================"
-echo "  AItrader 服务器健康检查 v2.0"
-echo "  崩溃诊断增强版"
+echo "  AItrader 服务器健康检查 v2.1"
+echo "  配置和启动诊断增强版"
 echo "========================================"
 echo ""
 
@@ -153,9 +153,25 @@ else
     info "系统内存使用率: ${MEM_PERCENT}% (${USED_MEM}MB / ${TOTAL_MEM}MB)"
 fi
 
-# 6. 检查日志中的崩溃模式
+# 6. 检查服务运行时长 (检测立即退出问题)
 echo ""
-echo ">> 6. 检查日志错误模式 (最近 200 行)"
+echo ">> 6. 检查服务运行时长"
+if systemctl is-active --quiet "$SERVICE_NAME"; then
+    UPTIME_SEC=$(systemctl show "$SERVICE_NAME" -p ActiveEnterTimestampMonotonic --value)
+    CURRENT_SEC=$(date +%s)000000  # 微秒
+    RUNNING_SEC=$(( (CURRENT_SEC - UPTIME_SEC) / 1000000 ))
+
+    if [ "$RUNNING_SEC" -lt 60 ]; then
+        check_warn "服务运行时间不足 1 分钟 ($RUNNING_SEC 秒) - 可能刚重启或启动失败"
+    else
+        RUNNING_MIN=$((RUNNING_SEC / 60))
+        info "服务运行时间: $RUNNING_MIN 分钟"
+    fi
+fi
+
+# 7. 检查日志中的崩溃模式
+echo ""
+echo ">> 7. 检查日志错误模式 (最近 200 行)"
 RECENT_LOGS=$(journalctl -u "$SERVICE_NAME" -n 200 --no-hostname 2>/dev/null || echo "")
 
 # 检查 Rust panic (线程安全崩溃)
@@ -193,9 +209,56 @@ if echo "$RECENT_LOGS" | grep -qi "ConfigManager.*failed\|Failed to load config"
     check_warn "检测到配置加载失败"
 fi
 
-# 7. 检查 Git 分支和版本
+# 检查 YAML 语法错误
+if echo "$RECENT_LOGS" | grep -qi "expected '<document start>'\|YAML.*error\|yaml.*syntax"; then
+    check_critical "检测到 YAML 配置文件语法错误"
+fi
+
+# 检查仪器加载超时
+if echo "$RECENT_LOGS" | grep -qi "Failed to load instrument\|Waiting for instrument.*180\|instrument.*timeout"; then
+    check_warn "检测到仪器加载超时 - 可能 load_all=True 导致"
+fi
+
+# 8. 检查配置文件语法
 echo ""
-echo ">> 7. 检查代码版本"
+echo ">> 8. 检查配置文件"
+cd "$INSTALL_DIR"
+
+# 检查关键配置文件是否存在
+for CONFIG_FILE in configs/base.yaml configs/production.yaml; do
+    if [ -f "$CONFIG_FILE" ]; then
+        # 尝试用 Python 验证 YAML 语法
+        if command -v python3 &> /dev/null; then
+            if python3 -c "import yaml; yaml.safe_load(open('$CONFIG_FILE'))" 2>/dev/null; then
+                check_pass "$CONFIG_FILE 语法正确"
+            else
+                check_critical "$CONFIG_FILE 存在 YAML 语法错误"
+            fi
+        else
+            info "$CONFIG_FILE 存在 (未验证语法)"
+        fi
+
+        # 检查仪器加载超时配置 (仅 production.yaml 或 base.yaml)
+        if echo "$CONFIG_FILE" | grep -q "production\|base"; then
+            if grep -q "max_retries.*180" "$CONFIG_FILE" || grep -q "max_retries: 180" "$CONFIG_FILE"; then
+                check_pass "仪器加载超时已配置为 180 秒"
+            elif grep -q "max_retries" "$CONFIG_FILE"; then
+                RETRIES=$(grep "max_retries" "$CONFIG_FILE" | grep -oE '[0-9]+' | head -1)
+                if [ "$RETRIES" -lt 180 ]; then
+                    check_warn "仪器加载超时仅为 ${RETRIES} 秒 (建议 180)"
+                fi
+            else
+                check_warn "未找到 instrument_discovery.max_retries 配置 (建议设为 180)"
+            fi
+        fi
+    else
+        check_warn "$CONFIG_FILE 不存在"
+    fi
+done
+
+# 9. 检查 Git 分支和版本
+echo ""
+echo ">> 9. 检查代码版本"
 cd "$INSTALL_DIR"
 CURRENT_BRANCH=$(git branch --show-current)
 if [ "$CURRENT_BRANCH" == "$BRANCH" ]; then
@@ -216,9 +279,9 @@ else
     info "本地: $(git log --oneline -1)"
 fi
 
-# 8. 检查 systemd 服务配置
+# 10. 检查 systemd 服务配置
 echo ""
-echo ">> 8. 检查服务配置"
+echo ">> 10. 检查服务配置"
 SERVICE_FILE="/etc/systemd/system/nautilus-trader.service"
 if [ -f "$SERVICE_FILE" ]; then
     # 检查入口文件
@@ -253,9 +316,9 @@ else
     check_fail "服务配置文件不存在: $SERVICE_FILE"
 fi
 
-# 9. 检查环境变量文件
+# 11. 检查环境变量文件
 echo ""
-echo ">> 9. 检查环境配置"
+echo ">> 11. 检查环境配置"
 ENV_FILE="$INSTALL_DIR/.env"
 if [ -f "$ENV_FILE" ]; then
     check_pass ".env 文件存在"
@@ -279,9 +342,9 @@ else
     check_fail ".env 文件不存在"
 fi
 
-# 10. 检查 Python 虚拟环境
+# 12. 检查 Python 虚拟环境
 echo ""
-echo ">> 10. 检查 Python 环境"
+echo ">> 12. 检查 Python 环境"
 VENV_PYTHON="$INSTALL_DIR/venv/bin/python"
 if [ -f "$VENV_PYTHON" ]; then
     check_pass "虚拟环境存在"
@@ -298,9 +361,9 @@ else
     check_fail "虚拟环境不存在: $VENV_PYTHON"
 fi
 
-# 11. 检查关键文件
+# 13. 检查关键文件
 echo ""
-echo ">> 11. 检查关键文件"
+echo ">> 13. 检查关键文件"
 for FILE in main_live.py strategy/deepseek_strategy.py utils/deepseek_client.py configs/base.yaml; do
     if [ -f "$INSTALL_DIR/$FILE" ]; then
         check_pass "$FILE 存在"
@@ -309,9 +372,9 @@ for FILE in main_live.py strategy/deepseek_strategy.py utils/deepseek_client.py 
     fi
 done
 
-# 12. 检查网络连接
+# 14. 检查网络连接
 echo ""
-echo ">> 12. 检查网络连接"
+echo ">> 14. 检查网络连接"
 if curl -s --connect-timeout 5 https://api.binance.com/api/v3/ping > /dev/null 2>&1; then
     check_pass "Binance API 可达"
 else
@@ -324,9 +387,9 @@ else
     check_warn "无法连接 DeepSeek API（可能需要验证）"
 fi
 
-# 13. 检查 Telegram 进程状态 (如果启用)
+# 15. 检查 Telegram 进程状态 (如果启用)
 echo ""
-echo ">> 13. 检查 Telegram 状态"
+echo ">> 15. 检查 Telegram 状态"
 if [ -n "$PID" ]; then
     # 检查是否有 Telegram 相关线程
     TG_THREADS=$(ps -T -p "$PID" 2>/dev/null | grep -c "python" || echo "0")
@@ -345,9 +408,9 @@ if [ -n "$PID" ]; then
     fi
 fi
 
-# 14. 检查策略运行状态
+# 16. 检查策略运行状态
 echo ""
-echo ">> 14. 检查策略运行状态"
+echo ">> 16. 检查策略运行状态"
 if echo "$RECENT_LOGS" | grep -q "Strategy Started\|Instrument.*BTCUSDT"; then
     check_pass "策略已成功启动"
 else
