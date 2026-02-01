@@ -391,13 +391,98 @@ def calculate_position_size(
     sizing_config = config.get('position_sizing', {})
     method = sizing_config.get('method', 'fixed_pct')
 
-    # v3.12: Check if AI specified position_size_pct
+    # v3.13: Get AI position_size_pct (used by hybrid and ai_controlled)
     ai_size_pct = signal_data.get('position_size_pct')
-    if ai_size_pct is not None and ai_size_pct >= 0:
-        # AI-controlled sizing: use position_size_pct directly
+
+    # v3.12 legacy: Override to ai_controlled if AI provides size and method is not hybrid
+    if ai_size_pct is not None and ai_size_pct >= 0 and method not in ('hybrid_atr_ai',):
         method = 'ai_controlled'
 
-    if method == 'atr_based':
+    if method == 'hybrid_atr_ai':
+        # v3.13: Hybrid ATR-AI Position Sizing
+        # 公式: 最终仓位 = ATR仓位 × AI调节系数
+        # AI调节系数 = min_mult + ai_weight × (AI_pct / 100), 范围 [min, max]
+        atr_config = sizing_config.get('atr_based', {})
+        hybrid_config = sizing_config.get('hybrid_atr_ai', {})
+
+        risk_per_trade = atr_config.get('risk_per_trade_pct', 0.01)
+        atr_multiplier = atr_config.get('atr_multiplier', 2.0)
+
+        min_mult = hybrid_config.get('min_multiplier', 0.3)
+        max_mult = hybrid_config.get('max_multiplier', 1.0)
+        ai_weight = hybrid_config.get('ai_weight', 0.7)
+        fallback_to_atr = hybrid_config.get('fallback_to_atr', True)
+
+        # Step 1: Calculate ATR-based position (risk ceiling)
+        atr = technical_data.get('atr', 0)
+        if atr <= 0:
+            atr = current_price * 0.02  # Fallback: 2% of price
+            if logger:
+                logger.warning(f"ATR not available, using estimate: ${atr:.2f}")
+
+        dollar_risk = equity * risk_per_trade
+        stop_distance = atr * atr_multiplier
+        stop_pct = stop_distance / current_price if current_price > 0 else 0.02
+
+        if stop_pct > 0:
+            atr_position_usdt = dollar_risk / stop_pct
+        else:
+            atr_position_usdt = max_usdt
+
+        # Apply max limit to ATR position
+        atr_position_usdt = min(atr_position_usdt, max_usdt)
+
+        # Step 2: Calculate AI adjustment multiplier
+        if ai_size_pct is not None and ai_size_pct >= 0:
+            # AI provided a position size percentage
+            ai_pct_normalized = min(ai_size_pct / 100.0, 1.0)  # Cap at 100%
+            ai_multiplier = min_mult + ai_weight * ai_pct_normalized
+            ai_multiplier = max(min_mult, min(ai_multiplier, max_mult))  # Clamp to range
+            ai_source = 'ai_provided'
+        else:
+            # AI didn't provide position size
+            if fallback_to_atr:
+                ai_multiplier = 1.0  # Use full ATR position
+                ai_source = 'fallback_atr'
+            else:
+                ai_multiplier = (min_mult + max_mult) / 2  # Use middle value
+                ai_source = 'default_middle'
+
+        # Step 3: Apply AI multiplier to ATR position
+        position_usdt = atr_position_usdt * ai_multiplier
+
+        # Apply risk multiplier from RiskController
+        position_usdt *= risk_multiplier
+
+        final_usdt = position_usdt
+
+        details = {
+            'method': 'hybrid_atr_ai',
+            'equity': equity,
+            'risk_per_trade_pct': risk_per_trade,
+            'dollar_risk': dollar_risk,
+            'atr': atr,
+            'atr_multiplier': atr_multiplier,
+            'stop_distance': stop_distance,
+            'stop_pct': stop_pct * 100,
+            'atr_position_usdt': atr_position_usdt,
+            'ai_size_pct': ai_size_pct,
+            'ai_source': ai_source,
+            'ai_multiplier': ai_multiplier,
+            'min_multiplier': min_mult,
+            'max_multiplier': max_mult,
+            'risk_multiplier': risk_multiplier,
+            'max_usdt': max_usdt,
+            'final_usdt': final_usdt,
+        }
+
+        if logger:
+            logger.info(
+                f"📊 Hybrid ATR-AI: ATR=${atr_position_usdt:.2f} × "
+                f"AI_mult={ai_multiplier:.2f} ({ai_source}) = ${final_usdt:.2f}"
+            )
+
+    elif method == 'atr_based':
         # ATR-Based Position Sizing
         atr_config = sizing_config.get('atr_based', {})
         risk_per_trade = atr_config.get('risk_per_trade_pct', 0.01)

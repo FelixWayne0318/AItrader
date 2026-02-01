@@ -209,15 +209,27 @@ risk:
       min_interval_minutes: 30      # 最少 30 分钟间隔
       max_trades_per_day: 10        # 每日最多 10 笔
 
-  # ===== v3.12: ATR-Based 仓位计算 =====
+  # ===== v3.13: Hybrid ATR-AI 仓位计算 =====
+  # 公式: 最终仓位 = ATR仓位 × AI调节系数
+  # - ATR 提供风险上限 (波动率适应)
+  # - AI 只能减仓，不能加仓 (风险可控)
   position_sizing:
-    method: "atr_based"             # fixed_pct | atr_based | kelly
+    method: "hybrid_atr_ai"         # fixed_pct | atr_based | kelly | hybrid_atr_ai
 
-    # ATR-Based 参数
+    # ATR-Based 参数 (也用于 hybrid_atr_ai 的上限计算)
     atr_based:
       risk_per_trade_pct: 0.01      # 每笔风险 1% of equity
       atr_period: 14                # ATR 周期
       atr_multiplier: 2.0           # 止损距离 = 2 × ATR
+
+    # v3.13: Hybrid ATR-AI 参数
+    # AI调节系数 = min_mult + ai_weight × (AI_pct / 100), 范围 [min, max]
+    hybrid_atr_ai:
+      enabled: true
+      min_multiplier: 0.3           # AI 最低系数 (保底 30%)
+      max_multiplier: 1.0           # AI 最高系数 (不超过 ATR)
+      ai_weight: 0.7                # AI 影响权重
+      fallback_to_atr: true         # AI 未提供仓位时，使用纯 ATR
 
     # Kelly Criterion 参数 (可选，需要足够历史数据)
     kelly:
