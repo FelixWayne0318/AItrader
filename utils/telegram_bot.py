@@ -541,6 +541,20 @@ class TelegramBot:
 {pnl_emoji} *盈亏*: ${pnl:,.2f} ({pnl_pct:+.2f}%)
 """
 
+        # v4.2: Add S/R Zone for CLOSED positions
+        if action == "CLOSED":
+            sr_zone = position_data.get('sr_zone') or {}
+            nearest_support = sr_zone.get('nearest_support')
+            nearest_resistance = sr_zone.get('nearest_resistance')
+            if nearest_support is not None or nearest_resistance is not None:
+                message += "\n🎯 *支撑/阻力 (平仓时)*:\n"
+                if nearest_support is not None:
+                    sup_dist = ((current_price - nearest_support) / current_price * 100) if current_price > 0 else 0
+                    message += f"  • 支撑: ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
+                if nearest_resistance is not None:
+                    res_dist = ((nearest_resistance - current_price) / current_price * 100) if current_price > 0 else 0
+                    message += f"  • 阻力: ${nearest_resistance:,.2f} (+{res_dist:.2f}%)\n"
+
         message += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
 
         return message
@@ -649,6 +663,19 @@ class TelegramBot:
                 if side == "SHORT":
                     tp_pct = -tp_pct  # SHORT position: TP below entry is positive profit
                 msg += f"  • 止盈: ${tp_price:,.2f} (+{abs(tp_pct):.2f}%)\n"
+
+        # v4.2: Add S/R Zone data if available
+        sr_zone = execution_data.get('sr_zone') or {}
+        nearest_support = sr_zone.get('nearest_support')
+        nearest_resistance = sr_zone.get('nearest_resistance')
+        if nearest_support is not None or nearest_resistance is not None:
+            msg += "\n🎯 *支撑/阻力*:\n"
+            if nearest_support is not None:
+                sup_dist = ((entry_price - nearest_support) / entry_price * 100) if entry_price > 0 else 0
+                msg += f"  • 支撑: ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
+            if nearest_resistance is not None:
+                res_dist = ((nearest_resistance - entry_price) / entry_price * 100) if entry_price > 0 else 0
+                msg += f"  • 阻力: ${nearest_resistance:,.2f} (+{res_dist:.2f}%)\n"
 
         # Add AI analysis if available
         if winning_side or reasoning:
@@ -769,6 +796,10 @@ class TelegramBot:
         entry_price = heartbeat_data.get('entry_price') or 0
         position_size = heartbeat_data.get('position_size') or 0
         position_pnl_pct = heartbeat_data.get('position_pnl_pct') or 0
+
+        # v4.2: SL/TP prices
+        sl_price = heartbeat_data.get('sl_price')
+        tp_price = heartbeat_data.get('tp_price')
 
         # v3.6 MTF Order Flow (optional)
         order_flow = heartbeat_data.get('order_flow') or {}
@@ -904,6 +935,14 @@ class TelegramBot:
         msg += f"📍 入场: ${entry_price:,.2f}\n"
         msg += f"📦 数量: {position_size:.4f}\n"
         msg += f"💹 盈亏: {pnl_emoji} {position_pnl_pct:+.2f}%\n"
+        # v4.2: Show SL/TP if available
+        if sl_price is not None or tp_price is not None:
+            if sl_price is not None:
+                sl_dist = ((sl_price - price) / price * 100) if price > 0 else 0
+                msg += f"🛑 止损: ${sl_price:,.2f} ({sl_dist:+.2f}%)\n"
+            if tp_price is not None:
+                tp_dist = ((tp_price - price) / price * 100) if price > 0 else 0
+                msg += f"🎯 止盈: ${tp_price:,.2f} ({tp_dist:+.2f}%)\n"
         msg += f"━━━━━━━━━━━━━━━━\n"
         msg += f"🏦 余额: ${equity:,.2f}\n"
         msg += f"⏱ 运行: {uptime_str}\n"
