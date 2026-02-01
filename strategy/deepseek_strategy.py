@@ -2956,12 +2956,9 @@ class DeepSeekAIStrategy(Strategy):
                 decision = "UNKNOWN"
                 if hasattr(self, 'last_signal') and self.last_signal:
                     signal = self.last_signal.get('signal', '')
-                    if signal == 'BUY':
-                        decision = 'LONG'
-                    elif signal == 'SELL':
-                        decision = 'SHORT'
-                    else:
-                        decision = signal
+                    # v3.12: Handle both legacy (BUY/SELL) and new (LONG/SHORT) formats
+                    legacy_mapping = {'BUY': 'LONG', 'SELL': 'SHORT'}
+                    decision = legacy_mapping.get(signal, signal)
 
                 # Get entry conditions
                 conditions = getattr(self, '_last_entry_conditions', 'N/A')

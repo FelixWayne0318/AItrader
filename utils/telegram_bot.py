@@ -619,10 +619,11 @@ class TelegramBot:
             action_display = signal_cn_map.get(signal, signal)
 
         # Build message
+        signal_cn = signal_cn_map.get(signal, signal)
         msg = f"""{signal_emoji} *交易执行成功*
 
 *动作*: {action_display}
-*信号*: {'买入' if signal == 'BUY' else '卖出'} (信心: {confidence_cn})
+*信号*: {signal_cn} (信心: {confidence_cn})
 *成交*: {quantity:.4f} BTC @ ${entry_price:,.2f}
 *金额*: ${quantity * entry_price:,.2f}
 """

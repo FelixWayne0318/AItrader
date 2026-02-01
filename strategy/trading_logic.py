@@ -625,14 +625,14 @@ def validate_multiagent_sltp(
     Validate MultiAgent SL/TP values.
 
     This function validates that SL/TP values from MultiAgent are correct:
-    - BUY: SL must be below entry, TP must be above entry
-    - SELL: SL must be above entry, TP must be below entry
+    - BUY/LONG: SL must be below entry, TP must be above entry
+    - SELL/SHORT: SL must be above entry, TP must be below entry
     - Both must have minimum distance from entry
 
     Parameters
     ----------
     side : str
-        Trade side ('BUY' or 'SELL')
+        Trade side ('BUY', 'SELL', 'LONG', or 'SHORT')
     multi_sl : float, optional
         Stop loss price from MultiAgent
     multi_tp : float, optional
@@ -651,7 +651,10 @@ def validate_multiagent_sltp(
     sl_distance = abs(multi_sl - entry_price) / entry_price
     tp_distance = abs(multi_tp - entry_price) / entry_price
 
-    if side == 'BUY':
+    # v3.12: Support both legacy (BUY/SELL) and new (LONG/SHORT) formats
+    is_long = side.upper() in ('BUY', 'LONG')
+
+    if is_long:
         # BUY: SL must be < entry, TP must be > entry
         if multi_sl >= entry_price:
             return False, None, None, f"BUY SL (${multi_sl:,.2f}) must be < entry (${entry_price:,.2f})"
@@ -705,7 +708,7 @@ def calculate_technical_sltp(
     Parameters
     ----------
     side : str
-        Trade side ('BUY' or 'SELL')
+        Trade side ('BUY', 'SELL', 'LONG', or 'SHORT')
     entry_price : float
         Entry price
     support : float
@@ -726,7 +729,10 @@ def calculate_technical_sltp(
     """
     PRICE_EPSILON = max(entry_price * 1e-8, 1e-8)
 
-    if side == 'BUY':
+    # v3.12: Support both legacy (BUY/SELL) and new (LONG/SHORT) formats
+    is_long = side.upper() in ('BUY', 'LONG')
+
+    if is_long:
         # BUY: Stop loss below entry
         default_sl = entry_price * 0.98  # Default 2% below
 
