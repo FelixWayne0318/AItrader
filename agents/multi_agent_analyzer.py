@@ -36,133 +36,93 @@ from strategy.trading_logic import (
 
 
 # =============================================================================
-# TradingAgents v3.3: Indicator Definitions for AI
+# TradingAgents v3.11: Indicator Definitions for AI
 # Borrowed from: TradingAgents/agents/analysts/market_analyst.py
 #
 # These definitions teach AI how to interpret raw indicator values.
 # AI receives raw numbers and uses these definitions to form its own judgment.
+# NOTE: Only definitions and usage - NO trading rules. Let AI decide autonomously.
 # =============================================================================
 INDICATOR_DEFINITIONS = """
 INDICATOR REFERENCE (How to interpret the data):
 
 MOVING AVERAGES:
-- SMA (Simple Moving Average): Trend direction indicator
-  * Price > SMA = Bullish bias
-  * Price < SMA = Bearish bias
-  * SMA_5 > SMA_20 > SMA_50 = Strong uptrend (aligned)
-  * SMA_5 < SMA_20 < SMA_50 = Strong downtrend (aligned)
+- SMA (Simple Moving Average): Medium/long-term trend indicator
+  * Usage: Identify trend direction, serve as dynamic support/resistance
+  * Price vs SMA relationship indicates trend bias
+  * Multiple SMA alignment (5/20/50) shows trend strength
 
 RSI (Relative Strength Index):
+- Momentum oscillator measuring speed of price changes
 - Range: 0-100
-- >70 = Overbought (potential reversal down or pullback)
-- <30 = Oversold (potential reversal up or bounce)
-- 40-60 = Neutral zone
+- Usage: Identify overbought/oversold conditions, spot divergences
+- Thresholds: 70 (overbought), 30 (oversold), 40-60 (neutral)
 
 MACD (Moving Average Convergence Divergence):
-- MACD > Signal = Bullish momentum
-- MACD < Signal = Bearish momentum
-- Histogram growing = Momentum strengthening
-- Histogram shrinking = Momentum weakening
-- Zero line crossover = Trend change signal
+- Trend-following momentum indicator
+- Components: MACD line, Signal line, Histogram
+- Usage: Identify trend changes via crossovers and divergences
+- Histogram shows momentum strength and direction
 
 BOLLINGER BANDS:
-- Price near Upper Band = Potentially overbought / strong momentum
-- Price near Lower Band = Potentially oversold / weak momentum
-- Price at Middle Band = Fair value / consolidation
-- Band squeeze (narrow) = Low volatility, breakout coming
-- Band expansion (wide) = High volatility
-- SMA_50 and BB Middle can serve as dynamic support/resistance
-
-SUPPORT/RESISTANCE RISK (IMPORTANT):
-- BB Lower Band and recent swing lows act as SUPPORT
-- BB Upper Band and recent swing highs act as RESISTANCE
-- Risk consideration for trade direction:
-  * SHORT near support (BB Lower, within 2%): HIGH RISK - support may hold, causing bounce
-  * LONG near resistance (BB Upper, within 2%): HIGH RISK - resistance may hold, causing rejection
-- When price is near support/resistance:
-  * Require STRONGER evidence to trade against the level
-  * Consider tighter stop loss or reduced position size
-  * If evidence is weak, prefer HOLD over risky entry
-- BB Position interpretation:
-  * 0-15% = Very close to support (cautious on SHORT)
-  * 85-100% = Very close to resistance (cautious on LONG)
-  * 15-85% = Safe zone for directional trades
+- Volatility indicator with upper/middle/lower bands
+- Usage: Identify volatility levels and potential price boundaries
+- Band width indicates volatility (narrow = low, wide = high)
+- Middle band (SMA_20) serves as dynamic mean
 
 VOLUME:
-- Volume Ratio > 1.5x = High interest, confirms move
-- Volume Ratio < 0.5x = Low interest, weak move
+- Measures trading activity and interest
+- Usage: Confirm price moves and identify breakout validity
+- Volume Ratio compares current to average volume
 
-ORDER FLOW (Buy Ratio):
-- >55% = Buyers dominating (bullish)
-- <45% = Sellers dominating (bearish)
-- 45-55% = Balanced
-- Recent 10 Bars: Look at trend direction (rising = bullish, falling = bearish)
+ORDER FLOW (Taker Buy/Sell Ratio):
+- Measures aggressive buyer vs seller activity
+- Usage: Identify which side is more aggressive in the market
+- Calculated from taker buy volume / total volume
 
-FUNDING RATE (Derivatives):
-- Positive (>0.01%) = Longs paying shorts, crowded long
-- Negative (<-0.01%) = Shorts paying longs, crowded short
-- Near zero = Balanced
+FUNDING RATE (Perpetual Futures):
+- Periodic payment between longs and shorts
+- Usage: Gauge market sentiment and positioning crowdedness
+- Positive = longs pay shorts, Negative = shorts pay longs
 
 OPEN INTEREST:
-- Rising OI + Rising Price = New longs entering (bullish)
-- Rising OI + Falling Price = New shorts entering (bearish)
-- Falling OI = Positions closing, trend weakening
+- Total outstanding derivative contracts
+- Usage: Measure new money entering/exiting the market
+- Rising OI = new positions, Falling OI = positions closing
 
-ORDER BOOK DEPTH (Microstructure):
-- OBI (Order Book Imbalance):
-  * +0.20 to +1.00 = Strong bid pressure (bullish)
-  * +0.05 to +0.20 = Mild bid pressure (slight bullish)
-  * -0.05 to +0.05 = Balanced
-  * -0.20 to -0.05 = Mild ask pressure (slight bearish)
-  * -1.00 to -0.20 = Strong ask pressure (bearish)
-  * Weighted OBI gives higher weight to orders near best price
+ORDER BOOK DEPTH:
+- OBI (Order Book Imbalance): Bid vs ask volume ratio
+  * Range: -1.0 (all asks) to +1.0 (all bids)
+  * Usage: Measure immediate buy/sell pressure
 
-- ⭐ DYNAMICS (Critical for timing):
-  * OBI Change > +0.05 = Bids strengthening (momentum building)
-  * OBI Change < -0.05 = Asks strengthening (selling pressure building)
-  * Trend values: BID_STRENGTHENING / ASK_STRENGTHENING / STABLE
-  * Bid/Ask Depth Change: Large drops (< -5%) = Liquidity thinning (caution)
+- Dynamics: Track changes in OBI and depth over time
+  * Usage: Identify momentum shifts and liquidity changes
 
-- ⭐ PRESSURE GRADIENT (Order concentration):
-  * HIGH concentration (near_5 > 40%) = Orders clustered near best price
-    - If on bid side: Strong immediate support
-    - If on ask side: Strong immediate resistance
-  * LOW concentration (near_5 < 25%) = Orders spread out
-    - Gradual support/resistance, less likely to hold
-  * Compare bid vs ask concentration for directional bias
+- Pressure Gradient: Order concentration near best price
+  * Usage: Assess how strongly levels may hold
 
-- ANOMALIES (Large orders):
-  * Wall detected = Large order blocking price movement
-  * Bid wall = Support level, harder to break down
-  * Ask wall = Resistance level, harder to break up
-  * Recent pulls (walls removed) may signal trap
+- Anomalies: Unusually large orders (walls)
+  * Usage: Identify significant price levels with heavy orders
 
-- LIQUIDITY (Execution quality):
-  * Slippage < 0.05% = Deep book, safe for larger orders
-  * Slippage > 0.10% = Thin book, use smaller position size
-  * Low confidence slippage = Sparse data, be cautious
+- Slippage Estimate: Expected execution cost for given size
+  * Usage: Assess market depth and liquidity quality
 
-SUPPORT/RESISTANCE ZONES (Multi-source S/R):
-- Zones are calculated from multiple sources for higher accuracy:
-  * Order Book Walls (most reliable) = Real orders at that price
-  * Bollinger Bands (dynamic) = Statistical price boundaries
-  * SMA_50/SMA_200 (trend) = Moving average support/resistance
+SUPPORT/RESISTANCE ZONES:
+- Calculated from multiple sources:
+  * Order Book Walls: Real orders at specific prices
+  * Bollinger Bands: Statistical price boundaries
+  * SMA_50/SMA_200: Moving average levels
+  * Pivot Points: Mathematical price levels
 
-- Strength levels:
-  * HIGH = Multiple sources agree OR Order Wall present (strong confluence)
-  * MEDIUM = 2 sources agree
-  * LOW = Single source only
+- Strength levels based on source confluence:
+  * HIGH: Multiple sources agree or Order Wall present
+  * MEDIUM: Two sources agree
+  * LOW: Single source only
 
-- Trading implications:
-  * LONG near HIGH resistance = HIGH RISK (multiple barriers to break)
-  * SHORT near HIGH support = HIGH RISK (multiple buyers waiting)
-  * Distance < 1% to HIGH zone = Extreme caution
-  * Distance > 2% = Safer for directional trades
-
-- Zone usage:
-  * Use S/R zones for stop loss placement (beyond the zone)
-  * Use S/R zones for take profit targets (before the zone)
-  * Order Walls may be pulled (spoofed) - consider with other data
+- Usage: Identify key price levels for analysis
+  * Stop loss placement considerations
+  * Take profit target identification
+  * Entry timing optimization
 """
 
 
