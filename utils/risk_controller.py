@@ -509,17 +509,29 @@ def calculate_atr_position_size(
     Tuple[float, Dict]
         (btc_quantity, calculation_details)
     """
+    # Guard against invalid inputs - return zero position with details
+    if current_price <= 0 or account_equity <= 0:
+        return 0.0, {
+            'method': 'atr_based',
+            'error': 'Invalid input: price or equity <= 0',
+            'account_equity': account_equity,
+            'current_price': current_price,
+            'btc_quantity': 0.0,
+            'actual_notional': 0.0,
+        }
+
     # Calculate dollar risk
     dollar_risk = account_equity * risk_per_trade_pct
 
     # Calculate stop distance
     stop_distance = current_atr * atr_multiplier
 
-    # Prevent division by zero
+    # Prevent division by zero - fallback to 2% of price
     if stop_distance <= 0:
-        stop_distance = current_price * 0.02  # Fallback to 2%
+        stop_distance = current_price * 0.02
 
     # Calculate position size in USDT
+    # Formula: risk_amount / (stop_distance_pct) = risk_amount / (stop_distance / price)
     position_usdt = dollar_risk / (stop_distance / current_price)
 
     # Apply risk multiplier from RiskController
