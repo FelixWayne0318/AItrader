@@ -158,7 +158,7 @@ echo ""
 echo ">> 6. 检查服务运行时长"
 if systemctl is-active --quiet "$SERVICE_NAME"; then
     UPTIME_SEC=$(systemctl show "$SERVICE_NAME" -p ActiveEnterTimestampMonotonic --value)
-    CURRENT_SEC=$(date +%s)000000  # 微秒
+    CURRENT_SEC=$(date +%s%N | cut -c1-16)  # 微秒级时间戳 (16 位)
     RUNNING_SEC=$(( (CURRENT_SEC - UPTIME_SEC) / 1000000 ))
 
     if [ "$RUNNING_SEC" -lt 60 ]; then
@@ -175,13 +175,13 @@ echo ">> 7. 检查日志错误模式 (最近 200 行)"
 RECENT_LOGS=$(journalctl -u "$SERVICE_NAME" -n 200 --no-hostname 2>/dev/null || echo "")
 
 # 检查 Rust panic (线程安全崩溃)
-RUST_PANIC_COUNT=$(echo "$RECENT_LOGS" | grep -ci "panic\|RelativeStrengthIndex is unsendable\|thread.*panicked" || echo "0")
+RUST_PANIC_COUNT=$(echo "$RECENT_LOGS" | grep -ci "panic\|RelativeStrengthIndex is unsendable\|thread.*panicked" | tr -d '\n' || echo "0")
 if [ "$RUST_PANIC_COUNT" -gt 0 ]; then
     check_critical "检测到 Rust panic: $RUST_PANIC_COUNT 次 (线程安全问题)"
 fi
 
 # 检查 Telegram 错误
-TELEGRAM_ERROR_COUNT=$(echo "$RECENT_LOGS" | grep -ci "TCPTransport closed\|can't use getUpdates\|Telegram.*error\|event loop" || echo "0")
+TELEGRAM_ERROR_COUNT=$(echo "$RECENT_LOGS" | grep -ci "TCPTransport closed\|can't use getUpdates\|Telegram.*error\|event loop" | tr -d '\n' || echo "0")
 if [ "$TELEGRAM_ERROR_COUNT" -gt 5 ]; then
     check_critical "Telegram 错误频繁: $TELEGRAM_ERROR_COUNT 次 (事件循环冲突)"
 elif [ "$TELEGRAM_ERROR_COUNT" -gt 0 ]; then
@@ -189,7 +189,7 @@ elif [ "$TELEGRAM_ERROR_COUNT" -gt 0 ]; then
 fi
 
 # 检查 Python 异常
-PYTHON_EXCEPTION_COUNT=$(echo "$RECENT_LOGS" | grep -ci "Traceback\|Exception\|Error:" || echo "0")
+PYTHON_EXCEPTION_COUNT=$(echo "$RECENT_LOGS" | grep -ci "Traceback\|Exception\|Error:" | tr -d '\n' || echo "0")
 if [ "$PYTHON_EXCEPTION_COUNT" -gt 10 ]; then
     check_warn "Python 异常频繁: $PYTHON_EXCEPTION_COUNT 次"
 fi
@@ -243,8 +243,8 @@ for CONFIG_FILE in configs/base.yaml configs/production.yaml; do
             if grep -q "max_retries.*180" "$CONFIG_FILE" || grep -q "max_retries: 180" "$CONFIG_FILE"; then
                 check_pass "仪器加载超时已配置为 180 秒"
             elif grep -q "max_retries" "$CONFIG_FILE"; then
-                RETRIES=$(grep "max_retries" "$CONFIG_FILE" | grep -oE '[0-9]+' | head -1)
-                if [ "$RETRIES" -lt 180 ]; then
+                RETRIES=$(grep "max_retries:" "$CONFIG_FILE" | awk '{print $2}' | head -1)
+                if [ -n "$RETRIES" ] && [ "$RETRIES" -lt 180 ]; then
                     check_warn "仪器加载超时仅为 ${RETRIES} 秒 (建议 180)"
                 fi
             else
