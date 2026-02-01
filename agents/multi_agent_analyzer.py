@@ -654,39 +654,34 @@ Focus on risks and bearish signals in the data."""
         Borrowed from: TradingAgents/agents/managers/research_manager.py
         Simplified v3.0: Let AI autonomously evaluate without hardcoded rules
         v3.9: Removed duplicate S/R check from prompt (handled by _evaluate_risk)
+        v3.10: Aligned with TradingAgents original design (rationale + strategic_actions)
         """
-        prompt = f"""You are the Portfolio Manager evaluating the Bull vs Bear debate.
-Your role is to make a DEFINITIVE trading decision based on the debate's strongest arguments.
+        prompt = f"""As the portfolio manager and debate facilitator, your role is to critically evaluate this round of debate and make a definitive decision: align with the bear analyst, the bull analyst, or choose HOLD only if it is strongly justified based on the arguments presented.
 
 DEBATE TRANSCRIPT:
 {debate_history}
 
-Past Trading Mistakes to AVOID:
+PAST REFLECTIONS ON MISTAKES:
 {past_memories if past_memories else "No past data - this is a fresh start."}
 
 YOUR TASK:
-1. Summarize the key points from both sides, focusing on the most compelling evidence
-2. Determine which side presented stronger, more data-backed arguments
-3. Make a DEFINITIVE decision - LONG, SHORT, or HOLD
+Summarize the key points from both sides concisely, focusing on the most compelling evidence or reasoning. Your recommendation—LONG, SHORT, or HOLD—must be clear and actionable.
 
-DECISION GUIDELINES:
-- Focus on evidence quality, not argument quantity
-- Consider the overall market context and risk/reward
-- One side almost always has an edge - find it and commit
-- HOLD is only for genuine uncertainty, not a safe default
-- Be decisive - missed opportunities cost money too
-- Support/Resistance risk is handled separately by the Risk Manager
+Avoid defaulting to HOLD simply because both sides have valid points; commit to a stance grounded in the debate's strongest arguments.
+
+Take into account your past mistakes on similar situations. Use these insights to refine your decision-making and ensure you are learning and improving.
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
     "decision": "LONG|SHORT|HOLD",
     "winning_side": "BULL|BEAR|TIE",
     "confidence": "HIGH|MEDIUM|LOW",
-    "key_reasons": ["reason1", "reason2", "reason3"],
+    "rationale": "Why these arguments lead to your conclusion (1-2 sentences)",
+    "strategic_actions": ["Concrete step 1", "Concrete step 2"],
     "acknowledged_risks": ["risk1", "risk2"]
 }}"""
 
-        system_prompt = "You are a Portfolio Manager. Evaluate the debate objectively and make a decisive trading recommendation. Avoid defaulting to HOLD - commit to the side with stronger evidence."
+        system_prompt = "You are a Portfolio Manager and debate facilitator. Critically evaluate the debate and make a decisive trading recommendation. Avoid defaulting to HOLD - commit to the side with stronger evidence. Learn from past mistakes."
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["judge"] = {
@@ -714,7 +709,8 @@ OUTPUT FORMAT (JSON only, no other text):
             "decision": "HOLD",
             "winning_side": "TIE",
             "confidence": "LOW",
-            "key_reasons": ["JSON parse error - defaulting to HOLD"],
+            "rationale": "JSON parse error - defaulting to HOLD for safety",
+            "strategic_actions": ["Wait for next analysis cycle"],
             "acknowledged_risks": ["Parse failure"]
         }
 
@@ -737,53 +733,54 @@ OUTPUT FORMAT (JSON only, no other text):
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
-        reasons = proposed_action.get("key_reasons", [])
+        # v3.10: Support both rationale (new) and key_reasons (legacy)
+        rationale = proposed_action.get("rationale", "")
+        strategic_actions = proposed_action.get("strategic_actions", [])
         risks = proposed_action.get("acknowledged_risks", [])
+        if isinstance(risks, list):
+            risks = risks.copy()  # Don't modify original
 
         # ========== v3.8: S/R Zone Hard Control ==========
         # Uses multi-source S/R zones (BB + SMA + Order Book Walls)
         # Only blocks when near HIGH strength zones (confluence of multiple sources)
         # v3.9: Can be disabled via sr_hard_control_enabled config
         sr_hard_control_enabled = getattr(self, 'sr_hard_control_enabled', True)
+        blocked_reason = ""
 
         if sr_hard_control_enabled and self._sr_zones_cache:
             hard_control = self._sr_zones_cache.get('hard_control', {})
 
             # Block LONG if too close to HIGH strength resistance
             if action == "LONG" and hard_control.get('block_long'):
-                reason = hard_control.get('reason', 'Too close to resistance')
-                self.logger.warning(f"⚠️ {reason}")
+                blocked_reason = hard_control.get('reason', 'Too close to resistance')
+                self.logger.warning(f"⚠️ {blocked_reason}")
                 proposed_action["decision"] = "HOLD"
                 proposed_action["confidence"] = "LOW"
-                if isinstance(reasons, list):
-                    reasons = reasons.copy()
-                    reasons.append(f"Blocked: {reason}")
-                if isinstance(risks, list):
-                    risks = risks.copy()
-                    risks.append("Too close to HIGH strength resistance zone")
+                rationale = f"Blocked: {blocked_reason}"
+                risks.append("Too close to HIGH strength resistance zone")
                 action = "HOLD"
 
             # Block SHORT if too close to HIGH strength support
             elif action == "SHORT" and hard_control.get('block_short'):
-                reason = hard_control.get('reason', 'Too close to support')
-                self.logger.warning(f"⚠️ {reason}")
+                blocked_reason = hard_control.get('reason', 'Too close to support')
+                self.logger.warning(f"⚠️ {blocked_reason}")
                 proposed_action["decision"] = "HOLD"
                 proposed_action["confidence"] = "LOW"
-                if isinstance(reasons, list):
-                    reasons = reasons.copy()
-                    reasons.append(f"Blocked: {reason}")
-                if isinstance(risks, list):
-                    risks = risks.copy()
-                    risks.append("Too close to HIGH strength support zone")
+                rationale = f"Blocked: {blocked_reason}"
+                risks.append("Too close to HIGH strength support zone")
                 action = "HOLD"
         # ========== End of S/R Zone Hard Control ==========
+
+        # Format strategic actions for prompt
+        actions_str = ', '.join(strategic_actions) if strategic_actions else 'None specified'
 
         prompt = f"""As the Risk Manager, provide final trade parameters.
 
 PROPOSED TRADE:
 - Action: {action}
 - Confidence: {confidence}
-- Key Reasons: {', '.join(reasons)}
+- Rationale: {rationale}
+- Strategic Actions: {actions_str}
 - Acknowledged Risks: {', '.join(risks)}
 
 MARKET DATA:

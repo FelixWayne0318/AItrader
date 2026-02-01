@@ -1475,10 +1475,14 @@ class DeepSeekAIStrategy(Strategy):
                 judge_decision = signal_data.get('judge_decision', {})
                 if judge_decision:
                     winning_side = judge_decision.get('winning_side', 'N/A')
-                    key_reasons = judge_decision.get('key_reasons', [])
+                    # v3.10: Support both rationale (new) and key_reasons (legacy)
+                    rationale = judge_decision.get('rationale', '')
+                    strategic_actions = judge_decision.get('strategic_actions', [])
                     self.log.info(f"⚖️ Winning Side: {winning_side}")
-                    if key_reasons:
-                        self.log.info(f"📌 Key Reasons: {', '.join(key_reasons[:3])}")
+                    if rationale:
+                        self.log.info(f"📌 Rationale: {rationale}")
+                    if strategic_actions:
+                        self.log.info(f"🎯 Actions: {', '.join(strategic_actions[:2])}")
 
                 # Telegram notification moved to after execution (see _execute_trade)
                 # This prevents "signal sent but not executed" confusion
@@ -1626,10 +1630,17 @@ class DeepSeekAIStrategy(Strategy):
                 if bear_matches:
                     bear_analysis = bear_matches[-1].strip()
 
-            # Get judge decision details
+            # Get judge decision details (v3.10: support rationale + legacy key_reasons)
             judge_decision = signal_data.get('judge_decision', {})
-            judge_reasons = judge_decision.get('key_reasons', []) if isinstance(judge_decision, dict) else []
-            judge_reasoning = '. '.join(judge_reasons) if judge_reasons else signal_data.get('reason', '')
+            if isinstance(judge_decision, dict):
+                # Prefer rationale (v3.10), fallback to key_reasons (legacy)
+                judge_reasoning = judge_decision.get('rationale', '')
+                if not judge_reasoning:
+                    judge_reasons = judge_decision.get('key_reasons', [])
+                    judge_reasoning = '. '.join(judge_reasons) if judge_reasons else ''
+            else:
+                judge_reasoning = ''
+            judge_reasoning = judge_reasoning or signal_data.get('reason', '')
 
             # Calculate confidence score (HIGH=80, MEDIUM=60, LOW=40)
             confidence_map = {'HIGH': 80, 'MEDIUM': 60, 'LOW': 40}
