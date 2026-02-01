@@ -587,7 +587,16 @@ def mock_calculate_position_size(
 
 # Use real or mock function
 if MODULES_AVAILABLE['trading_logic']:
-    _calc_position_size = calculate_position_size
+    # Wrap real function to match mock signature (returns tuple)
+    def _calc_position_size_wrapper(signal_data, price_data, technical_data, position_config):
+        qty, details = calculate_position_size(
+            signal_data=signal_data,
+            price_data=price_data,
+            technical_data=technical_data,
+            config=position_config,  # Real function uses 'config'
+        )
+        return qty
+    _calc_position_size = _calc_position_size_wrapper
 else:
     _calc_position_size = mock_calculate_position_size
     print("  (Using mock function - install dotenv for full tests)")
