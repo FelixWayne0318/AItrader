@@ -60,9 +60,9 @@ v11.6 更新 - 修复 calculate_technical_sltp 调用签名:
 
 v11.5 更新 - 完整流程可视化:
 - 添加 AI Prompt 结构验证 (显示 System/User Prompt 内容)
-- 添加 MTF 状态估算 (基于当前数据估算趋势方向, ALLOW_LONG/SHORT)
+- 添加 MTF 数据展示 (三层时间框架原始数据，无本地决策)
 - 修复订单提交模拟类型错误 (safe_float 转换)
-- 添加 Funding Rate 差异原因标注 (Binance 8h vs Coinalyze 聚合)
+- 添加 Funding Rate 数据源标注 (v3.8 改用 Binance 8h)
 - 添加错误恢复机制验证 ([9.4/10] 新增步骤)
 - MultiAgentAnalyzer 添加 get_last_prompts() 方法
 
@@ -134,9 +134,9 @@ v11.6:
 
 v11.5:
 - 添加 AI Prompt 结构验证 (System/User Prompt 分离检查)
-- 添加 MTF 状态估算 (趋势方向估算, ALLOW_LONG/SHORT)
+- 添加 MTF 数据展示 (三层时间框架数据，AI 自主分析)
 - 添加 safe_float() 类型转换
-- 添加 Funding Rate 差异标注 (Binance 8h vs Coinalyze)
+- 添加 Funding Rate 数据源标注 (v3.8 改用 Binance 8h)
 - 添加错误恢复机制验证
 
 v11.4:
@@ -244,12 +244,10 @@ v10.8:
 v10.7:
 - 修复 SentimentDataFetcher 初始化: 移除不存在的 logger 参数
 
-v10.6 (已在 v10.20 升级):
-- 添加 Step 7.5: MTF 信号过滤模拟 (与 deepseek_strategy.py:1454-1525 100% 一致)
-- 规则1: 方向性权限检查 (趋势层，v10.20 升级)
-- 规则2: 决策层方向匹配 (信号与 ALLOW_LONG/SHORT/WAIT 一致性)
-- 规则3: 执行层 RSI 确认 (入场范围检查)
-- 达到 100% 流程覆盖
+v10.6 (已废弃 - MTF v3.3 无本地决策):
+- ⚠️ 注: MTF v3.3 已移除本地决策逻辑 (DecisionState)
+- 旧版包含 MTF 信号过滤模拟 (ALLOW_LONG/SHORT/WAIT)
+- 现版本仅收集三层数据 (1D/4H/15M)，所有决策由 AI 完成
 
 v10.5:
 - 修复 get_funding_rate() 数据解析: 使用 'value' 字段而非 'fundingRate'
@@ -789,7 +787,7 @@ try:
                 try:
                     from indicators.multi_timeframe_manager import MultiTimeframeManager
                     print("  ✅ MultiTimeframeManager 导入成功")
-                    print(f"     v3.3: DecisionState 已移除 (决策逻辑由 AI 控制)")
+                    print(f"     v3.3: 三层数据收集 (1D/4H/15M)，决策逻辑由 AI 控制")
                 except ImportError as e:
                     print(f"  ⚠️ MultiTimeframeManager 导入失败: {e}")
             else:
@@ -1247,6 +1245,7 @@ try:
     print(f"  [诊断用] Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
     print("  ✅ 技术数据获取成功")
     print("  📝 v3.3: AI 只接收原始数值 (SMA/RSI/MACD/BB)，不接收 support/resistance/trend 标签")
+    print("     注: support/resistance 仍用于技术回退计算 (calculate_technical_sltp)，非 AI 输入")
 
     # ========== MTF 多时间框架数据获取 (v11.8 新增) ==========
     # 获取 4H 决策层数据
@@ -1879,6 +1878,7 @@ print("     ❌ 确认计数框架 (bullish_count/bearish_count)")
 print()
 print("  ✅ 不再传给 AI 的预计算标签 (v3.3 移除):")
 print("     ❌ support/resistance - AI 用 SMA_50/BB 作动态支撑阻力")
+print("        (但仍保留用于技术回退计算 calculate_technical_sltp)")
 print("     ❌ cvd_trend - AI 从 recent_10_bars 推断")
 print("     ❌ overall_trend - AI 从 SMA 关系推断")
 print("     ❌ Interpretation: Bullish/Bearish - AI 从原始比例推断")
@@ -1911,20 +1911,12 @@ if sma_200 > 0:
         trend_reason = f"价格 < SMA_200 ({price_vs_sma200*100:+.2f}%)"
     print(f"     趋势层 (1D): {trend_estimate} - {trend_reason} (供 AI 参考)")
 
-    # 决策层 (4H): 基于 SMA 排列和 RSI
+    # 决策层 (4H): 显示原始数据 (MTF v3.3 无本地决策)
     sma_5 = technical_data.get('sma_5', 0)
     sma_20 = technical_data.get('sma_20', 0)
     rsi = technical_data.get('rsi', 50)
-    if sma_5 > sma_20 and rsi < 70:
-        decision_state = "ALLOW_LONG"
-        decision_reason = f"SMA_5 > SMA_20, RSI={rsi:.1f}"
-    elif sma_5 < sma_20 and rsi > 30:
-        decision_state = "ALLOW_SHORT"
-        decision_reason = f"SMA_5 < SMA_20, RSI={rsi:.1f}"
-    else:
-        decision_state = "WAIT"
-        decision_reason = f"SMA 排列不明确或 RSI 极值"
-    print(f"     决策层 (4H): {decision_state} - {decision_reason}")
+    print(f"     决策层 (4H): SMA_5={sma_5:.2f}, SMA_20={sma_20:.2f}, RSI={rsi:.1f}")
+    print(f"                  (数据传给 AI，由 AI 自主分析决策)")
 
     # 执行层状态
     bb_lower = technical_data.get('bb_lower', 0)
@@ -1936,8 +1928,10 @@ else:
     print(f"     ⚠️ SMA_200 不可用 ({sma_200})，无法估算 MTF 状态")
 
 print()
-print("  ⚠️ 注意: 以上为基于当前数据的估算值")
-print("     v3.1: 所有交易决策由 AI (MultiAgent) 完成，本地不做趋势判断")
+print("  📝 MTF v3.3 架构说明:")
+print("     - 本地: 仅收集三层时间框架数据 (1D/4H/15M)")
+print("     - AI: 所有交易决策由 MultiAgent 完成 (Bull/Bear/Judge)")
+print("     - 无本地决策逻辑 (已移除 DecisionState/ALLOW_LONG/SHORT/WAIT)")
 print()
 print("  ✅ TradingAgents v3.4 架构验证完成")
 print()
@@ -2485,40 +2479,42 @@ if not SUMMARY_MODE:
                     else:
                         print("        ❌ OI 获取失败")
 
-                    # 测试 get_funding_rate (v2.1: 对比 Binance 和 Coinalyze)
-                    print("        测试 Funding Rate...")
+                    # 测试 get_funding_rate (v3.8: 优先使用 Binance 8h 资金费率)
+                    print("        测试 Funding Rate (v3.8: 优先 Binance)...")
                     fr_data = coinalyze_client.get_funding_rate(symbol=coinalyze_symbol)
 
-                    # 同时获取 Binance 直接的 Funding Rate 做对比
+                    # 获取 Binance 8 小时资金费率 (主要数据源)
                     binance_fr = None
                     try:
                         binance_fr = kline_client.get_funding_rate(symbol=symbol_clean)
                     except Exception:
                         pass
 
-                    if fr_data:
-                        fr_value = fr_data.get('value', 0)
-                        print(f"        ✅ Coinalyze Funding: {fr_value:.6f} ({fr_value*100:.4f}%)")
+                    # v3.8: 优先显示 Binance 数据 (配置: always_use_binance=true)
+                    if binance_fr:
+                        binance_value = binance_fr.get('funding_rate', 0)
+                        binance_pct = binance_fr.get('funding_rate_pct', 0)
+                        print(f"        ✅ 主数据源 (Binance 8h): {binance_value:.6f} ({binance_pct:.4f}%)")
+                        print(f"           • 结算周期: 每 8 小时 (00:00/08:00/16:00 UTC)")
+                        print(f"           • 说明: Binance 合约交易者实际支付/收取的费率")
 
-                        # v2.1: 显示 Binance 对比 + 差异警告
-                        if binance_fr:
-                            binance_value = binance_fr.get('funding_rate', 0)
-                            binance_pct = binance_fr.get('funding_rate_pct', 0)
-                            print(f"        ✅ Binance Funding:  {binance_value:.6f} ({binance_pct:.4f}%)")
+                        # 显示 Coinalyze 对比 (仅供参考)
+                        if fr_data:
+                            fr_value = fr_data.get('value', 0)
+                            print(f"        ℹ️ 参考数据 (Coinalyze): {fr_value:.6f} ({fr_value*100:.4f}%)")
 
                             # 计算差异倍数并解释原因
                             if binance_value > 0 and fr_value > 0:
                                 ratio = fr_value / binance_value
                                 if ratio > 5 or ratio < 0.2:
-                                    print(f"        ⚠️ 差异 {ratio:.1f}x - 原因说明:")
-                                    print(f"           • Binance: 下次结算的 8 小时费率 (实时单次)")
-                                    print(f"           • Coinalyze: 多交易所加权聚合值 (可能包含历史累计)")
-                                    print(f"           • 差异正常，不影响交易逻辑")
-                                    print(f"        ✅ AI 输入使用 Binance 8h funding rate (因为我们在 Binance 交易)")
+                                    print(f"        ⚠️ 差异 {ratio:.1f}x - 原因:")
+                                    print(f"           • Binance: 单交易所 8 小时费率 (实时)")
+                                    print(f"           • Coinalyze: 多交易所加权聚合值")
                     else:
-                        print("        ❌ Coinalyze Funding Rate 获取失败")
-                        if binance_fr:
-                            print(f"        ✅ Binance Funding: {binance_fr.get('funding_rate', 0):.6f} ({binance_fr.get('funding_rate_pct', 0):.4f}%)")
+                        print("        ❌ Binance Funding Rate 获取失败")
+                        if fr_data:
+                            fr_value = fr_data.get('value', 0)
+                            print(f"        ⚠️ 降级使用 Coinalyze: {fr_value:.6f} ({fr_value*100:.4f}%)")
 
                     # 测试 get_liquidations
                     print("        测试 Liquidations (1h)...")
@@ -3235,7 +3231,7 @@ if not SUMMARY_MODE:
             print()
             print(f"     • {decision_tf.upper()} bar → 决策层 (_handle_decision_bar)")
             print(f"       - 更新决策层技术指标")
-            print(f"       - 计算 ALLOW_LONG/ALLOW_SHORT/WAIT 状态")
+            print(f"       - 收集决策层数据 (AI 自主分析，无本地决策)")
             print(f"       - 设置 _mtf_decision_initialized = True")
             print()
             print(f"     • {execution_tf.upper()} bar → 执行层 (_handle_execution_bar)")
@@ -3656,18 +3652,25 @@ if not SUMMARY_MODE:
         else:
             print(f"    (数据不可用)")
         print()
-        print(f"  Funding Rate:")
+        print(f"  Funding Rate (资金费率):")
         if fr_data:
             fr_value = fr_data.get('value', 0)
             source = fr_data.get('source', 'unknown')
+            period = fr_data.get('period', 'N/A')
             print(f"    Current:     {fr_value:.6f} ({fr_value*100:.4f}%)")
             print(f"    Interpret:   {fr_data.get('interpretation', 'N/A')}")
-            print(f"    Source:      {source}")
-            # v2.1: 显示两个数据源对比
+            print(f"    Source:      {source} (周期: {period})")
+
+            # v3.8: 标注币安 8 小时资金费率
+            if source == 'binance_8h':
+                print(f"    ✅ 使用币安 8 小时资金费率")
+                print(f"       结算时间: 00:00/08:00/16:00 UTC")
+
+            # 显示两个数据源对比 (供参考)
             binance_pct = fr_data.get('binance_pct')
             coinalyze_pct = fr_data.get('coinalyze_pct')
             if binance_pct is not None and coinalyze_pct is not None:
-                print(f"    [对比] Binance 8h: {binance_pct:.4f}%, Coinalyze: {coinalyze_pct:.4f}%")
+                print(f"    [参考] Binance 8h: {binance_pct:.4f}%, Coinalyze: {coinalyze_pct:.4f}%")
         else:
             print(f"    (数据不可用)")
         print()

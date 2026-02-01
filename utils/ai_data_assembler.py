@@ -271,7 +271,7 @@ class AIDataAssembler:
                 if use_binance and binance_funding:
                     final_value = binance_funding['funding_rate']
                     final_pct = binance_pct
-                    source = "binance_direct"
+                    source = "binance_8h"  # v3.8: 明确标注为币安 8 小时资金费率
                 else:
                     final_value = coinalyze_value
                     final_pct = coinalyze_pct
@@ -283,6 +283,7 @@ class AIDataAssembler:
                     "current_pct": final_pct,
                     "interpretation": self._interpret_funding(final_value),
                     "source": source,
+                    "period": "8h" if source == "binance_8h" else "aggregated",  # v3.8: 标注周期
                     # 保留两个数据源供对比
                     "coinalyze_pct": coinalyze_pct,
                     "binance_pct": binance_pct,
@@ -296,7 +297,8 @@ class AIDataAssembler:
                 "current": binance_funding['funding_rate'],
                 "current_pct": binance_funding['funding_rate_pct'],
                 "interpretation": self._interpret_funding(binance_funding['funding_rate']),
-                "source": "binance_direct",
+                "source": "binance_8h",  # v3.8: 明确标注为币安 8 小时资金费率
+                "period": "8h",  # v3.8: 标注周期
                 "coinalyze_pct": None,
                 "binance_pct": binance_funding['funding_rate_pct'],
             }

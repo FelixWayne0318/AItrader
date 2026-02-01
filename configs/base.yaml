@@ -386,10 +386,13 @@ order_flow:
     fallback_funding_rate: 0
 
     # ===== v3.7: Funding Rate 数据源配置 =====
+    # ⚠️ 重要: 资金费率统一使用 Binance 8 小时资金费率
+    # Binance 合约每 8 小时结算一次 (00:00, 08:00, 16:00 UTC)
+    # Coinalyze 数据是多交易所聚合值，可能与 Binance 实际费率差异较大
     funding_rate:
       prefer_binance_when_divergent: true   # 差异大时使用 Binance
       max_divergence_ratio: 10.0            # 差异超过 10x 视为异常
-      always_use_binance: false             # 始终使用 Binance (忽略 Coinalyze)
+      always_use_binance: true              # ✅ 始终使用 Binance 8h 资金费率 (v3.8 默认)
 
   # ---------------------------------------------------------------------------
   # 买卖比阈值
