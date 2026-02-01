@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.15 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.16 (与实盘 100% 一致)
+
+v11.16 更新 - S/R Zone v2.0 增强显示:
+- 使用 calculate_with_detailed_report() 获取详细报告
+- 显示 S/R Zone level (MAJOR/INTERMEDIATE/MINOR)
+- 显示 S/R Zone source_type (ORDER_FLOW/TECHNICAL/STRUCTURAL)
+- 添加 AI 详细报告预览 (前 15 行)
+- 支持 AI 验证 S/R 计算结果
 
 v11.15 更新 - 添加记忆系统和提示词验证 (v3.12):
 - 添加 [9.6/14] 记忆系统健康检查 (memory_file 加载/保存/格式验证)
@@ -409,7 +416,7 @@ def create_bar_from_kline(kline: list, bar_type: str) -> MockBar:
 # =============================================================================
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.15')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.16')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -654,7 +661,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.14 (S/R Zone v3.8){mode_str}")
+print(f"  实盘信号诊断工具 v11.16 (S/R Zone v2.0){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -2872,13 +2879,13 @@ if not SUMMARY_MODE:
                         'ask_anomalies': anomalies.get('ask_anomalies', []),
                     }
 
-            # 计算 S/R Zones
+            # 计算 S/R Zones (v2.0: 使用详细报告方法)
             sr_calc = SRZoneCalculator(
                 cluster_pct=0.5,
                 zone_expand_pct=0.1,
                 hard_control_threshold_pct=1.0,
             )
-            sr_result = sr_calc.calculate(
+            sr_result = sr_calc.calculate_with_detailed_report(
                 current_price=test_price,
                 bb_data=test_bb_data,
                 sma_data=test_sma_data,
@@ -2888,20 +2895,22 @@ if not SUMMARY_MODE:
             print(f"     📊 当前价格: ${test_price:,.0f}")
             print(f"     📊 数据源: BB={'✅' if test_bb_data else '❌'}, SMA={'✅' if test_sma_data else '❌'}, OrderBook={'✅' if test_orderbook_anomalies else '❌'}")
 
-            # 显示阻力位
+            # 显示阻力位 (v2.0: 增加 level 和 source_type)
             resistance_zones = sr_result.get('resistance_zones', [])
             print(f"     🔴 阻力位: {len(resistance_zones)} zones")
             for i, zone in enumerate(resistance_zones[:2]):  # 最多显示2个
                 wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
                 print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
+                print(f"           Level: {zone.level} | Type: {zone.source_type}")
                 print(f"           Sources: {', '.join(zone.sources)}")
 
-            # 显示支撑位
+            # 显示支撑位 (v2.0: 增加 level 和 source_type)
             support_zones = sr_result.get('support_zones', [])
             print(f"     🟢 支撑位: {len(support_zones)} zones")
             for i, zone in enumerate(support_zones[:2]):  # 最多显示2个
                 wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
                 print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
+                print(f"           Level: {zone.level} | Type: {zone.source_type}")
                 print(f"           Sources: {', '.join(zone.sources)}")
 
             # v11.14: 显示硬风控状态，增加触发说明
@@ -2941,7 +2950,19 @@ if not SUMMARY_MODE:
             if block_long or block_short:
                 print(f"        📝 说明: Block 仅在 AI 输出对应方向时触发")
 
-            print("     ✅ S/R Zone Calculator 测试完成")
+            # v2.0: 显示详细 AI 报告预览
+            ai_detailed_report = sr_result.get('ai_detailed_report', '')
+            if ai_detailed_report:
+                print()
+                print("     📄 AI 详细报告预览 (v2.0):")
+                # 只显示前 15 行作为预览
+                report_lines = ai_detailed_report.split('\n')
+                for line in report_lines[:15]:
+                    print(f"        {line}")
+                if len(report_lines) > 15:
+                    print(f"        ... (还有 {len(report_lines) - 15} 行)")
+
+            print("     ✅ S/R Zone Calculator 测试完成 (v2.0)")
 
         except ImportError as e:
             print(f"     ❌ 无法导入 SRZoneCalculator: {e}")

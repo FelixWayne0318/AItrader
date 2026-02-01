@@ -160,7 +160,7 @@ ORDER BOOK DEPTH:
   * Includes confidence level and range (best/worst case)
   * Based on actual order book depth distribution
 
-SUPPORT/RESISTANCE ZONES:
+SUPPORT/RESISTANCE ZONES (v2.0):
 - Price levels identified from multiple independent data sources
 - Sources:
   * Order Book Walls: Large real limit orders (>2 BTC) at specific prices
@@ -173,11 +173,26 @@ SUPPORT/RESISTANCE ZONES:
   * MEDIUM: Two sources agree
   * LOW: Single source only
 
+- Zone Level (timeframe significance, v2.0):
+  * MAJOR: Daily/weekly significance (SMA_200, weekly BB) - strongest
+  * INTERMEDIATE: 4H significance (SMA_50, 4H BB) - moderate
+  * MINOR: 15M/1H significance (SMA_20, 15M BB, Order Walls) - short-term
+
+- Zone Source Type (data reliability, v2.0):
+  * ORDER_FLOW: Real-time order book data - most current but can change
+  * TECHNICAL: Calculated indicators (SMA, BB) - widely followed
+  * STRUCTURAL: Historical price levels (Pivot) - time-tested
+
 - Zone Properties:
   * Price Center: Midpoint of the zone
   * Distance: Percentage distance from current price
   * Sources: Which indicators contributed to this zone
   * Width: Range of the zone (expanded by 0.1% from center)
+
+- Trading Implications:
+  * Zones with ORDER_FLOW type are real orders that can be eaten through
+  * MAJOR level zones are more significant for longer-term trades
+  * Multiple overlapping sources increase confidence in the zone
 """
 
 
@@ -454,13 +469,17 @@ class MultiAgentAnalyzer:
             orderbook_summary = self._format_orderbook_report(orderbook_report)
 
             # v3.8: Calculate S/R Zones (multi-source support/resistance)
+            # v2.0: Use detailed report with raw data for AI verification
             sr_zones = self._calculate_sr_zones(
                 current_price=current_price,
                 technical_data=technical_report,
                 orderbook_data=orderbook_report,
             )
             self._sr_zones_cache = sr_zones  # Cache for _evaluate_risk()
-            sr_zones_summary = sr_zones.get('ai_report', '') if sr_zones else ''
+            # v2.0: Use detailed report (includes raw data + level/source_type)
+            sr_zones_summary = sr_zones.get('ai_detailed_report', '') if sr_zones else ''
+            if not sr_zones_summary:
+                sr_zones_summary = sr_zones.get('ai_report', '') if sr_zones else ''
 
             # Phase 1: Bull/Bear Debate (2 AI calls)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
@@ -800,6 +819,13 @@ OUTPUT FORMAT (JSON only, no other text):
         # Format strategic actions for prompt
         actions_str = ', '.join(strategic_actions) if strategic_actions else 'None specified'
 
+        # v2.0: Get S/R zones summary for SL/TP reference
+        sr_zones_for_risk = ""
+        if self._sr_zones_cache:
+            sr_zones_for_risk = self._sr_zones_cache.get('ai_detailed_report', '')
+            if not sr_zones_for_risk:
+                sr_zones_for_risk = self._sr_zones_cache.get('ai_report', '')
+
         prompt = f"""As the Risk Manager, provide final trade parameters.
 
 PROPOSED TRADE:
@@ -814,6 +840,8 @@ MARKET DATA:
 
 {sentiment_report}
 
+{sr_zones_for_risk}
+
 CURRENT POSITION:
 {self._format_position(current_position)}
 
@@ -821,9 +849,13 @@ CURRENT PRICE: ${current_price:,.2f}
 
 YOUR TASK:
 1. Evaluate if the proposed trade makes sense given the market data
-2. Determine stop loss based on market structure
-3. Determine take profit based on potential targets
-4. Determine position size (position_size_pct) based on your risk assessment
+2. Determine stop loss using S/R zones as reference:
+   - For LONG: Place SL below nearest SUPPORT zone (preferably with ORDER_FLOW or HIGH strength)
+   - For SHORT: Place SL above nearest RESISTANCE zone (preferably with ORDER_FLOW or HIGH strength)
+3. Determine take profit using S/R zones as reference:
+   - For LONG: Target nearest RESISTANCE zone as TP (consider zone Level: MAJOR > INTERMEDIATE > MINOR)
+   - For SHORT: Target nearest SUPPORT zone as TP
+4. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
 
 SIGNAL TYPES (v3.12 - choose the most appropriate):
 - LONG: Open new long or add to existing long position
@@ -1532,9 +1564,9 @@ ORDER FLOW (Binance Taker Data):
                     'ask_anomalies': anomalies.get('ask_anomalies', []),
                 }
 
-        # Calculate S/R zones
+        # Calculate S/R zones with detailed report (v2.0)
         try:
-            result = self.sr_calculator.calculate(
+            result = self.sr_calculator.calculate_with_detailed_report(
                 current_price=current_price,
                 bb_data=bb_data,
                 sma_data=sma_data,

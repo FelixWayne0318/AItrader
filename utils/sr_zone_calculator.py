@@ -1,17 +1,20 @@
 # utils/sr_zone_calculator.py
 """
-Support/Resistance Zone Calculator v1.0
+Support/Resistance Zone Calculator v2.0
 
 职责:
 - 聚合多个数据源的 S/R 候选价位
 - 聚类形成 S/R Zone (价差 < cluster_pct 的合并)
 - 计算 Zone 强度 (基于 confluence)
 - 输出给 AI 和本地硬风控使用
+- v2.0: 添加 level (时间框架级别) 和 source_type (来源类型)
+- v2.0: 添加详细 AI 报告，包含原始数据供 AI 验证
 
 设计原则:
 - 只做预处理，不做交易判断
 - 输出结构化数据，让 AI 解读
 - 硬风控只在 HIGH strength 时介入
+- v2.0: 传递原始数据让 AI 可以验证计算结果
 
 参考:
 - QuantStrategy.io: Order Book Depth Analysis
@@ -20,11 +23,30 @@ Support/Resistance Zone Calculator v1.0
 
 Author: AItrader Team
 Date: 2026-01
+Version: 2.0
 """
 
 import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
+
+
+# =============================================================================
+# v2.0: Level and Source Type Enums
+# =============================================================================
+
+class SRLevel:
+    """S/R Zone 时间框架级别"""
+    MAJOR = "MAJOR"           # 日线/周线级别 (SMA_200, 周线 BB)
+    INTERMEDIATE = "INTERMEDIATE"  # 4H 级别 (SMA_50, 4H BB)
+    MINOR = "MINOR"           # 15M/1H 级别 (SMA_20, 15M BB, Order Wall)
+
+
+class SRSourceType:
+    """S/R 来源类型"""
+    ORDER_FLOW = "ORDER_FLOW"     # 订单流 (Order Wall) - 最实时
+    TECHNICAL = "TECHNICAL"       # 技术指标 (SMA, BB) - 广泛认可
+    STRUCTURAL = "STRUCTURAL"     # 结构性 (前高/前低, Pivot) - 历史验证
 
 
 @dataclass
@@ -35,6 +57,9 @@ class SRCandidate:
     weight: float        # 权重: Order_Wall=2.0, SMA_200=1.5, BB=1.0, SMA_50=0.8
     side: str            # support 或 resistance
     extra: Dict = field(default_factory=dict)  # 额外信息 (如 wall size)
+    # v2.0 新增
+    level: str = SRLevel.MINOR           # 时间框架级别
+    source_type: str = SRSourceType.TECHNICAL  # 来源类型
 
 
 @dataclass
@@ -50,6 +75,10 @@ class SRZone:
     distance_pct: float  # 距离当前价格的百分比
     has_order_wall: bool # 是否包含订单簿大单
     wall_size_btc: float # 大单总量 (BTC)
+    # v2.0 新增
+    level: str = SRLevel.MINOR           # 时间框架级别 (取最高级别)
+    source_type: str = SRSourceType.TECHNICAL  # 主要来源类型
+    order_walls: List[Dict] = field(default_factory=list)  # Order Wall 详情
 
 
 class SRZoneCalculator:
@@ -213,10 +242,10 @@ class SRZoneCalculator:
         orderbook_anomalies: Optional[Dict],
         pivot_data: Optional[Dict],
     ) -> List[SRCandidate]:
-        """收集所有 S/R 候选价位"""
+        """收集所有 S/R 候选价位 (v2.0: 添加 level 和 source_type)"""
         candidates = []
 
-        # Bollinger Bands
+        # Bollinger Bands (15M = MINOR level)
         if bb_data:
             bb_upper = bb_data.get('upper')
             bb_lower = bb_data.get('lower')
@@ -226,7 +255,9 @@ class SRZoneCalculator:
                     price=bb_upper,
                     source='BB_Upper',
                     weight=self.WEIGHTS['BB_Upper'],
-                    side='resistance'
+                    side='resistance',
+                    level=SRLevel.MINOR,
+                    source_type=SRSourceType.TECHNICAL,
                 ))
 
             if bb_lower and bb_lower < current_price:
@@ -234,10 +265,12 @@ class SRZoneCalculator:
                     price=bb_lower,
                     source='BB_Lower',
                     weight=self.WEIGHTS['BB_Lower'],
-                    side='support'
+                    side='support',
+                    level=SRLevel.MINOR,
+                    source_type=SRSourceType.TECHNICAL,
                 ))
 
-        # SMA
+        # SMA (SMA_50 = INTERMEDIATE, SMA_200 = MAJOR)
         if sma_data:
             sma_50 = sma_data.get('sma_50')
             sma_200 = sma_data.get('sma_200')
@@ -248,7 +281,9 @@ class SRZoneCalculator:
                     price=sma_50,
                     source='SMA_50',
                     weight=self.WEIGHTS['SMA_50'],
-                    side=side
+                    side=side,
+                    level=SRLevel.INTERMEDIATE,
+                    source_type=SRSourceType.TECHNICAL,
                 ))
 
             if sma_200 and sma_200 > 0:
@@ -257,10 +292,12 @@ class SRZoneCalculator:
                     price=sma_200,
                     source='SMA_200',
                     weight=self.WEIGHTS['SMA_200'],
-                    side=side
+                    side=side,
+                    level=SRLevel.MAJOR,
+                    source_type=SRSourceType.TECHNICAL,
                 ))
 
-        # Order Book Walls (最重要)
+        # Order Book Walls (MINOR level, ORDER_FLOW type - 最实时)
         if orderbook_anomalies:
             # Bid walls = Support
             for wall in orderbook_anomalies.get('bid_anomalies', []):
@@ -273,7 +310,9 @@ class SRZoneCalculator:
                         extra={
                             'size_btc': wall.get('volume_btc', 0),
                             'multiplier': wall.get('multiplier', 1),
-                        }
+                        },
+                        level=SRLevel.MINOR,
+                        source_type=SRSourceType.ORDER_FLOW,
                     ))
 
             # Ask walls = Resistance
@@ -287,10 +326,12 @@ class SRZoneCalculator:
                         extra={
                             'size_btc': wall.get('volume_btc', 0),
                             'multiplier': wall.get('multiplier', 1),
-                        }
+                        },
+                        level=SRLevel.MINOR,
+                        source_type=SRSourceType.ORDER_FLOW,
                     ))
 
-        # Pivot Points (可选)
+        # Pivot Points (STRUCTURAL type)
         if pivot_data:
             for key, price in pivot_data.items():
                 if price and price > 0:
@@ -299,14 +340,18 @@ class SRZoneCalculator:
                             price=price,
                             source=f"Pivot_{key.upper()}",
                             weight=self.WEIGHTS['Pivot'],
-                            side='support'
+                            side='support',
+                            level=SRLevel.INTERMEDIATE,
+                            source_type=SRSourceType.STRUCTURAL,
                         ))
                     elif 'r' in key.lower():  # r1, r2, r3 = resistance
                         candidates.append(SRCandidate(
                             price=price,
                             source=f"Pivot_{key.upper()}",
                             weight=self.WEIGHTS['Pivot'],
-                            side='resistance'
+                            side='resistance',
+                            level=SRLevel.INTERMEDIATE,
+                            source_type=SRSourceType.STRUCTURAL,
                         ))
 
         return candidates
@@ -357,7 +402,7 @@ class SRZoneCalculator:
         current_price: float,
         side: str,
     ) -> SRZone:
-        """从候选 cluster 创建 Zone"""
+        """从候选 cluster 创建 Zone (v2.0: 添加 level/source_type/order_walls)"""
         prices = [c.price for c in cluster]
         price_center = sum(prices) / len(prices)
 
@@ -380,6 +425,16 @@ class SRZoneCalculator:
             if 'Order_Wall' in c.source
         )
 
+        # v2.0: 收集 Order Wall 详情
+        order_walls = []
+        for c in cluster:
+            if 'Order_Wall' in c.source:
+                order_walls.append({
+                    'price': c.price,
+                    'size_btc': c.extra.get('size_btc', 0),
+                    'multiplier': c.extra.get('multiplier', 1),
+                })
+
         # 计算强度
         if has_order_wall or total_weight >= self.STRENGTH_THRESHOLDS['HIGH']:
             strength = 'HIGH'
@@ -394,6 +449,24 @@ class SRZoneCalculator:
         else:
             distance_pct = (price_center - current_price) / current_price * 100
 
+        # v2.0: 确定 Zone 的级别 (取最高级别)
+        level_priority = {SRLevel.MAJOR: 3, SRLevel.INTERMEDIATE: 2, SRLevel.MINOR: 1}
+        zone_level = SRLevel.MINOR
+        for c in cluster:
+            if level_priority.get(c.level, 0) > level_priority.get(zone_level, 0):
+                zone_level = c.level
+
+        # v2.0: 确定主要来源类型 (ORDER_FLOW > TECHNICAL > STRUCTURAL)
+        type_priority = {
+            SRSourceType.ORDER_FLOW: 3,
+            SRSourceType.TECHNICAL: 2,
+            SRSourceType.STRUCTURAL: 1,
+        }
+        zone_source_type = SRSourceType.TECHNICAL
+        for c in cluster:
+            if type_priority.get(c.source_type, 0) > type_priority.get(zone_source_type, 0):
+                zone_source_type = c.source_type
+
         return SRZone(
             price_low=round(price_low, 2),
             price_high=round(price_high, 2),
@@ -405,6 +478,9 @@ class SRZoneCalculator:
             distance_pct=round(distance_pct, 2),
             has_order_wall=has_order_wall,
             wall_size_btc=round(wall_size_btc, 2),
+            level=zone_level,
+            source_type=zone_source_type,
+            order_walls=order_walls,
         )
 
     def _check_hard_control(
@@ -526,4 +602,267 @@ class SRZoneCalculator:
                 'reason': None,
             },
             'ai_report': "SUPPORT/RESISTANCE ZONES: Data not available",
+            'ai_detailed_report': "SUPPORT/RESISTANCE ANALYSIS: Data not available",
+            'raw_data': {},
         }
+
+    def generate_ai_detailed_report(
+        self,
+        current_price: float,
+        bb_data: Optional[Dict[str, float]] = None,
+        sma_data: Optional[Dict[str, float]] = None,
+        orderbook_anomalies: Optional[Dict] = None,
+        support_zones: List[SRZone] = None,
+        resistance_zones: List[SRZone] = None,
+        nearest_support: Optional[SRZone] = None,
+        nearest_resistance: Optional[SRZone] = None,
+    ) -> str:
+        """
+        生成详细 AI 报告 (v2.0)
+
+        包含:
+        1. 原始数据来源 (BB, SMA, Order Wall)
+        2. 计算后的 S/R Zones (含 level/strength/source_type)
+        3. 交易建议 (供 AI 参考)
+
+        Parameters
+        ----------
+        current_price : float
+            当前价格
+        bb_data : Dict, optional
+            布林带原始数据
+        sma_data : Dict, optional
+            SMA 原始数据
+        orderbook_anomalies : Dict, optional
+            订单簿大单数据
+        support_zones : List[SRZone]
+            计算后的支撑区
+        resistance_zones : List[SRZone]
+            计算后的阻力区
+        nearest_support : SRZone, optional
+            最近支撑
+        nearest_resistance : SRZone, optional
+            最近阻力
+
+        Returns
+        -------
+        str
+            格式化的详细报告
+        """
+        lines = []
+        lines.append("=" * 70)
+        lines.append("            SUPPORT/RESISTANCE ANALYSIS (v2.0)")
+        lines.append("=" * 70)
+        lines.append("")
+
+        # =================================================================
+        # Section 1: RAW DATA SOURCES
+        # =================================================================
+        lines.append("【RAW DATA SOURCES】")
+        lines.append("-" * 40)
+
+        # Technical Indicators
+        lines.append("Technical Indicators:")
+        if bb_data:
+            bb_upper = bb_data.get('upper')
+            bb_lower = bb_data.get('lower')
+            bb_middle = bb_data.get('middle')
+            if bb_upper:
+                lines.append(f"  • BB_Upper:  ${bb_upper:,.2f}")
+            if bb_middle:
+                lines.append(f"  • BB_Middle: ${bb_middle:,.2f}")
+            if bb_lower:
+                lines.append(f"  • BB_Lower:  ${bb_lower:,.2f}")
+        else:
+            lines.append("  • Bollinger Bands: Not available")
+
+        if sma_data:
+            sma_50 = sma_data.get('sma_50')
+            sma_200 = sma_data.get('sma_200')
+            if sma_50:
+                lines.append(f"  • SMA_50:    ${sma_50:,.2f}")
+            if sma_200:
+                lines.append(f"  • SMA_200:   ${sma_200:,.2f}")
+        else:
+            lines.append("  • SMA: Not available")
+
+        lines.append("")
+
+        # Order Book Walls
+        lines.append("Order Book Walls (Real-time):")
+        if orderbook_anomalies:
+            ask_walls = orderbook_anomalies.get('ask_anomalies', [])
+            bid_walls = orderbook_anomalies.get('bid_anomalies', [])
+
+            if ask_walls:
+                lines.append("  Ask Walls (Resistance):")
+                for wall in ask_walls[:5]:  # 最多显示 5 个
+                    price = wall.get('price', 0)
+                    size = wall.get('volume_btc', 0)
+                    mult = wall.get('multiplier', 1)
+                    lines.append(f"    • ${price:,.0f} ({size:.2f} BTC, {mult:.1f}x avg)")
+            else:
+                lines.append("  Ask Walls: None detected")
+
+            if bid_walls:
+                lines.append("  Bid Walls (Support):")
+                for wall in bid_walls[:5]:
+                    price = wall.get('price', 0)
+                    size = wall.get('volume_btc', 0)
+                    mult = wall.get('multiplier', 1)
+                    lines.append(f"    • ${price:,.0f} ({size:.2f} BTC, {mult:.1f}x avg)")
+            else:
+                lines.append("  Bid Walls: None detected")
+        else:
+            lines.append("  Order Book: Not available")
+
+        lines.append("")
+
+        # =================================================================
+        # Section 2: CALCULATED S/R ZONES
+        # =================================================================
+        lines.append("【CALCULATED S/R ZONES】")
+        lines.append("-" * 40)
+
+        # Resistance Zones
+        if resistance_zones:
+            lines.append("RESISTANCE ZONES (sorted by distance):")
+            for i, zone in enumerate(resistance_zones[:4], 1):  # 最多 4 个
+                marker = ">>>" if zone == nearest_resistance else "   "
+                lines.append(f"{marker}[R{i}] ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% from current)")
+                lines.append(f"      Level: {zone.level} | Strength: {zone.strength} (weight: {zone.total_weight})")
+                lines.append(f"      Sources: {', '.join(zone.sources)}")
+                lines.append(f"      Type: {zone.source_type}")
+                if zone.has_order_wall:
+                    lines.append(f"      Order Wall: {zone.wall_size_btc:.2f} BTC total")
+                    for wall in zone.order_walls:
+                        lines.append(f"        - ${wall['price']:,.0f}: {wall['size_btc']:.2f} BTC")
+                lines.append("")
+        else:
+            lines.append("RESISTANCE ZONES: None detected")
+            lines.append("")
+
+        # Support Zones
+        if support_zones:
+            lines.append("SUPPORT ZONES (sorted by distance):")
+            for i, zone in enumerate(support_zones[:4], 1):
+                marker = ">>>" if zone == nearest_support else "   "
+                lines.append(f"{marker}[S{i}] ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% from current)")
+                lines.append(f"      Level: {zone.level} | Strength: {zone.strength} (weight: {zone.total_weight})")
+                lines.append(f"      Sources: {', '.join(zone.sources)}")
+                lines.append(f"      Type: {zone.source_type}")
+                if zone.has_order_wall:
+                    lines.append(f"      Order Wall: {zone.wall_size_btc:.2f} BTC total")
+                    for wall in zone.order_walls:
+                        lines.append(f"        - ${wall['price']:,.0f}: {wall['size_btc']:.2f} BTC")
+                lines.append("")
+        else:
+            lines.append("SUPPORT ZONES: None detected")
+            lines.append("")
+
+        # =================================================================
+        # Section 3: TRADING IMPLICATIONS
+        # =================================================================
+        lines.append("【TRADING IMPLICATIONS】")
+        lines.append("-" * 40)
+
+        # Nearest levels summary
+        if nearest_resistance:
+            lines.append(f"Nearest Resistance: ${nearest_resistance.price_center:,.0f} "
+                        f"({nearest_resistance.distance_pct:.1f}% away)")
+            lines.append(f"  → LONG entries face {nearest_resistance.strength} resistance here")
+            if nearest_resistance.source_type == SRSourceType.ORDER_FLOW:
+                lines.append(f"  → Order flow data: {nearest_resistance.wall_size_btc:.2f} BTC wall (real-time)")
+            lines.append(f"  → Consider this level for LONG take-profit")
+        else:
+            lines.append("Nearest Resistance: Not detected (upside open)")
+
+        lines.append("")
+
+        if nearest_support:
+            lines.append(f"Nearest Support: ${nearest_support.price_center:,.0f} "
+                        f"({nearest_support.distance_pct:.1f}% away)")
+            lines.append(f"  → SHORT entries face {nearest_support.strength} support here")
+            if nearest_support.source_type == SRSourceType.ORDER_FLOW:
+                lines.append(f"  → Order flow data: {nearest_support.wall_size_btc:.2f} BTC wall (real-time)")
+            lines.append(f"  → Consider this level for SHORT take-profit")
+        else:
+            lines.append("Nearest Support: Not detected (downside open)")
+
+        lines.append("")
+
+        # Risk/reward context
+        if nearest_support and nearest_resistance:
+            total_range = nearest_resistance.price_center - nearest_support.price_center
+            current_to_resistance = nearest_resistance.price_center - current_price
+            current_to_support = current_price - nearest_support.price_center
+            position_in_range = (current_price - nearest_support.price_center) / total_range * 100 if total_range > 0 else 50
+
+            lines.append("Range Analysis:")
+            lines.append(f"  • Price Range: ${nearest_support.price_center:,.0f} - ${nearest_resistance.price_center:,.0f}")
+            lines.append(f"  • Current Position: {position_in_range:.0f}% from support to resistance")
+            lines.append(f"  • Upside Potential: ${current_to_resistance:,.0f} ({nearest_resistance.distance_pct:.1f}%)")
+            lines.append(f"  • Downside Risk: ${current_to_support:,.0f} ({nearest_support.distance_pct:.1f}%)")
+
+            # Risk/reward ratio
+            if current_to_support > 0:
+                rr_ratio = current_to_resistance / current_to_support
+                lines.append(f"  • LONG R/R Ratio: {rr_ratio:.2f}")
+            if current_to_resistance > 0:
+                rr_ratio_short = current_to_support / current_to_resistance
+                lines.append(f"  • SHORT R/R Ratio: {rr_ratio_short:.2f}")
+
+        lines.append("")
+        lines.append("=" * 70)
+        lines.append("NOTE: ORDER_FLOW data reflects real-time order book. TECHNICAL data")
+        lines.append("reflects calculated indicators. Use both for comprehensive analysis.")
+        lines.append("=" * 70)
+
+        return "\n".join(lines)
+
+    def calculate_with_detailed_report(
+        self,
+        current_price: float,
+        bb_data: Optional[Dict[str, float]] = None,
+        sma_data: Optional[Dict[str, float]] = None,
+        orderbook_anomalies: Optional[Dict] = None,
+        pivot_data: Optional[Dict[str, float]] = None,
+    ) -> Dict[str, Any]:
+        """
+        计算 S/R Zones 并生成详细 AI 报告 (v2.0)
+
+        这是 calculate() 的增强版，额外返回:
+        - ai_detailed_report: 详细报告供 AI 验证
+        - raw_data: 原始数据供调试
+        """
+        # 先调用标准计算
+        result = self.calculate(
+            current_price=current_price,
+            bb_data=bb_data,
+            sma_data=sma_data,
+            orderbook_anomalies=orderbook_anomalies,
+            pivot_data=pivot_data,
+        )
+
+        # 生成详细报告
+        result['ai_detailed_report'] = self.generate_ai_detailed_report(
+            current_price=current_price,
+            bb_data=bb_data,
+            sma_data=sma_data,
+            orderbook_anomalies=orderbook_anomalies,
+            support_zones=result['support_zones'],
+            resistance_zones=result['resistance_zones'],
+            nearest_support=result['nearest_support'],
+            nearest_resistance=result['nearest_resistance'],
+        )
+
+        # 存储原始数据供调试
+        result['raw_data'] = {
+            'current_price': current_price,
+            'bb_data': bb_data,
+            'sma_data': sma_data,
+            'orderbook_anomalies': orderbook_anomalies,
+            'pivot_data': pivot_data,
+        }
+
+        return result
