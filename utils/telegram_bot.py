@@ -61,6 +61,7 @@ class TelegramBot:
         queue_db_path: str = "data/telegram_queue.db",
         queue_max_retries: int = 3,
         queue_alert_cooldown: int = 300,  # 5 minutes
+        queue_send_interval: float = 0.5,  # v2.0: Interval between sends (rate limit)
     ):
         """
         Initialize Telegram Bot.
@@ -85,6 +86,8 @@ class TelegramBot:
             Maximum retry attempts for failed messages
         queue_alert_cooldown : int
             Cooldown period for alert convergence (seconds)
+        queue_send_interval : float
+            Interval between sends in seconds (rate limiting), default: 0.5
         """
         if not TELEGRAM_AVAILABLE:
             raise ImportError(
@@ -118,6 +121,7 @@ class TelegramBot:
                     db_path=queue_db_path,
                     max_retries=queue_max_retries,
                     alert_cooldown=queue_alert_cooldown,
+                    send_interval=queue_send_interval,
                     logger=self.logger,
                 )
                 self.message_queue.start()
