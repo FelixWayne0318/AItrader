@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.14 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.15 (与实盘 100% 一致)
+
+v11.15 更新 - 添加记忆系统和提示词验证 (v3.12):
+- 添加 [9.6/14] 记忆系统健康检查 (memory_file 加载/保存/格式验证)
+- 更新 MultiAgentAnalyzer 初始化: 添加 memory_file 参数
+- 更新 AI Prompt 验证: 检查 "PAST REFLECTIONS" 记忆数据
+- 显示完整提示词内容 (System + User Prompt)
+- 更新步骤编号: [10/14] 到 [13/14]
 
 v11.14 更新 - 修复误导性输出问题:
 - 修复 Step 11: HOLD 信号不计算仓位 (与实盘一致)
@@ -225,11 +232,11 @@ v10.10:
 - 帮助诊断 "history 为空" 是真的无数据还是解析错误
 
 v10.9:
-- 添加 [10/13] on_bar MTF 路由逻辑模拟 (1D/4H/15M bar 分发)
-- 添加 [11/13] 仓位计算函数测试 (calculate_position_size 完整验证)
-- 添加 [12/13] 订单提交流程模拟 (_submit_bracket_order + SL/TP 验证)
-- 添加 [13/13] 完整数据流汇总 (所有获取数据的具体值输出)
-- 测试步骤从 10 步扩展到 13 步，实现 100% 数据流覆盖
+- 添加 [10/14] on_bar MTF 路由逻辑模拟 (1D/4H/15M bar 分发)
+- 添加 [11/14] 仓位计算函数测试 (calculate_position_size 完整验证)
+- 添加 [12/14] 订单提交流程模拟 (_submit_bracket_order + SL/TP 验证)
+- 添加 [13/14] 完整数据流汇总 (所有获取数据的具体值输出)
+- 测试步骤从 10 步扩展到 14 步，实现 100% 数据流覆盖
 
 v10.8:
 - 修复 Step 9.3 Coinalyze 配置路径: base_config.get('coinalyze') → order_flow.get('coinalyze')
@@ -1445,11 +1452,13 @@ try:
     from agents.multi_agent_analyzer import MultiAgentAnalyzer
 
     # 使用与 deepseek_strategy.py 完全相同的初始化参数
+    # v11.15: 添加 memory_file 参数 (v3.12 记忆系统)
     multi_agent = MultiAgentAnalyzer(
         api_key=strategy_config.deepseek_api_key,
         model=strategy_config.deepseek_model,
         temperature=strategy_config.deepseek_temperature,
         debate_rounds=strategy_config.debate_rounds,
+        memory_file="data/trading_memory.json",  # v3.12: 持久化记忆
     )
 
     print(f"  Model: {strategy_config.deepseek_model}")
@@ -1768,13 +1777,13 @@ try:
 
     print("  ✅ MultiAgent 层级决策成功")
 
-    # ========== 显示 AI Prompt 结构 (v11.4 新增) ==========
+    # ========== 显示 AI Prompt 结构 (v11.4 新增, v11.15 增强) ==========
     if hasattr(multi_agent, 'get_last_prompts') and callable(multi_agent.get_last_prompts):
         last_prompts = multi_agent.get_last_prompts()
         if last_prompts:
             print()
             print("  ┌─────────────────────────────────────────────────────────────────┐")
-            print("  │         AI Prompt 结构验证 (v3.4 System/User 分离)              │")
+            print("  │     AI Prompt 结构验证 (v3.12 System/User + Memory)             │")
             print("  └─────────────────────────────────────────────────────────────────┘")
             print()
 
@@ -1787,10 +1796,17 @@ try:
                     # 检查 INDICATOR_DEFINITIONS 是否在 System Prompt 中
                     has_indicator_defs = "INDICATOR REFERENCE" in system_prompt
 
+                    # v11.15: 检查 PAST REFLECTIONS (记忆系统) 是否在 Judge 的 User Prompt 中
+                    has_past_memories = "PAST REFLECTIONS" in user_prompt
+
                     print(f"  [{agent_name.upper()}] Prompt 结构:")
                     print(f"     System Prompt 长度: {len(system_prompt)} 字符")
                     print(f"     User Prompt 长度:   {len(user_prompt)} 字符")
                     print(f"     INDICATOR_DEFINITIONS 在 System: {'✅ 是' if has_indicator_defs else '❌ 否'}")
+
+                    # v11.15: Judge 特有检查 - 记忆系统
+                    if agent_name == "judge":
+                        print(f"     PAST REFLECTIONS (记忆): {'✅ 是' if has_past_memories else '⚠️ 无历史交易'}")
 
                     # 显示 System Prompt 前 200 字符
                     if system_prompt:
@@ -1801,11 +1817,26 @@ try:
                     if user_prompt:
                         preview = user_prompt[:200].replace('\n', ' ')
                         print(f"     User 预览:   {preview}...")
+
+                    # v11.15: 对于 Judge，额外显示记忆部分
+                    if agent_name == "judge" and has_past_memories:
+                        # 提取 PAST REFLECTIONS 部分
+                        start_idx = user_prompt.find("PAST REFLECTIONS")
+                        if start_idx != -1:
+                            end_idx = user_prompt.find("\n\nYOUR TASK", start_idx)
+                            if end_idx == -1:
+                                end_idx = start_idx + 500
+                            memory_section = user_prompt[start_idx:end_idx]
+                            memory_preview = memory_section[:300].replace('\n', '\n        ')
+                            print(f"     📝 记忆内容预览:")
+                            print(f"        {memory_preview}...")
+
                     print()
 
-            print("  📋 v3.4 架构要求:")
+            print("  📋 v3.12 架构要求:")
             print("     - System Prompt: 角色定义 + INDICATOR_DEFINITIONS (知识背景)")
             print("     - User Prompt: 原始数据 + 任务指令 (当前任务)")
+            print("     - Judge Prompt: 包含 PAST REFLECTIONS (过去交易记忆)")
             print()
 
 except (ImportError, AttributeError, requests.RequestException, ValueError, KeyError) as e:
@@ -3074,11 +3105,108 @@ if not SUMMARY_MODE:
     print()
 
 # =============================================================================
+# 9.6 记忆系统健康检查 (v11.15 新增, v3.12 记忆系统)
+# 验证 AI 学习记忆的加载、保存和格式
+# =============================================================================
+if not SUMMARY_MODE:
+    print("[9.6/14] 记忆系统健康检查 (v3.12 AI Learning)...")
+    print("-" * 70)
+
+    try:
+        import os
+        import json
+        from pathlib import Path
+
+        memory_file = "data/trading_memory.json"
+        memory_path = Path(project_root) / memory_file
+
+        print(f"  📂 记忆文件路径: {memory_path}")
+
+        # 检查文件是否存在
+        if memory_path.exists():
+            print(f"  ✅ 记忆文件存在")
+
+            # 读取记忆内容
+            with open(memory_path, 'r') as f:
+                memories = json.load(f)
+
+            print(f"  📊 记忆条目数量: {len(memories)}")
+
+            if memories:
+                # 统计成功/失败
+                successes = [m for m in memories if m.get('pnl', 0) > 0]
+                failures = [m for m in memories if m.get('pnl', 0) <= 0]
+
+                print(f"     ✅ 成功交易: {len(successes)} 条")
+                print(f"     ❌ 失败交易: {len(failures)} 条")
+
+                # 显示最近 3 条记忆
+                print()
+                print("  📝 最近 3 条记忆:")
+                for mem in memories[-3:]:
+                    decision = mem.get('decision', 'N/A')
+                    pnl = mem.get('pnl', 0)
+                    conditions = mem.get('conditions', 'N/A')[:50]
+                    timestamp = mem.get('timestamp', 'N/A')[:19]
+                    emoji = '✅' if pnl > 0 else '❌'
+                    print(f"     {emoji} [{timestamp}] {decision} → {pnl:+.2f}%")
+                    print(f"        Conditions: {conditions}...")
+
+                # 验证记忆格式
+                print()
+                print("  🔍 记忆格式验证:")
+                required_fields = ['decision', 'pnl', 'conditions', 'lesson', 'timestamp']
+                latest = memories[-1] if memories else {}
+                for field in required_fields:
+                    has_field = field in latest
+                    print(f"     {'✅' if has_field else '❌'} {field}: {'存在' if has_field else '缺失'}")
+            else:
+                print("  ℹ️ 记忆为空 (系统刚启动，尚无交易记录)")
+
+        else:
+            print(f"  ⚠️ 记忆文件不存在 (系统刚启动)")
+            print(f"     → 首次交易后将自动创建")
+
+        # 验证 MultiAgentAnalyzer 记忆系统
+        print()
+        print("  🧠 MultiAgentAnalyzer 记忆系统状态:")
+        if 'multi_agent' in dir():
+            mem_count = len(getattr(multi_agent, 'decision_memory', []))
+            mem_file = getattr(multi_agent, 'memory_file', 'N/A')
+            print(f"     → 已加载记忆: {mem_count} 条")
+            print(f"     → 记忆文件: {mem_file}")
+
+            # 检查 _get_past_memories 方法
+            if hasattr(multi_agent, '_get_past_memories'):
+                past_memories = multi_agent._get_past_memories()
+                if past_memories:
+                    print(f"     → 传给 AI 的记忆摘要: {len(past_memories)} 字符")
+                    # 显示前 200 字符预览
+                    preview = past_memories[:200].replace('\n', ' ')
+                    print(f"     → 预览: {preview}...")
+                else:
+                    print(f"     → 传给 AI 的记忆摘要: (空 - 无历史交易)")
+            else:
+                print(f"     ❌ _get_past_memories 方法不存在")
+        else:
+            print(f"     ⚠️ multi_agent 未初始化")
+
+        print()
+        print("  ✅ 记忆系统健康检查完成")
+
+    except Exception as e:
+        print(f"  ❌ 记忆系统检查失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print()
+
+# =============================================================================
 # 10. on_bar MTF 路由逻辑模拟 (v10.9 新增)
 # 模拟 deepseek_strategy.py:on_bar() 的 MTF bar 路由
 # =============================================================================
 if not SUMMARY_MODE:
-    print("[10/13] on_bar MTF 路由逻辑模拟...")
+    print("[10/14] on_bar MTF 路由逻辑模拟...")
     print("-" * 70)
 
     try:
@@ -3155,7 +3283,7 @@ if not SUMMARY_MODE:
 # 测试 trading_logic.py:calculate_position_size() 的完整逻辑
 # =============================================================================
 if not SUMMARY_MODE:
-    print("[11/13] 仓位计算函数测试 (calculate_position_size)...")
+    print("[11/14] 仓位计算函数测试 (calculate_position_size)...")
     print("-" * 70)
 
     try:
@@ -3269,7 +3397,7 @@ if not SUMMARY_MODE:
 # 模拟 deepseek_strategy.py:_submit_bracket_order() 的参数验证
 # =============================================================================
 if not SUMMARY_MODE:
-    print("[12/13] 订单提交流程模拟 (_submit_bracket_order)...")
+    print("[12/14] 订单提交流程模拟 (_submit_bracket_order)...")
     print("-" * 70)
 
     try:
@@ -3435,7 +3563,7 @@ if not SUMMARY_MODE:
 # 输出所有获取的数据的具体值
 # =============================================================================
 if not SUMMARY_MODE:
-    print("[13/13] 完整数据流汇总...")
+    print("[13/14] 完整数据流汇总...")
     print("-" * 70)
 
     print()
