@@ -2550,20 +2550,18 @@ class DeepSeekAIStrategy(Strategy):
         if instrument_key in self.trailing_stop_state:
             del self.trailing_stop_state[instrument_key]
             self.log.debug(f"🗑️ Cleared trailing stop state for {instrument_key}")
-        
+
+        # v3.12: Calculate P&L percentage upfront (needed for both Telegram and memory system)
+        pnl = float(event.realized_pnl)
+        quantity = float(event.quantity) if hasattr(event, 'quantity') else 0.0
+        entry_price = float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0
+        exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
+        position_value = entry_price * quantity
+        pnl_pct = (pnl / position_value * 100) if position_value > 0 else 0.0
+
         # Send Telegram position closed notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
-                # Calculate P&L percentage
-                pnl = float(event.realized_pnl)
-                quantity = float(event.quantity) if hasattr(event, 'quantity') else 0.0
-                entry_price = float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0
-                exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
-
-                # Calculate position value for percentage: PnL / (entry_price * quantity) * 100
-                position_value = entry_price * quantity
-                pnl_pct = (pnl / position_value * 100) if position_value > 0 else 0.0
-
                 position_msg = self.telegram_bot.format_position_update({
                     'action': 'CLOSED',
                     'side': event.side.name,
@@ -2579,7 +2577,7 @@ class DeepSeekAIStrategy(Strategy):
 
         # v3.12: Record outcome for AI learning
         try:
-            if hasattr(self, 'ai_analyzer') and self.ai_analyzer:
+            if hasattr(self, 'multi_agent') and self.multi_agent:
                 # Get decision from last signal
                 decision = "UNKNOWN"
                 if hasattr(self, 'last_signal') and self.last_signal:
@@ -2595,7 +2593,7 @@ class DeepSeekAIStrategy(Strategy):
                 conditions = getattr(self, '_last_entry_conditions', 'N/A')
 
                 # Record the outcome
-                self.ai_analyzer.record_outcome(
+                self.multi_agent.record_outcome(
                     decision=decision,
                     pnl=pnl_pct,
                     conditions=conditions,
