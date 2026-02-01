@@ -2224,6 +2224,29 @@ class DeepSeekAIStrategy(Strategy):
                 }
             else:
                 # Reduce position
+                # v3.10: Cancel pending SL/TP before reducing to prevent quantity mismatch
+                # Old SL/TP might have larger quantity than reduced position
+                cancel_failed = False
+                try:
+                    open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                    reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
+                    if reduce_only_orders:
+                        self.log.info(f"🗑️ Cancelling {len(reduce_only_orders)} SL/TP orders before reduce")
+                        for order in reduce_only_orders:
+                            try:
+                                self.cancel_order(order)
+                            except Exception as e:
+                                self.log.warning(f"Failed to cancel order: {e}")
+                                cancel_failed = True
+                except Exception as e:
+                    self.log.error(f"❌ Failed to cancel SL/TP orders: {e}")
+                    cancel_failed = True
+
+                if cancel_failed:
+                    # v3.10: Warn but continue - reduce is less risky than reversal
+                    # Orphan cleanup will handle remaining orders later
+                    self.log.warning("⚠️ Some orders failed to cancel, continuing with reduce (orphan cleanup will handle)")
+
                 self._submit_order(
                     side=OrderSide.SELL if target_side == 'long' else OrderSide.BUY,
                     quantity=abs(size_diff),
@@ -2258,6 +2281,23 @@ class DeepSeekAIStrategy(Strategy):
                 return
 
             self.log.info(f"🔄 Reversing position: {current_side} → {target_side}")
+
+            # v3.10: Cancel all pending orders BEFORE reversing to prevent -2022 ReduceOnly rejection
+            # Old position's SL/TP orders are reduce_only=True, they'll be rejected if position closes first
+            try:
+                open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                if open_orders:
+                    self.log.info(f"🗑️ Cancelling {len(open_orders)} pending orders before reversal")
+                    self.cancel_all_orders(self.instrument_id)
+            except Exception as e:
+                # v3.10: ABORT reversal if cancel fails - continuing would cause -2022 errors
+                self.log.error(f"❌ Failed to cancel pending orders, aborting reversal: {e}")
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': f'取消挂单失败: {str(e)[:30]}',
+                    'action_taken': '中止反转',
+                }
+                return
 
             # Close current position
             self._submit_order(
@@ -3323,6 +3363,20 @@ class DeepSeekAIStrategy(Strategy):
             else:
                 close_side = OrderSide.BUY
                 side_str = "SHORT"
+
+            # v3.10: Cancel all pending orders BEFORE closing to prevent -2022 ReduceOnly rejection
+            try:
+                open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                if open_orders:
+                    self.log.info(f"🗑️ Cancelling {len(open_orders)} pending orders before close")
+                    self.cancel_all_orders(self.instrument_id)
+            except Exception as e:
+                # v3.10: ABORT close if cancel fails - user should retry
+                self.log.error(f"❌ Failed to cancel pending orders, aborting close: {e}")
+                return {
+                    'success': False,
+                    'error': f"Failed to cancel pending orders: {str(e)[:50]}. Please try again."
+                }
 
             # Submit close order
             self._submit_order(
