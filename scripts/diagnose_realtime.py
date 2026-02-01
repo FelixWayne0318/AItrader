@@ -787,12 +787,9 @@ try:
 
                 # 尝试导入验证
                 try:
-                    from indicators.multi_timeframe_manager import (
-                        MultiTimeframeManager,
-                        DecisionState
-                    )
+                    from indicators.multi_timeframe_manager import MultiTimeframeManager
                     print("  ✅ MultiTimeframeManager 导入成功")
-                    print(f"     DecisionState: {[s.name for s in DecisionState]}")
+                    print(f"     v3.3: DecisionState 已移除 (决策逻辑由 AI 控制)")
                 except ImportError as e:
                     print(f"  ⚠️ MultiTimeframeManager 导入失败: {e}")
             else:
@@ -841,10 +838,10 @@ if not SUMMARY_MODE and mtf_enabled:
     print("-" * 70)
 
     try:
-        from indicators.multi_timeframe_manager import MultiTimeframeManager, DecisionState
+        from indicators.multi_timeframe_manager import MultiTimeframeManager
 
-        # 检查 MTF 管理器的关键方法 (v3.1: 移除了 RiskState 相关方法)
-        mtf_methods = ['route_bar', 'is_initialized', 'get_decision_state', 'set_decision_state']
+        # 检查 MTF 管理器的关键方法 (v3.3: 移除了本地决策逻辑)
+        mtf_methods = ['route_bar', 'is_initialized', 'get_technical_data_for_layer', 'is_all_layers_initialized']
         missing_methods = []
         for method in mtf_methods:
             if not hasattr(MultiTimeframeManager, method):
@@ -870,11 +867,15 @@ if not SUMMARY_MODE and mtf_enabled:
         print("     → 查看服务日志检查初始化状态:")
         print("       journalctl -u nautilus-trader | grep -i 'mtf\\|timeframe\\|initialized'")
 
-        # 检查 DecisionState 枚举值 (v3.1: RiskState 已移除)
+        # v3.3 架构更新说明
         print()
-        print("  📋 MTF 状态枚举检查:")
-        print(f"     DecisionState 值: {[s.name for s in DecisionState]}")
-        print("     (v3.1: RiskState 已移除，交易决策完全由 AI 控制)")
+        print("  📋 MTF v3.3 架构更新:")
+        print("     ❌ 已移除: DecisionState 枚举 (ALLOW_LONG/SHORT/WAIT)")
+        print("     ❌ 已移除: get_decision_state(), set_decision_state()")
+        print("     ❌ 已移除: get_summary(), check_execution_confirmation()")
+        print("     ✅ 保留: 三层数据收集 (1D/4H/15M)")
+        print("     ✅ 保留: get_technical_data_for_layer() - 仅提供原始数据")
+        print("     → 设计理念: 所有决策交由 AI 完成，本地仅提供数据")
 
         # 检查预取配置
         print()

@@ -703,14 +703,12 @@ class ConfigManagementDiagnostic:
 
             content = mtf_file.read_text()
 
-            # 检查关键类和枚举
+            # 检查关键类和方法 (v3.3: 移除了本地决策逻辑)
             checks = [
                 ('class MultiTimeframeManager', 'MultiTimeframeManager 类'),
-                ('class RiskState', 'RiskState 枚举'),
-                ('class DecisionState', 'DecisionState 枚举'),
                 ('def route_bar', 'route_bar 方法'),
-                ('def evaluate_risk_state', 'evaluate_risk_state 方法'),
-                ('def check_execution_confirmation', 'check_execution_confirmation 方法'),
+                ('def is_initialized', 'is_initialized 方法'),
+                ('def get_technical_data_for_layer', 'get_technical_data_for_layer 方法'),
             ]
 
             missing = []
@@ -723,16 +721,12 @@ class ConfigManagementDiagnostic:
                 print("❌ [Phase 7] MTF Manager")
                 print(f"   缺失: {', '.join(missing)}")
             else:
-                # 尝试导入验证
+                # 尝试导入验证 (v3.3: DecisionState 已移除)
                 try:
-                    from indicators.multi_timeframe_manager import (
-                        MultiTimeframeManager,
-                        RiskState,
-                        DecisionState
-                    )
-                    self.add_result('Phase 7', 'MTF Manager', True, '模块导入成功')
+                    from indicators.multi_timeframe_manager import MultiTimeframeManager
+                    self.add_result('Phase 7', 'MTF Manager', True, '模块导入成功 (v3.3: 仅数据收集)')
                     print("✅ [Phase 7] MTF Manager")
-                    print("   模块导入成功")
+                    print("   模块导入成功 (v3.3: DecisionState/RiskState 已移除)")
                 except ImportError as e:
                     self.add_result('Phase 7', 'MTF Manager', False, f'导入失败: {e}')
                     print(f"❌ [Phase 7] MTF Manager: 导入失败 {e}")
