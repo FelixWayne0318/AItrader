@@ -9,3 +9,8 @@ timing:
 
 logging:
   level: "INFO"
+
+network:
+  instrument_discovery:
+    max_retries: 180              # 增加到 180 秒 (3 分钟)
+    retry_interval: 1.0

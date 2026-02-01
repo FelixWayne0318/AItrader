@@ -2,11 +2,15 @@
 """
 Multi-Timeframe POC (Proof of Concept) v1.0
 
+⚠️ 注意: 此 POC 演示的是 MTF v3.0 之前的架构 (包含 DecisionState/RiskState)
+⚠️ MTF v3.3 已移除本地决策逻辑，所有决策交由 AI 完成
+⚠️ 此文件保留用于参考和测试基础概念，实际实现见 indicators/multi_timeframe_manager.py
+
 验证多时间框架方案的核心假设:
 1. TechnicalIndicatorManager 支持 SMA_200
 2. BarType 可以精确匹配
 3. 多 BarType 订阅可行性
-4. MultiTimeframeManager 基础逻辑
+4. MultiTimeframeManager 基础逻辑 (旧架构)
 
 运行方式:
     cd /home/user/AItrader

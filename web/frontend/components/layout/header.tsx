@@ -76,7 +76,17 @@ export function Header({ locale, t }: HeaderProps) {
   const volume24h = ticker?.quote_volume_24h || 0;
   const formatVolume = (value: number) => { if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`; if (value >= 1e6) return `$${(value / 1e6).toFixed(0)}M`; return "--"; };
   const signal = latestSignal?.signal || "HOLD";
-  const getSignalColor = (s: string) => { if (s === "BUY" || s === "LONG") return "text-green-500"; if (s === "SELL" || s === "SHORT") return "text-red-500"; return "text-foreground"; };
+  const dataSource = latestSignal?.data_source || "none";
+  const getSignalColor = (s: string) => {
+    if (s === "BUY" || s === "LONG") return "text-green-500";
+    if (s === "SELL" || s === "SHORT") return "text-red-500";
+    if (s === "NO_DATA") return "text-yellow-500";
+    return "text-foreground";
+  };
+  const getSignalDisplay = (s: string) => {
+    if (s === "NO_DATA") return "等待信号";
+    return s;
+  };
 
   return (
     <header className="fixed top-4 inset-x-0 z-50 px-4">
@@ -135,11 +145,12 @@ export function Header({ locale, t }: HeaderProps) {
           {mounted && (
             <div className={`flex items-center gap-1.5 px-3 py-2 backdrop-blur-xl border border-border/30 rounded-xl ${
               signal === "BUY" || signal === "LONG" ? "bg-green-500/10" :
-              signal === "SELL" || signal === "SHORT" ? "bg-red-500/10" : "bg-background/60"
+              signal === "SELL" || signal === "SHORT" ? "bg-red-500/10" :
+              signal === "NO_DATA" ? "bg-yellow-500/10" : "bg-background/60"
             }`}>
               <Brain className={`h-3.5 w-3.5 ${getSignalColor(signal)}`} />
               <span className="text-xs text-muted-foreground">Signal:</span>
-              <span className={`text-xs font-semibold ${getSignalColor(signal)}`}>{signal}</span>
+              <span className={`text-xs font-semibold ${getSignalColor(signal)}`}>{getSignalDisplay(signal)}</span>
             </div>
           )}
 
@@ -226,10 +237,11 @@ export function Header({ locale, t }: HeaderProps) {
           {mounted && (
             <div className={`flex items-center gap-1 px-2 py-1.5 backdrop-blur-xl border border-border/30 rounded-lg ${
               signal === "BUY" || signal === "LONG" ? "bg-green-500/10" :
-              signal === "SELL" || signal === "SHORT" ? "bg-red-500/10" : "bg-background/60"
+              signal === "SELL" || signal === "SHORT" ? "bg-red-500/10" :
+              signal === "NO_DATA" ? "bg-yellow-500/10" : "bg-background/60"
             }`}>
               <Brain className={`h-3 w-3 ${getSignalColor(signal)}`} />
-              <span className={`text-[10px] font-semibold ${getSignalColor(signal)}`}>{signal}</span>
+              <span className={`text-[10px] font-semibold ${getSignalColor(signal)}`}>{getSignalDisplay(signal)}</span>
             </div>
           )}
 

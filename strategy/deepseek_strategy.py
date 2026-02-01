@@ -171,14 +171,10 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     network_telegram_message_timeout: float = 30.0  # Telegram 消息发送超时 (秒)
     sentiment_timeout: float = 10.0
 
-    # Multi-Timeframe Configuration (v3.2.9)
+    # Multi-Timeframe Configuration (v3.3)
     multi_timeframe_enabled: bool = False  # Default disabled for backward compatibility
     mtf_trend_sma_period: int = 200        # SMA period for trend layer (1D)
-    mtf_trend_require_above_sma: bool = True
-    mtf_trend_require_macd_positive: bool = True
     mtf_decision_debate_rounds: int = 2    # Debate rounds for decision layer (4H)
-    mtf_execution_rsi_entry_min: int = 35  # RSI entry range for execution layer (15M)
-    mtf_execution_rsi_entry_max: int = 65
 
     # Order Book Configuration (v3.7)
     order_book_enabled: bool = False  # 启用订单簿深度数据 (默认关闭)
@@ -257,6 +253,12 @@ class DeepSeekAIStrategy(Strategy):
         self.latest_technical_data: Optional[Dict[str, Any]] = None
         self.latest_price_data: Optional[Dict[str, Any]] = None
 
+        # v3.6/3.7/3.8: Store latest indicator data for Telegram heartbeat
+        self.latest_order_flow_data: Optional[Dict[str, Any]] = None
+        self.latest_derivatives_data: Optional[Dict[str, Any]] = None
+        self.latest_orderbook_data: Optional[Dict[str, Any]] = None
+        self.latest_sr_zones_data: Optional[Dict[str, Any]] = None
+
         # OCO (One-Cancels-the-Other) - Now handled by NautilusTrader's bracket orders
         # No need for manual OCO manager anymore
         self.enable_oco = config.enable_oco  # Keep for config compatibility
@@ -290,6 +292,9 @@ class DeepSeekAIStrategy(Strategy):
 
         # Track trailing stop state for each position
         self.trailing_stop_state: Dict[str, Dict[str, Any]] = {}
+        # Throttle trailing stop notifications (5 minutes = 300 seconds)
+        self._last_trailing_stop_notify_time: float = 0.0
+        self._trailing_stop_notify_throttle: float = 300.0  # seconds
         # Format: {
         #   "instrument_id": {
         #       "entry_price": float,
@@ -322,15 +327,13 @@ class DeepSeekAIStrategy(Strategy):
         self.decision_bar_type = None
         self.execution_bar_type = None
 
-        # Async request tracking for request_bars (v3.2.8)
-        self._pending_requests: Dict[str, Any] = {}  # layer -> request_id
         self._mtf_trend_initialized = False
         self._mtf_decision_initialized = False
         self._mtf_execution_initialized = False
 
         if self.mtf_enabled:
             try:
-                from indicators.multi_timeframe_manager import MultiTimeframeManager, DecisionState
+                from indicators.multi_timeframe_manager import MultiTimeframeManager
 
                 # Build BarType objects for each layer
                 instrument_str = str(self.instrument_id)
@@ -338,14 +341,12 @@ class DeepSeekAIStrategy(Strategy):
                 self.decision_bar_type = BarType.from_str(f"{instrument_str}-4-HOUR-LAST-EXTERNAL")
                 self.execution_bar_type = BarType.from_str(f"{instrument_str}-15-MINUTE-LAST-EXTERNAL")
 
-                # Build MTF config from strategy config
+                # Build MTF config from strategy config (v3.3: removed unused filter configs)
                 mtf_config = {
                     'enabled': True,
                     'trend_layer': {
                         'timeframe': '1d',
                         'sma_period': getattr(config, 'mtf_trend_sma_period', 200),
-                        'require_above_sma': getattr(config, 'mtf_trend_require_above_sma', True),
-                        'require_macd_positive': getattr(config, 'mtf_trend_require_macd_positive', True),
                     },
                     'decision_layer': {
                         'timeframe': '4h',
@@ -353,8 +354,6 @@ class DeepSeekAIStrategy(Strategy):
                     },
                     'execution_layer': {
                         'timeframe': '15m',
-                        'rsi_entry_min': getattr(config, 'mtf_execution_rsi_entry_min', 35),
-                        'rsi_entry_max': getattr(config, 'mtf_execution_rsi_entry_max', 65),
                     }
                 }
 
@@ -365,8 +364,6 @@ class DeepSeekAIStrategy(Strategy):
                     execution_bar_type=self.execution_bar_type,
                     logger=self.log,
                 )
-                # Store enums for use in on_timer (avoid import in hot path)
-                self._DecisionState = DecisionState
                 self.log.info(f"✅ MTF Manager initialized: trend={self.trend_bar_type}, decision={self.decision_bar_type}, exec={self.execution_bar_type}")
             except Exception as e:
                 self.log.error(f"❌ Failed to initialize MTF Manager: {e}")
@@ -943,9 +940,8 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.debug(f"MTF: trend (1D) bar routed")
                 return
             elif layer == "decision":
-                # 决策层 (4H) 收盘时评估方向 - 核心 MTF 逻辑
-                self.log.info(f"[MTF] 4H bar 收盘，触发决策层评估...")
-                self._evaluate_decision_layer_on_bar_close(bar)
+                # 决策层 (4H) 数据由 AI 在 on_timer 中使用，这里只记录
+                self.log.debug(f"[MTF] 4H bar 收盘，数据已更新 (AI 将在 on_timer 中使用)")
                 return
             elif layer == "execution":
                 # Update cached price for execution layer
@@ -970,125 +966,6 @@ class DeepSeekAIStrategy(Strategy):
                 f"Bar #{self.bars_received}: "
                 f"O:{bar.open} H:{bar.high} L:{bar.low} C:{bar.close} V:{bar.volume}"
             )
-
-    def _evaluate_decision_layer_on_bar_close(self, bar: Bar):
-        """
-        评估决策层方向 (在 4H bar 收盘时调用)
-
-        根据设计文档 Section 1.5.4，决策层应该在 4H bar 收盘时评估，
-        使用技术指标规则确定方向 (ALLOW_LONG / ALLOW_SHORT / WAIT)。
-
-        这个方向状态将持续到下一个 4H bar 收盘，期间 on_timer 中的
-        交易信号必须符合此方向才能执行。
-
-        Parameters
-        ----------
-        bar : Bar
-            4H bar 数据
-        """
-        if not self.mtf_manager or not self.mtf_manager.decision_manager:
-            self.log.warning("[MTF] 决策层管理器未初始化")
-            return
-
-        current_price = float(bar.close)
-
-        # 获取 4H 决策层技术数据
-        try:
-            decision_data = self.mtf_manager.get_technical_data_for_layer("decision", current_price)
-
-            if not decision_data.get('_initialized', True):
-                self.log.warning("[MTF] 决策层指标未完全初始化，保持当前状态")
-                return
-
-            # 提取关键指标
-            macd = decision_data.get('macd', 0)
-            macd_signal = decision_data.get('macd_signal', 0)
-            rsi = decision_data.get('rsi', 50)
-            sma_20 = decision_data.get('sma_20', current_price)
-            sma_50 = decision_data.get('sma_50', current_price)
-            overall_trend = decision_data.get('overall_trend', 'NEUTRAL')
-
-            # 决策规则 (基于 4H 技术指标)
-            # 规则设计参考业界最佳实践：
-            # - MACD 金叉/死叉 作为主要方向信号
-            # - RSI 区间确认动量
-            # - 价格与均线关系确认趋势
-
-            bullish_signals = 0
-            bearish_signals = 0
-
-            # 规则 1: MACD 方向
-            if macd > macd_signal and macd > 0:
-                bullish_signals += 2  # MACD 金叉且为正，强看涨
-            elif macd > macd_signal:
-                bullish_signals += 1  # MACD 金叉但为负，弱看涨
-            elif macd < macd_signal and macd < 0:
-                bearish_signals += 2  # MACD 死叉且为负，强看跌
-            elif macd < macd_signal:
-                bearish_signals += 1  # MACD 死叉但为正，弱看跌
-
-            # 规则 2: RSI 区间
-            if rsi > 55:
-                bullish_signals += 1
-            elif rsi < 45:
-                bearish_signals += 1
-
-            # 规则 3: 价格与均线关系
-            if current_price > sma_20 and sma_20 > sma_50:
-                bullish_signals += 1  # 多头排列
-            elif current_price < sma_20 and sma_20 < sma_50:
-                bearish_signals += 1  # 空头排列
-
-            # 决定方向
-            old_state = self.mtf_manager.get_decision_state()
-
-            if bullish_signals >= 3 and bullish_signals > bearish_signals:
-                confidence = "HIGH" if bullish_signals >= 4 else "MEDIUM"
-                self.mtf_manager.set_decision_state(self._DecisionState.ALLOW_LONG, confidence)
-                self.log.info(
-                    f"[MTF] 4H 决策层评估: ALLOW_LONG ({confidence}) | "
-                    f"多头信号={bullish_signals}, 空头信号={bearish_signals} | "
-                    f"MACD={macd:.2f}, RSI={rsi:.1f}, Price vs SMA20={current_price:.2f}/{sma_20:.2f}"
-                )
-            elif bearish_signals >= 3 and bearish_signals > bullish_signals:
-                confidence = "HIGH" if bearish_signals >= 4 else "MEDIUM"
-                self.mtf_manager.set_decision_state(self._DecisionState.ALLOW_SHORT, confidence)
-                self.log.info(
-                    f"[MTF] 4H 决策层评估: ALLOW_SHORT ({confidence}) | "
-                    f"多头信号={bullish_signals}, 空头信号={bearish_signals} | "
-                    f"MACD={macd:.2f}, RSI={rsi:.1f}, Price vs SMA20={current_price:.2f}/{sma_20:.2f}"
-                )
-            else:
-                self.mtf_manager.set_decision_state(self._DecisionState.WAIT, "LOW")
-                self.log.info(
-                    f"[MTF] 4H 决策层评估: WAIT (方向不明确) | "
-                    f"多头信号={bullish_signals}, 空头信号={bearish_signals} | "
-                    f"MACD={macd:.2f}, RSI={rsi:.1f}"
-                )
-
-            # 如果状态变化，发送 Telegram 通知
-            new_state = self.mtf_manager.get_decision_state()
-            if old_state != new_state and self.telegram_bot and self.enable_telegram:
-                try:
-                    state_emoji = {
-                        self._DecisionState.ALLOW_LONG: "🟢",
-                        self._DecisionState.ALLOW_SHORT: "🔴",
-                        self._DecisionState.WAIT: "🟡",
-                    }
-                    emoji = state_emoji.get(new_state, "⚪")
-                    msg = (
-                        f"{emoji} [MTF 4H 方向更新]\n"
-                        f"方向: {old_state.value} → {new_state.value}\n"
-                        f"价格: ${current_price:,.2f}\n"
-                        f"MACD: {macd:.2f}\n"
-                        f"RSI: {rsi:.1f}"
-                    )
-                    self.telegram_bot.send_message_sync(msg)
-                except Exception as e:
-                    self.log.warning(f"Telegram 通知发送失败: {e}")
-
-        except Exception as e:
-            self.log.error(f"[MTF] 决策层评估失败: {e}")
 
     def on_historical_data(self, data):
         """
@@ -1496,6 +1373,7 @@ class DeepSeekAIStrategy(Strategy):
                         )
                         if raw_klines:
                             order_flow_data = self.order_flow_processor.process_klines(raw_klines)
+                            self.latest_order_flow_data = order_flow_data  # v3.6: Store for heartbeat
                             self.log.info(
                                 f"📊 Order Flow: buy_ratio={order_flow_data.get('buy_ratio', 0):.1%}, "
                                 f"cvd_trend={order_flow_data.get('cvd_trend', 'N/A')}"
@@ -1510,6 +1388,7 @@ class DeepSeekAIStrategy(Strategy):
                 if self.coinalyze_client and self.coinalyze_client.is_enabled():
                     try:
                         derivatives_data = self.coinalyze_client.fetch_all()
+                        self.latest_derivatives_data = derivatives_data  # v3.6: Store for heartbeat
                         if derivatives_data.get('enabled'):
                             oi = derivatives_data.get('open_interest')
                             funding = derivatives_data.get('funding_rate')
@@ -1540,6 +1419,7 @@ class DeepSeekAIStrategy(Strategy):
                             )
                             # 提取关键指标用于日志 (v3.7.1: 修正字段路径)
                             if orderbook_data.get('_status', {}).get('code') == 'OK':
+                                self.latest_orderbook_data = orderbook_data  # v3.7: Store for heartbeat
                                 obi = orderbook_data.get('obi', {})
                                 simple_obi = obi.get('simple', 0)
                                 weighted_obi = obi.get('weighted', 0)
@@ -1569,6 +1449,10 @@ class DeepSeekAIStrategy(Strategy):
                     orderbook_report=orderbook_data,
                 )
 
+                # v3.8: Store S/R Zone data for heartbeat (from MultiAgentAnalyzer cache)
+                if hasattr(self.multi_agent, '_sr_zones_cache') and self.multi_agent._sr_zones_cache:
+                    self.latest_sr_zones_data = self.multi_agent._sr_zones_cache
+
                 # ========== TradingAgents v3.1: AI 完全自主决策 ==========
                 # 设计理念: "Autonomy is non-negotiable" - AI 像人类分析师一样思考
                 # 移除了所有本地硬编码规则:
@@ -1591,10 +1475,14 @@ class DeepSeekAIStrategy(Strategy):
                 judge_decision = signal_data.get('judge_decision', {})
                 if judge_decision:
                     winning_side = judge_decision.get('winning_side', 'N/A')
-                    key_reasons = judge_decision.get('key_reasons', [])
+                    # v3.10: Support both rationale (new) and key_reasons (legacy)
+                    rationale = judge_decision.get('rationale', '')
+                    strategic_actions = judge_decision.get('strategic_actions', [])
                     self.log.info(f"⚖️ Winning Side: {winning_side}")
-                    if key_reasons:
-                        self.log.info(f"📌 Key Reasons: {', '.join(key_reasons[:3])}")
+                    if rationale:
+                        self.log.info(f"📌 Rationale: {rationale}")
+                    if strategic_actions:
+                        self.log.info(f"🎯 Actions: {', '.join(strategic_actions[:2])}")
 
                 # Telegram notification moved to after execution (see _execute_trade)
                 # This prevents "signal sent but not executed" confusion
@@ -1620,8 +1508,6 @@ class DeepSeekAIStrategy(Strategy):
 
             # 📸 Fix C16/J43: Save complete decision snapshot for replay
             try:
-                mtf_perms = permissions if self.mtf_enabled and self.mtf_manager and 'permissions' in locals() else None
-                orig_sig = original_signal if 'original_signal' in locals() else None
                 self._save_decision_snapshot(
                     signal_data=signal_data,
                     technical_data=technical_data,
@@ -1630,8 +1516,6 @@ class DeepSeekAIStrategy(Strategy):
                     derivatives_data=derivatives_data if 'derivatives_data' in locals() else None,
                     current_position=current_position,
                     price_data=price_data,
-                    mtf_permissions=mtf_perms,
-                    original_signal=orig_sig,
                 )
             except Exception as e:
                 self.log.debug(f"Failed to save decision snapshot: {e}")
@@ -1661,14 +1545,15 @@ class DeepSeekAIStrategy(Strategy):
         derivatives_data: dict,
         current_position: dict,
         price_data: dict,
-        mtf_permissions: dict = None,
-        original_signal: str = None,
     ):
         """
         🔍 Fix C16/J43: Save complete decision snapshot for debugging and replay.
 
-        Saves all inputs, AI outputs, and filtering decisions to a JSON file.
+        Saves all inputs and AI outputs to a JSON file.
         This enables full replay of "why did the system make this decision?"
+
+        Note: All trading decisions are made by AI (Bull/Bear/Judge).
+        Local code only handles risk control (S/R proximity blocking).
         """
         try:
             import json
@@ -1702,18 +1587,117 @@ class DeepSeekAIStrategy(Strategy):
                     'debate_summary': signal_data.get('debate_summary'),
                     'judge_decision': signal_data.get('judge_decision'),
                 },
-                'mtf_filtering': {
-                    'original_signal': original_signal or signal_data.get('signal'),
-                    'final_signal': signal_data.get('signal'),
-                    'permissions': mtf_permissions,
-                    'filtered': original_signal != signal_data.get('signal') if original_signal else False,
-                },
             }
 
             with open(snapshot_file, 'w') as f:
                 json.dump(snapshot, f, indent=2, default=str)
 
             self.log.debug(f"📸 Decision snapshot saved: {snapshot_file}")
+
+            # 📡 Write latest_signal.json for web frontend API
+            # This file is read by /api/public/latest-signal endpoint
+            latest_signal_file = 'logs/latest_signal.json'
+            latest_signal = {
+                'signal': signal_data.get('signal', 'HOLD'),
+                'confidence': signal_data.get('confidence', 'MEDIUM'),
+                'reason': signal_data.get('reason', ''),
+                'symbol': 'BTCUSDT',
+                'timestamp': datetime.now().isoformat(),
+                'risk_level': signal_data.get('risk_level', 'MEDIUM'),
+                'stop_loss': signal_data.get('stop_loss'),
+                'take_profit': signal_data.get('take_profit'),
+                'debate_summary': signal_data.get('debate_summary', ''),
+            }
+            with open(latest_signal_file, 'w') as f:
+                json.dump(latest_signal, f, indent=2, default=str)
+            self.log.debug(f"📡 Latest signal updated: {latest_signal_file}")
+
+            # 📊 Write latest_analysis.json for AI analysis page (Bull/Bear/Judge)
+            # This file is read by /api/public/ai-analysis endpoint
+            latest_analysis_file = 'logs/latest_analysis.json'
+
+            # Extract Bull/Bear arguments from debate transcript
+            debate_transcript = getattr(self.multi_agent, 'last_debate_transcript', '') if self.multi_agent else ''
+            bull_analysis = ''
+            bear_analysis = ''
+            if debate_transcript:
+                # Parse transcript to extract bull/bear sections
+                import re
+                bull_matches = re.findall(r'BULL ANALYST:\n(.*?)(?=\n\nBEAR ANALYST:|$)', debate_transcript, re.DOTALL)
+                bear_matches = re.findall(r'BEAR ANALYST:\n(.*?)(?=\n\n=== ROUND|$)', debate_transcript, re.DOTALL)
+                if bull_matches:
+                    bull_analysis = bull_matches[-1].strip()  # Get last round's argument
+                if bear_matches:
+                    bear_analysis = bear_matches[-1].strip()
+
+            # Get judge decision details (v3.10: support rationale + legacy key_reasons)
+            judge_decision = signal_data.get('judge_decision', {})
+            if isinstance(judge_decision, dict):
+                # Prefer rationale (v3.10), fallback to key_reasons (legacy)
+                judge_reasoning = judge_decision.get('rationale', '')
+                if not judge_reasoning:
+                    judge_reasons = judge_decision.get('key_reasons', [])
+                    judge_reasoning = '. '.join(judge_reasons) if judge_reasons else ''
+            else:
+                judge_reasoning = ''
+            judge_reasoning = judge_reasoning or signal_data.get('reason', '')
+
+            # Calculate confidence score (HIGH=80, MEDIUM=60, LOW=40)
+            confidence_map = {'HIGH': 80, 'MEDIUM': 60, 'LOW': 40}
+            confidence_score = confidence_map.get(signal_data.get('confidence', 'MEDIUM'), 60)
+
+            # Get current price for entry
+            current_price = price_data.get('price') if price_data else None
+
+            latest_analysis = {
+                'signal': signal_data.get('signal', 'HOLD'),
+                'confidence': signal_data.get('confidence', 'MEDIUM'),
+                'confidence_score': confidence_score,
+                'bull_analysis': bull_analysis or 'No bull analysis available',
+                'bear_analysis': bear_analysis or 'No bear analysis available',
+                'judge_reasoning': judge_reasoning or 'No judge reasoning available',
+                'entry_price': current_price,
+                'stop_loss': signal_data.get('stop_loss'),
+                'take_profit': signal_data.get('take_profit'),
+                'technical_score': technical_data.get('rsi', 50) if technical_data else 50,  # Use RSI as proxy
+                'sentiment_score': sentiment_data.get('net_sentiment', 50) if sentiment_data else 50,
+                'timestamp': datetime.now().isoformat(),
+            }
+            with open(latest_analysis_file, 'w') as f:
+                json.dump(latest_analysis, f, indent=2, default=str)
+            self.log.debug(f"📊 Latest analysis updated: {latest_analysis_file}")
+
+            # 📜 Update signal_history.json (append mode, keep last 100 signals)
+            # This file is read by /api/public/signal-history endpoint
+            signal_history_file = 'logs/signal_history.json'
+            signal_entry = {
+                'signal': signal_data.get('signal', 'HOLD'),
+                'confidence': signal_data.get('confidence', 'MEDIUM'),
+                'reason': signal_data.get('reason', ''),
+                'timestamp': datetime.now().isoformat(),
+                'result': None,  # Will be updated later when trade completes
+                'stop_loss': signal_data.get('stop_loss'),
+                'take_profit': signal_data.get('take_profit'),
+            }
+
+            # Load existing history or create new
+            try:
+                if os.path.exists(signal_history_file):
+                    with open(signal_history_file, 'r') as f:
+                        history_data = json.load(f)
+                        signals = history_data.get('signals', []) if isinstance(history_data, dict) else history_data
+                else:
+                    signals = []
+            except Exception:
+                signals = []
+
+            # Prepend new signal and keep last 100
+            signals.insert(0, signal_entry)
+            signals = signals[:100]
+
+            with open(signal_history_file, 'w') as f:
+                json.dump({'signals': signals}, f, indent=2, default=str)
+            self.log.debug(f"📜 Signal history updated: {signal_history_file} ({len(signals)} signals)")
 
         except Exception as e:
             self.log.warning(f"Failed to save decision snapshot: {e}")
@@ -1782,7 +1766,44 @@ class DeepSeekAIStrategy(Strategy):
             signal = last_signal.get('signal') or 'PENDING'
             confidence = last_signal.get('confidence') or 'N/A'
 
-            # 8. 发送消息
+            # 8. 组装 v3.6/3.7/3.8 数据 (如果可用)
+            order_flow_heartbeat = None
+            if self.latest_order_flow_data:
+                order_flow_heartbeat = {
+                    'buy_ratio': self.latest_order_flow_data.get('buy_ratio'),
+                    'cvd_trend': self.latest_order_flow_data.get('cvd_trend'),
+                }
+
+            derivatives_heartbeat = None
+            if self.latest_derivatives_data and self.latest_derivatives_data.get('enabled'):
+                funding = self.latest_derivatives_data.get('funding_rate', {})
+                oi = self.latest_derivatives_data.get('open_interest', {})
+                derivatives_heartbeat = {
+                    'funding_rate': funding.get('value') if funding else None,
+                    'oi_change_pct': oi.get('change_pct') if oi else None,
+                }
+
+            orderbook_heartbeat = None
+            if self.latest_orderbook_data and self.latest_orderbook_data.get('_status', {}).get('code') == 'OK':
+                obi = self.latest_orderbook_data.get('obi', {})
+                dynamics = self.latest_orderbook_data.get('dynamics', {})
+                orderbook_heartbeat = {
+                    'weighted_obi': obi.get('weighted'),
+                    'obi_trend': dynamics.get('obi_trend'),
+                }
+
+            sr_zone_heartbeat = None
+            if self.latest_sr_zones_data:
+                zones = self.latest_sr_zones_data.get('zones', {})
+                hard_control = self.latest_sr_zones_data.get('hard_control', {})
+                sr_zone_heartbeat = {
+                    'nearest_support': zones.get('nearest_support'),
+                    'nearest_resistance': zones.get('nearest_resistance'),
+                    'block_long': hard_control.get('block_long', False),
+                    'block_short': hard_control.get('block_short', False),
+                }
+
+            # 9. 发送消息
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
@@ -1795,6 +1816,11 @@ class DeepSeekAIStrategy(Strategy):
                 'timer_count': getattr(self, '_timer_count', 0),
                 'equity': equity,
                 'uptime_str': uptime_str,
+                # v3.6/3.7/3.8 data
+                'order_flow': order_flow_heartbeat,
+                'derivatives': derivatives_heartbeat,
+                'order_book': orderbook_heartbeat,
+                'sr_zone': sr_zone_heartbeat,
             })
             self.telegram_bot.send_message_sync(heartbeat_msg)
             self.log.info(f"💓 Sent heartbeat #{self._timer_count}")
@@ -2353,6 +2379,7 @@ class DeepSeekAIStrategy(Strategy):
                         "highest_price": entry_price if side == OrderSide.BUY else None,
                         "lowest_price": entry_price if side == OrderSide.SELL else None,
                         "current_sl_price": stop_loss_price,
+                        "current_tp_price": tp_price,  # v3.8: Store TP price for notifications
                         "sl_order_id": str(sl_order.client_order_id),
                         "activated": False,
                         "side": "LONG" if side == OrderSide.BUY else "SHORT",
@@ -2447,6 +2474,9 @@ class DeepSeekAIStrategy(Strategy):
             f"{event.quantity} @ {event.avg_px_open}"
         )
 
+        # v3.12: Store entry conditions for memory system
+        self._last_entry_conditions = self._format_entry_conditions()
+
         # Update trailing stop state with actual entry price if it exists
         # (bracket order already initialized it with estimated price)
         if self.enable_trailing_stop:
@@ -2483,6 +2513,15 @@ class DeepSeekAIStrategy(Strategy):
         # Send Telegram position opened notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
+                # Retrieve SL/TP prices from trailing_stop_state (v3.8)
+                instrument_key = str(self.instrument_id)
+                sl_price = None
+                tp_price = None
+                if instrument_key in self.trailing_stop_state:
+                    state = self.trailing_stop_state[instrument_key]
+                    sl_price = state.get("current_sl_price")
+                    tp_price = state.get("current_tp_price")
+
                 position_msg = self.telegram_bot.format_position_update({
                     'action': 'OPENED',
                     'side': event.side.name,
@@ -2491,6 +2530,8 @@ class DeepSeekAIStrategy(Strategy):
                     'current_price': float(event.avg_px_open),
                     'pnl': 0.0,
                     'pnl_pct': 0.0,
+                    'sl_price': sl_price,  # v3.8: Include SL price
+                    'tp_price': tp_price,  # v3.8: Include TP price
                 })
                 self.telegram_bot.send_message_sync(position_msg)
             except Exception as e:
@@ -2509,20 +2550,18 @@ class DeepSeekAIStrategy(Strategy):
         if instrument_key in self.trailing_stop_state:
             del self.trailing_stop_state[instrument_key]
             self.log.debug(f"🗑️ Cleared trailing stop state for {instrument_key}")
-        
+
+        # v3.12: Calculate P&L percentage upfront (needed for both Telegram and memory system)
+        pnl = float(event.realized_pnl)
+        quantity = float(event.quantity) if hasattr(event, 'quantity') else 0.0
+        entry_price = float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0
+        exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
+        position_value = entry_price * quantity
+        pnl_pct = (pnl / position_value * 100) if position_value > 0 else 0.0
+
         # Send Telegram position closed notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
-                # Calculate P&L percentage
-                pnl = float(event.realized_pnl)
-                quantity = float(event.quantity) if hasattr(event, 'quantity') else 0.0
-                entry_price = float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0
-                exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
-
-                # Calculate position value for percentage: PnL / (entry_price * quantity) * 100
-                position_value = entry_price * quantity
-                pnl_pct = (pnl / position_value * 100) if position_value > 0 else 0.0
-
                 position_msg = self.telegram_bot.format_position_update({
                     'action': 'CLOSED',
                     'side': event.side.name,
@@ -2535,7 +2574,70 @@ class DeepSeekAIStrategy(Strategy):
                 self.telegram_bot.send_message_sync(position_msg)
             except Exception as e:
                 self.log.warning(f"Failed to send Telegram position closed notification: {e}")
-    
+
+        # v3.12: Record outcome for AI learning
+        try:
+            if hasattr(self, 'multi_agent') and self.multi_agent:
+                # Get decision from last signal
+                decision = "UNKNOWN"
+                if hasattr(self, 'last_signal') and self.last_signal:
+                    signal = self.last_signal.get('signal', '')
+                    if signal == 'BUY':
+                        decision = 'LONG'
+                    elif signal == 'SELL':
+                        decision = 'SHORT'
+                    else:
+                        decision = signal
+
+                # Get entry conditions
+                conditions = getattr(self, '_last_entry_conditions', 'N/A')
+
+                # Record the outcome
+                self.multi_agent.record_outcome(
+                    decision=decision,
+                    pnl=pnl_pct,
+                    conditions=conditions,
+                )
+                self.log.info(f"📝 Trade outcome recorded for AI learning")
+        except Exception as e:
+            self.log.warning(f"Failed to record trade outcome: {e}")
+
+    def _format_entry_conditions(self) -> str:
+        """
+        Format current market conditions for memory recording.
+
+        v3.12: Captures key indicators at entry for pattern learning.
+        """
+        try:
+            parts = []
+
+            # Get RSI
+            if hasattr(self, 'indicator_manager') and self.indicator_manager:
+                rsi = self.indicator_manager.get_rsi()
+                if rsi is not None:
+                    parts.append(f"RSI={rsi:.0f}")
+
+            # Get trend from last signal
+            if hasattr(self, 'last_signal') and self.last_signal:
+                confidence = self.last_signal.get('confidence', 'N/A')
+                parts.append(f"confidence={confidence}")
+
+                # Get judge decision info
+                judge = self.last_signal.get('judge_decision', {})
+                if judge:
+                    winning = judge.get('winning_side', 'N/A')
+                    parts.append(f"winning_side={winning}")
+
+            # Get cached price for context
+            if hasattr(self, '_cached_current_price') and self._cached_current_price:
+                parts.append(f"price=${self._cached_current_price:,.0f}")
+
+            return ", ".join(parts) if parts else "N/A"
+
+        except Exception as e:
+            self.log.debug(f"Failed to format entry conditions: {e}")
+            return "N/A"
+
     def _cleanup_oco_orphans(self):
         """
         Clean up orphan orders.
@@ -2596,11 +2698,18 @@ class DeepSeekAIStrategy(Strategy):
         """
         try:
             instrument_key = str(self.instrument_id)
-            
+
             # Check if we have trailing stop state for this instrument
             if instrument_key not in self.trailing_stop_state:
                 return
-            
+
+            # Verify position still exists (fix for -2022 ReduceOnly rejection)
+            position = self.cache.position(self.position_id)
+            if position is None or position.is_closed:
+                self.log.debug(f"Position closed, cleaning up trailing_stop_state")
+                del self.trailing_stop_state[instrument_key]
+                return
+
             state = self.trailing_stop_state[instrument_key]
             entry_price = state["entry_price"]
             side = state["side"]
@@ -2710,11 +2819,33 @@ class DeepSeekAIStrategy(Strategy):
             Position side (LONG/SHORT)
         """
         try:
+            # First, verify position still exists (fix for -2022 ReduceOnly rejection)
+            position = self.cache.position(self.position_id)
+            if position is None or position.is_closed:
+                self.log.warning(
+                    f"⚠️ Position no longer exists, skipping trailing stop update. "
+                    f"Cleaning up trailing_stop_state."
+                )
+                # Clean up state
+                if instrument_key in self.trailing_stop_state:
+                    del self.trailing_stop_state[instrument_key]
+                return
+
             state = self.trailing_stop_state[instrument_key]
             old_sl_price = state["current_sl_price"]
             old_sl_order_id = state["sl_order_id"]
             quantity = state["quantity"]
-            
+
+            # Verify quantity matches current position
+            current_qty = float(position.quantity)
+            if abs(current_qty - quantity) > 0.0001:
+                self.log.warning(
+                    f"⚠️ Position quantity changed ({quantity:.4f} → {current_qty:.4f}), "
+                    f"updating trailing stop state"
+                )
+                state["quantity"] = current_qty
+                quantity = current_qty
+
             # Log the update
             if old_sl_price:
                 move_pct = ((new_sl_price - old_sl_price) / old_sl_price) * 100
@@ -2764,6 +2895,35 @@ class DeepSeekAIStrategy(Strategy):
             state["sl_order_id"] = str(new_sl_order.client_order_id)
 
             self.log.info(f"✅ New trailing SL order submitted @ ${new_sl_price:,.2f}")
+
+            # Send Telegram notification for trailing stop update (with throttle)
+            if self.telegram_bot and self.enable_telegram and old_sl_price:
+                import time
+                current_time = time.time()
+                time_since_last = current_time - self._last_trailing_stop_notify_time
+
+                if time_since_last >= self._trailing_stop_notify_throttle:
+                    try:
+                        entry_price = state.get("entry_price", 0)
+                        profit_pct = ((current_price - entry_price) / entry_price) if entry_price > 0 else 0
+                        if side == "SHORT":
+                            profit_pct = -profit_pct  # SHORT profit is inverse
+
+                        ts_msg = self.telegram_bot.format_trailing_stop_update({
+                            'old_sl_price': old_sl_price,
+                            'new_sl_price': new_sl_price,
+                            'current_price': current_price,
+                            'profit_pct': profit_pct,
+                        })
+                        self.telegram_bot.send_message_sync(ts_msg)
+                        self._last_trailing_stop_notify_time = current_time
+                    except Exception as te:
+                        self.log.warning(f"Failed to send trailing stop notification: {te}")
+                else:
+                    self.log.debug(
+                        f"Trailing stop notification throttled "
+                        f"({time_since_last:.0f}s < {self._trailing_stop_notify_throttle:.0f}s)"
+                    )
 
             # Note: OCO relationship is handled automatically by NautilusTrader
             # When the new SL is submitted, it will be linked to the existing TP orders

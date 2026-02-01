@@ -1,46 +1,37 @@
 """
-Multi-Timeframe Indicator Manager v3.0
+Multi-Timeframe Indicator Manager v3.3
 
 管理多个时间框架的技术指标，提供跨周期分析能力。
+
+v3.3 更新:
+- 移除本地决策逻辑 (ALLOW_LONG/SHORT/WAIT)
+- 移除 DecisionState 枚举和相关方法
+- 移除 get_summary(), check_execution_confirmation() 等幽灵代码
+- 所有决策交由 AI 完成，本地仅提供数据
 
 v3.0 更新:
 - 移除对不存在的 ConfigManager 辅助方法的依赖
 - 使用 MACD 替代 ADX (ADX 未在 TechnicalIndicatorManager 实现)
 - 添加 SMA_200 支持 (需要在 TechnicalIndicatorManager 初始化时指定)
-
-v3.2.8 更新:
-- 从文档转为实际可执行文件
-- 添加线程安全注释
 """
 
-from typing import Dict, Any, Optional, List
-from enum import Enum
-from datetime import datetime, timezone
+from typing import Dict, Any, Optional
 import logging
 
 from nautilus_trader.model.data import Bar, BarType
 from indicators.technical_manager import TechnicalIndicatorManager
 
 
-class DecisionState(Enum):
-    """决策层方向状态"""
-    ALLOW_LONG = "ALLOW_LONG"   # 允许做多
-    ALLOW_SHORT = "ALLOW_SHORT" # 允许做空
-    WAIT = "WAIT"               # 等待
-
-
 class MultiTimeframeManager:
     """
-    多时间框架管理器 v3.1
+    多时间框架管理器 v3.3
 
     管理三层时间框架:
     - trend_layer (1D): 提供趋势数据给 AI 分析
     - decision_layer (4H): 方向决策 (AI 控制)
     - execution_layer (5M/15M): 入场执行
 
-    v3.1 更新:
-    - 移除本地 RISK_ON/OFF 判断，交由 AI 决策
-    - 保留趋势层数据收集功能
+    v3.3: 仅负责数据收集和路由，所有决策交由 AI 完成
     """
 
     def __init__(
@@ -82,28 +73,12 @@ class MultiTimeframeManager:
             self.trend_manager = None
             self.decision_manager = None
             self.execution_manager = None
-            self._decision_state = DecisionState.WAIT
-            self._decision_confidence = "LOW"
-            self._decision_updated = None
-            self._last_trend_price = 0.0
-            self._last_decision_price = 0.0
-            self._last_execution_price = 0.0
             return
 
         # 初始化三层指标管理器
         self.trend_manager: Optional[TechnicalIndicatorManager] = None
         self.decision_manager: Optional[TechnicalIndicatorManager] = None
         self.execution_manager: Optional[TechnicalIndicatorManager] = None
-
-        # 状态缓存 (决策由 AI 控制，本地仅存储)
-        self._decision_state: DecisionState = DecisionState.WAIT
-        self._decision_confidence: str = "LOW"
-        self._decision_updated: Optional[datetime] = None
-
-        # 上次更新的价格
-        self._last_trend_price: float = 0.0
-        self._last_decision_price: float = 0.0
-        self._last_execution_price: float = 0.0
 
         # 初始化各层管理器
         self._init_managers()
@@ -261,43 +236,24 @@ class MultiTimeframeManager:
         if self.trend_bar_type and bar.bar_type == self.trend_bar_type:
             if self.trend_manager:
                 self.trend_manager.update(bar)
-            self._last_trend_price = float(bar.close)
             self.logger.debug(f"[1D] 趋势层 bar 更新: close={bar.close}")
             return "trend"
 
         elif self.decision_bar_type and bar.bar_type == self.decision_bar_type:
             if self.decision_manager:
                 self.decision_manager.update(bar)
-            self._last_decision_price = float(bar.close)
             self.logger.debug(f"[4H] 决策层 bar 更新: close={bar.close}")
             return "decision"
 
         elif self.execution_bar_type and bar.bar_type == self.execution_bar_type:
             if self.execution_manager:
                 self.execution_manager.update(bar)
-            self._last_execution_price = float(bar.close)
             self.logger.debug(f"[15M] 执行层 bar 更新: close={bar.close}")
             return "execution"
 
         else:
             self.logger.warning(f"Unknown bar type: {bar.bar_type}")
             return "unknown"
-
-    def get_decision_state(self) -> DecisionState:
-        """获取当前决策状态"""
-        return self._decision_state
-
-    def set_decision_state(self, state: DecisionState, confidence: str = "MEDIUM"):
-        """设置决策状态 (由 MultiAgentAnalyzer 调用)"""
-        old_state = self._decision_state
-        self._decision_state = state
-        self._decision_confidence = confidence
-        self._decision_updated = datetime.now(timezone.utc)
-
-        self.logger.info(
-            f"[4H] 决策层状态更新: {old_state.value} → {state.value} "
-            f"(confidence={confidence})"
-        )
 
     def get_technical_data_for_layer(self, layer: str, current_price: float) -> Dict[str, Any]:
         """
@@ -332,42 +288,6 @@ class MultiTimeframeManager:
             return data
         return {'_layer': layer, '_initialized': False}
 
-    def check_execution_confirmation(self, current_price: float) -> Dict[str, Any]:
-        """
-        检查执行层入场确认条件
-
-        Returns
-        -------
-        Dict
-            {
-                'confirmed': bool,
-                'rsi': float,
-                'rsi_in_range': bool,
-                'reason': str
-            }
-        """
-        if not self.execution_manager or not self.execution_manager.is_initialized():
-            return {
-                'confirmed': False,
-                'reason': '执行层未初始化'
-            }
-
-        exec_config = self.config.get('execution_layer', {})
-        tech_data = self.execution_manager.get_technical_data(current_price)
-
-        rsi = tech_data.get('rsi', 50)
-        rsi_min = exec_config.get('rsi_entry_min', 35)
-        rsi_max = exec_config.get('rsi_entry_max', 65)
-        rsi_in_range = rsi_min <= rsi <= rsi_max
-
-        return {
-            'confirmed': rsi_in_range,
-            'rsi': rsi,
-            'rsi_in_range': rsi_in_range,
-            'rsi_range': [rsi_min, rsi_max],
-            'reason': f'RSI={rsi:.1f} {"在" if rsi_in_range else "不在"}范围[{rsi_min}, {rsi_max}]内'
-        }
-
     def is_all_layers_initialized(self) -> bool:
         """检查所有层是否都已初始化"""
         if not self.enabled:
@@ -379,21 +299,3 @@ class MultiTimeframeManager:
             self.execution_manager is not None and self.execution_manager.is_initialized()
         )
 
-    def get_summary(self) -> Dict[str, Any]:
-        """获取多时间框架状态摘要"""
-        return {
-            "enabled": self.enabled,
-            "decision_state": self._decision_state.value if self._decision_state else "UNKNOWN",
-            "decision_confidence": self._decision_confidence,
-            "decision_updated": self._decision_updated.isoformat() if self._decision_updated else None,
-            "layers_initialized": {
-                "trend": self.trend_manager.is_initialized() if self.trend_manager else False,
-                "decision": self.decision_manager.is_initialized() if self.decision_manager else False,
-                "execution": self.execution_manager.is_initialized() if self.execution_manager else False,
-            },
-            "last_prices": {
-                "trend": self._last_trend_price,
-                "decision": self._last_decision_price,
-                "execution": self._last_execution_price,
-            }
-        }

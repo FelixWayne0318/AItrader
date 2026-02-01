@@ -300,13 +300,12 @@ multi_timeframe:
   enabled: true                       # 启用三层 MTF 框架 (1D/4H/15M)
 
   # ---------------------------------------------------------------------------
-  # 趋势层配置 (1D) - Risk-On/Risk-Off 判断
+  # 趋势层配置 (1D) - 提供趋势数据给 AI 分析
+  # v3.3: 移除本地过滤逻辑，所有决策交由 AI
   # ---------------------------------------------------------------------------
   trend_layer:
     timeframe: "1d"
-    sma_period: 200                   # SMA_200 判断长期趋势
-    require_above_sma: true           # 价格需在 SMA 上方才能交易
-    require_macd_positive: true       # MACD > 0 才能交易
+    sma_period: 200                   # SMA_200 判断长期趋势 (数据给 AI)
     cache_ttl_hours: 4                # 趋势状态缓存时间
 
   # ---------------------------------------------------------------------------
@@ -325,13 +324,12 @@ multi_timeframe:
       bb_std: 2.0
 
   # ---------------------------------------------------------------------------
-  # 执行层配置 (5M / 15M) - 精确入场时机
+  # 执行层配置 (5M / 15M) - 提供执行层数据给 AI
+  # v3.3: 移除本地 RSI 过滤，所有入场决策交由 AI
   # ---------------------------------------------------------------------------
   execution_layer:
     default_timeframe: "15m"          # 默认执行周期
     high_volatility_timeframe: "5m"   # 高波动时使用 5M
-    rsi_entry_min: 35                 # RSI 入场范围下限
-    rsi_entry_max: 65                 # RSI 入场范围上限
     indicators:
       sma_periods: [5, 20]
       ema_periods: [10]
@@ -388,10 +386,13 @@ order_flow:
     fallback_funding_rate: 0
 
     # ===== v3.7: Funding Rate 数据源配置 =====
+    # ⚠️ 重要: 资金费率统一使用 Binance 8 小时资金费率
+    # Binance 合约每 8 小时结算一次 (00:00, 08:00, 16:00 UTC)
+    # Coinalyze 数据是多交易所聚合值，可能与 Binance 实际费率差异较大
     funding_rate:
       prefer_binance_when_divergent: true   # 差异大时使用 Binance
       max_divergence_ratio: 10.0            # 差异超过 10x 视为异常
-      always_use_binance: false             # 始终使用 Binance (忽略 Coinalyze)
+      always_use_binance: true              # ✅ 始终使用 Binance 8h 资金费率 (v3.8 默认)
 
   # ---------------------------------------------------------------------------
   # 买卖比阈值

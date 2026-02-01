@@ -36,133 +36,148 @@ from strategy.trading_logic import (
 
 
 # =============================================================================
-# TradingAgents v3.3: Indicator Definitions for AI
+# TradingAgents v3.12: Indicator Definitions for AI
 # Borrowed from: TradingAgents/agents/analysts/market_analyst.py
 #
-# These definitions teach AI how to interpret raw indicator values.
-# AI receives raw numbers and uses these definitions to form its own judgment.
+# Philosophy: "Teach AI WHAT indicators mean, not HOW to use them"
+# - Provide calculation methods and mathematical definitions
+# - Explain what values represent, not trading rules
+# - Let AI form its own interpretation based on raw data
+# - Aligned with TradingAgents "授人以渔" (授人以渔) principle
 # =============================================================================
 INDICATOR_DEFINITIONS = """
-INDICATOR REFERENCE (How to interpret the data):
+TECHNICAL INDICATOR REFERENCE (Calculation and Meaning):
 
-MOVING AVERAGES:
-- SMA (Simple Moving Average): Trend direction indicator
-  * Price > SMA = Bullish bias
-  * Price < SMA = Bearish bias
-  * SMA_5 > SMA_20 > SMA_50 = Strong uptrend (aligned)
-  * SMA_5 < SMA_20 < SMA_50 = Strong downtrend (aligned)
+MOVING AVERAGES (SMA):
+- Simple Moving Average of closing prices over N periods
+- Calculation: Sum of last N closing prices / N
+- Common periods: 5 (short-term), 20 (medium-term), 50/200 (long-term)
+- Interpretation: Higher values = higher average price over that period
+- Multiple SMAs show different timeframe averages simultaneously
 
 RSI (Relative Strength Index):
+- Momentum oscillator measuring magnitude and velocity of price changes
+- Calculation: 100 - (100 / (1 + RS)), where RS = Avg Gain / Avg Loss (14 periods)
 - Range: 0-100
-- >70 = Overbought (potential reversal down or pullback)
-- <30 = Oversold (potential reversal up or bounce)
-- 40-60 = Neutral zone
+  * 0 = Maximum downward momentum (all periods were losses)
+  * 100 = Maximum upward momentum (all periods were gains)
+  * 50 = Equal gains and losses (neutral momentum)
+- Time sensitivity: Standard period is 14 bars, longer periods = smoother values
 
 MACD (Moving Average Convergence Divergence):
-- MACD > Signal = Bullish momentum
-- MACD < Signal = Bearish momentum
-- Histogram growing = Momentum strengthening
-- Histogram shrinking = Momentum weakening
-- Zero line crossover = Trend change signal
+- Trend-following momentum indicator comparing two exponential moving averages
+- Components:
+  * MACD Line: EMA(12) - EMA(26)
+  * Signal Line: EMA(9) of MACD Line
+  * Histogram: MACD Line - Signal Line
+- Interpretation:
+  * Positive MACD = short-term average above long-term average
+  * Negative MACD = short-term average below long-term average
+  * Histogram magnitude = strength of divergence/convergence
+  * Histogram direction = rate of change in divergence
 
 BOLLINGER BANDS:
-- Price near Upper Band = Potentially overbought / strong momentum
-- Price near Lower Band = Potentially oversold / weak momentum
-- Price at Middle Band = Fair value / consolidation
-- Band squeeze (narrow) = Low volatility, breakout coming
-- Band expansion (wide) = High volatility
-- SMA_50 and BB Middle can serve as dynamic support/resistance
-
-SUPPORT/RESISTANCE RISK (IMPORTANT):
-- BB Lower Band and recent swing lows act as SUPPORT
-- BB Upper Band and recent swing highs act as RESISTANCE
-- Risk consideration for trade direction:
-  * SHORT near support (BB Lower, within 2%): HIGH RISK - support may hold, causing bounce
-  * LONG near resistance (BB Upper, within 2%): HIGH RISK - resistance may hold, causing rejection
-- When price is near support/resistance:
-  * Require STRONGER evidence to trade against the level
-  * Consider tighter stop loss or reduced position size
-  * If evidence is weak, prefer HOLD over risky entry
-- BB Position interpretation:
-  * 0-15% = Very close to support (cautious on SHORT)
-  * 85-100% = Very close to resistance (cautious on LONG)
-  * 15-85% = Safe zone for directional trades
+- Volatility indicator based on standard deviation from moving average
+- Components:
+  * Middle Band: SMA(20)
+  * Upper Band: SMA(20) + (2 × Standard Deviation)
+  * Lower Band: SMA(20) - (2 × Standard Deviation)
+- Band Width: Measures current volatility level
+  * Narrow bands = low volatility period
+  * Wide bands = high volatility period
+- BB Position: Price location within bands (0% = lower band, 100% = upper band)
+- Statistical meaning: ~95% of price action falls within 2 standard deviations
 
 VOLUME:
-- Volume Ratio > 1.5x = High interest, confirms move
-- Volume Ratio < 0.5x = Low interest, weak move
+- Number of contracts/coins traded in a given time period
+- Volume Ratio: Current volume / Average volume over recent periods
+- Interpretation:
+  * Ratio > 1.0 = more trading activity than usual
+  * Ratio < 1.0 = less trading activity than usual
+  * Higher ratio = more market participants engaged
 
-ORDER FLOW (Buy Ratio):
-- >55% = Buyers dominating (bullish)
-- <45% = Sellers dominating (bearish)
-- 45-55% = Balanced
-- Recent 10 Bars: Look at trend direction (rising = bullish, falling = bearish)
+ORDER FLOW (Taker Buy/Sell Ratio):
+- Measures aggressive buying vs selling pressure from market takers
+- Calculation: Taker buy volume / Total volume
+- Range: 0-100%
+  * >50% = more aggressive buying (market buy orders)
+  * <50% = more aggressive selling (market sell orders)
+  * 50% = balanced aggressive activity
+- CVD (Cumulative Volume Delta): Running sum of (buy volume - sell volume)
+- Data source: Binance taker buy/sell volume from kline data
 
-FUNDING RATE (Derivatives):
-- Positive (>0.01%) = Longs paying shorts, crowded long
-- Negative (<-0.01%) = Shorts paying longs, crowded short
-- Near zero = Balanced
+FUNDING RATE (Perpetual Futures):
+- Periodic payment mechanism between long and short position holders
+- Purpose: Keep perpetual contract price anchored to spot price
+- Calculation: Based on premium/discount of perpetual vs spot + interest rate component
+- Settlement: Every 8 hours (00:00, 08:00, 16:00 UTC) for Binance
+- Interpretation:
+  * Positive rate = longs pay shorts (indicating more long positions)
+  * Negative rate = shorts pay longs (indicating more short positions)
+  * Magnitude shows degree of position imbalance
+- Note: Binance 8h funding rate is the actual rate traders pay/receive
 
-OPEN INTEREST:
-- Rising OI + Rising Price = New longs entering (bullish)
-- Rising OI + Falling Price = New shorts entering (bearish)
-- Falling OI = Positions closing, trend weakening
+OPEN INTEREST (OI):
+- Total number of outstanding derivative contracts (sum of all open positions)
+- Units: Number of contracts or BTC equivalent
+- Change interpretation:
+  * Rising OI + rising price = new long positions entering
+  * Rising OI + falling price = new short positions entering
+  * Falling OI + price move = position closing (profit taking or stop loss)
+  * Stable OI + price move = position rotation between traders
+- Does NOT indicate direction, only total exposure
 
-ORDER BOOK DEPTH (Microstructure):
+ORDER BOOK DEPTH:
+- Distribution of buy (bid) and sell (ask) limit orders at various price levels
+- Data source: Binance /fapi/v1/depth API (100 levels analyzed)
+
 - OBI (Order Book Imbalance):
-  * +0.20 to +1.00 = Strong bid pressure (bullish)
-  * +0.05 to +0.20 = Mild bid pressure (slight bullish)
-  * -0.05 to +0.05 = Balanced
-  * -0.20 to -0.05 = Mild ask pressure (slight bearish)
-  * -1.00 to -0.20 = Strong ask pressure (bearish)
-  * Weighted OBI gives higher weight to orders near best price
+  * Calculation: (Bid Volume - Ask Volume) / (Bid Volume + Ask Volume)
+  * Range: -1.0 (all asks) to +1.0 (all bids)
+  * Simple OBI: Equal weight to all levels
+  * Weighted OBI: Exponential decay, closer levels weighted higher (decay factor ~0.8)
+  * Adaptive OBI: Decay factor adjusts based on market volatility
 
-- ⭐ DYNAMICS (Critical for timing):
-  * OBI Change > +0.05 = Bids strengthening (momentum building)
-  * OBI Change < -0.05 = Asks strengthening (selling pressure building)
-  * Trend values: BID_STRENGTHENING / ASK_STRENGTHENING / STABLE
-  * Bid/Ask Depth Change: Large drops (< -5%) = Liquidity thinning (caution)
+- Dynamics (vs Previous Snapshot):
+  * OBI Change: Shift in bid/ask balance over time
+  * Depth Change: Change in total volume at bid/ask side
+  * Trend: Direction of imbalance movement (STRENGTHENING_BIDS, WEAKENING_BIDS, etc.)
+  * Note: Requires historical snapshots; first snapshot shows "no historical data"
 
-- ⭐ PRESSURE GRADIENT (Order concentration):
-  * HIGH concentration (near_5 > 40%) = Orders clustered near best price
-    - If on bid side: Strong immediate support
-    - If on ask side: Strong immediate resistance
-  * LOW concentration (near_5 < 25%) = Orders spread out
-    - Gradual support/resistance, less likely to hold
-  * Compare bid vs ask concentration for directional bias
+- Pressure Gradient:
+  * Measures concentration of orders near best bid/ask
+  * Near-5/10/20: Percentage of volume within 0.5%/1.0%/2.0% of current price
+  * Higher percentage = orders clustered close to market price
+  * Concentration level: LOW/MEDIUM/HIGH based on near-5 percentage
 
-- ANOMALIES (Large orders):
-  * Wall detected = Large order blocking price movement
-  * Bid wall = Support level, harder to break down
-  * Ask wall = Resistance level, harder to break up
-  * Recent pulls (walls removed) may signal trap
+- Anomalies (Order Walls):
+  * Orders significantly larger than average (threshold: 3-4x mean size)
+  * Dynamic threshold adjusts based on volatility
+  * Shows price level, size in BTC, and multiplier vs average
 
-- LIQUIDITY (Execution quality):
-  * Slippage < 0.05% = Deep book, safe for larger orders
-  * Slippage > 0.10% = Thin book, use smaller position size
-  * Low confidence slippage = Sparse data, be cautious
+- Slippage Estimate:
+  * Expected price impact when executing a market order of given size
+  * Includes confidence level and range (best/worst case)
+  * Based on actual order book depth distribution
 
-SUPPORT/RESISTANCE ZONES (Multi-source S/R):
-- Zones are calculated from multiple sources for higher accuracy:
-  * Order Book Walls (most reliable) = Real orders at that price
-  * Bollinger Bands (dynamic) = Statistical price boundaries
-  * SMA_50/SMA_200 (trend) = Moving average support/resistance
+SUPPORT/RESISTANCE ZONES:
+- Price levels identified from multiple independent data sources
+- Sources:
+  * Order Book Walls: Large real limit orders (>2 BTC) at specific prices
+  * Bollinger Bands: Upper/lower bands as statistical boundaries
+  * SMA_50/SMA_200: Moving average levels
+  * Pivot Points: Mathematical price levels calculated from high/low/close
 
-- Strength levels:
-  * HIGH = Multiple sources agree OR Order Wall present (strong confluence)
-  * MEDIUM = 2 sources agree
-  * LOW = Single source only
+- Zone Strength (based on source confluence):
+  * HIGH: Multiple sources agree (≥3) OR large order wall present (>2 BTC)
+  * MEDIUM: Two sources agree
+  * LOW: Single source only
 
-- Trading implications:
-  * LONG near HIGH resistance = HIGH RISK (multiple barriers to break)
-  * SHORT near HIGH support = HIGH RISK (multiple buyers waiting)
-  * Distance < 1% to HIGH zone = Extreme caution
-  * Distance > 2% = Safer for directional trades
-
-- Zone usage:
-  * Use S/R zones for stop loss placement (beyond the zone)
-  * Use S/R zones for take profit targets (before the zone)
-  * Order Walls may be pulled (spoofed) - consider with other data
+- Zone Properties:
+  * Price Center: Midpoint of the zone
+  * Distance: Percentage distance from current price
+  * Sources: Which indicators contributed to this zone
+  * Width: Range of the zone (expanded by 0.1% from center)
 """
 
 
@@ -183,6 +198,7 @@ class MultiAgentAnalyzer:
         debate_rounds: int = 2,
         retry_delay: float = 1.0,  # Configurable retry delay
         json_parse_max_retries: int = 2,  # Configurable JSON parse retries
+        memory_file: str = "data/trading_memory.json",  # v3.12: Persistent memory
     ):
         """
         Initialize the multi-agent analyzer.
@@ -214,8 +230,10 @@ class MultiAgentAnalyzer:
         # Setup logger
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
-        # Memory for learning from past decisions (borrowed from TradingAgents)
-        self.decision_memory: List[Dict] = []
+        # v3.12: Persistent memory for learning from past decisions
+        # Based on TradingGroup paper: label outcomes, compile experience summary
+        self.memory_file = memory_file
+        self.decision_memory: List[Dict] = self._load_memory()
 
         # Track debate history for debugging
         self.last_debate_transcript: str = ""
@@ -653,45 +671,35 @@ Focus on risks and bearish signals in the data."""
 
         Borrowed from: TradingAgents/agents/managers/research_manager.py
         Simplified v3.0: Let AI autonomously evaluate without hardcoded rules
+        v3.9: Removed duplicate S/R check from prompt (handled by _evaluate_risk)
+        v3.10: Aligned with TradingAgents original design (rationale + strategic_actions)
         """
-        prompt = f"""You are the Portfolio Manager evaluating the Bull vs Bear debate.
-Your role is to make a DEFINITIVE trading decision based on the debate's strongest arguments.
+        prompt = f"""As the portfolio manager and debate facilitator, your role is to critically evaluate this round of debate and make a definitive decision: align with the bear analyst, the bull analyst, or choose HOLD only if it is strongly justified based on the arguments presented.
 
 DEBATE TRANSCRIPT:
 {debate_history}
 
-Past Trading Mistakes to AVOID:
+PAST REFLECTIONS ON MISTAKES:
 {past_memories if past_memories else "No past data - this is a fresh start."}
 
 YOUR TASK:
-1. Summarize the key points from both sides, focusing on the most compelling evidence
-2. Determine which side presented stronger, more data-backed arguments
-3. Make a DEFINITIVE decision - LONG, SHORT, or HOLD
+Summarize the key points from both sides concisely, focusing on the most compelling evidence or reasoning. Your recommendation—LONG, SHORT, or HOLD—must be clear and actionable.
 
-DECISION GUIDELINES:
-- Focus on evidence quality, not argument quantity
-- Consider the overall market context and risk/reward
-- One side almost always has an edge - find it and commit
-- HOLD is only for genuine uncertainty, not a safe default
-- Be decisive - missed opportunities cost money too
+Avoid defaulting to HOLD simply because both sides have valid points; commit to a stance grounded in the debate's strongest arguments.
 
-SUPPORT/RESISTANCE RISK CHECK (IMPORTANT):
-- Before finalizing SHORT: Check if price is near support (BB Lower, within 2%)
-  → If yes, require VERY STRONG bearish evidence to proceed, otherwise HOLD
-- Before finalizing LONG: Check if price is near resistance (BB Upper, within 2%)
-  → If yes, require VERY STRONG bullish evidence to proceed, otherwise HOLD
-- Include this risk assessment in your "acknowledged_risks" if applicable
+Take into account your past mistakes on similar situations. Use these insights to refine your decision-making and ensure you are learning and improving.
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
     "decision": "LONG|SHORT|HOLD",
     "winning_side": "BULL|BEAR|TIE",
     "confidence": "HIGH|MEDIUM|LOW",
-    "key_reasons": ["reason1", "reason2", "reason3"],
+    "rationale": "Why these arguments lead to your conclusion (1-2 sentences)",
+    "strategic_actions": ["Concrete step 1", "Concrete step 2"],
     "acknowledged_risks": ["risk1", "risk2"]
 }}"""
 
-        system_prompt = "You are a Portfolio Manager. Evaluate the debate objectively and make a decisive trading recommendation. Avoid defaulting to HOLD - commit to the side with stronger evidence."
+        system_prompt = "You are a Portfolio Manager and debate facilitator. Critically evaluate the debate and make a decisive trading recommendation. Avoid defaulting to HOLD - commit to the side with stronger evidence. Learn from past mistakes."
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["judge"] = {
@@ -719,7 +727,8 @@ OUTPUT FORMAT (JSON only, no other text):
             "decision": "HOLD",
             "winning_side": "TIE",
             "confidence": "LOW",
-            "key_reasons": ["JSON parse error - defaulting to HOLD"],
+            "rationale": "JSON parse error - defaulting to HOLD for safety",
+            "strategic_actions": ["Wait for next analysis cycle"],
             "acknowledged_risks": ["Parse failure"]
         }
 
@@ -739,53 +748,58 @@ OUTPUT FORMAT (JSON only, no other text):
         Simplified v3.0: Let AI determine SL/TP based on market structure
         v3.7: Added BB position hardcoded checks for support/resistance risk control
         v3.8: Replaced BB-only check with multi-source S/R Zone check
+        v3.11: Removed preset rules from prompt, let AI decide autonomously
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
-        reasons = proposed_action.get("key_reasons", [])
+        # v3.10: Support both rationale (new) and key_reasons (legacy)
+        rationale = proposed_action.get("rationale", "")
+        strategic_actions = proposed_action.get("strategic_actions", [])
         risks = proposed_action.get("acknowledged_risks", [])
+        if isinstance(risks, list):
+            risks = risks.copy()  # Don't modify original
 
         # ========== v3.8: S/R Zone Hard Control ==========
         # Uses multi-source S/R zones (BB + SMA + Order Book Walls)
         # Only blocks when near HIGH strength zones (confluence of multiple sources)
-        if self._sr_zones_cache:
+        # v3.9: Can be disabled via sr_hard_control_enabled config
+        sr_hard_control_enabled = getattr(self, 'sr_hard_control_enabled', True)
+        blocked_reason = ""
+
+        if sr_hard_control_enabled and self._sr_zones_cache:
             hard_control = self._sr_zones_cache.get('hard_control', {})
 
             # Block LONG if too close to HIGH strength resistance
             if action == "LONG" and hard_control.get('block_long'):
-                reason = hard_control.get('reason', 'Too close to resistance')
-                self.logger.warning(f"⚠️ {reason}")
+                blocked_reason = hard_control.get('reason', 'Too close to resistance')
+                self.logger.warning(f"⚠️ {blocked_reason}")
                 proposed_action["decision"] = "HOLD"
                 proposed_action["confidence"] = "LOW"
-                if isinstance(reasons, list):
-                    reasons = reasons.copy()
-                    reasons.append(f"Blocked: {reason}")
-                if isinstance(risks, list):
-                    risks = risks.copy()
-                    risks.append("Too close to HIGH strength resistance zone")
+                rationale = f"Blocked: {blocked_reason}"
+                risks.append("Too close to HIGH strength resistance zone")
                 action = "HOLD"
 
             # Block SHORT if too close to HIGH strength support
             elif action == "SHORT" and hard_control.get('block_short'):
-                reason = hard_control.get('reason', 'Too close to support')
-                self.logger.warning(f"⚠️ {reason}")
+                blocked_reason = hard_control.get('reason', 'Too close to support')
+                self.logger.warning(f"⚠️ {blocked_reason}")
                 proposed_action["decision"] = "HOLD"
                 proposed_action["confidence"] = "LOW"
-                if isinstance(reasons, list):
-                    reasons = reasons.copy()
-                    reasons.append(f"Blocked: {reason}")
-                if isinstance(risks, list):
-                    risks = risks.copy()
-                    risks.append("Too close to HIGH strength support zone")
+                rationale = f"Blocked: {blocked_reason}"
+                risks.append("Too close to HIGH strength support zone")
                 action = "HOLD"
         # ========== End of S/R Zone Hard Control ==========
+
+        # Format strategic actions for prompt
+        actions_str = ', '.join(strategic_actions) if strategic_actions else 'None specified'
 
         prompt = f"""As the Risk Manager, provide final trade parameters.
 
 PROPOSED TRADE:
 - Action: {action}
 - Confidence: {confidence}
-- Key Reasons: {', '.join(reasons)}
+- Rationale: {rationale}
+- Strategic Actions: {actions_str}
 - Acknowledged Risks: {', '.join(risks)}
 
 MARKET DATA:
@@ -800,15 +814,9 @@ CURRENT PRICE: ${current_price:,.2f}
 
 YOUR TASK:
 1. Evaluate if the proposed trade makes sense given the market data
-2. Set stop loss based on market structure (support/resistance levels)
-3. Set take profit based on confidence level and potential targets
-4. Determine appropriate position size based on risk assessment
-
-GUIDELINES:
-- Stop loss should be placed at logical market structure levels
-- Higher confidence = larger position size, wider targets
-- Lower confidence = smaller position size, tighter stops
-- Consider the acknowledged risks when setting parameters
+2. Determine stop loss based on market structure
+3. Determine take profit based on potential targets
+4. Determine position size based on your risk assessment
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
@@ -1047,21 +1055,83 @@ Avg Entry: ${avg_px:,.2f}
 Unrealized P&L: ${unrealized_pnl:,.2f}
 """
 
+    # =========================================================================
+    # v3.12: Persistent Memory System (TradingGroup-style experience summary)
+    # =========================================================================
+
+    def _load_memory(self) -> List[Dict]:
+        """Load memory from JSON file."""
+        import os
+        try:
+            if os.path.exists(self.memory_file):
+                with open(self.memory_file, 'r') as f:
+                    data = json.load(f)
+                    self.logger.info(f"📚 Loaded {len(data)} memories from {self.memory_file}")
+                    return data
+        except Exception as e:
+            self.logger.warning(f"Failed to load memory: {e}")
+        return []
+
+    def _save_memory(self):
+        """Save memory to JSON file."""
+        import os
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self.memory_file), exist_ok=True)
+            with open(self.memory_file, 'w') as f:
+                json.dump(self.decision_memory, f, indent=2)
+            self.logger.debug(f"💾 Saved {len(self.decision_memory)} memories")
+        except Exception as e:
+            self.logger.warning(f"Failed to save memory: {e}")
+
     def _get_past_memories(self) -> str:
-        """Get past decision memories for learning."""
+        """
+        Get past decision memories formatted for AI learning.
+
+        Based on TradingGroup paper: show both successes and failures
+        to help AI identify patterns and avoid repeating mistakes.
+        """
         if not self.decision_memory:
             return ""
 
-        memories = []
-        for mem in self.decision_memory[-5:]:  # Last 5 decisions
-            outcome = "PROFIT" if mem.get('pnl', 0) > 0 else "LOSS"
-            memories.append(
-                f"- {mem.get('decision')}: {outcome} ({mem.get('pnl', 0):+.2f}%) | "
-                f"Lesson: {mem.get('lesson', 'N/A')}"
-            )
-        return "\n".join(memories)
+        # Separate successes and failures
+        successes = [m for m in self.decision_memory if m.get('pnl', 0) > 0]
+        failures = [m for m in self.decision_memory if m.get('pnl', 0) <= 0]
 
-    def record_outcome(self, decision: str, pnl: float, lesson: str = ""):
+        # Take most recent 3 of each
+        recent_successes = successes[-3:] if successes else []
+        recent_failures = failures[-3:] if failures else []
+
+        lines = []
+
+        if recent_successes:
+            lines.append("SUCCESSFUL TRADES (learn from these):")
+            for mem in recent_successes:
+                conditions = mem.get('conditions', 'N/A')
+                lines.append(
+                    f"  ✅ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}% | "
+                    f"Conditions: {conditions}"
+                )
+
+        if recent_failures:
+            lines.append("FAILED TRADES (avoid repeating):")
+            for mem in recent_failures:
+                conditions = mem.get('conditions', 'N/A')
+                lesson = mem.get('lesson', 'N/A')
+                lines.append(
+                    f"  ❌ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}% | "
+                    f"Conditions: {conditions} | Lesson: {lesson}"
+                )
+
+        return "\n".join(lines)
+
+    def record_outcome(
+        self,
+        decision: str,
+        pnl: float,
+        conditions: str = "",
+        lesson: str = "",
+    ):
         """
         Record trade outcome for learning.
 
@@ -1073,29 +1143,43 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
             The decision that was made (BUY/SELL/HOLD)
         pnl : float
             Percentage profit/loss
+        conditions : str
+            Market conditions at entry (e.g., "RSI=65, trend=UP, funding=0.01%")
         lesson : str
-            Lesson learned from this trade
+            Lesson learned from this trade (auto-generated if empty)
         """
+        # Auto-generate lesson based on outcome
         if not lesson:
-            if pnl < -1:
-                lesson = f"Lost {abs(pnl):.1f}% - be more cautious in similar conditions"
-            elif pnl > 1:
-                lesson = f"Gained {pnl:.1f}% - this setup worked well"
+            if pnl < -2:
+                lesson = "Significant loss - review entry conditions carefully"
+            elif pnl < 0:
+                lesson = "Small loss - timing or direction may need adjustment"
+            elif pnl > 2:
+                lesson = "Good profit - this setup worked well"
+            elif pnl > 0:
+                lesson = "Small profit - consider holding longer or tighter stops"
             else:
-                lesson = "Marginal result - entry/exit timing could improve"
+                lesson = "Breakeven - entry/exit timing needs improvement"
 
         self.decision_memory.append({
             "decision": decision,
-            "pnl": pnl,
+            "pnl": round(pnl, 2),
+            "conditions": conditions,
             "lesson": lesson,
             "timestamp": datetime.now().isoformat(),
         })
 
-        # Keep only last 20 memories
-        if len(self.decision_memory) > 20:
+        # Keep only last 50 memories (enough for pattern recognition)
+        if len(self.decision_memory) > 50:
             self.decision_memory.pop(0)
 
-        self.logger.info(f"Recorded outcome: {decision} -> {pnl:+.2f}% | Lesson: {lesson}")
+        # Persist to file
+        self._save_memory()
+
+        self.logger.info(
+            f"📝 Recorded: {decision} → {pnl:+.2f}% | "
+            f"Conditions: {conditions[:50]}... | Lesson: {lesson}"
+        )
 
     def _create_fallback_signal(self, price_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create conservative fallback signal when analysis fails."""

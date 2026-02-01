@@ -1,6 +1,26 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v11.12 (与实盘 100% 一致)
+实盘信号诊断脚本 v11.15 (与实盘 100% 一致)
+
+v11.15 更新 - 添加记忆系统和提示词验证 (v3.12):
+- 添加 [9.6/14] 记忆系统健康检查 (memory_file 加载/保存/格式验证)
+- 更新 MultiAgentAnalyzer 初始化: 添加 memory_file 参数
+- 更新 AI Prompt 验证: 检查 "PAST REFLECTIONS" 记忆数据
+- 显示完整提示词内容 (System + User Prompt)
+- 更新步骤编号: [10/14] 到 [13/14]
+
+v11.14 更新 - 修复误导性输出问题:
+- 修复 Step 11: HOLD 信号不计算仓位 (与实盘一致)
+- 修复 SL/TP 显示: HOLD 时标注 "(仅供参考，HOLD 不使用)"
+- 修复 Block 状态: 增加触发说明 (已触发/未触发/不适用)
+- 修复版本描述: 架构改为 v3.8 (有 S/R Zone 执行层风控)
+- 修复订单簿冷启动: 无历史数据时添加警告
+
+v11.13 更新 - 添加 S/R Zone 测试 (v3.8):
+- 添加 Step 9.5.5: S/R Zone Calculator 测试
+- 显示多源 S/R zones (BB + SMA + Order Walls)
+- 显示硬风控状态 (block_long/block_short)
+- 修复 btc_quantity NameError in summary mode
 
 v11.12 更新 - 修正订单簿字段映射:
 - 修复 pressure_gradient 字段路径 (bid_near_5 不是 bid.near_5_pct)
@@ -40,9 +60,9 @@ v11.6 更新 - 修复 calculate_technical_sltp 调用签名:
 
 v11.5 更新 - 完整流程可视化:
 - 添加 AI Prompt 结构验证 (显示 System/User Prompt 内容)
-- 添加 MTF 状态估算 (基于当前数据估算趋势方向, ALLOW_LONG/SHORT)
+- 添加 MTF 数据展示 (三层时间框架原始数据，无本地决策)
 - 修复订单提交模拟类型错误 (safe_float 转换)
-- 添加 Funding Rate 差异原因标注 (Binance 8h vs Coinalyze 聚合)
+- 添加 Funding Rate 数据源标注 (v3.8 改用 Binance 8h)
 - 添加错误恢复机制验证 ([9.4/10] 新增步骤)
 - MultiAgentAnalyzer 添加 get_last_prompts() 方法
 
@@ -73,7 +93,7 @@ v11.3 更新 - TradingAgents v3.3 数据标准化:
 - Phase 1: Bull/Bear 辩论 (2 AI calls) - AI 自主分析数据
 - Phase 2: Judge 决策 (1 AI call) - AI 自主评估辩论，做出决策
 - Phase 3: Risk 评估 (1 AI call) - AI 自主设定 SL/TP/仓位
-- 本地风控: 无 (完全由 AI 决策)
+- 本地风控: S/R Zone Block (执行层风控，防止追墙下单)
 - 设计理念: "Autonomy is non-negotiable" - AI 应像人类分析师思考
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
@@ -114,9 +134,9 @@ v11.6:
 
 v11.5:
 - 添加 AI Prompt 结构验证 (System/User Prompt 分离检查)
-- 添加 MTF 状态估算 (趋势方向估算, ALLOW_LONG/SHORT)
+- 添加 MTF 数据展示 (三层时间框架数据，AI 自主分析)
 - 添加 safe_float() 类型转换
-- 添加 Funding Rate 差异标注 (Binance 8h vs Coinalyze)
+- 添加 Funding Rate 数据源标注 (v3.8 改用 Binance 8h)
 - 添加错误恢复机制验证
 
 v11.4:
@@ -212,11 +232,11 @@ v10.10:
 - 帮助诊断 "history 为空" 是真的无数据还是解析错误
 
 v10.9:
-- 添加 [10/13] on_bar MTF 路由逻辑模拟 (1D/4H/15M bar 分发)
-- 添加 [11/13] 仓位计算函数测试 (calculate_position_size 完整验证)
-- 添加 [12/13] 订单提交流程模拟 (_submit_bracket_order + SL/TP 验证)
-- 添加 [13/13] 完整数据流汇总 (所有获取数据的具体值输出)
-- 测试步骤从 10 步扩展到 13 步，实现 100% 数据流覆盖
+- 添加 [10/14] on_bar MTF 路由逻辑模拟 (1D/4H/15M bar 分发)
+- 添加 [11/14] 仓位计算函数测试 (calculate_position_size 完整验证)
+- 添加 [12/14] 订单提交流程模拟 (_submit_bracket_order + SL/TP 验证)
+- 添加 [13/14] 完整数据流汇总 (所有获取数据的具体值输出)
+- 测试步骤从 10 步扩展到 14 步，实现 100% 数据流覆盖
 
 v10.8:
 - 修复 Step 9.3 Coinalyze 配置路径: base_config.get('coinalyze') → order_flow.get('coinalyze')
@@ -224,12 +244,10 @@ v10.8:
 v10.7:
 - 修复 SentimentDataFetcher 初始化: 移除不存在的 logger 参数
 
-v10.6 (已在 v10.20 升级):
-- 添加 Step 7.5: MTF 信号过滤模拟 (与 deepseek_strategy.py:1454-1525 100% 一致)
-- 规则1: 方向性权限检查 (趋势层，v10.20 升级)
-- 规则2: 决策层方向匹配 (信号与 ALLOW_LONG/SHORT/WAIT 一致性)
-- 规则3: 执行层 RSI 确认 (入场范围检查)
-- 达到 100% 流程覆盖
+v10.6 (已废弃 - MTF v3.3 无本地决策):
+- ⚠️ 注: MTF v3.3 已移除本地决策逻辑 (DecisionState)
+- 旧版包含 MTF 信号过滤模拟 (ALLOW_LONG/SHORT/WAIT)
+- 现版本仅收集三层数据 (1D/4H/15M)，所有决策由 AI 完成
 
 v10.5:
 - 修复 get_funding_rate() 数据解析: 使用 'value' 字段而非 'fundingRate'
@@ -391,7 +409,7 @@ def create_bar_from_kline(kline: list, bar_type: str) -> MockBar:
 # =============================================================================
 
 # 解析命令行参数
-parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.12')
+parser = argparse.ArgumentParser(description='实盘信号诊断工具 v11.15')
 parser.add_argument('--summary', action='store_true',
                    help='仅显示关键结果，跳过详细分析')
 parser.add_argument('--export', action='store_true',
@@ -636,7 +654,7 @@ else:
 
 mode_str = " (快速模式)" if SUMMARY_MODE else ""
 print("=" * 70)
-print(f"  实盘信号诊断工具 v11.12 (修正订单簿字段映射){mode_str}")
+print(f"  实盘信号诊断工具 v11.14 (S/R Zone v3.8){mode_str}")
 print("=" * 70)
 print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print("=" * 70)
@@ -767,12 +785,9 @@ try:
 
                 # 尝试导入验证
                 try:
-                    from indicators.multi_timeframe_manager import (
-                        MultiTimeframeManager,
-                        DecisionState
-                    )
+                    from indicators.multi_timeframe_manager import MultiTimeframeManager
                     print("  ✅ MultiTimeframeManager 导入成功")
-                    print(f"     DecisionState: {[s.name for s in DecisionState]}")
+                    print(f"     v3.3: 三层数据收集 (1D/4H/15M)，决策逻辑由 AI 控制")
                 except ImportError as e:
                     print(f"  ⚠️ MultiTimeframeManager 导入失败: {e}")
             else:
@@ -821,10 +836,10 @@ if not SUMMARY_MODE and mtf_enabled:
     print("-" * 70)
 
     try:
-        from indicators.multi_timeframe_manager import MultiTimeframeManager, DecisionState
+        from indicators.multi_timeframe_manager import MultiTimeframeManager
 
-        # 检查 MTF 管理器的关键方法 (v3.1: 移除了 RiskState 相关方法)
-        mtf_methods = ['route_bar', 'is_initialized', 'get_decision_state', 'set_decision_state']
+        # 检查 MTF 管理器的关键方法 (v3.3: 移除了本地决策逻辑)
+        mtf_methods = ['route_bar', 'is_initialized', 'get_technical_data_for_layer', 'is_all_layers_initialized']
         missing_methods = []
         for method in mtf_methods:
             if not hasattr(MultiTimeframeManager, method):
@@ -850,11 +865,15 @@ if not SUMMARY_MODE and mtf_enabled:
         print("     → 查看服务日志检查初始化状态:")
         print("       journalctl -u nautilus-trader | grep -i 'mtf\\|timeframe\\|initialized'")
 
-        # 检查 DecisionState 枚举值 (v3.1: RiskState 已移除)
+        # v3.3 架构更新说明
         print()
-        print("  📋 MTF 状态枚举检查:")
-        print(f"     DecisionState 值: {[s.name for s in DecisionState]}")
-        print("     (v3.1: RiskState 已移除，交易决策完全由 AI 控制)")
+        print("  📋 MTF v3.3 架构更新:")
+        print("     ❌ 已移除: DecisionState 枚举 (ALLOW_LONG/SHORT/WAIT)")
+        print("     ❌ 已移除: get_decision_state(), set_decision_state()")
+        print("     ❌ 已移除: get_summary(), check_execution_confirmation()")
+        print("     ✅ 保留: 三层数据收集 (1D/4H/15M)")
+        print("     ✅ 保留: get_technical_data_for_layer() - 仅提供原始数据")
+        print("     → 设计理念: 所有决策交由 AI 完成，本地仅提供数据")
 
         # 检查预取配置
         print()
@@ -1226,6 +1245,7 @@ try:
     print(f"  [诊断用] Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
     print("  ✅ 技术数据获取成功")
     print("  📝 v3.3: AI 只接收原始数值 (SMA/RSI/MACD/BB)，不接收 support/resistance/trend 标签")
+    print("     注: support/resistance 仍用于技术回退计算 (calculate_technical_sltp)，非 AI 输入")
 
     # ========== MTF 多时间框架数据获取 (v11.8 新增) ==========
     # 获取 4H 决策层数据
@@ -1432,11 +1452,13 @@ try:
     from agents.multi_agent_analyzer import MultiAgentAnalyzer
 
     # 使用与 deepseek_strategy.py 完全相同的初始化参数
+    # v11.15: 添加 memory_file 参数 (v3.12 记忆系统)
     multi_agent = MultiAgentAnalyzer(
         api_key=strategy_config.deepseek_api_key,
         model=strategy_config.deepseek_model,
         temperature=strategy_config.deepseek_temperature,
         debate_rounds=strategy_config.debate_rounds,
+        memory_file="data/trading_memory.json",  # v3.12: 持久化记忆
     )
 
     print(f"  Model: {strategy_config.deepseek_model}")
@@ -1619,7 +1641,9 @@ try:
                 print(f"      Depth change:    {dynamics.get('depth_change_pct', 0):+.2f}%")
                 print(f"      Trend:           {dynamics.get('trend', 'N/A')}")
             else:
+                # v11.14: 冷启动警告
                 print(f"      Dynamics:        首次运行，无历史数据")
+                print(f"      ⚠️ 注意: adaptive OBI 无历史基线，数值可靠性降低")
 
             # v11.12: 修正字段路径 (平面结构，不是嵌套结构)
             bid_near_5 = gradient.get('bid_near_5', 0) * 100  # 转换为百分比
@@ -1700,11 +1724,14 @@ try:
 
     print()
     print("  🎯 Judge 最终决策:")
-    print(f"     Signal: {signal_data.get('signal', 'N/A')}")
+    judge_signal = signal_data.get('signal', 'N/A')
+    print(f"     Signal: {judge_signal}")
     print(f"     Confidence: {signal_data.get('confidence', 'N/A')}")
     print(f"     Risk Level: {signal_data.get('risk_level', 'N/A')}")
-    print(f"     Stop Loss: ${signal_data.get('stop_loss', 0):,.2f}" if signal_data.get('stop_loss') else "     Stop Loss: None")
-    print(f"     Take Profit: ${signal_data.get('take_profit', 0):,.2f}" if signal_data.get('take_profit') else "     Take Profit: None")
+    # v11.14: 标注 HOLD 时 SL/TP 不会使用
+    sltp_suffix = " (仅供参考，HOLD 不使用)" if judge_signal == 'HOLD' else ""
+    print(f"     Stop Loss: ${signal_data.get('stop_loss', 0):,.2f}{sltp_suffix}" if signal_data.get('stop_loss') else "     Stop Loss: None")
+    print(f"     Take Profit: ${signal_data.get('take_profit', 0):,.2f}{sltp_suffix}" if signal_data.get('take_profit') else "     Take Profit: None")
 
     # 显示 Judge 详细决策 (v3.0 简化版 - AI 完全自主决策)
     judge_decision = signal_data.get('judge_decision', {})
@@ -1750,13 +1777,13 @@ try:
 
     print("  ✅ MultiAgent 层级决策成功")
 
-    # ========== 显示 AI Prompt 结构 (v11.4 新增) ==========
+    # ========== 显示 AI Prompt 结构 (v11.4 新增, v11.15 增强) ==========
     if hasattr(multi_agent, 'get_last_prompts') and callable(multi_agent.get_last_prompts):
         last_prompts = multi_agent.get_last_prompts()
         if last_prompts:
             print()
             print("  ┌─────────────────────────────────────────────────────────────────┐")
-            print("  │         AI Prompt 结构验证 (v3.4 System/User 分离)              │")
+            print("  │     AI Prompt 结构验证 (v3.12 System/User + Memory)             │")
             print("  └─────────────────────────────────────────────────────────────────┘")
             print()
 
@@ -1769,10 +1796,17 @@ try:
                     # 检查 INDICATOR_DEFINITIONS 是否在 System Prompt 中
                     has_indicator_defs = "INDICATOR REFERENCE" in system_prompt
 
+                    # v11.15: 检查 PAST REFLECTIONS (记忆系统) 是否在 Judge 的 User Prompt 中
+                    has_past_memories = "PAST REFLECTIONS" in user_prompt
+
                     print(f"  [{agent_name.upper()}] Prompt 结构:")
                     print(f"     System Prompt 长度: {len(system_prompt)} 字符")
                     print(f"     User Prompt 长度:   {len(user_prompt)} 字符")
                     print(f"     INDICATOR_DEFINITIONS 在 System: {'✅ 是' if has_indicator_defs else '❌ 否'}")
+
+                    # v11.15: Judge 特有检查 - 记忆系统
+                    if agent_name == "judge":
+                        print(f"     PAST REFLECTIONS (记忆): {'✅ 是' if has_past_memories else '⚠️ 无历史交易'}")
 
                     # 显示 System Prompt 前 200 字符
                     if system_prompt:
@@ -1783,11 +1817,26 @@ try:
                     if user_prompt:
                         preview = user_prompt[:200].replace('\n', ' ')
                         print(f"     User 预览:   {preview}...")
+
+                    # v11.15: 对于 Judge，额外显示记忆部分
+                    if agent_name == "judge" and has_past_memories:
+                        # 提取 PAST REFLECTIONS 部分
+                        start_idx = user_prompt.find("PAST REFLECTIONS")
+                        if start_idx != -1:
+                            end_idx = user_prompt.find("\n\nYOUR TASK", start_idx)
+                            if end_idx == -1:
+                                end_idx = start_idx + 500
+                            memory_section = user_prompt[start_idx:end_idx]
+                            memory_preview = memory_section[:300].replace('\n', '\n        ')
+                            print(f"     📝 记忆内容预览:")
+                            print(f"        {memory_preview}...")
+
                     print()
 
-            print("  📋 v3.4 架构要求:")
+            print("  📋 v3.12 架构要求:")
             print("     - System Prompt: 角色定义 + INDICATOR_DEFINITIONS (知识背景)")
             print("     - User Prompt: 原始数据 + 任务指令 (当前任务)")
+            print("     - Judge Prompt: 包含 PAST REFLECTIONS (过去交易记忆)")
             print()
 
 except (ImportError, AttributeError, requests.RequestException, ValueError, KeyError) as e:
@@ -1829,6 +1878,7 @@ print("     ❌ 确认计数框架 (bullish_count/bearish_count)")
 print()
 print("  ✅ 不再传给 AI 的预计算标签 (v3.3 移除):")
 print("     ❌ support/resistance - AI 用 SMA_50/BB 作动态支撑阻力")
+print("        (但仍保留用于技术回退计算 calculate_technical_sltp)")
 print("     ❌ cvd_trend - AI 从 recent_10_bars 推断")
 print("     ❌ overall_trend - AI 从 SMA 关系推断")
 print("     ❌ Interpretation: Bullish/Bearish - AI 从原始比例推断")
@@ -1861,20 +1911,12 @@ if sma_200 > 0:
         trend_reason = f"价格 < SMA_200 ({price_vs_sma200*100:+.2f}%)"
     print(f"     趋势层 (1D): {trend_estimate} - {trend_reason} (供 AI 参考)")
 
-    # 决策层 (4H): 基于 SMA 排列和 RSI
+    # 决策层 (4H): 显示原始数据 (MTF v3.3 无本地决策)
     sma_5 = technical_data.get('sma_5', 0)
     sma_20 = technical_data.get('sma_20', 0)
     rsi = technical_data.get('rsi', 50)
-    if sma_5 > sma_20 and rsi < 70:
-        decision_state = "ALLOW_LONG"
-        decision_reason = f"SMA_5 > SMA_20, RSI={rsi:.1f}"
-    elif sma_5 < sma_20 and rsi > 30:
-        decision_state = "ALLOW_SHORT"
-        decision_reason = f"SMA_5 < SMA_20, RSI={rsi:.1f}"
-    else:
-        decision_state = "WAIT"
-        decision_reason = f"SMA 排列不明确或 RSI 极值"
-    print(f"     决策层 (4H): {decision_state} - {decision_reason}")
+    print(f"     决策层 (4H): SMA_5={sma_5:.2f}, SMA_20={sma_20:.2f}, RSI={rsi:.1f}")
+    print(f"                  (数据传给 AI，由 AI 自主分析决策)")
 
     # 执行层状态
     bb_lower = technical_data.get('bb_lower', 0)
@@ -1886,8 +1928,10 @@ else:
     print(f"     ⚠️ SMA_200 不可用 ({sma_200})，无法估算 MTF 状态")
 
 print()
-print("  ⚠️ 注意: 以上为基于当前数据的估算值")
-print("     v3.1: 所有交易决策由 AI (MultiAgent) 完成，本地不做趋势判断")
+print("  📝 MTF v3.3 架构说明:")
+print("     - 本地: 仅收集三层时间框架数据 (1D/4H/15M)")
+print("     - AI: 所有交易决策由 MultiAgent 完成 (Bull/Bear/Judge)")
+print("     - 无本地决策逻辑 (已移除 DecisionState/ALLOW_LONG/SHORT/WAIT)")
 print()
 print("  ✅ TradingAgents v3.4 架构验证完成")
 print()
@@ -2010,6 +2054,9 @@ print()
 
 # 模拟 _execute_trade 的检查逻辑 (使用共享模块)
 print("  模拟 _execute_trade 检查:")
+
+# 初始化变量 (避免 NameError in summary mode)
+btc_quantity = 0
 
 # 0. 检查 is_trading_paused (诊断无法检测，需查看服务状态)
 print("  ⚠️ is_trading_paused: 无法检测 (需查看服务日志)")
@@ -2139,13 +2186,13 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents v3.2 - AI 完全自主决策)")
+print("  诊断总结 (TradingAgents v3.8 - AI 决策 + 执行层风控)")
 print("=" * 70)
 print()
 
-# 显示架构状态 (v3.2: 无本地风控)
-print(f"  📊 架构: TradingAgents v3.2 - AI 完全自主决策")
-print(f"     本地风控: 无 (已移除所有硬编码规则)")
+# 显示架构状态 (v3.8: S/R Zone 执行层风控)
+print(f"  📊 架构: TradingAgents v3.8 - AI 决策 + 执行层风控")
+print(f"     本地风控: S/R Zone Block (执行层，非方向预测)")
 print()
 
 # TradingAgents: Judge 决策即最终决策
@@ -2432,40 +2479,42 @@ if not SUMMARY_MODE:
                     else:
                         print("        ❌ OI 获取失败")
 
-                    # 测试 get_funding_rate (v2.1: 对比 Binance 和 Coinalyze)
-                    print("        测试 Funding Rate...")
+                    # 测试 get_funding_rate (v3.8: 优先使用 Binance 8h 资金费率)
+                    print("        测试 Funding Rate (v3.8: 优先 Binance)...")
                     fr_data = coinalyze_client.get_funding_rate(symbol=coinalyze_symbol)
 
-                    # 同时获取 Binance 直接的 Funding Rate 做对比
+                    # 获取 Binance 8 小时资金费率 (主要数据源)
                     binance_fr = None
                     try:
                         binance_fr = kline_client.get_funding_rate(symbol=symbol_clean)
                     except Exception:
                         pass
 
-                    if fr_data:
-                        fr_value = fr_data.get('value', 0)
-                        print(f"        ✅ Coinalyze Funding: {fr_value:.6f} ({fr_value*100:.4f}%)")
+                    # v3.8: 优先显示 Binance 数据 (配置: always_use_binance=true)
+                    if binance_fr:
+                        binance_value = binance_fr.get('funding_rate', 0)
+                        binance_pct = binance_fr.get('funding_rate_pct', 0)
+                        print(f"        ✅ 主数据源 (Binance 8h): {binance_value:.6f} ({binance_pct:.4f}%)")
+                        print(f"           • 结算周期: 每 8 小时 (00:00/08:00/16:00 UTC)")
+                        print(f"           • 说明: Binance 合约交易者实际支付/收取的费率")
 
-                        # v2.1: 显示 Binance 对比 + 差异警告
-                        if binance_fr:
-                            binance_value = binance_fr.get('funding_rate', 0)
-                            binance_pct = binance_fr.get('funding_rate_pct', 0)
-                            print(f"        ✅ Binance Funding:  {binance_value:.6f} ({binance_pct:.4f}%)")
+                        # 显示 Coinalyze 对比 (仅供参考)
+                        if fr_data:
+                            fr_value = fr_data.get('value', 0)
+                            print(f"        ℹ️ 参考数据 (Coinalyze): {fr_value:.6f} ({fr_value*100:.4f}%)")
 
                             # 计算差异倍数并解释原因
                             if binance_value > 0 and fr_value > 0:
                                 ratio = fr_value / binance_value
                                 if ratio > 5 or ratio < 0.2:
-                                    print(f"        ⚠️ 差异 {ratio:.1f}x - 原因说明:")
-                                    print(f"           • Binance: 下次结算的 8 小时费率 (实时单次)")
-                                    print(f"           • Coinalyze: 多交易所加权聚合值 (可能包含历史累计)")
-                                    print(f"           • 差异正常，不影响交易逻辑")
-                                    print(f"        ✅ AI 输入使用 Binance 8h funding rate (因为我们在 Binance 交易)")
+                                    print(f"        ⚠️ 差异 {ratio:.1f}x - 原因:")
+                                    print(f"           • Binance: 单交易所 8 小时费率 (实时)")
+                                    print(f"           • Coinalyze: 多交易所加权聚合值")
                     else:
-                        print("        ❌ Coinalyze Funding Rate 获取失败")
-                        if binance_fr:
-                            print(f"        ✅ Binance Funding: {binance_fr.get('funding_rate', 0):.6f} ({binance_fr.get('funding_rate_pct', 0):.4f}%)")
+                        print("        ❌ Binance Funding Rate 获取失败")
+                        if fr_data:
+                            fr_value = fr_data.get('value', 0)
+                            print(f"        ⚠️ 降级使用 Coinalyze: {fr_value:.6f} ({fr_value*100:.4f}%)")
 
                     # 测试 get_liquidations
                     print("        测试 Liquidations (1h)...")
@@ -2713,7 +2762,9 @@ if not SUMMARY_MODE:
                                 print(f"          - Depth Change: {dynamics.get('depth_change_pct', 0):+.2f}%")
                                 print(f"          - Trend: {dynamics.get('trend', 'N/A')}")
                             else:
+                                # v11.14: 冷启动警告
                                 print(f"        Dynamics: 首次运行，无历史数据")
+                                print(f"        ⚠️ adaptive OBI 无历史基线，数值可靠性降低")
 
                             # Pressure Gradient (v11.12: 修正字段路径)
                             gradient = ob_result.get('pressure_gradient', {})
@@ -2757,6 +2808,123 @@ if not SUMMARY_MODE:
 
         print()
         print("  ✅ MTF v2.1 + Order Book 组件集成测试完成")
+
+        # 9.5.5 测试 S/R Zone Calculator (v3.8 新增)
+        print()
+        print("  [9.5.5] S/R Zone Calculator 测试 (v3.8):")
+        try:
+            from utils.sr_zone_calculator import SRZoneCalculator
+            print("     ✅ SRZoneCalculator 导入成功")
+
+            # 获取当前价格和技术数据
+            test_price = current_price if 'current_price' in dir() and current_price > 0 else 100000
+
+            # 从之前的测试中获取数据
+            test_bb_data = None
+            test_sma_data = None
+            test_orderbook_anomalies = None
+
+            # 尝试从 technical_data 获取 BB 和 SMA
+            if 'technical_data' in dir() and technical_data:
+                bb_upper = technical_data.get('bb_upper')
+                bb_lower = technical_data.get('bb_lower')
+                if bb_upper and bb_lower:
+                    test_bb_data = {
+                        'upper': bb_upper,
+                        'lower': bb_lower,
+                        'middle': technical_data.get('bb_middle'),
+                    }
+                sma_50 = technical_data.get('sma_50')
+                sma_200 = technical_data.get('sma_200')
+                if sma_50 or sma_200:
+                    test_sma_data = {'sma_50': sma_50, 'sma_200': sma_200}
+
+            # 尝试从之前的订单簿测试获取 anomalies
+            if 'ob_result' in dir() and ob_result:
+                anomalies = ob_result.get('anomalies', {})
+                if anomalies:
+                    test_orderbook_anomalies = {
+                        'bid_anomalies': anomalies.get('bid_anomalies', []),
+                        'ask_anomalies': anomalies.get('ask_anomalies', []),
+                    }
+
+            # 计算 S/R Zones
+            sr_calc = SRZoneCalculator(
+                cluster_pct=0.5,
+                zone_expand_pct=0.1,
+                hard_control_threshold_pct=1.0,
+            )
+            sr_result = sr_calc.calculate(
+                current_price=test_price,
+                bb_data=test_bb_data,
+                sma_data=test_sma_data,
+                orderbook_anomalies=test_orderbook_anomalies,
+            )
+
+            print(f"     📊 当前价格: ${test_price:,.0f}")
+            print(f"     📊 数据源: BB={'✅' if test_bb_data else '❌'}, SMA={'✅' if test_sma_data else '❌'}, OrderBook={'✅' if test_orderbook_anomalies else '❌'}")
+
+            # 显示阻力位
+            resistance_zones = sr_result.get('resistance_zones', [])
+            print(f"     🔴 阻力位: {len(resistance_zones)} zones")
+            for i, zone in enumerate(resistance_zones[:2]):  # 最多显示2个
+                wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+                print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
+                print(f"           Sources: {', '.join(zone.sources)}")
+
+            # 显示支撑位
+            support_zones = sr_result.get('support_zones', [])
+            print(f"     🟢 支撑位: {len(support_zones)} zones")
+            for i, zone in enumerate(support_zones[:2]):  # 最多显示2个
+                wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+                print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
+                print(f"           Sources: {', '.join(zone.sources)}")
+
+            # v11.14: 显示硬风控状态，增加触发说明
+            hard_control = sr_result.get('hard_control', {})
+            block_long = hard_control.get('block_long', False)
+            block_short = hard_control.get('block_short', False)
+            ai_signal = signal_data.get('signal', 'HOLD') if 'signal_data' in dir() else 'UNKNOWN'
+
+            print(f"     ⚠️ 硬风控状态:")
+
+            # Block LONG 状态和触发情况
+            if block_long:
+                if ai_signal == 'BUY':
+                    print(f"        Block LONG: True → ✅ 已触发 (AI 输出 BUY 被阻止)")
+                elif ai_signal == 'HOLD':
+                    print(f"        Block LONG: True (AI 输出 HOLD，未触发)")
+                else:
+                    print(f"        Block LONG: True (AI 输出 {ai_signal}，不适用)")
+            else:
+                print(f"        Block LONG: False")
+
+            # Block SHORT 状态和触发情况
+            if block_short:
+                if ai_signal == 'SELL':
+                    print(f"        Block SHORT: True → ✅ 已触发 (AI 输出 SELL 被阻止)")
+                elif ai_signal == 'HOLD':
+                    print(f"        Block SHORT: True (AI 输出 HOLD，未触发)")
+                else:
+                    print(f"        Block SHORT: True (AI 输出 {ai_signal}，不适用)")
+            else:
+                print(f"        Block SHORT: False")
+
+            if hard_control.get('reason'):
+                print(f"        Reason: {hard_control.get('reason')}")
+
+            # 补充说明
+            if block_long or block_short:
+                print(f"        📝 说明: Block 仅在 AI 输出对应方向时触发")
+
+            print("     ✅ S/R Zone Calculator 测试完成")
+
+        except ImportError as e:
+            print(f"     ❌ 无法导入 SRZoneCalculator: {e}")
+        except Exception as e:
+            print(f"     ❌ S/R Zone 测试失败: {e}")
+            import traceback
+            traceback.print_exc()
 
     except Exception as e:
         print(f"  ❌ MTF 组件测试失败: {e}")
@@ -2934,11 +3102,109 @@ if not SUMMARY_MODE:
     print()
 
 # =============================================================================
+# 9.6 记忆系统健康检查 (v11.15 新增, v3.12 记忆系统)
+# 验证 AI 学习记忆的加载、保存和格式
+# =============================================================================
+if not SUMMARY_MODE:
+    print("[9.6/14] 记忆系统健康检查 (v3.12 AI Learning)...")
+    print("-" * 70)
+
+    try:
+        import os
+        import json
+        from pathlib import Path
+
+        memory_file = "data/trading_memory.json"
+        memory_path = Path(project_root) / memory_file
+
+        print(f"  📂 记忆文件路径: {memory_path}")
+
+        # 检查文件是否存在
+        if memory_path.exists():
+            print(f"  ✅ 记忆文件存在")
+
+            # 读取记忆内容
+            with open(memory_path, 'r') as f:
+                memories = json.load(f)
+
+            print(f"  📊 记忆条目数量: {len(memories)}")
+
+            if memories:
+                # 统计成功/失败
+                successes = [m for m in memories if m.get('pnl', 0) > 0]
+                failures = [m for m in memories if m.get('pnl', 0) <= 0]
+
+                print(f"     ✅ 成功交易: {len(successes)} 条")
+                print(f"     ❌ 失败交易: {len(failures)} 条")
+
+                # 显示最近 3 条记忆
+                print()
+                print("  📝 最近 3 条记忆:")
+                for mem in memories[-3:]:
+                    decision = mem.get('decision', 'N/A')
+                    pnl = mem.get('pnl', 0)
+                    conditions = str(mem.get('conditions', 'N/A') or 'N/A')[:50]
+                    timestamp = str(mem.get('timestamp', 'N/A') or 'N/A')[:19]
+                    emoji = '✅' if pnl > 0 else '❌'
+                    print(f"     {emoji} [{timestamp}] {decision} → {pnl:+.2f}%")
+                    print(f"        Conditions: {conditions}...")
+
+                # 验证记忆格式
+                print()
+                print("  🔍 记忆格式验证:")
+                required_fields = ['decision', 'pnl', 'conditions', 'lesson', 'timestamp']
+                latest = memories[-1] if memories else {}
+                for field in required_fields:
+                    has_field = field in latest
+                    print(f"     {'✅' if has_field else '❌'} {field}: {'存在' if has_field else '缺失'}")
+            else:
+                print("  ℹ️ 记忆为空 (系统刚启动，尚无交易记录)")
+
+        else:
+            print(f"  ⚠️ 记忆文件不存在 (系统刚启动)")
+            print(f"     → 首次交易后将自动创建")
+
+        # 验证 MultiAgentAnalyzer 记忆系统
+        print()
+        print("  🧠 MultiAgentAnalyzer 记忆系统状态:")
+        # v11.15: 使用 globals() 检查全局变量
+        if 'multi_agent' in globals() and multi_agent is not None:
+            mem_count = len(getattr(multi_agent, 'decision_memory', []))
+            mem_file = getattr(multi_agent, 'memory_file', 'N/A')
+            print(f"     → 已加载记忆: {mem_count} 条")
+            print(f"     → 记忆文件: {mem_file}")
+
+            # 检查 _get_past_memories 方法
+            if hasattr(multi_agent, '_get_past_memories'):
+                past_memories = multi_agent._get_past_memories()
+                if past_memories:
+                    print(f"     → 传给 AI 的记忆摘要: {len(past_memories)} 字符")
+                    # 显示前 200 字符预览
+                    preview = past_memories[:200].replace('\n', ' ')
+                    print(f"     → 预览: {preview}...")
+                else:
+                    print(f"     → 传给 AI 的记忆摘要: (空 - 无历史交易)")
+            else:
+                print(f"     ❌ _get_past_memories 方法不存在")
+        else:
+            print(f"     ⚠️ multi_agent 未初始化")
+
+        print()
+        print("  ✅ 记忆系统健康检查完成")
+
+    except Exception as e:
+        print(f"  ❌ 记忆系统检查失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print()
+
+# =============================================================================
 # 10. on_bar MTF 路由逻辑模拟 (v10.9 新增)
 # 模拟 deepseek_strategy.py:on_bar() 的 MTF bar 路由
 # =============================================================================
 if not SUMMARY_MODE:
-    print("[10/13] on_bar MTF 路由逻辑模拟...")
+    print("[10/14] on_bar MTF 路由逻辑模拟...")
     print("-" * 70)
 
     try:
@@ -2965,7 +3231,7 @@ if not SUMMARY_MODE:
             print()
             print(f"     • {decision_tf.upper()} bar → 决策层 (_handle_decision_bar)")
             print(f"       - 更新决策层技术指标")
-            print(f"       - 计算 ALLOW_LONG/ALLOW_SHORT/WAIT 状态")
+            print(f"       - 收集决策层数据 (AI 自主分析，无本地决策)")
             print(f"       - 设置 _mtf_decision_initialized = True")
             print()
             print(f"     • {execution_tf.upper()} bar → 执行层 (_handle_execution_bar)")
@@ -3015,7 +3281,7 @@ if not SUMMARY_MODE:
 # 测试 trading_logic.py:calculate_position_size() 的完整逻辑
 # =============================================================================
 if not SUMMARY_MODE:
-    print("[11/13] 仓位计算函数测试 (calculate_position_size)...")
+    print("[11/14] 仓位计算函数测试 (calculate_position_size)...")
     print("-" * 70)
 
     try:
@@ -3054,44 +3320,65 @@ if not SUMMARY_MODE:
         print(f"     RSI 极值乘数: {calc_config['rsi_extreme_multiplier']}x (RSI>{calc_config['rsi_extreme_upper']} 或 <{calc_config['rsi_extreme_lower']} 时缩小)")
         print()
 
-        # 使用当前信号数据计算仓位
-        print("  📊 当前信号仓位计算:")
-        quantity, calc_details = calculate_position_size(
-            signal_data=signal_data,
-            price_data=price_data,
-            technical_data=technical_data,
-            config=calc_config,
-            logger=None
-        )
+        # v11.14: 检查信号类型，HOLD 时不计算仓位 (与实盘一致)
+        current_signal = signal_data.get('signal', 'HOLD')
 
-        print(f"     输入信号: {signal_data.get('signal', 'N/A')}")
-        print(f"     输入信心: {signal_data.get('confidence', 'N/A')}")
-        print(f"     当前价格: ${current_price:,.2f}")
-        print(f"     当前趋势: {technical_data.get('overall_trend', 'N/A')}")
-        print(f"     当前 RSI: {technical_data.get('rsi', 50):.2f}")
-        print()
-        print(f"     计算结果:")
-        print(f"     • 目标仓位: {quantity:.6f} BTC")
-        print(f"     • 等值 USDT: ${quantity * current_price:,.2f}")
-        print(f"     • 占 equity 比例: {(quantity * current_price / calc_config['equity']) * 100:.2f}%")
-        print()
+        if current_signal == 'HOLD':
+            # HOLD 信号：实盘直接 return，不计算仓位
+            print("  📊 当前信号仓位计算:")
+            print(f"     输入信号: HOLD")
+            print(f"     输入信心: {signal_data.get('confidence', 'N/A')}")
+            print()
+            print(f"     ℹ️ HOLD 信号不计算仓位 (与实盘一致)")
+            print(f"     → 实盘逻辑: if signal == 'HOLD': return")
+            print(f"     → 目标仓位: N/A")
+            print()
 
-        # 计算详情
-        if calc_details:
-            print(f"     计算详情:")
-            for key, value in calc_details.items():
-                if isinstance(value, float):
-                    print(f"     • {key}: {value:.4f}")
-                else:
-                    print(f"     • {key}: {value}")
+            # 仅展示配置参考，不实际计算
+            print("  📊 不同信心级别仓位参考 (假设 BUY/SELL 信号时):")
+            for conf_level in ['HIGH', 'MEDIUM', 'LOW']:
+                test_signal = {'signal': 'BUY', 'confidence': conf_level}
+                q, _ = calculate_position_size(test_signal, price_data, technical_data, calc_config)
+                print(f"     {conf_level}: {q:.6f} BTC (${q * current_price:,.2f})")
+        else:
+            # BUY/SELL 信号：正常计算仓位
+            print("  📊 当前信号仓位计算:")
+            quantity, calc_details = calculate_position_size(
+                signal_data=signal_data,
+                price_data=price_data,
+                technical_data=technical_data,
+                config=calc_config,
+                logger=None
+            )
 
-        # 模拟不同信心级别的仓位
-        print()
-        print("  📊 不同信心级别仓位对比:")
-        for conf_level in ['HIGH', 'MEDIUM', 'LOW']:
-            test_signal = {'signal': signal_data.get('signal', 'BUY'), 'confidence': conf_level}
-            q, _ = calculate_position_size(test_signal, price_data, technical_data, calc_config)
-            print(f"     {conf_level}: {q:.6f} BTC (${q * current_price:,.2f})")
+            print(f"     输入信号: {current_signal}")
+            print(f"     输入信心: {signal_data.get('confidence', 'N/A')}")
+            print(f"     当前价格: ${current_price:,.2f}")
+            print(f"     当前趋势: {technical_data.get('overall_trend', 'N/A')}")
+            print(f"     当前 RSI: {technical_data.get('rsi', 50):.2f}")
+            print()
+            print(f"     计算结果:")
+            print(f"     • 目标仓位: {quantity:.6f} BTC")
+            print(f"     • 等值 USDT: ${quantity * current_price:,.2f}")
+            print(f"     • 占 equity 比例: {(quantity * current_price / calc_config['equity']) * 100:.2f}%")
+            print()
+
+            # 计算详情
+            if calc_details:
+                print(f"     计算详情:")
+                for key, value in calc_details.items():
+                    if isinstance(value, float):
+                        print(f"     • {key}: {value:.4f}")
+                    else:
+                        print(f"     • {key}: {value}")
+
+            # 模拟不同信心级别的仓位
+            print()
+            print("  📊 不同信心级别仓位对比:")
+            for conf_level in ['HIGH', 'MEDIUM', 'LOW']:
+                test_signal = {'signal': current_signal, 'confidence': conf_level}
+                q, _ = calculate_position_size(test_signal, price_data, technical_data, calc_config)
+                print(f"     {conf_level}: {q:.6f} BTC (${q * current_price:,.2f})")
 
         print()
         print("  ✅ 仓位计算测试完成")
@@ -3108,7 +3395,7 @@ if not SUMMARY_MODE:
 # 模拟 deepseek_strategy.py:_submit_bracket_order() 的参数验证
 # =============================================================================
 if not SUMMARY_MODE:
-    print("[12/13] 订单提交流程模拟 (_submit_bracket_order)...")
+    print("[12/14] 订单提交流程模拟 (_submit_bracket_order)...")
     print("-" * 70)
 
     try:
@@ -3274,7 +3561,7 @@ if not SUMMARY_MODE:
 # 输出所有获取的数据的具体值
 # =============================================================================
 if not SUMMARY_MODE:
-    print("[13/13] 完整数据流汇总...")
+    print("[13/14] 完整数据流汇总...")
     print("-" * 70)
 
     print()
@@ -3365,18 +3652,25 @@ if not SUMMARY_MODE:
         else:
             print(f"    (数据不可用)")
         print()
-        print(f"  Funding Rate:")
+        print(f"  Funding Rate (资金费率):")
         if fr_data:
             fr_value = fr_data.get('value', 0)
             source = fr_data.get('source', 'unknown')
+            period = fr_data.get('period', 'N/A')
             print(f"    Current:     {fr_value:.6f} ({fr_value*100:.4f}%)")
             print(f"    Interpret:   {fr_data.get('interpretation', 'N/A')}")
-            print(f"    Source:      {source}")
-            # v2.1: 显示两个数据源对比
+            print(f"    Source:      {source} (周期: {period})")
+
+            # v3.8: 标注币安 8 小时资金费率
+            if source == 'binance_8h':
+                print(f"    ✅ 使用币安 8 小时资金费率")
+                print(f"       结算时间: 00:00/08:00/16:00 UTC")
+
+            # 显示两个数据源对比 (供参考)
             binance_pct = fr_data.get('binance_pct')
             coinalyze_pct = fr_data.get('coinalyze_pct')
             if binance_pct is not None and coinalyze_pct is not None:
-                print(f"    [对比] Binance 8h: {binance_pct:.4f}%, Coinalyze: {coinalyze_pct:.4f}%")
+                print(f"    [参考] Binance 8h: {binance_pct:.4f}%, Coinalyze: {coinalyze_pct:.4f}%")
         else:
             print(f"    (数据不可用)")
         print()
@@ -3427,16 +3721,18 @@ if not SUMMARY_MODE:
     print("  ┃                        AI 决策结果                                  ┃")
     print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
     print()
-    print(f"  原始信号: {signal_data.get('signal', 'N/A')}")
+    summary_signal = signal_data.get('signal', 'N/A')
+    print(f"  原始信号: {summary_signal}")
     print(f"  最终信号: {final_signal}")
     print(f"  信心等级: {signal_data.get('confidence', 'N/A')}")
     print(f"  风险等级: {signal_data.get('risk_level', 'N/A')}")
     judge_decision = signal_data.get('judge_decision', {})
     print(f"  胜出方:   {judge_decision.get('winning_side', 'N/A')}")
-    # v3.0: AI 完全自主决策，无确认计数框架
     print()
-    print(f"  AI 止损: ${signal_data.get('stop_loss', 0):,.2f}" if signal_data.get('stop_loss') else "  AI 止损: N/A")
-    print(f"  AI 止盈: ${signal_data.get('take_profit', 0):,.2f}" if signal_data.get('take_profit') else "  AI 止盈: N/A")
+    # v11.14: 标注 HOLD 时 SL/TP 不会使用
+    sltp_note = " (仅供参考，HOLD 不使用)" if summary_signal == 'HOLD' else ""
+    print(f"  AI 止损: ${signal_data.get('stop_loss', 0):,.2f}{sltp_note}" if signal_data.get('stop_loss') else "  AI 止损: N/A")
+    print(f"  AI 止盈: ${signal_data.get('take_profit', 0):,.2f}{sltp_note}" if signal_data.get('take_profit') else "  AI 止盈: N/A")
     print()
     print(f"  关键理由:")
     key_reasons = judge_decision.get('key_reasons', [])
@@ -3458,8 +3754,8 @@ if not SUMMARY_MODE:
     print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
     print()
 
-    print(f"  架构: TradingAgents v3.2 - AI 完全自主决策")
-    print(f"  本地风控: 无 (已移除所有硬编码规则)")
+    print(f"  架构: TradingAgents v3.8 - AI 决策 + 执行层风控")
+    print(f"  本地风控: S/R Zone Block (执行层，非方向预测)")
     print()
     print(f"  AI 决策: {signal_data.get('signal')} (Confidence: {signal_data.get('confidence')})")
     print(f"  Winning Side: {signal_data.get('judge_decision', {}).get('winning_side', 'N/A')}")
