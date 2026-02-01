@@ -89,22 +89,29 @@ v11.3 更新 - TradingAgents v3.3 数据标准化:
 关键特性:
 1. 调用 main_live.py 中的 get_strategy_config() 获取真实配置
 2. 使用与实盘完全相同的组件初始化参数
-3. 使用 TradingAgents 层级决策架构 (v3.4)
+3. 使用 TradingAgents 层级决策架构 (v3.12)
 4. 检查 Binance 真实持仓
 5. 模拟完整的 _execute_trade 流程
 6. 输出实盘环境下会产生的真实结果
 
-当前架构 (TradingAgents v3.4 - Prompt 结构优化):
+当前架构 (TradingAgents v3.12 - AI 完全自主决策):
 - System Prompt: 角色定义 + INDICATOR_DEFINITIONS (知识背景)
-- User Prompt: 原始数据 + 任务指令 (当前任务)
+- User Prompt: 原始数据 + S/R Zone v2.0 + 任务指令
 - Phase 1: Bull/Bear 辩论 (2 AI calls) - AI 自主分析数据
 - Phase 2: Judge 决策 (1 AI call) - AI 自主评估辩论，做出决策
 - Phase 3: Risk 评估 (1 AI call) - AI 自主设定 SL/TP/仓位
-- 本地风控: S/R Zone Block (执行层风控，防止追墙下单)
+- 本地风控: S/R Zone v2.0 Block (执行层风控，含 level/source_type)
 - 设计理念: "Autonomy is non-negotiable" - AI 应像人类分析师思考
 - 参考: TradingAgents (UCLA/MIT) https://github.com/TauricResearch/TradingAgents
 
-Prompt 结构 (v3.4):
+信号类型 (v3.12):
+- LONG: 开多/加仓 (替代旧版 BUY)
+- SHORT: 开空/加仓 (替代旧版 SELL)
+- CLOSE: 完全平仓 (不反向开仓)
+- REDUCE: 部分减仓 (保持方向)
+- HOLD: 不操作
+
+Prompt 结构 (v3.12):
 ┌─────────────────────────────────────────┐
 │ System Prompt                           │
 │ ├─ 角色定义 (Bull/Bear/Judge Analyst)   │
@@ -116,15 +123,16 @@ Prompt 结构 (v3.4):
 │ └─ TASK (任务指令)                      │
 └─────────────────────────────────────────┘
 
-传给 AI 的数据 (v3.4):
-- 技术指标: price, SMA 5/20/50, RSI, MACD, BB (原始数值)
-- 订单流: buy_ratio, recent_10_bars (原始数值)
+传给 AI 的数据 (v3.12):
+- 技术指标: price, SMA 5/20/50/200, RSI, MACD, BB (原始数值)
+- 订单流: buy_ratio, recent_10_bars, volume_usdt (原始数值)
 - 衍生品: OI, funding_rate, liquidations (原始数值)
 - 情绪: long/short ratio (原始数值)
+- S/R Zones: level, source_type, order_walls (v2.0 详细数据)
 
-职责划分 (v3.4):
+职责划分 (v3.12):
 - AI 职责: 所有判断 (趋势、支撑阻力、信号方向、SL/TP)
-- 本地职责: 只收集原始数据，不做预解读
+- 本地职责: 只收集原始数据 + S/R Zone 计算 + 执行层风控
 
 历史更新:
 v11.7:
@@ -1940,7 +1948,7 @@ print("     - 本地: 仅收集三层时间框架数据 (1D/4H/15M)")
 print("     - AI: 所有交易决策由 MultiAgent 完成 (Bull/Bear/Judge)")
 print("     - 无本地决策逻辑 (已移除 DecisionState/ALLOW_LONG/SHORT/WAIT)")
 print()
-print("  ✅ TradingAgents v3.4 架构验证完成")
+print("  ✅ TradingAgents v3.12 架构验证完成")
 print()
 
 # =============================================================================
@@ -2198,12 +2206,12 @@ print()
 # 最终诊断总结
 # =============================================================================
 print("=" * 70)
-print("  诊断总结 (TradingAgents v3.8 - AI 决策 + 执行层风控)")
+print("  诊断总结 (TradingAgents v3.12 - AI 决策 + S/R Zone v2.0 风控)")
 print("=" * 70)
 print()
 
 # 显示架构状态 (S/R Zone v2.0 执行层风控)
-print(f"  📊 架构: TradingAgents v3.8 - AI 决策 + 执行层风控")
+print(f"  📊 架构: TradingAgents v3.12 - AI 决策 + S/R Zone v2.0 风控")
 print(f"     本地风控: S/R Zone v2.0 Block (执行层，含 level/source_type)")
 print()
 
@@ -3800,7 +3808,7 @@ if not SUMMARY_MODE:
     print("  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
     print()
 
-    print(f"  架构: TradingAgents v3.8 - AI 决策 + 执行层风控")
+    print(f"  架构: TradingAgents v3.12 - AI 决策 + S/R Zone v2.0 风控")
     print(f"  本地风控: S/R Zone v2.0 Block (执行层，含 level/source_type)")
     print()
     print(f"  AI 决策: {signal_data.get('signal')} (Confidence: {signal_data.get('confidence')})")
@@ -3833,15 +3841,16 @@ rsi_upper = getattr(strategy_config, 'rsi_extreme_threshold_upper', 70)
 rsi_lower = getattr(strategy_config, 'rsi_extreme_threshold_lower', 30)
 
 print(f"  RSI: {rsi:.2f}")
-print(f"    配置阈值: 超卖<{rsi_lower}, 超买>{rsi_upper}")
+print(f"    参考阈值: 超卖<{rsi_lower}, 超买>{rsi_upper}")
 if rsi > rsi_upper:
-    print(f"    → 🔴 超买区 (>{rsi_upper}) - 可能触发 SELL")
+    print(f"    → 🔴 超买区 (>{rsi_upper}) - AI 可能倾向 SHORT")
 elif rsi < rsi_lower:
-    print(f"    → 🟢 超卖区 (<{rsi_lower}) - 可能触发 BUY")
+    print(f"    → 🟢 超卖区 (<{rsi_lower}) - AI 可能倾向 LONG")
 else:
-    print(f"    → ⚪ 中性区间 ({rsi_lower}-{rsi_upper}) - 无明确方向")
+    print(f"    → ⚪ 中性区间 ({rsi_lower}-{rsi_upper}) - AI 综合其他因素判断")
     print(f"    → 距离超买: {rsi_upper - rsi:.2f} 点")
     print(f"    → 距离超卖: {rsi - rsi_lower:.2f} 点")
+print(f"    📝 注: v3.12 架构中 AI 自主解读 RSI，不使用硬编码规则")
 
 macd = technical_data.get('macd', 0)
 macd_signal = technical_data.get('macd_signal', 0)
@@ -3975,25 +3984,32 @@ print(f"  🗣️ 辩论摘要:")
 debate_summary = signal_data.get('debate_summary', 'N/A')
 print_wrapped(str(debate_summary))
 
-# 5. 触发交易的条件 (基于更新后的提示词)
+# 5. AI 决策参考因素 (v3.12 架构 - AI 自主决策)
 print()
-print("[分析5] 触发交易所需条件 (最新提示词)")
+print("[分析5] AI 决策参考因素 (v3.12 TradingAgents 架构)")
 print("-" * 50)
 
-print("  要触发 BUY 信号 (ANY 2 of these is sufficient):")
-print(f"    • 价格在 SMA5/SMA20 上方 (当前: {'✅' if current_price > sma_5 and current_price > sma_20 else '❌'})")
-print(f"    • RSI < 60 且不超买 (当前: {rsi:.2f}, {'✅' if rsi < 60 else '❌'})")
-print(f"    • MACD 金叉或柱状图为正 (当前: {'✅' if macd > macd_signal or macd_hist > 0 else '❌'})")
-print(f"    • 价格接近支撑或 BB 下轨 (当前位置: {bb_position:.1f}%)")
+print("  📊 AI 分析流程 (Bull/Bear 辩论 → Judge 决策):")
+print("     1. Bull Analyst: 寻找做多理由 (价格、动量、支撑)")
+print("     2. Bear Analyst: 寻找做空理由 (阻力、超买、风险)")
+print("     3. Judge: 评估双方论据，做出 LONG/SHORT/HOLD 决策")
+print("     4. Risk Manager: 设定 SL/TP，参考 S/R Zone v2.0")
 print()
-print("  要触发 SELL 信号 (ANY 2 of these is sufficient):")
-print(f"    • 价格在 SMA5/SMA20 下方 (当前: {'✅' if current_price < sma_5 and current_price < sma_20 else '❌'})")
-print(f"    • RSI > 40 且显示弱势 (当前: {rsi:.2f}, {'✅' if rsi > 40 else '❌'})")
-print(f"    • MACD 死叉或柱状图为负 (当前: {'✅' if macd < macd_signal or macd_hist < 0 else '❌'})")
-print(f"    • 价格接近阻力或 BB 上轨 (当前位置: {bb_position:.1f}%)")
+print("  📈 看多因素 (AI 自主评估权重):")
+print(f"    • 价格 vs SMA: {'上方' if current_price > sma_5 else '下方'} SMA5, {'上方' if current_price > sma_20 else '下方'} SMA20")
+print(f"    • RSI 状态: {rsi:.2f} ({'超卖区' if rsi < rsi_lower else '超买区' if rsi > rsi_upper else '中性'})")
+print(f"    • MACD: {'金叉' if macd > macd_signal else '死叉'}, 柱状图 {'+' if macd_hist > 0 else ''}{macd_hist:.4f}")
+print(f"    • BB 位置: {bb_position:.1f}% ({'接近下轨' if bb_position < 20 else '接近上轨' if bb_position > 80 else '中间区域'})")
 print()
-print("  📌 提示词更新后，HOLD 仅在信号真正冲突时使用")
-print(f"     当前 min_confidence_to_trade: {strategy_config.min_confidence_to_trade}")
+print("  📉 看空因素 (AI 自主评估权重):")
+print(f"    • S/R Zone: AI 参考阻力位设定 TP，支撑位设定 SL")
+print(f"    • 订单流: AI 分析 buy_ratio 判断资金流向")
+print(f"    • 衍生品: AI 参考 funding rate 和 OI 变化")
+print()
+print("  ⚠️ v3.12 架构说明:")
+print("     • AI 自主决策，无硬编码规则触发信号")
+print("     • HOLD 由 AI 判断何时使用，非规则强制")
+print(f"     • min_confidence_to_trade: {strategy_config.min_confidence_to_trade} (信心过滤)")
 
 # 6. 建议
 print()
