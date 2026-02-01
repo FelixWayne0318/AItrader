@@ -3,6 +3,12 @@ Telegram Bot for Trading Notifications
 
 Provides real-time notifications for trading signals, order fills,
 position updates, and system status via Telegram.
+
+v2.0 Improvements (2026-02):
+- Async message queue (non-blocking)
+- Message persistence with SQLite
+- Alert convergence (deduplication)
+- Reduced timeout for faster failure detection
 """
 
 import asyncio
@@ -20,27 +26,41 @@ except ImportError:
     Bot = None
     TelegramError = Exception
 
+# Import message queue (optional, graceful degradation if not available)
+try:
+    from utils.telegram_queue import TelegramMessageQueue, MessagePriority
+    QUEUE_AVAILABLE = True
+except ImportError:
+    QUEUE_AVAILABLE = False
+    TelegramMessageQueue = None
+    MessagePriority = None
+
 
 class TelegramBot:
     """
     Telegram Bot for sending trading notifications.
-    
+
     Features:
     - Send formatted trading signals
     - Send order fill notifications
     - Send position updates
     - Send error/warning alerts
-    - Async message sending
-    - Rate limiting support
+    - Async message queue (v2.0 - non-blocking)
+    - Message persistence and retry (v2.0)
+    - Alert convergence (v2.0)
     """
-    
+
     def __init__(
         self,
         token: str,
         chat_id: str,
         logger: Optional[logging.Logger] = None,
         enabled: bool = True,
-        message_timeout: float = 30.0
+        message_timeout: float = 5.0,  # v2.0: Reduced from 30s to 5s
+        use_queue: bool = True,  # v2.0: Use async message queue
+        queue_db_path: str = "data/telegram_queue.db",
+        queue_max_retries: int = 3,
+        queue_alert_cooldown: int = 300,  # 5 minutes
     ):
         """
         Initialize Telegram Bot.
@@ -56,7 +76,15 @@ class TelegramBot:
         enabled : bool
             Whether the bot is enabled (default: True)
         message_timeout : float
-            Timeout for sending messages (seconds), default: 30.0
+            Timeout for sending messages (seconds), default: 5.0
+        use_queue : bool
+            Use async message queue for non-blocking sends (default: True)
+        queue_db_path : str
+            Path to SQLite database for message persistence
+        queue_max_retries : int
+            Maximum retry attempts for failed messages
+        queue_alert_cooldown : int
+            Cooldown period for alert convergence (seconds)
         """
         if not TELEGRAM_AVAILABLE:
             raise ImportError(
@@ -78,6 +106,26 @@ class TelegramBot:
             self.logger.error(f"❌ Failed to initialize Telegram Bot: {e}")
             self.enabled = False
             raise
+
+        # v2.0: Initialize message queue
+        self.message_queue: Optional[TelegramMessageQueue] = None
+        self.use_queue = use_queue and QUEUE_AVAILABLE
+
+        if self.use_queue:
+            try:
+                self.message_queue = TelegramMessageQueue(
+                    send_func=self._send_direct,
+                    db_path=queue_db_path,
+                    max_retries=queue_max_retries,
+                    alert_cooldown=queue_alert_cooldown,
+                    logger=self.logger,
+                )
+                self.message_queue.start()
+                self.logger.info("✅ Telegram message queue initialized")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Message queue init failed, using direct send: {e}")
+                self.message_queue = None
+                self.use_queue = False
 
     @staticmethod
     def escape_markdown(text: str) -> str:
@@ -161,21 +209,75 @@ class TelegramBot:
             self.logger.error(f"❌ Failed to send Telegram message: {e}")
             return False
     
-    def send_message_sync(self, message: str, **kwargs) -> bool:
+    def send_message_sync(
+        self,
+        message: str,
+        priority: Optional[int] = None,
+        use_queue: Optional[bool] = None,
+        **kwargs
+    ) -> bool:
         """
         Synchronous method to send Telegram message.
 
-        Uses the `requests` library to call Telegram API directly.
-        This is the recommended approach for sending messages from
-        synchronous code, as python-telegram-bot v20+ is fully async
-        and not thread-safe.
+        v2.0: Uses async message queue by default (non-blocking).
+        Falls back to direct send if queue not available.
 
-        Reference: https://github.com/python-telegram-bot/python-telegram-bot/discussions/4096
+        Parameters
+        ----------
+        message : str
+            Message text to send
+        priority : int, optional
+            Message priority (0=LOW, 1=NORMAL, 2=HIGH, 3=CRITICAL)
+            Higher priority messages are sent first.
+        use_queue : bool, optional
+            Override queue usage for this message.
+            Set to False for immediate blocking send.
+        **kwargs
+            Additional arguments (parse_mode, disable_notification)
+
+        Returns
+        -------
+        bool
+            True if enqueued/sent successfully
         """
         if not self.enabled:
             self.logger.debug("Telegram bot is disabled, skipping message")
             return False
 
+        # Determine whether to use queue
+        should_use_queue = use_queue if use_queue is not None else self.use_queue
+
+        # v2.0: Use queue for non-blocking send
+        if should_use_queue and self.message_queue:
+            # Convert priority to MessagePriority enum
+            if priority is None:
+                priority = 1  # NORMAL
+            if QUEUE_AVAILABLE and MessagePriority:
+                try:
+                    msg_priority = MessagePriority(priority)
+                except ValueError:
+                    msg_priority = MessagePriority.NORMAL
+            else:
+                msg_priority = priority
+
+            return self.message_queue.enqueue(
+                message=message,
+                priority=msg_priority,
+                **kwargs
+            )
+
+        # Fallback: Direct send (blocking)
+        return self._send_direct(message, **kwargs)
+
+    def _send_direct(self, message: str, **kwargs) -> bool:
+        """
+        Direct (blocking) message send via requests.
+
+        This is the actual send implementation used by both
+        direct calls and the message queue background thread.
+
+        Reference: https://github.com/python-telegram-bot/python-telegram-bot/discussions/4096
+        """
         import requests
 
         parse_mode = kwargs.get('parse_mode', 'Markdown')
@@ -195,7 +297,7 @@ class TelegramBot:
             result = response.json()
 
             if result.get('ok'):
-                self.logger.info(f"📱 Telegram message sent: {message[:50]}...")
+                self.logger.debug(f"📱 Telegram message sent: {message[:50]}...")
                 return True
 
             # Handle Markdown parse errors - retry without formatting
@@ -217,6 +319,18 @@ class TelegramBot:
         except Exception as e:
             self.logger.error(f"❌ Error sending Telegram message: {e}")
             return False
+
+    def get_queue_stats(self) -> Dict[str, Any]:
+        """Get message queue statistics (v2.0)."""
+        if self.message_queue:
+            return self.message_queue.get_stats()
+        return {"queue_enabled": False}
+
+    def stop_queue(self):
+        """Stop the message queue (call on shutdown)."""
+        if self.message_queue:
+            self.message_queue.stop()
+            self.logger.info("🛑 Telegram message queue stopped")
     
     # Message Formatters
     

@@ -149,6 +149,21 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     telegram_notify_errors: bool = True
     telegram_notify_heartbeat: bool = True  # v2.1: 每次 on_timer 发送心跳状态
 
+    # Telegram Queue (v4.0 - Non-blocking message sending)
+    telegram_queue_enabled: bool = True  # 启用消息队列 (默认开启)
+    telegram_queue_db_path: str = "data/telegram_queue.db"  # SQLite 持久化路径
+    telegram_queue_max_retries: int = 3  # 最大重试次数
+    telegram_queue_alert_cooldown: int = 300  # 告警收敛冷却时间 (秒)
+    telegram_queue_send_interval: float = 0.5  # 发送间隔 (秒)
+
+    # Telegram Security (v4.0 - Enhanced authentication)
+    telegram_security_enable_pin: bool = True  # 启用 PIN 码验证
+    telegram_security_pin_code: str = ""  # PIN 码 (空则自动生成)
+    telegram_security_pin_expiry_seconds: int = 60  # PIN 过期时间 (秒)
+    telegram_security_rate_limit_per_minute: int = 30  # 每分钟速率限制
+    telegram_security_enable_audit: bool = True  # 启用审计日志
+    telegram_security_audit_log_dir: str = "logs/audit"  # 审计日志目录
+
     # Execution
     position_adjustment_threshold: float = 0.001
 
@@ -410,7 +425,13 @@ class DeepSeekAIStrategy(Strategy):
                         chat_id=chat_id,
                         logger=self.log,
                         enabled=True,
-                        message_timeout=config.network_telegram_message_timeout
+                        message_timeout=config.network_telegram_message_timeout,
+                        # v4.0 Queue configuration (non-blocking message sending)
+                        use_queue=config.telegram_queue_enabled,
+                        queue_db_path=config.telegram_queue_db_path,
+                        queue_max_retries=config.telegram_queue_max_retries,
+                        queue_alert_cooldown=config.telegram_queue_alert_cooldown,
+                        queue_send_interval=config.telegram_queue_send_interval,
                     )
                     # Store notification preferences
                     self.telegram_notify_signals = config.telegram_notify_signals
@@ -443,6 +464,13 @@ class DeepSeekAIStrategy(Strategy):
                             startup_delay=config.network_telegram_startup_delay,
                             polling_max_retries=config.network_telegram_polling_max_retries,
                             polling_base_delay=config.network_telegram_polling_base_delay,
+                            # v4.0 Security configuration (PIN verification + audit logging)
+                            enable_pin=config.telegram_security_enable_pin,
+                            pin_code=config.telegram_security_pin_code or None,
+                            pin_expiry_seconds=config.telegram_security_pin_expiry_seconds,
+                            rate_limit_per_minute=config.telegram_security_rate_limit_per_minute,
+                            enable_audit=config.telegram_security_enable_audit,
+                            audit_log_dir=config.telegram_security_audit_log_dir,
                         )
 
                         # Start command handler in background thread with isolated event loop

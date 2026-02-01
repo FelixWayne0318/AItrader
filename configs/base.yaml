@@ -202,7 +202,7 @@ network:
     startup_delay: 5              # 启动延迟 (秒)
     polling_max_retries: 3        # 轮询最大重试次数
     polling_base_delay: 10        # 轮询重试基础延迟 (秒)
-    message_timeout: 30           # 消息发送超时 (秒)
+    message_timeout: 5            # v2.0: 消息发送超时 (秒) - 降低到 5 秒减少阻塞
 
 # =============================================================================
 # Telegram 通知
@@ -220,6 +220,23 @@ telegram:
     positions: true
     errors: true
     heartbeat: true           # v2.1: 每次 on_timer 运行发送心跳状态 (测试阶段推荐开启)
+
+  # v2.0: 消息队列配置 (异步非阻塞发送)
+  queue:
+    enabled: true                 # 启用异步消息队列 (推荐)
+    db_path: "data/telegram_queue.db"  # SQLite 持久化路径
+    max_retries: 3                # 失败消息最大重试次数
+    alert_cooldown: 300           # 告警收敛冷却时间 (秒)
+    send_interval: 0.5            # 发送间隔 (秒，防止速率限制)
+
+  # v2.0: 安全配置
+  security:
+    enable_pin: true              # 控制命令需要 PIN 验证 (pause/resume/close)
+    pin_code: ""                  # 固定 PIN 码 (空 = 每次随机生成)
+    pin_expiry_seconds: 60        # PIN 有效期 (秒)
+    rate_limit_per_minute: 30     # 每分钟最大命令数
+    enable_audit: true            # 启用审计日志
+    audit_log_dir: "logs/audit"   # 审计日志目录
 
 # =============================================================================
 # 执行配置

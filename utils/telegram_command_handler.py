@@ -2,16 +2,25 @@
 Telegram Command Handler for Trading Strategy
 
 Handles incoming Telegram commands for remote control of the trading strategy.
+
+v2.0 Security Improvements (2026-02):
+- PIN verification for control commands
+- Audit logging for all operations
+- Rate limiting to prevent abuse
+- Enhanced authorization checks
 """
 
 import asyncio
 import logging
+import random
+import time
+import hashlib
 from typing import Optional, Callable, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 try:
     from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-    from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+    from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
     from telegram.error import Conflict as TelegramConflict
     TELEGRAM_AVAILABLE = True
 except ImportError:
@@ -19,18 +28,30 @@ except ImportError:
     Application = None
     CommandHandler = None
     CallbackQueryHandler = None
+    MessageHandler = None
+    filters = None
     Update = None
     ContextTypes = None
     TelegramConflict = Exception
     InlineKeyboardButton = None
     InlineKeyboardMarkup = None
 
+# Import audit logger (optional, graceful degradation)
+try:
+    from utils.audit_logger import AuditLogger, AuditEventType, get_audit_logger
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
+    AuditLogger = None
+    AuditEventType = None
+    get_audit_logger = None
+
 
 class TelegramCommandHandler:
     """
     Handles Telegram commands for strategy control.
 
-    Query Commands:
+    Query Commands (no PIN required):
     - /status: Get strategy status
     - /position: Get current position info
     - /orders: View open orders
@@ -39,12 +60,20 @@ class TelegramCommandHandler:
     - /help: Show available commands
     - /menu: Show interactive button menu
 
-    Control Commands:
+    Control Commands (PIN required):
     - /pause: Pause trading
     - /resume: Resume trading
     - /close: Close current position
+
+    Security Features (v2.0):
+    - PIN verification for control commands
+    - Audit logging for all operations
+    - Rate limiting (configurable)
     """
-    
+
+    # Commands that require PIN verification
+    CONTROL_COMMANDS = {'pause', 'resume', 'close'}
+
     def __init__(
         self,
         token: str,
@@ -54,6 +83,13 @@ class TelegramCommandHandler:
         startup_delay: float = 5.0,
         polling_max_retries: int = 3,
         polling_base_delay: float = 10.0,
+        # v2.0 Security options
+        enable_pin: bool = True,
+        pin_code: Optional[str] = None,  # If None, auto-generate
+        pin_expiry_seconds: int = 60,
+        enable_audit: bool = True,
+        audit_log_dir: str = "logs/audit",
+        rate_limit_per_minute: int = 30,
     ):
         """
         Initialize command handler.
@@ -75,6 +111,18 @@ class TelegramCommandHandler:
             Maximum polling retry attempts, default: 3
         polling_base_delay : float, optional
             Base delay for exponential backoff (seconds), default: 10.0
+        enable_pin : bool
+            Enable PIN verification for control commands (default: True)
+        pin_code : str, optional
+            Fixed PIN code. If None, generates random PIN each time.
+        pin_expiry_seconds : int
+            PIN expiry time in seconds (default: 60)
+        enable_audit : bool
+            Enable audit logging (default: True)
+        audit_log_dir : str
+            Directory for audit logs
+        rate_limit_per_minute : int
+            Maximum commands per minute per user (default: 30)
         """
         if not TELEGRAM_AVAILABLE:
             raise ImportError("python-telegram-bot not installed")
@@ -92,11 +140,40 @@ class TelegramCommandHandler:
         self.application = None
         self.is_running = False
         self.start_time = datetime.utcnow()
+
+        # v2.0: PIN verification
+        self.enable_pin = enable_pin
+        self.fixed_pin = pin_code
+        self.pin_expiry_seconds = pin_expiry_seconds
+        self._pending_pins: Dict[str, Dict[str, Any]] = {}  # {chat_id: {pin, command, expires}}
+
+        # v2.0: Audit logging
+        self.enable_audit = enable_audit and AUDIT_AVAILABLE
+        self.audit_logger: Optional[AuditLogger] = None
+        if self.enable_audit:
+            try:
+                self.audit_logger = get_audit_logger(audit_log_dir) if get_audit_logger else None
+            except Exception as e:
+                self.logger.warning(f"⚠️ Audit logger init failed: {e}")
+                self.audit_logger = None
+
+        # v2.0: Rate limiting
+        self.rate_limit_per_minute = rate_limit_per_minute
+        self._rate_limit_tracker: Dict[str, list] = {}  # {chat_id: [timestamps]}
     
     def _is_authorized(self, update: Update) -> bool:
         """Check if the user is authorized to send commands."""
         chat_id = str(update.effective_chat.id)
         is_authorized = chat_id in self.allowed_chat_ids
+
+        # v2.0: Audit log authorization attempts
+        if self.audit_logger:
+            self.audit_logger.log_auth(
+                user_id=chat_id,
+                success=is_authorized,
+                method="chat_id",
+                reason=None if is_authorized else "not_in_allowed_list"
+            )
 
         # Log authorization attempt for debugging
         if not is_authorized:
@@ -105,10 +182,112 @@ class TelegramCommandHandler:
                 f"(allowed: {self.allowed_chat_ids})"
             )
         else:
-            self.logger.info(f"Authorized command from chat_id: {chat_id}")
+            self.logger.debug(f"Authorized command from chat_id: {chat_id}")
 
         return is_authorized
-    
+
+    def _check_rate_limit(self, chat_id: str) -> bool:
+        """
+        Check if user is within rate limit (v2.0).
+
+        Returns True if within limit, False if exceeded.
+        """
+        now = time.time()
+        cutoff = now - 60  # Last minute
+
+        # Get or create tracker for this chat
+        if chat_id not in self._rate_limit_tracker:
+            self._rate_limit_tracker[chat_id] = []
+
+        # Clean old entries
+        self._rate_limit_tracker[chat_id] = [
+            ts for ts in self._rate_limit_tracker[chat_id] if ts > cutoff
+        ]
+
+        # Check limit
+        if len(self._rate_limit_tracker[chat_id]) >= self.rate_limit_per_minute:
+            self.logger.warning(f"⚠️ Rate limit exceeded for chat_id: {chat_id}")
+            return False
+
+        # Record this request
+        self._rate_limit_tracker[chat_id].append(now)
+        return True
+
+    def _generate_pin(self) -> str:
+        """Generate a 6-digit PIN code."""
+        if self.fixed_pin:
+            return self.fixed_pin
+        return ''.join(random.choices('0123456789', k=6))
+
+    def _request_pin(self, chat_id: str, command: str) -> str:
+        """
+        Generate and store a PIN for command verification (v2.0).
+
+        Returns the generated PIN.
+        """
+        pin = self._generate_pin()
+        expires = datetime.utcnow() + timedelta(seconds=self.pin_expiry_seconds)
+
+        self._pending_pins[chat_id] = {
+            'pin': pin,
+            'command': command,
+            'expires': expires,
+            'attempts': 0,
+        }
+
+        # Audit log
+        if self.audit_logger:
+            self.audit_logger.log_2fa(user_id=chat_id, event="requested", command=command)
+
+        return pin
+
+    def _verify_pin(self, chat_id: str, entered_pin: str) -> Dict[str, Any]:
+        """
+        Verify entered PIN against pending request (v2.0).
+
+        Returns:
+            {'valid': bool, 'command': str or None, 'error': str or None}
+        """
+        if chat_id not in self._pending_pins:
+            return {'valid': False, 'command': None, 'error': 'no_pending_request'}
+
+        pending = self._pending_pins[chat_id]
+
+        # Check expiry
+        if datetime.utcnow() > pending['expires']:
+            del self._pending_pins[chat_id]
+            if self.audit_logger:
+                self.audit_logger.log_2fa(user_id=chat_id, event="failed", command=pending['command'])
+            return {'valid': False, 'command': pending['command'], 'error': 'pin_expired'}
+
+        # Check attempts
+        pending['attempts'] += 1
+        if pending['attempts'] > 3:
+            del self._pending_pins[chat_id]
+            if self.audit_logger:
+                self.audit_logger.log_2fa(user_id=chat_id, event="failed", command=pending['command'])
+            return {'valid': False, 'command': pending['command'], 'error': 'too_many_attempts'}
+
+        # Verify PIN
+        if entered_pin == pending['pin']:
+            command = pending['command']
+            del self._pending_pins[chat_id]
+            if self.audit_logger:
+                self.audit_logger.log_2fa(user_id=chat_id, event="success", command=command)
+            return {'valid': True, 'command': command, 'error': None}
+
+        return {'valid': False, 'command': pending['command'], 'error': 'invalid_pin'}
+
+    def _audit_command(self, chat_id: str, command: str, result: str, error: Optional[str] = None):
+        """Log command execution to audit log (v2.0)."""
+        if self.audit_logger:
+            self.audit_logger.log_command(
+                user_id=chat_id,
+                command=command,
+                result=result,
+                error_message=error,
+            )
+
     async def _send_response(self, update: Update, message: str):
         """Send response message with Markdown parse error handling."""
         try:
@@ -170,51 +349,109 @@ class TelegramCommandHandler:
             await self._send_response(update, f"❌ Error: {str(e)}")
     
     async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /pause command."""
+        """Handle /pause command (v2.0: requires PIN)."""
         self.logger.info("Received /pause command")
+        chat_id = str(update.effective_chat.id)
 
         if not self._is_authorized(update):
             await self._send_response(update, "❌ Unauthorized")
             return
 
+        # v2.0: Rate limit check
+        if not self._check_rate_limit(chat_id):
+            await self._send_response(update, "⚠️ 请求过于频繁，请稍后再试")
+            return
+
+        # v2.0: PIN verification for control commands
+        if self.enable_pin:
+            pin = self._request_pin(chat_id, 'pause')
+            await self._send_response(
+                update,
+                f"🔐 *安全验证*\n\n"
+                f"请在 {self.pin_expiry_seconds} 秒内回复以下验证码以确认暂停交易:\n\n"
+                f"`{pin}`\n\n"
+                f"_直接回复此消息输入验证码_"
+            )
+            return
+
+        # Execute directly if PIN disabled
+        await self._execute_pause(update, chat_id)
+
+    async def _execute_pause(self, update: Update, chat_id: str):
+        """Execute pause command after verification."""
         try:
-            # Call strategy callback to pause
             result = self.strategy_callback('pause', {})
 
             if result.get('success'):
+                self._audit_command(chat_id, '/pause', 'success')
                 await self._send_response(update, result.get('message', '⏸️ Trading paused'))
             else:
-                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
+                error = result.get('error', 'Unknown')
+                self._audit_command(chat_id, '/pause', 'failed', error)
+                await self._send_response(update, f"❌ Error: {error}")
         except Exception as e:
+            self._audit_command(chat_id, '/pause', 'error', str(e))
             self.logger.error(f"Error handling /pause: {e}")
             await self._send_response(update, f"❌ Error: {str(e)}")
-    
+
     async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /resume command."""
+        """Handle /resume command (v2.0: requires PIN)."""
         self.logger.info("Received /resume command")
+        chat_id = str(update.effective_chat.id)
 
         if not self._is_authorized(update):
             await self._send_response(update, "❌ Unauthorized")
             return
 
+        # v2.0: Rate limit check
+        if not self._check_rate_limit(chat_id):
+            await self._send_response(update, "⚠️ 请求过于频繁，请稍后再试")
+            return
+
+        # v2.0: PIN verification for control commands
+        if self.enable_pin:
+            pin = self._request_pin(chat_id, 'resume')
+            await self._send_response(
+                update,
+                f"🔐 *安全验证*\n\n"
+                f"请在 {self.pin_expiry_seconds} 秒内回复以下验证码以确认恢复交易:\n\n"
+                f"`{pin}`\n\n"
+                f"_直接回复此消息输入验证码_"
+            )
+            return
+
+        # Execute directly if PIN disabled
+        await self._execute_resume(update, chat_id)
+
+    async def _execute_resume(self, update: Update, chat_id: str):
+        """Execute resume command after verification."""
         try:
-            # Call strategy callback to resume
             result = self.strategy_callback('resume', {})
 
             if result.get('success'):
+                self._audit_command(chat_id, '/resume', 'success')
                 await self._send_response(update, result.get('message', '▶️ Trading resumed'))
             else:
-                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
+                error = result.get('error', 'Unknown')
+                self._audit_command(chat_id, '/resume', 'failed', error)
+                await self._send_response(update, f"❌ Error: {error}")
         except Exception as e:
+            self._audit_command(chat_id, '/resume', 'error', str(e))
             self.logger.error(f"Error handling /resume: {e}")
             await self._send_response(update, f"❌ Error: {str(e)}")
     
     async def cmd_close(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /close command - show confirmation before closing position."""
+        """Handle /close command - show confirmation before closing position (v2.0: requires PIN)."""
         self.logger.info("Received /close command")
+        chat_id = str(update.effective_chat.id)
 
         if not self._is_authorized(update):
             await self._send_response(update, "❌ Unauthorized")
+            return
+
+        # v2.0: Rate limit check
+        if not self._check_rate_limit(chat_id):
+            await self._send_response(update, "⚠️ 请求过于频繁，请稍后再试")
             return
 
         # First get position info to show what will be closed
@@ -234,7 +471,20 @@ class TelegramCommandHandler:
         except Exception:
             position_info = ""
 
-        # Show confirmation with inline buttons
+        # v2.0: PIN verification for close command
+        if self.enable_pin:
+            pin = self._request_pin(chat_id, 'close')
+            await self._send_response(
+                update,
+                f"🔐 *安全验证 - 平仓确认*\n\n"
+                f"此操作将立即以市价平掉所有持仓。{position_info}\n\n"
+                f"请在 {self.pin_expiry_seconds} 秒内回复以下验证码确认平仓:\n\n"
+                f"`{pin}`\n\n"
+                f"_直接回复此消息输入验证码，或忽略以取消_"
+            )
+            return
+
+        # If PIN disabled, show confirmation with inline buttons
         keyboard = [
             [
                 InlineKeyboardButton("✅ 确认平仓", callback_data='confirm_close'),
@@ -250,6 +500,75 @@ class TelegramCommandHandler:
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
+
+    async def _execute_close(self, update_or_query, chat_id: str):
+        """Execute close command after verification."""
+        try:
+            result = self.strategy_callback('close', {})
+            if result.get('success'):
+                self._audit_command(chat_id, '/close', 'success')
+                if self.audit_logger:
+                    self.audit_logger.log_trading_action(chat_id, 'close_confirm', 'success')
+                message = "✅ *平仓成功*\n\n" + result.get('message', '持仓已平仓')
+            else:
+                error = result.get('error', 'Unknown')
+                self._audit_command(chat_id, '/close', 'failed', error)
+                message = f"❌ 平仓失败: {error}"
+
+            # Send response based on update type
+            if hasattr(update_or_query, 'message'):
+                await self._send_response(update_or_query, message)
+            else:
+                await update_or_query.edit_message_text(message, parse_mode='Markdown')
+
+        except Exception as e:
+            self._audit_command(chat_id, '/close', 'error', str(e))
+            self.logger.error(f"Error executing close: {e}")
+            error_msg = f"❌ 平仓失败: {str(e)}"
+            if hasattr(update_or_query, 'message'):
+                await self._send_response(update_or_query, error_msg)
+            else:
+                await update_or_query.edit_message_text(error_msg)
+
+    async def handle_pin_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle PIN verification input messages (v2.0)."""
+        chat_id = str(update.effective_chat.id)
+
+        # Only process if there's a pending PIN request for this chat
+        if chat_id not in self._pending_pins:
+            return  # Not a PIN input, ignore
+
+        # Authorization check
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        entered_pin = update.message.text.strip()
+
+        # Verify the PIN
+        result = self._verify_pin(chat_id, entered_pin)
+
+        if result['valid']:
+            command = result['command']
+            self.logger.info(f"PIN verified for command: {command}")
+
+            # Execute the pending command
+            if command == 'pause':
+                await self._execute_pause(update, chat_id)
+            elif command == 'resume':
+                await self._execute_resume(update, chat_id)
+            elif command == 'close':
+                await self._execute_close(update, chat_id)
+            else:
+                await self._send_response(update, f"⚠️ 未知命令: {command}")
+        else:
+            error = result['error']
+            if error == 'pin_expired':
+                await self._send_response(update, "❌ 验证码已过期，请重新发送命令")
+            elif error == 'too_many_attempts':
+                await self._send_response(update, "❌ 验证失败次数过多，请重新发送命令")
+            elif error == 'invalid_pin':
+                await self._send_response(update, "❌ 验证码错误，请重试")
 
     async def cmd_orders(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /orders command - view open orders."""
@@ -571,6 +890,14 @@ class TelegramCommandHandler:
 
                 # Register callback handler for inline keyboard buttons
                 self.application.add_handler(CallbackQueryHandler(self.handle_callback))
+
+                # v2.0: Register message handler for PIN verification input
+                # This must come after command handlers so commands are processed first
+                if self.enable_pin and MessageHandler and filters:
+                    self.application.add_handler(
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_pin_input)
+                    )
+                    self.logger.info("🔐 PIN verification handler registered")
 
                 self.logger.info("🤖 Starting Telegram command handler...")
 
