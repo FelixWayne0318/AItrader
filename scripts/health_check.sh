@@ -157,15 +157,23 @@ fi
 echo ""
 echo ">> 6. 检查服务运行时长"
 if systemctl is-active --quiet "$SERVICE_NAME"; then
-    UPTIME_SEC=$(systemctl show "$SERVICE_NAME" -p ActiveEnterTimestampMonotonic --value)
-    CURRENT_SEC=$(date +%s%N | cut -c1-16)  # 微秒级时间戳 (16 位)
-    RUNNING_SEC=$(( (CURRENT_SEC - UPTIME_SEC) / 1000000 ))
+    # 使用 systemd 内置的运行时长计算 (更可靠)
+    UPTIME_USEC=$(systemctl show "$SERVICE_NAME" -p ActiveEnterTimestampMonotonic --value)
+    CURRENT_USEC=$(cat /proc/uptime | awk '{printf "%.0f", $1 * 1000000}')
 
-    if [ "$RUNNING_SEC" -lt 60 ]; then
-        check_warn "服务运行时间不足 1 分钟 ($RUNNING_SEC 秒) - 可能刚重启或启动失败"
+    if [ -n "$UPTIME_USEC" ] && [ "$UPTIME_USEC" != "0" ] && [ -n "$CURRENT_USEC" ]; then
+        RUNNING_SEC=$(( (CURRENT_USEC - UPTIME_USEC) / 1000000 ))
+
+        if [ "$RUNNING_SEC" -lt 60 ]; then
+            check_warn "服务运行时间不足 1 分钟 ($RUNNING_SEC 秒) - 可能刚重启或启动失败"
+        else
+            RUNNING_MIN=$((RUNNING_SEC / 60))
+            info "服务运行时间: $RUNNING_MIN 分钟"
+        fi
     else
-        RUNNING_MIN=$((RUNNING_SEC / 60))
-        info "服务运行时间: $RUNNING_MIN 分钟"
+        # Fallback: 使用人类可读的时间格式
+        UPTIME_STR=$(systemctl show "$SERVICE_NAME" -p ActiveEnterTimestamp --value)
+        info "启动时间: $UPTIME_STR"
     fi
 fi
 
@@ -240,11 +248,13 @@ for CONFIG_FILE in configs/base.yaml configs/production.yaml; do
 
         # 检查仪器加载超时配置 (仅 production.yaml 或 base.yaml)
         if echo "$CONFIG_FILE" | grep -q "production\|base"; then
-            if grep -q "max_retries.*180" "$CONFIG_FILE" || grep -q "max_retries: 180" "$CONFIG_FILE"; then
-                check_pass "仪器加载超时已配置为 180 秒"
-            elif grep -q "max_retries" "$CONFIG_FILE"; then
-                RETRIES=$(grep "max_retries:" "$CONFIG_FILE" | awk '{print $2}' | head -1)
-                if [ -n "$RETRIES" ] && [ "$RETRIES" -lt 180 ]; then
+            # 提取 max_retries 值 (兼容有无空格的格式)
+            RETRIES=$(grep -E "^\s*max_retries:\s*[0-9]+" "$CONFIG_FILE" | grep -oE '[0-9]+' | head -1)
+
+            if [ -n "$RETRIES" ]; then
+                if [ "$RETRIES" -ge 180 ]; then
+                    check_pass "仪器加载超时已配置为 ${RETRIES} 秒"
+                else
                     check_warn "仪器加载超时仅为 ${RETRIES} 秒 (建议 180)"
                 fi
             else
