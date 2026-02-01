@@ -335,21 +335,58 @@ class TelegramBot:
     # Message Formatters
     
     def format_startup_message(self, instrument_id: str, config: Dict[str, Any]) -> str:
-        """Format strategy startup notification."""
+        """
+        Format strategy startup notification (v4.0 - dynamic content).
+
+        Parameters
+        ----------
+        instrument_id : str
+            Trading instrument identifier
+        config : dict
+            Strategy configuration containing:
+            - timeframe: str (e.g., "15m", "1m", "4h")
+            - enable_auto_sl_tp: bool
+            - enable_trailing_stop: bool
+            - enable_bracket_orders: bool (implied by enable_oco)
+            - mtf_enabled: bool
+            - sr_hard_control_enabled: bool
+        """
         safe_instrument = self.escape_markdown(str(instrument_id))
+
+        # Extract timeframe from config (default to 15m)
+        timeframe = config.get('timeframe', '15m')
+        # Convert to Chinese display format
+        timeframe_map = {
+            '1m': '1 分钟', '5m': '5 分钟', '15m': '15 分钟', '30m': '30 分钟',
+            '1h': '1 小时', '4h': '4 小时', '1d': '1 天',
+        }
+        timeframe_cn = timeframe_map.get(timeframe, timeframe)
+
+        # Build feature list dynamically based on config
+        features = []
+        if config.get('enable_auto_sl_tp', True):
+            features.append("• 自动止损/止盈")
+        if config.get('enable_oco', True):
+            features.append("• Bracket Orders (NautilusTrader)")
+        if config.get('enable_trailing_stop', False):
+            features.append("• 移动止损")
+        if config.get('mtf_enabled', False):
+            features.append("• 多时间框架分析 (MTF)")
+        if config.get('sr_hard_control_enabled', True):
+            features.append("• S/R Zone 硬风控 (v3.8)")
+        features.append("• TradingAgents AI 决策")  # Always enabled
+
+        features_str = '\n'.join(features) if features else "• 基础策略"
+
         return f"""
 🚀 *策略已启动*
 
 📊 *交易对*: {safe_instrument}
-⏰ *周期*: 15 分钟
+⏰ *周期*: {timeframe_cn}
 🕐 *时间*: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
 
 ✅ *已启用功能*:
-• 自动止损/止盈
-• Bracket Orders (NautilusTrader)
-• 移动止损
-• S/R Zone 硬风控 (v3.8)
-• TradingAgents AI 决策
+{features_str}
 
 🎯 策略正在监控市场...
 """
@@ -491,7 +528,98 @@ class TelegramBot:
         message += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
 
         return message
-    
+
+    def format_trade_execution(self, execution_data: Dict[str, Any]) -> str:
+        """
+        Format unified trade execution notification (v4.0).
+
+        Combines signal, fill, and position info into a single comprehensive message.
+        Replaces separate signal/fill/position notifications to reduce message spam.
+
+        Parameters
+        ----------
+        execution_data : dict
+            Contains:
+            - signal: BUY/SELL
+            - confidence: HIGH/MEDIUM/LOW
+            - side: LONG/SHORT
+            - quantity: float (BTC)
+            - entry_price: float
+            - sl_price: float (optional)
+            - tp_price: float (optional)
+            - rsi: float (optional)
+            - macd: float (optional)
+            - winning_side: str (Bull/Bear, optional)
+            - reasoning: str (optional)
+        """
+        signal = execution_data.get('signal', 'UNKNOWN')
+        confidence = execution_data.get('confidence', 'UNKNOWN')
+        side = execution_data.get('side', 'UNKNOWN')
+        quantity = execution_data.get('quantity', 0.0)
+        entry_price = execution_data.get('entry_price', 0.0)
+
+        # Risk management
+        sl_price = execution_data.get('sl_price')
+        tp_price = execution_data.get('tp_price')
+
+        # Technical (optional)
+        rsi = execution_data.get('rsi')
+        macd = execution_data.get('macd')
+
+        # AI analysis (optional)
+        winning_side = execution_data.get('winning_side', '')
+        reasoning = execution_data.get('reasoning', '')
+
+        # Emojis and translations
+        signal_emoji = "🟢" if signal == "BUY" else "🔴" if signal == "SELL" else "⚪"
+        side_cn = "多" if side == "LONG" else "空" if side == "SHORT" else side
+        confidence_cn = {'HIGH': '高', 'MEDIUM': '中', 'LOW': '低'}.get(confidence, confidence)
+
+        # Build message
+        msg = f"""{signal_emoji} *交易执行成功*
+
+*信号*: {'买入' if signal == 'BUY' else '卖出'} (信心: {confidence_cn})
+*成交*: {quantity:.4f} BTC @ ${entry_price:,.2f}
+*金额*: ${quantity * entry_price:,.2f}
+"""
+
+        # Add technical indicators if available
+        if rsi is not None or macd is not None:
+            msg += "\n📊 *技术指标*:\n"
+            if rsi is not None:
+                msg += f"  • RSI: {rsi:.1f}\n"
+            if macd is not None:
+                msg += f"  • MACD: {macd:.4f}\n"
+
+        # Add risk management
+        if sl_price or tp_price:
+            msg += "\n🛡️ *风险管理*:\n"
+            if sl_price:
+                sl_pct = ((sl_price / entry_price) - 1) * 100 if entry_price > 0 else 0
+                if side == "SHORT":
+                    sl_pct = -sl_pct  # SHORT position: SL above entry is positive distance
+                msg += f"  • 止损: ${sl_price:,.2f} ({abs(sl_pct):.2f}%)\n"
+            if tp_price:
+                tp_pct = ((tp_price / entry_price) - 1) * 100 if entry_price > 0 else 0
+                if side == "SHORT":
+                    tp_pct = -tp_pct  # SHORT position: TP below entry is positive profit
+                msg += f"  • 止盈: ${tp_price:,.2f} (+{abs(tp_pct):.2f}%)\n"
+
+        # Add AI analysis if available
+        if winning_side or reasoning:
+            msg += "\n🤖 *AI 分析*:\n"
+            if winning_side:
+                side_emoji_ai = "🐂" if winning_side.upper() == "BULL" else "🐻" if winning_side.upper() == "BEAR" else "⚖️"
+                side_cn_ai = "多方" if winning_side.upper() == "BULL" else "空方" if winning_side.upper() == "BEAR" else winning_side
+                msg += f"  {side_emoji_ai} {side_cn_ai}胜出\n"
+            if reasoning:
+                safe_reasoning = self.escape_markdown(reasoning[:100])
+                msg += f"  {safe_reasoning}{'...' if len(reasoning) > 100 else ''}\n"
+
+        msg += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+
+        return msg
+
     def format_error_alert(self, error_data: Dict[str, Any]) -> str:
         """Format error/warning notification."""
         level = error_data.get('level', 'ERROR')  # ERROR, WARNING, CRITICAL
@@ -526,11 +654,34 @@ class TelegramBot:
     # add a new formatter here.
 
     def format_trailing_stop_update(self, ts_data: Dict[str, Any]) -> str:
-        """Format trailing stop update notification."""
+        """
+        Format trailing stop update notification (v4.0 - direction aware).
+
+        Parameters
+        ----------
+        ts_data : dict
+            Contains:
+            - old_sl_price: float
+            - new_sl_price: float
+            - current_price: float
+            - profit_pct: float
+            - side: str (LONG or SHORT, optional)
+        """
         old_sl = ts_data.get('old_sl_price', 0.0)
         new_sl = ts_data.get('new_sl_price', 0.0)
         current_price = ts_data.get('current_price', 0.0)
         profit_pct = ts_data.get('profit_pct', 0.0)
+        side = ts_data.get('side', 'LONG')  # Default to LONG for backward compatibility
+
+        # Direction-aware emoji and text
+        if side == 'SHORT':
+            # SHORT position: stop loss moves DOWN to lock profit
+            direction_emoji = "⬇️"
+            direction_text = "止损已下移，锁定更多利润！"
+        else:
+            # LONG position: stop loss moves UP to lock profit
+            direction_emoji = "⬆️"
+            direction_text = "止损已上移，锁定更多利润！"
 
         return f"""
 🔄 *移动止损更新*
@@ -540,9 +691,9 @@ class TelegramBot:
 
 *止损价*:
   原: ${old_sl:,.2f}
-  新: ${new_sl:,.2f} ⬆️
+  新: ${new_sl:,.2f} {direction_emoji}
 
-🛡️ 止损已上移，锁定更多利润！
+🛡️ {direction_text}
 
 ⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
 """

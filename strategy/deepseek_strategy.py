@@ -310,6 +310,10 @@ class DeepSeekAIStrategy(Strategy):
         # Throttle trailing stop notifications (5 minutes = 300 seconds)
         self._last_trailing_stop_notify_time: float = 0.0
         self._trailing_stop_notify_throttle: float = 300.0  # seconds
+
+        # v4.0: Store pending execution data for unified Telegram notification
+        # This allows on_position_opened to send a comprehensive message with signal + fill + position
+        self._pending_execution_data: Optional[Dict[str, Any]] = None
         # Format: {
         #   "instrument_id": {
         #       "entry_price": float,
@@ -742,13 +746,34 @@ class DeepSeekAIStrategy(Strategy):
         # Send Telegram startup notification
         if self.telegram_bot and self.enable_telegram:
             try:
+                # v4.0: Extract timeframe from bar_type for display
+                bar_type_str = str(self.bar_type)
+                if '15-MINUTE' in bar_type_str:
+                    timeframe = '15m'
+                elif '5-MINUTE' in bar_type_str:
+                    timeframe = '5m'
+                elif '1-MINUTE' in bar_type_str:
+                    timeframe = '1m'
+                elif '30-MINUTE' in bar_type_str:
+                    timeframe = '30m'
+                elif '1-HOUR' in bar_type_str:
+                    timeframe = '1h'
+                elif '4-HOUR' in bar_type_str:
+                    timeframe = '4h'
+                elif '1-DAY' in bar_type_str:
+                    timeframe = '1d'
+                else:
+                    timeframe = '15m'  # Default
+
                 startup_msg = self.telegram_bot.format_startup_message(
                     instrument_id=str(self.instrument_id),
                     config={
+                        'timeframe': timeframe,
                         'enable_auto_sl_tp': self.enable_auto_sl_tp,
                         'enable_oco': self.enable_oco,
                         'enable_trailing_stop': self.enable_trailing_stop,
-                        'enable_partial_tp': hasattr(self, 'enable_partial_tp') and getattr(self, 'enable_partial_tp', False),
+                        'mtf_enabled': getattr(self, 'mtf_enabled', False),
+                        'sr_hard_control_enabled': True,  # Always enabled in current version
                     }
                 )
                 self.telegram_bot.send_message_sync(startup_msg)
@@ -2042,6 +2067,21 @@ class DeepSeekAIStrategy(Strategy):
         # Determine order side
         target_side = 'long' if signal == 'BUY' else 'short'
 
+        # v4.0: Store execution data for unified Telegram notification in on_position_opened
+        # This replaces the separate signal/fill/position notifications with one comprehensive message
+        if self.telegram_bot and self.enable_telegram:
+            judge_info = signal_data.get('judge_decision', {})
+            self._pending_execution_data = {
+                'signal': signal,
+                'confidence': confidence,
+                'target_quantity': target_quantity,
+                'price': price_data.get('price', 0),
+                'rsi': technical_data.get('rsi'),
+                'macd': technical_data.get('macd'),
+                'winning_side': judge_info.get('winning_side', ''),
+                'reasoning': signal_data.get('reason', ''),
+            }
+
         # Execute position management logic
         if current_position:
             self._manage_existing_position(
@@ -2050,31 +2090,8 @@ class DeepSeekAIStrategy(Strategy):
         else:
             self._open_new_position(target_side, target_quantity)
 
-        # Send Telegram notification AFTER execution (符合 TradingAgents 意图)
-        # This prevents "signal sent but not executed" confusion
-        if self.telegram_bot and self.enable_telegram and self.telegram_notify_signals:
-            try:
-                judge_info = signal_data.get('judge_decision', {})
-                winning_side = judge_info.get('winning_side', 'N/A')
-                debate_summary = signal_data.get('debate_summary', '')
-
-                signal_notification = self.telegram_bot.format_trade_signal({
-                    'signal': signal,
-                    'confidence': confidence,
-                    'price': price_data['price'],
-                    'timestamp': price_data['timestamp'],
-                    'rsi': technical_data.get('rsi', 0),
-                    'macd': technical_data.get('macd', 0),
-                    'support': technical_data.get('support', 0),
-                    'resistance': technical_data.get('resistance', 0),
-                    'reasoning': signal_data.get('reason', ''),
-                    'winning_side': winning_side,
-                    'debate_summary': debate_summary[:100] if debate_summary else '',
-                })
-                self.telegram_bot.send_message_sync(signal_notification)
-                self.log.info("✅ Telegram notification sent after execution")
-            except Exception as e:
-                self.log.warning(f"Failed to send Telegram signal notification: {e}")
+        # Note: Telegram notification is now sent in on_position_opened for new positions
+        # This ensures we have accurate fill price and SL/TP info
 
     def _calculate_position_size(
         self,
@@ -2451,18 +2468,9 @@ class DeepSeekAIStrategy(Strategy):
             f"(ID: {filled_order_id[:8]}...)"
         )
 
-        # Send Telegram order fill notification
-        if self.telegram_bot and self.enable_telegram and self.telegram_notify_fills:
-            try:
-                fill_msg = self.telegram_bot.format_order_fill({
-                    'side': event.order_side.name,
-                    'quantity': float(event.last_qty),
-                    'price': float(event.last_px),
-                    'order_type': 'MARKET',  # Could extract from order if needed
-                })
-                self.telegram_bot.send_message_sync(fill_msg)
-            except Exception as e:
-                self.log.warning(f"Failed to send Telegram fill notification: {e}")
+        # v4.0: Order fill notification is now combined with position notification
+        # See on_position_opened for unified trade execution message
+        # This reduces message spam (3 messages -> 1 comprehensive message)
     
 
     def on_order_rejected(self, event):
@@ -2538,7 +2546,8 @@ class DeepSeekAIStrategy(Strategy):
                     f"📊 Trailing stop initialized for {event.side.name} position @ ${entry_price:,.2f}"
                 )
 
-        # Send Telegram position opened notification
+        # v4.0: Send unified trade execution notification (combines signal + fill + position)
+        # This replaces 3 separate messages with 1 comprehensive notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
                 # Retrieve SL/TP prices from trailing_stop_state (v3.8)
@@ -2550,20 +2559,38 @@ class DeepSeekAIStrategy(Strategy):
                     sl_price = state.get("current_sl_price")
                     tp_price = state.get("current_tp_price")
 
-                position_msg = self.telegram_bot.format_position_update({
-                    'action': 'OPENED',
+                # Build unified execution data from pending data + event data
+                execution_data = {
                     'side': event.side.name,
                     'quantity': float(event.quantity),
                     'entry_price': float(event.avg_px_open),
-                    'current_price': float(event.avg_px_open),
-                    'pnl': 0.0,
-                    'pnl_pct': 0.0,
-                    'sl_price': sl_price,  # v3.8: Include SL price
-                    'tp_price': tp_price,  # v3.8: Include TP price
-                })
-                self.telegram_bot.send_message_sync(position_msg)
+                    'sl_price': sl_price,
+                    'tp_price': tp_price,
+                }
+
+                # Merge with pending execution data (signal info, technical indicators, AI analysis)
+                if self._pending_execution_data:
+                    execution_data.update({
+                        'signal': self._pending_execution_data.get('signal', 'BUY' if event.side.name == 'LONG' else 'SELL'),
+                        'confidence': self._pending_execution_data.get('confidence', 'MEDIUM'),
+                        'rsi': self._pending_execution_data.get('rsi'),
+                        'macd': self._pending_execution_data.get('macd'),
+                        'winning_side': self._pending_execution_data.get('winning_side', ''),
+                        'reasoning': self._pending_execution_data.get('reasoning', ''),
+                    })
+                    # Clear pending data after use
+                    self._pending_execution_data = None
+                else:
+                    # Fallback if no pending data (shouldn't happen normally)
+                    execution_data['signal'] = 'BUY' if event.side.name == 'LONG' else 'SELL'
+                    execution_data['confidence'] = 'MEDIUM'
+
+                # Send unified message
+                execution_msg = self.telegram_bot.format_trade_execution(execution_data)
+                self.telegram_bot.send_message_sync(execution_msg)
+                self.log.info("✅ Sent unified trade execution notification")
             except Exception as e:
-                self.log.warning(f"Failed to send Telegram position opened notification: {e}")
+                self.log.warning(f"Failed to send Telegram trade execution notification: {e}")
 
     def on_position_closed(self, event):
         """Handle position closed events."""
@@ -2942,6 +2969,7 @@ class DeepSeekAIStrategy(Strategy):
                             'new_sl_price': new_sl_price,
                             'current_price': current_price,
                             'profit_pct': profit_pct,
+                            'side': side,  # v4.0: Pass side for direction-aware message
                         })
                         self.telegram_bot.send_message_sync(ts_msg)
                         self._last_trailing_stop_notify_time = current_time

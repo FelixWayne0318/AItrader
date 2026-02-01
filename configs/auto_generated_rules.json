@@ -2069,12 +2069,72 @@
       "pattern_type": "contains",
       "created": "2026-02-01T08:30:16.507433",
       "auto_generated": true
+    },
+    {
+      "id": "2f1eaa3bd197",
+      "commit": "b2ea267",
+      "file": "main_live.py",
+      "message": "feat(telegram): Implement non-blocking message queue and enhanced security",
+      "pattern": "telegram_queue_enabled=config_manager.get('telegram', 'queue', 'enabled', default=True),",
+      "pattern_type": "contains",
+      "created": "2026-02-01T09:26:28.394358",
+      "auto_generated": true
+    },
+    {
+      "id": "6ad873d090ef",
+      "commit": "b2ea267",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "feat(telegram): Implement non-blocking message queue and enhanced security",
+      "pattern": "message_timeout=config.network_telegram_message_timeout,",
+      "pattern_type": "contains",
+      "created": "2026-02-01T09:26:28.419130",
+      "auto_generated": true
+    },
+    {
+      "id": "cb8b792ee2ef",
+      "commit": "b2ea267",
+      "file": "utils/audit_logger.py",
+      "message": "feat(telegram): Implement non-blocking message queue and enhanced security",
+      "pattern": "import json",
+      "pattern_type": "import",
+      "created": "2026-02-01T09:26:28.439182",
+      "auto_generated": true
+    },
+    {
+      "id": "8687b073168e",
+      "commit": "b2ea267",
+      "file": "utils/telegram_bot.py",
+      "message": "feat(telegram): Implement non-blocking message queue and enhanced security",
+      "pattern": "from utils.telegram_queue import TelegramMessageQueue, MessagePriority",
+      "pattern_type": "import",
+      "created": "2026-02-01T09:26:28.460076",
+      "auto_generated": true
+    },
+    {
+      "id": "8cabe0ea48ca",
+      "commit": "b2ea267",
+      "file": "utils/telegram_command_handler.py",
+      "message": "feat(telegram): Implement non-blocking message queue and enhanced security",
+      "pattern": "import random",
+      "pattern_type": "import",
+      "created": "2026-02-01T09:26:28.481938",
+      "auto_generated": true
+    },
+    {
+      "id": "b30d96e8b283",
+      "commit": "b2ea267",
+      "file": "utils/telegram_queue.py",
+      "message": "feat(telegram): Implement non-blocking message queue and enhanced security",
+      "pattern": "import queue",
+      "pattern_type": "import",
+      "created": "2026-02-01T09:26:28.502348",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-01T08:30:19.562936",
-    "count": 207,
+    "updated": "2026-02-01T09:26:34.632380",
+    "count": 213,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
