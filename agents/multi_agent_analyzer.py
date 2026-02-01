@@ -1137,9 +1137,19 @@ TREND INDICATORS (1D):
         if not data:
             return "SENTIMENT: Data not available"
 
-        net = data.get('net_sentiment') or 0
-        pos_ratio = data.get('positive_ratio') or 0
-        neg_ratio = data.get('negative_ratio') or 0
+        # Fix: Ensure numeric types for formatting (API may return strings)
+        try:
+            net = float(data.get('net_sentiment') or 0)
+        except (ValueError, TypeError):
+            net = 0.0
+        try:
+            pos_ratio = float(data.get('positive_ratio') or 0)
+        except (ValueError, TypeError):
+            pos_ratio = 0.0
+        try:
+            neg_ratio = float(data.get('negative_ratio') or 0)
+        except (ValueError, TypeError):
+            neg_ratio = 0.0
         sign = '+' if net >= 0 else ''
 
         # TradingAgents v3.3: Raw data only, AI interprets
@@ -1155,9 +1165,19 @@ MARKET SENTIMENT (Binance Long/Short Ratio):
         if not position:
             return "No current position (FLAT)"
 
-        qty = position.get('quantity') or 0
-        avg_px = position.get('avg_px') or 0
-        unrealized_pnl = position.get('unrealized_pnl') or 0
+        # Fix: Ensure numeric types for formatting (API may return strings)
+        try:
+            qty = float(position.get('quantity') or 0)
+        except (ValueError, TypeError):
+            qty = 0.0
+        try:
+            avg_px = float(position.get('avg_px') or 0)
+        except (ValueError, TypeError):
+            avg_px = 0.0
+        try:
+            unrealized_pnl = float(position.get('unrealized_pnl') or 0)
+        except (ValueError, TypeError):
+            unrealized_pnl = 0.0
 
         return f"""
 Side: {position.get('side', 'N/A')}
@@ -1405,7 +1425,10 @@ ORDER FLOW (Binance Taker Data):
             # Open Interest (v3.9: removed trend label for AI autonomy)
             oi = data.get('open_interest')
             if oi:
-                oi_btc = oi.get('value', 0)
+                try:
+                    oi_btc = float(oi.get('value', 0) or 0)
+                except (ValueError, TypeError):
+                    oi_btc = 0.0
                 parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
             else:
                 parts.append("- Open Interest: N/A")
@@ -1413,7 +1436,10 @@ ORDER FLOW (Binance Taker Data):
             # Funding Rate (v3.9: removed trend label for AI autonomy)
             funding = data.get('funding_rate')
             if funding:
-                rate = funding.get('value', 0)
+                try:
+                    rate = float(funding.get('value', 0) or 0)
+                except (ValueError, TypeError):
+                    rate = 0.0
                 rate_pct = rate * 100
                 parts.append(f"- Funding Rate: {rate_pct:.4f}%")
             else:
@@ -1639,16 +1665,23 @@ Reason: {status.get('message', 'Unknown')}
         ]
 
         # ========== IMBALANCE Section ==========
-        obi = data.get('obi', {})
-        simple_obi = obi.get('simple', 0)
-        weighted_obi = obi.get('weighted', 0)
-        adaptive_obi = obi.get('adaptive_weighted', weighted_obi)
-        decay_used = obi.get('decay_used', 0.8)
+        # Fix: Ensure numeric types for formatting (data may contain strings)
+        def _safe_float(val, default=0.0):
+            try:
+                return float(val) if val is not None else default
+            except (ValueError, TypeError):
+                return default
 
-        bid_vol_usd = obi.get('bid_volume_usd', 0)
-        ask_vol_usd = obi.get('ask_volume_usd', 0)
-        bid_vol_btc = obi.get('bid_volume_btc', 0)
-        ask_vol_btc = obi.get('ask_volume_btc', 0)
+        obi = data.get('obi', {})
+        simple_obi = _safe_float(obi.get('simple', 0))
+        weighted_obi = _safe_float(obi.get('weighted', 0))
+        adaptive_obi = _safe_float(obi.get('adaptive_weighted', weighted_obi))
+        decay_used = _safe_float(obi.get('decay_used', 0.8), 0.8)
+
+        bid_vol_usd = _safe_float(obi.get('bid_volume_usd', 0))
+        ask_vol_usd = _safe_float(obi.get('ask_volume_usd', 0))
+        bid_vol_btc = _safe_float(obi.get('bid_volume_btc', 0))
+        ask_vol_btc = _safe_float(obi.get('ask_volume_btc', 0))
 
         parts.append("IMBALANCE:")
         parts.append(f"  Simple OBI: {simple_obi:+.2f}")
@@ -1659,7 +1692,7 @@ Reason: {status.get('message', 'Unknown')}
 
         # ========== DYNAMICS Section (v2.0 Critical) ==========
         dynamics = data.get('dynamics', {})
-        samples_count = dynamics.get('samples_count', 0) if dynamics else 0
+        samples_count = int(_safe_float(dynamics.get('samples_count', 0))) if dynamics else 0
 
         parts.append("⭐ DYNAMICS (vs previous snapshot):")
         if samples_count > 0:
@@ -1671,14 +1704,15 @@ Reason: {status.get('message', 'Unknown')}
             trend = dynamics.get('trend', 'N/A')
 
             if obi_change is not None:
-                pct_str = f" ({obi_change_pct:+.1f}%)" if obi_change_pct is not None else ""
-                parts.append(f"  OBI Change: {obi_change:+.2f}{pct_str}")
+                obi_change_f = _safe_float(obi_change)
+                pct_str = f" ({_safe_float(obi_change_pct):+.1f}%)" if obi_change_pct is not None else ""
+                parts.append(f"  OBI Change: {obi_change_f:+.2f}{pct_str}")
             if bid_depth_change is not None:
-                parts.append(f"  Bid Depth Change: {bid_depth_change:+.1f}%")
+                parts.append(f"  Bid Depth Change: {_safe_float(bid_depth_change):+.1f}%")
             if ask_depth_change is not None:
-                parts.append(f"  Ask Depth Change: {ask_depth_change:+.1f}%")
+                parts.append(f"  Ask Depth Change: {_safe_float(ask_depth_change):+.1f}%")
             if spread_change is not None:
-                parts.append(f"  Spread Change: {spread_change:+.1f}%")
+                parts.append(f"  Spread Change: {_safe_float(spread_change):+.1f}%")
             parts.append(f"  Trend: {trend}")
         else:
             parts.append("  [First snapshot - no historical data yet]")
@@ -1688,12 +1722,12 @@ Reason: {status.get('message', 'Unknown')}
         gradient = data.get('pressure_gradient', {})
         if gradient:
             # Convert to percentage (values are 0-1 ratios)
-            bid_near_5 = gradient.get('bid_near_5', 0) * 100
-            bid_near_10 = gradient.get('bid_near_10', 0) * 100
-            bid_near_20 = gradient.get('bid_near_20', 0) * 100
-            ask_near_5 = gradient.get('ask_near_5', 0) * 100
-            ask_near_10 = gradient.get('ask_near_10', 0) * 100
-            ask_near_20 = gradient.get('ask_near_20', 0) * 100
+            bid_near_5 = _safe_float(gradient.get('bid_near_5', 0)) * 100
+            bid_near_10 = _safe_float(gradient.get('bid_near_10', 0)) * 100
+            bid_near_20 = _safe_float(gradient.get('bid_near_20', 0)) * 100
+            ask_near_5 = _safe_float(gradient.get('ask_near_5', 0)) * 100
+            ask_near_10 = _safe_float(gradient.get('ask_near_10', 0)) * 100
+            ask_near_20 = _safe_float(gradient.get('ask_near_20', 0)) * 100
             bid_conc = gradient.get('bid_concentration', 'N/A')
             ask_conc = gradient.get('ask_concentration', 'N/A')
 
@@ -1710,7 +1744,7 @@ Reason: {status.get('message', 'Unknown')}
             for band in bands:
                 range_str = band.get('range', '')
                 side = band.get('side', '').upper()
-                volume_usd = band.get('volume_usd', 0)
+                volume_usd = _safe_float(band.get('volume_usd', 0))
                 # Format volume in millions with 1 decimal
                 vol_str = f"${volume_usd/1e6:.1f}M" if volume_usd >= 1e6 else f"${volume_usd/1e3:.0f}K"
                 parts.append(f"  {range_str}: {side} {vol_str}")
@@ -1720,28 +1754,28 @@ Reason: {status.get('message', 'Unknown')}
         anomalies = data.get('anomalies', {})
         bid_anomalies = anomalies.get('bid_anomalies', [])
         ask_anomalies = anomalies.get('ask_anomalies', [])
-        threshold = anomalies.get('threshold_used', 3.0)
+        threshold = _safe_float(anomalies.get('threshold_used', 3.0), 3.0)
         threshold_reason = anomalies.get('threshold_reason', 'default')
 
         if bid_anomalies or ask_anomalies:
             parts.append(f"ANOMALIES (threshold={threshold:.1f}x, {threshold_reason}):")
             for anom in bid_anomalies[:3]:  # Show up to 3 per side
-                price = anom.get('price', 0)
-                amount = anom.get('amount', 0)
-                multiple = anom.get('multiple', 0)
+                price = _safe_float(anom.get('price', 0))
+                amount = _safe_float(anom.get('amount', 0))
+                multiple = _safe_float(anom.get('multiple', 0))
                 parts.append(f"  Bid: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
             for anom in ask_anomalies[:3]:
-                price = anom.get('price', 0)
-                amount = anom.get('amount', 0)
-                multiple = anom.get('multiple', 0)
+                price = _safe_float(anom.get('price', 0))
+                amount = _safe_float(anom.get('amount', 0))
+                multiple = _safe_float(anom.get('multiple', 0))
                 parts.append(f"  Ask: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
             parts.append("")
 
         # ========== LIQUIDITY Section ==========
         liquidity = data.get('liquidity', {})
         if liquidity:
-            spread_pct = liquidity.get('spread_pct', 0)
-            spread_usd = liquidity.get('spread_usd', 0)
+            spread_pct = _safe_float(liquidity.get('spread_pct', 0))
+            spread_usd = _safe_float(liquidity.get('spread_usd', 0))
 
             parts.append("LIQUIDITY:")
             parts.append(f"  Spread: {spread_pct:.2f}% (${spread_usd:.2f})")
@@ -1754,11 +1788,11 @@ Reason: {status.get('message', 'Unknown')}
                     key = f"{side}_1.0_btc"
                     est = slippage.get(key, {})
                     if isinstance(est, dict) and est.get('estimated') is not None:
-                        pct = est.get('estimated', 0)
-                        conf = est.get('confidence', 0)
+                        pct = _safe_float(est.get('estimated', 0))
+                        conf = _safe_float(est.get('confidence', 0))
                         range_vals = est.get('range', [0, 0])
-                        range_low = range_vals[0] if range_vals[0] is not None else 0
-                        range_high = range_vals[1] if range_vals[1] is not None else 0
+                        range_low = _safe_float(range_vals[0] if range_vals[0] is not None else 0)
+                        range_high = _safe_float(range_vals[1] if range_vals[1] is not None else 0)
                         side_label = "Buy" if side == "buy" else "Sell"
                         parts.append(
                             f"  Slippage ({side_label} 1 BTC): {pct:.2f}% "
