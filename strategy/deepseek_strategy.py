@@ -785,10 +785,7 @@ class DeepSeekAIStrategy(Strategy):
                     }
                 )
                 self.telegram_bot.send_message_sync(startup_msg)
-
-                # Send command help message
-                help_msg = self.telegram_bot.format_help_response()
-                self.telegram_bot.send_message_sync(help_msg)
+                # Note: Help message removed - users can use /help command if needed
 
             except Exception as e:
                 self.log.warning(f"Failed to send Telegram startup notification: {e}")
