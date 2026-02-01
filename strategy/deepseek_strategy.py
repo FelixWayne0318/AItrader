@@ -2750,26 +2750,49 @@ class DeepSeekAIStrategy(Strategy):
         try:
             parts = []
 
-            # Get RSI
-            if hasattr(self, 'indicator_manager') and self.indicator_manager:
-                rsi = self.indicator_manager.get_rsi()
-                if rsi is not None:
-                    parts.append(f"RSI={rsi:.0f}")
-
-            # Get trend from last signal
-            if hasattr(self, 'last_signal') and self.last_signal:
-                confidence = self.last_signal.get('confidence', 'N/A')
-                parts.append(f"confidence={confidence}")
-
-                # Get judge decision info
-                judge = self.last_signal.get('judge_decision', {})
-                if judge:
-                    winning = judge.get('winning_side', 'N/A')
-                    parts.append(f"winning_side={winning}")
-
             # Get cached price for context
             if hasattr(self, '_cached_current_price') and self._cached_current_price:
                 parts.append(f"price=${self._cached_current_price:,.0f}")
+
+            # Get technical indicators from indicator_manager
+            if hasattr(self, 'indicator_manager') and self.indicator_manager:
+                # RSI
+                if hasattr(self.indicator_manager, 'rsi') and self.indicator_manager.rsi.initialized:
+                    rsi = self.indicator_manager.rsi.value * 100
+                    parts.append(f"RSI={rsi:.0f}")
+
+                # MACD direction
+                if hasattr(self.indicator_manager, 'macd') and self.indicator_manager.macd.initialized:
+                    macd = self.indicator_manager.macd.value
+                    macd_signal = self.indicator_manager.macd_signal.value if hasattr(self.indicator_manager, 'macd_signal') else 0
+                    macd_dir = "bullish" if macd > macd_signal else "bearish"
+                    parts.append(f"MACD={macd_dir}")
+
+                # BB position (requires current price)
+                if hasattr(self, '_cached_current_price') and self._cached_current_price:
+                    try:
+                        tech_data = self.indicator_manager.get_technical_data(self._cached_current_price)
+                        bb_pos = tech_data.get('bb_position', 0.5) * 100
+                        parts.append(f"BB={bb_pos:.0f}%")
+                    except Exception:
+                        pass
+
+            # Get confidence and winning side from last signal
+            if hasattr(self, 'last_signal') and self.last_signal:
+                confidence = self.last_signal.get('confidence', 'N/A')
+                parts.append(f"conf={confidence}")
+
+                judge = self.last_signal.get('judge_decision', {})
+                if judge:
+                    winning = judge.get('winning_side', 'N/A')
+                    parts.append(f"winner={winning}")
+
+            # Get sentiment data if available
+            if hasattr(self, 'latest_sentiment_data') and self.latest_sentiment_data:
+                ls_ratio = self.latest_sentiment_data.get('long_short_ratio')
+                if ls_ratio:
+                    sentiment = "crowded_long" if ls_ratio > 2.0 else "crowded_short" if ls_ratio < 0.5 else "neutral"
+                    parts.append(f"sentiment={sentiment}")
 
             return ", ".join(parts) if parts else "N/A"
 
