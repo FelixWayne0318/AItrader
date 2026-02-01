@@ -219,9 +219,11 @@ class TelegramMessageQueue:
                 kwargs
             ))
 
-            # Persist to database if requested
-            if persist:
-                self._persist_message(message, priority, kwargs)
+            # NOTE: Do NOT persist to database here!
+            # If we persist AND add to memory queue, the message will be sent twice:
+            # 1. From memory queue (no msg_id, so DB not updated)
+            # 2. From DB (still 'pending', sent again)
+            # Database is only for crash recovery (queue full or shutdown)
 
             self.stats['enqueued'] += 1
             self.logger.debug(f"📥 Enqueued (P{priority}): {message[:50]}...")
