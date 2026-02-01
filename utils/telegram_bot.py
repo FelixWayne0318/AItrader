@@ -555,6 +555,7 @@ class TelegramBot:
             - macd: float (optional)
             - winning_side: str (Bull/Bear, optional)
             - reasoning: str (optional)
+            - action_taken: str (optional, v3.11) - specific action like 开多/反转/加仓
         """
         signal = execution_data.get('signal', 'UNKNOWN')
         confidence = execution_data.get('confidence', 'UNKNOWN')
@@ -574,14 +575,27 @@ class TelegramBot:
         winning_side = execution_data.get('winning_side', '')
         reasoning = execution_data.get('reasoning', '')
 
+        # v3.11: Specific action taken (开多/平空/反转/加仓/减仓)
+        action_taken = execution_data.get('action_taken', '')
+
         # Emojis and translations
         signal_emoji = "🟢" if signal == "BUY" else "🔴" if signal == "SELL" else "⚪"
         side_cn = "多" if side == "LONG" else "空" if side == "SHORT" else side
         confidence_cn = {'HIGH': '高', 'MEDIUM': '中', 'LOW': '低'}.get(confidence, confidence)
 
+        # v3.11: Determine action display
+        # Priority: action_taken > generic signal translation
+        if action_taken:
+            # Use specific action (e.g., "开多仓 0.001 BTC", "反转: 多→空")
+            action_display = action_taken
+        else:
+            # Fallback to generic signal
+            action_display = f"{'开多' if signal == 'BUY' else '开空'}"
+
         # Build message
         msg = f"""{signal_emoji} *交易执行成功*
 
+*动作*: {action_display}
 *信号*: {'买入' if signal == 'BUY' else '卖出'} (信心: {confidence_cn})
 *成交*: {quantity:.4f} BTC @ ${entry_price:,.2f}
 *金额*: ${quantity * entry_price:,.2f}

@@ -2124,6 +2124,12 @@ class DeepSeekAIStrategy(Strategy):
         else:
             self._open_new_position(target_side, target_quantity)
 
+        # v3.11: Add action_taken to pending execution data for Telegram notification
+        # This allows Telegram to show specific action (开多/平空/反转 etc.) instead of just BUY/SELL
+        if self._pending_execution_data and self._last_signal_status:
+            self._pending_execution_data['action_taken'] = self._last_signal_status.get('action_taken', '')
+            self._pending_execution_data['was_executed'] = self._last_signal_status.get('executed', False)
+
         # Note: Telegram notification is now sent in on_position_opened for new positions
         # This ensures we have accurate fill price and SL/TP info
 
