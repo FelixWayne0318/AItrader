@@ -289,6 +289,35 @@ sudo systemctl restart nautilus-trader
 sudo journalctl -u nautilus-trader -f --no-hostname
 ```
 
+### reinstall.sh 自动修复功能 (v2.1+)
+
+`reinstall.sh` 脚本现在包含自动诊断和修复功能，会在安装时检测并修复已知问题：
+
+**预检查** (Step 0):
+- ✅ Python 版本检查 (必须 3.11+)
+- ✅ 磁盘空间检查 (建议至少 5GB)
+- ✅ 内存检查 (建议至少 2GB)
+
+**配置验证和自动修复**:
+- ✅ 检查 `production.yaml` 是否包含 `network` 配置段
+- ✅ 自动添加缺少的配置段
+- ✅ 验证 `max_retries` 值是否足够 (至少 180 秒)
+- ✅ 自动更新过低的超时配置
+
+**安装后验证**:
+- ✅ 等待服务启动 (5 秒)
+- ✅ 运行健康检查脚本 (如果存在)
+- ✅ 检查服务日志中的致命错误
+- ✅ 报告服务状态和潜在问题
+
+**已知问题自动修复**:
+| 问题 | 自动修复 |
+|------|---------|
+| production.yaml 缺少 network 配置段 | ✅ 自动添加 |
+| max_retries 值过低 (< 180) | ✅ 自动更新到 180 |
+| Python 版本过低 | ⚠️ 警告 (需要手动升级) |
+| 磁盘/内存不足 | ⚠️ 警告 (需要手动处理) |
+
 ## 常用命令
 
 ```bash
@@ -519,6 +548,34 @@ Environment=AUTO_CONFIRM=true
     - 文件：`indicators/technical_manager.py`
     - 注意：**不要**从 `nautilus_trader.core.nautilus_pyo3` 导入指标
 
+14. **仪器加载超时问题** (服务启动后立即退出)
+    - 问题：服务启动后立即退出，日志显示 "Trading session ended"，exit code 0
+    - 根因：`load_all=True` 加载所有 Binance 合约需要 1-3 分钟，但 `max_retries: 60` 只给了 60 秒
+    - 症状：无错误消息，服务在 `on_start()` 等待仪器超时后调用 `self.stop()` 正常退出
+    - 修复：增加 `configs/production.yaml` 中的 `network.instrument_discovery.max_retries: 180`
+    - 文件：`configs/production.yaml`, `configs/base.yaml`
+    - 相关代码：`main_live.py:343-356` (InstrumentProviderConfig)
+    - 替代方案：改用 `load_ids=[instrument_id]` 只加载需要的仪器（启动更快，< 5 秒）
+
+15. **YAML 配置文件语法错误** (production.yaml 缺少 network 配置段)
+    - 问题：配置加载失败，报错 `expected '<document start>', but found '<scalar>'`
+    - 根因：`configs/production.yaml` 缺少 `network` 配置段
+    - 修复：添加完整的 `network.instrument_discovery` 配置段
+    - 文件：`configs/production.yaml`
+
+16. **健康检查脚本 bug** (health_check.sh v2.1-v2.3)
+    - **问题 1**: Bash 语法错误 (`[: 0\n0: integer expression expected`)
+      - 根因：`grep -ci` 返回值包含换行符，导致变量值为 `"0\n0"` 而非 `"0"`
+      - 修复：添加 `tr -d '\n'` 清除换行符
+    - **问题 2**: 服务运行时长计算错误 (显示 29480588 分钟)
+      - 根因：`date +%s%N` 与 `ActiveEnterTimestampMonotonic` 时间基准不同
+      - 修复：改用 `/proc/uptime` 计算 (与 monotonic clock 同步)
+    - **问题 3**: 仪器超时检测错误 (显示 2 秒而非 180 秒)
+      - 根因：`base.yaml` 中有多个 `max_retries` 字段，`grep` 提取到错误的值
+      - 修复：使用 Python YAML 解析器正确提取嵌套路径 `network.instrument_discovery.max_retries`
+      - 配置优先级：先检查 `production.yaml`，回退到 `base.yaml`
+    - 文件：`scripts/health_check.sh`
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
@@ -539,6 +596,9 @@ Environment=AUTO_CONFIRM=true
   # 正确：始终以 cd 开头
   cd /home/linuxuser/nautilus_AItrader && git status
   ```
+- ❌ **仪器加载超时配置不足** → ✅ **production.yaml 中设置 max_retries: 180** (`load_all=true` 需要 1-3 分钟)
+- ❌ **YAML 配置文件缺少必需配置段** → ✅ **确保 production.yaml 包含 network 配置段**
+- ❌ **使用 bash grep/awk 解析 YAML** → ✅ **使用 Python yaml.safe_load() 解析嵌套配置**
 
 ## 文件结构
 

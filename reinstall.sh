@@ -116,6 +116,39 @@ print_error() {
 # ==================== 主程序开始 ====================
 print_header
 
+# ==================== 0. 预检查 ====================
+print_step "0" "运行预检查..."
+
+# 检查 Python 版本
+if command -v python3 &> /dev/null; then
+    PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}' | cut -d'.' -f1,2)
+    PY_MAJOR=$(echo $PY_VERSION | cut -d'.' -f1)
+    PY_MINOR=$(echo $PY_VERSION | cut -d'.' -f2)
+    if [ "$PY_MAJOR" -lt 3 ] || ([ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 11 ]); then
+        print_warning "Python 版本过低: $PY_VERSION (需要 3.11+)"
+    else
+        print_success "Python 版本: $PY_VERSION"
+    fi
+fi
+
+# 检查磁盘空间 (至少 5GB)
+AVAIL_GB=$(df -BG "${HOME_DIR}" | awk 'NR==2 {print $4}' | sed 's/G//')
+if [ "$AVAIL_GB" -lt 5 ]; then
+    print_warning "磁盘空间不足: ${AVAIL_GB}GB (建议至少 5GB)"
+else
+    print_success "磁盘空间: ${AVAIL_GB}GB"
+fi
+
+# 检查内存 (至少 2GB)
+TOTAL_MEM_MB=$(free -m | awk 'NR==2 {print $2}')
+if [ "$TOTAL_MEM_MB" -lt 2048 ]; then
+    print_warning "内存不足: ${TOTAL_MEM_MB}MB (建议至少 2GB)"
+else
+    print_success "内存: ${TOTAL_MEM_MB}MB"
+fi
+
+print_success "预检查完成"
+
 STEP=1
 TOTAL_STEPS=0
 $INSTALL_TRADER && TOTAL_STEPS=$((TOTAL_STEPS + 5))
@@ -243,6 +276,45 @@ if $INSTALL_TRADER; then
         ln -sf "${ENV_PERMANENT}" .env
         print_warning "已创建配置模板，请稍后编辑"
     fi
+
+    # 验证并修复配置文件 (自动修复已知问题)
+    print_warning "验证配置文件..."
+
+    # 检查 production.yaml 是否存在 network 配置段
+    if ! grep -q "^network:" "${INSTALL_DIR}/configs/production.yaml" 2>/dev/null; then
+        print_warning "修复 production.yaml: 添加 network 配置段..."
+        cat >> "${INSTALL_DIR}/configs/production.yaml" << 'PRODEOF'
+
+network:
+  instrument_discovery:
+    max_retries: 180              # 增加到 180 秒 (3 分钟)
+    retry_interval: 1.0           # load_all=true 需要 1-3 分钟加载所有合约
+PRODEOF
+        print_success "已添加 network 配置段"
+    else
+        # 检查 max_retries 值
+        RETRIES=$(python3 -c "import yaml; print(yaml.safe_load(open('${INSTALL_DIR}/configs/production.yaml')).get('network', {}).get('instrument_discovery', {}).get('max_retries', 0))" 2>/dev/null || echo "0")
+        if [ "$RETRIES" -lt 180 ]; then
+            print_warning "修复 production.yaml: 增加 max_retries 到 180 秒..."
+            python3 << 'PYEOF'
+import yaml
+config_file = "${INSTALL_DIR}/configs/production.yaml"
+with open(config_file, 'r') as f:
+    config = yaml.safe_load(f) or {}
+if 'network' not in config:
+    config['network'] = {}
+if 'instrument_discovery' not in config['network']:
+    config['network']['instrument_discovery'] = {}
+config['network']['instrument_discovery']['max_retries'] = 180
+config['network']['instrument_discovery']['retry_interval'] = 1.0
+with open(config_file, 'w') as f:
+    yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+PYEOF
+            print_success "已更新 max_retries: 180"
+        fi
+    fi
+
+    print_success "配置验证完成"
 
     # 运行 setup.sh
     chmod +x setup.sh
@@ -415,6 +487,35 @@ CADDYEOF
         sudo systemctl restart caddy 2>/dev/null || true
         print_success "Caddy 已配置 (HTTP 模式)"
         print_warning "设置域名: ALGVEX_DOMAIN=algvex.com ./reinstall.sh --web-only"
+    fi
+fi
+
+# ==================== 安装后验证 ====================
+if $INSTALL_TRADER; then
+    print_step "验证" "验证 AItrader 配置..."
+
+    # 等待服务启动
+    sleep 5
+
+    # 运行健康检查 (如果存在)
+    if [ -f "${INSTALL_DIR}/scripts/health_check.sh" ]; then
+        chmod +x "${INSTALL_DIR}/scripts/health_check.sh"
+        echo ""
+        echo -e "${CYAN}运行健康检查...${NC}"
+        cd "${INSTALL_DIR}"
+        ./scripts/health_check.sh || print_warning "健康检查发现警告 (非致命)"
+    fi
+
+    # 检查服务是否正在运行
+    if systemctl is-active --quiet ${TRADER_SERVICE}; then
+        # 检查日志中是否有致命错误
+        FATAL_ERRORS=$(journalctl -u ${TRADER_SERVICE} -n 50 --no-pager 2>/dev/null | grep -i "fatal\|panic\|crash" | wc -l)
+        if [ "$FATAL_ERRORS" -gt 0 ]; then
+            print_warning "发现 ${FATAL_ERRORS} 个致命错误，请检查日志"
+            echo -e "${YELLOW}查看日志: sudo journalctl -u ${TRADER_SERVICE} -n 100 --no-pager${NC}"
+        else
+            print_success "服务运行正常，无致命错误"
+        fi
     fi
 fi
 
