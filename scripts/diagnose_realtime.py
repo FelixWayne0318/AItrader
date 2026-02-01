@@ -2202,9 +2202,9 @@ print("  诊断总结 (TradingAgents v3.8 - AI 决策 + 执行层风控)")
 print("=" * 70)
 print()
 
-# 显示架构状态 (v3.8: S/R Zone 执行层风控)
+# 显示架构状态 (S/R Zone v2.0 执行层风控)
 print(f"  📊 架构: TradingAgents v3.8 - AI 决策 + 执行层风控")
-print(f"     本地风控: S/R Zone Block (执行层，非方向预测)")
+print(f"     本地风控: S/R Zone v2.0 Block (执行层，含 level/source_type)")
 print()
 
 # TradingAgents: Judge 决策即最终决策
@@ -2840,12 +2840,13 @@ if not SUMMARY_MODE:
         print()
         print("  ✅ MTF v2.1 + Order Book 组件集成测试完成")
 
-        # 9.5.5 测试 S/R Zone Calculator (v3.8 新增)
+        # 9.5.5 测试 S/R Zone Calculator (v2.0 新增 level/source_type)
         print()
-        print("  [9.5.5] S/R Zone Calculator 测试 (v3.8):")
+        print("  [9.5.5] S/R Zone Calculator 测试 (v2.0):")
         try:
-            from utils.sr_zone_calculator import SRZoneCalculator
+            from utils.sr_zone_calculator import SRZoneCalculator, SRLevel, SRSourceType
             print("     ✅ SRZoneCalculator 导入成功")
+            print(f"     ✅ SRLevel/SRSourceType 类可用")
 
             # 获取当前价格和技术数据
             test_price = current_price if 'current_price' in dir() and current_price > 0 else 100000
@@ -2913,7 +2914,7 @@ if not SUMMARY_MODE:
                 print(f"           Level: {zone.level} | Type: {zone.source_type}")
                 print(f"           Sources: {', '.join(zone.sources)}")
 
-            # v11.14: 显示硬风控状态，增加触发说明
+            # v11.14/v11.16: 显示硬风控状态，增加触发说明 (支持 LONG/SHORT 和 BUY/SELL)
             hard_control = sr_result.get('hard_control', {})
             block_long = hard_control.get('block_long', False)
             block_short = hard_control.get('block_short', False)
@@ -2921,10 +2922,10 @@ if not SUMMARY_MODE:
 
             print(f"     ⚠️ 硬风控状态:")
 
-            # Block LONG 状态和触发情况
+            # Block LONG 状态和触发情况 (v3.12: 支持 LONG 和 BUY)
             if block_long:
-                if ai_signal == 'BUY':
-                    print(f"        Block LONG: True → ✅ 已触发 (AI 输出 BUY 被阻止)")
+                if ai_signal in ('LONG', 'BUY'):
+                    print(f"        Block LONG: True → ✅ 已触发 (AI 输出 {ai_signal} 被阻止)")
                 elif ai_signal == 'HOLD':
                     print(f"        Block LONG: True (AI 输出 HOLD，未触发)")
                 else:
@@ -2932,10 +2933,10 @@ if not SUMMARY_MODE:
             else:
                 print(f"        Block LONG: False")
 
-            # Block SHORT 状态和触发情况
+            # Block SHORT 状态和触发情况 (v3.12: 支持 SHORT 和 SELL)
             if block_short:
-                if ai_signal == 'SELL':
-                    print(f"        Block SHORT: True → ✅ 已触发 (AI 输出 SELL 被阻止)")
+                if ai_signal in ('SHORT', 'SELL'):
+                    print(f"        Block SHORT: True → ✅ 已触发 (AI 输出 {ai_signal} 被阻止)")
                 elif ai_signal == 'HOLD':
                     print(f"        Block SHORT: True (AI 输出 HOLD，未触发)")
                 else:
@@ -3800,7 +3801,7 @@ if not SUMMARY_MODE:
     print()
 
     print(f"  架构: TradingAgents v3.8 - AI 决策 + 执行层风控")
-    print(f"  本地风控: S/R Zone Block (执行层，非方向预测)")
+    print(f"  本地风控: S/R Zone v2.0 Block (执行层，含 level/source_type)")
     print()
     print(f"  AI 决策: {signal_data.get('signal')} (Confidence: {signal_data.get('confidence')})")
     print(f"  Winning Side: {signal_data.get('judge_decision', {}).get('winning_side', 'N/A')}")
