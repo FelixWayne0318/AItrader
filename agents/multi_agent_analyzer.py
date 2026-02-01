@@ -690,6 +690,7 @@ OUTPUT FORMAT (JSON only, no other text):
         Simplified v3.0: Let AI determine SL/TP based on market structure
         v3.7: Added BB position hardcoded checks for support/resistance risk control
         v3.8: Replaced BB-only check with multi-source S/R Zone check
+        v3.11: Removed preset rules from prompt, let AI decide autonomously
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
@@ -755,15 +756,9 @@ CURRENT PRICE: ${current_price:,.2f}
 
 YOUR TASK:
 1. Evaluate if the proposed trade makes sense given the market data
-2. Set stop loss based on market structure (support/resistance levels)
-3. Set take profit based on confidence level and potential targets
-4. Determine appropriate position size based on risk assessment
-
-GUIDELINES:
-- Stop loss should be placed at logical market structure levels
-- Higher confidence = larger position size, wider targets
-- Lower confidence = smaller position size, tighter stops
-- Consider the acknowledged risks when setting parameters
+2. Determine stop loss based on market structure
+3. Determine take profit based on potential targets
+4. Determine position size based on your risk assessment
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
