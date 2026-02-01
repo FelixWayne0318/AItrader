@@ -653,6 +653,7 @@ Focus on risks and bearish signals in the data."""
 
         Borrowed from: TradingAgents/agents/managers/research_manager.py
         Simplified v3.0: Let AI autonomously evaluate without hardcoded rules
+        v3.9: Removed duplicate S/R check from prompt (handled by _evaluate_risk)
         """
         prompt = f"""You are the Portfolio Manager evaluating the Bull vs Bear debate.
 Your role is to make a DEFINITIVE trading decision based on the debate's strongest arguments.
@@ -674,13 +675,7 @@ DECISION GUIDELINES:
 - One side almost always has an edge - find it and commit
 - HOLD is only for genuine uncertainty, not a safe default
 - Be decisive - missed opportunities cost money too
-
-SUPPORT/RESISTANCE RISK CHECK (IMPORTANT):
-- Before finalizing SHORT: Check if price is near support (BB Lower, within 2%)
-  → If yes, require VERY STRONG bearish evidence to proceed, otherwise HOLD
-- Before finalizing LONG: Check if price is near resistance (BB Upper, within 2%)
-  → If yes, require VERY STRONG bullish evidence to proceed, otherwise HOLD
-- Include this risk assessment in your "acknowledged_risks" if applicable
+- Support/Resistance risk is handled separately by the Risk Manager
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
