@@ -172,6 +172,17 @@ def calculate_sr_accuracy(predictions: List[Dict]) -> Dict:
 
 ## 四、交易绩效标准 (核心)
 
+### 4.0 盈利模式核心理念
+
+> **靠概率和盈亏比盈利，盈亏比根据 S/R 强度动态变化**
+
+```
+期望收益 = 胜率 × 平均盈利 - (1-胜率) × 平均亏损
+
+正常行情: 胜率 55% × 盈亏比 1.5:1 = 正期望
+极端行情: 胜率 50% × 盈亏比 3:1 = 更高期望 (顺势交易，放大止盈)
+```
+
 ### 4.1 A/B 测试设计
 
 ```
@@ -185,25 +196,137 @@ def calculate_sr_accuracy(predictions: List[Dict]) -> Dict:
                           vs
 ┌─────────────────────────────────────────────────────────────┐
 │  实验组 (B): 新系统                                          │
-│  ├─ 动态 SL: 基于支撑强度调整                                │
-│  ├─ 动态 TP: 基于阻力强度调整                                │
+│  ├─ 动态 SL: 基于支撑强度调整 (1.5%-2.5%)                   │
+│  ├─ 动态 TP: 基于阻力强度 + 行情类型 (1%-8%)                │
+│  │   ├─ 正常行情: 根据最近 S/R 距离设置                     │
+│  │   └─ 极端行情: 顺势放大 2-3 倍                           │
 │  ├─ 20 值历史数据上下文                                      │
 │  └─ AI 可见趋势变化                                          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 4.2 核心绩效指标
+### 4.2 动态止盈策略 (核心创新)
+
+#### 4.2.1 止盈决策因素
+
+| 因素 | 影响 | 权重 |
+|-----|------|-----|
+| **S/R 强度** | 强阻力 → 保守 TP，弱/无阻力 → 激进 TP | 高 |
+| **行情类型** | 极端行情顺势 → 放大 TP | 高 |
+| **信心等级** | HIGH → 更大 TP 空间 | 中 |
+| **S/R 距离** | 距离近 → TP 设在 S/R 前 | 中 |
+
+#### 4.2.2 动态止盈公式
+
+```python
+def calculate_dynamic_tp(
+    signal: str,           # LONG/SHORT
+    confidence: str,       # HIGH/MEDIUM/LOW
+    market_condition: str, # NORMAL/EXTREME_BULLISH/EXTREME_BEARISH
+    sr_strength: str,      # STRONG/MEDIUM/WEAK/NONE
+    nearest_sr_distance: float,  # 最近 S/R 距离 (%)
+) -> float:
+    """
+    动态计算止盈比例
+
+    核心逻辑:
+    1. 极端行情顺势 → 放大止盈 (捕捉大行情)
+    2. S/R 强度弱/无 → 更大止盈空间
+    3. S/R 强度强且距离近 → 止盈设在 S/R 前
+    """
+    # 基础止盈 (根据信心)
+    base_tp = {
+        'HIGH': 0.03,    # 3%
+        'MEDIUM': 0.02,  # 2%
+        'LOW': 0.01,     # 1%
+    }[confidence]
+
+    # 极端行情放大系数 (顺势交易)
+    extreme_multiplier = 1.0
+    if market_condition == 'EXTREME_BULLISH' and signal == 'LONG':
+        extreme_multiplier = 2.5  # 极端利多做多，放大 2.5 倍
+    elif market_condition == 'EXTREME_BEARISH' and signal == 'SHORT':
+        extreme_multiplier = 2.5  # 极端利空做空，放大 2.5 倍
+    elif market_condition == 'EXTREME_BULLISH' and signal == 'SHORT':
+        extreme_multiplier = 0.7  # 逆势，收紧止盈
+    elif market_condition == 'EXTREME_BEARISH' and signal == 'LONG':
+        extreme_multiplier = 0.7  # 逆势，收紧止盈
+
+    # S/R 强度调整
+    sr_multiplier = 1.0
+    dynamic_tp = base_tp * extreme_multiplier
+
+    if sr_strength == 'STRONG':
+        if nearest_sr_distance < dynamic_tp:
+            # 强 S/R 在止盈范围内，设在 S/R 前 10%
+            return nearest_sr_distance * 0.9
+        else:
+            sr_multiplier = 0.9  # 略微保守
+    elif sr_strength == 'MEDIUM':
+        sr_multiplier = 1.0  # 标准
+    elif sr_strength == 'WEAK':
+        sr_multiplier = 1.2  # 可以更激进
+    elif sr_strength == 'NONE':
+        sr_multiplier = 1.5  # 无阻力，最激进
+
+    final_tp = dynamic_tp * sr_multiplier
+
+    # 安全边界
+    return max(0.005, min(final_tp, 0.10))  # 0.5% - 10%
+```
+
+#### 4.2.3 止盈场景示例
+
+| 场景 | 信心 | 行情 | S/R | TP 计算 | 最终 TP |
+|-----|------|------|-----|---------|--------|
+| 正常做多，强阻力近 | MEDIUM | NORMAL | STRONG@2% | 2%×1×0.9=1.8%, 但 S/R@2% | **1.8%** |
+| 正常做多，无阻力 | MEDIUM | NORMAL | NONE | 2%×1×1.5 | **3%** |
+| 极端利多做多，弱阻力 | HIGH | EXTREME_BULL | WEAK | 3%×2.5×1.2 | **9%→8%** (上限) |
+| 极端利空做空，无阻力 | MEDIUM | EXTREME_BEAR | NONE | 2%×2.5×1.5 | **7.5%** |
+| 极端利多逆势做空 | LOW | EXTREME_BULL | - | 1%×0.7×1 | **0.7%** |
+
+### 4.3 核心绩效指标
 
 | 指标 | 定义 | 目标改进 | 最低接受 |
 |-----|------|---------|---------|
 | **胜率 (Win Rate)** | 盈利交易 / 总交易 | +5% | 不低于基准 |
-| **盈亏比 (R:R)** | 平均盈利 / 平均亏损 | +15% | +5% |
+| **盈亏比 (R:R)** | 平均盈利 / 平均亏损 (动态) | +20% | +10% |
 | **最大回撤 (MDD)** | 最大峰谷跌幅 | -10% | 不高于基准 |
 | **Sharpe Ratio** | (收益-无风险) / 波动率 | +0.2 | 不低于基准 |
-| **Profit Factor** | 总盈利 / 总亏损 | +10% | +5% |
-| **平均持仓时间** | 开仓到平仓时间 | 记录变化 | 无硬性要求 |
+| **Profit Factor** | 总盈利 / 总亏损 | +15% | +5% |
+| **极端行情捕获率** | 极端行情盈利次数 / 极端行情交易次数 | ≥50% | ≥40% |
 
-### 4.3 计算公式
+### 4.4 盈亏比分布分析
+
+```python
+def analyze_risk_reward_distribution(trades: List[Trade]) -> Dict:
+    """
+    分析盈亏比分布，验证动态止盈效果
+    """
+    # 按行情类型分组
+    normal_trades = [t for t in trades if t.market_condition == 'NORMAL']
+    extreme_trades = [t for t in trades if 'EXTREME' in t.market_condition]
+
+    # 计算各组盈亏比
+    def calc_rr(trade_list):
+        wins = [t for t in trade_list if t.pnl > 0]
+        losses = [t for t in trade_list if t.pnl < 0]
+        avg_win = sum(t.pnl_pct for t in wins) / len(wins) if wins else 0
+        avg_loss = abs(sum(t.pnl_pct for t in losses) / len(losses)) if losses else 1
+        return avg_win / avg_loss if avg_loss > 0 else 0
+
+    return {
+        'normal_rr': calc_rr(normal_trades),      # 目标: 1.2-1.5
+        'extreme_rr': calc_rr(extreme_trades),    # 目标: 2.5-4.0
+        'overall_rr': calc_rr(trades),
+        'extreme_trade_pct': len(extreme_trades) / len(trades) if trades else 0,
+    }
+
+# 验收标准:
+# - 正常行情盈亏比: 1.2-1.5
+# - 极端行情盈亏比: 2.5-4.0 (顺势交易)
+# - 极端行情应占总交易 10-20%
+```
 
 ```python
 def calculate_trading_metrics(trades: List[Trade]) -> Dict:
@@ -372,21 +495,146 @@ def analyze_ai_reasoning(reasoning_text: str) -> Dict:
 
 ## 六、风险控制标准
 
-### 6.1 异常场景处理
+### 6.0 风险控制核心理念
+
+> **极端行情是机会，关键是识别方向和控制风险，而不是一味回避**
+
+```
+错误思路: 极端行情 → 回退保守策略 → 错失大行情
+正确思路: 极端行情 → 识别方向 → 顺势交易 → 放大止盈 → 控制风险
+```
+
+### 6.1 极端行情处理策略
+
+| 行情类型 | 信号方向 | 止损 | 止盈 | 仓位 |
+|---------|---------|------|------|------|
+| **极端利空** | 顺势做空 | 保持 2% | **放大到 5-8%** | 标准或略降 |
+| **极端利多** | 顺势做多 | 保持 2% | **放大到 5-8%** | 标准或略降 |
+| **极端利空** | 逆势做多 | 收紧 1.5% | 收紧 1% | 降低 50% |
+| **极端利多** | 逆势做空 | 收紧 1.5% | 收紧 1% | 降低 50% |
+| **剧烈震荡** | 方向不明 | 标准 2% | 标准 | 降低 30-50% |
+
+### 6.2 异常场景处理
 
 | 风险场景 | 检测条件 | 预期行为 | 验收标准 |
 |---------|---------|---------|---------|
-| **极端波动** | 5分钟波动 >3% | 回退到保守 SL/TP (固定 2%) | 100% 触发 |
+| **极端行情 (方向明确)** | 5分钟波动 >3% 且趋势明确 | 顺势交易，放大止盈 | 正确识别方向 |
+| **极端行情 (方向不明)** | 5分钟波动 >3% 且震荡 | 减仓或观望 | 100% 触发 |
 | **S/R 数据缺失** | nearest_support=None | 使用默认值，不崩溃 | 100% 正常运行 |
 | **历史数据不足** | len(history) < 10 | 标记数据质量低，告知 AI | 100% 正确标记 |
 | **API 超时** | 数据获取 >5秒 | 使用缓存数据 | 100% 降级成功 |
 | **连续亏损** | 3 次连续止损 | 降低仓位或发出警告 | 可配置触发 |
+| **流动性不足** | 订单簿深度低 | 减小仓位，避免滑点 | 100% 检测 |
 
-### 6.2 回退机制测试
+### 6.3 极端行情识别与处理
 
 ```python
+def handle_extreme_market(
+    volatility_5min: float,
+    price_change_1h: float,
+    signal: str,
+    sr_strength: str,
+) -> Dict:
+    """
+    极端行情处理逻辑
+
+    核心原则:
+    1. 极端行情顺势交易，放大止盈
+    2. 逆势交易收紧止盈，降低仓位
+    3. 方向不明时谨慎
+    """
+    result = {
+        'market_condition': 'NORMAL',
+        'tp_multiplier': 1.0,
+        'sl_multiplier': 1.0,
+        'position_multiplier': 1.0,
+        'action': 'NORMAL_TRADE',
+    }
+
+    # 检测极端行情
+    is_extreme = volatility_5min > 0.03  # 5分钟波动 >3%
+
+    if not is_extreme:
+        return result
+
+    # 判断方向
+    is_bullish = price_change_1h > 0.03   # 1小时涨幅 >3%
+    is_bearish = price_change_1h < -0.03  # 1小时跌幅 >3%
+
+    if is_bullish:
+        result['market_condition'] = 'EXTREME_BULLISH'
+        if signal == 'LONG':
+            # 极端利多做多 = 顺势
+            result['tp_multiplier'] = 2.5  # 放大止盈
+            result['action'] = 'TREND_FOLLOW_LONG'
+        else:
+            # 极端利多做空 = 逆势
+            result['tp_multiplier'] = 0.7
+            result['sl_multiplier'] = 0.75  # 收紧止损
+            result['position_multiplier'] = 0.5
+            result['action'] = 'COUNTER_TREND_SHORT'
+
+    elif is_bearish:
+        result['market_condition'] = 'EXTREME_BEARISH'
+        if signal == 'SHORT':
+            # 极端利空做空 = 顺势
+            result['tp_multiplier'] = 2.5  # 放大止盈
+            result['action'] = 'TREND_FOLLOW_SHORT'
+        else:
+            # 极端利空做多 = 逆势
+            result['tp_multiplier'] = 0.7
+            result['sl_multiplier'] = 0.75
+            result['position_multiplier'] = 0.5
+            result['action'] = 'COUNTER_TREND_LONG'
+
+    else:
+        # 方向不明的剧烈震荡
+        result['market_condition'] = 'EXTREME_VOLATILE'
+        result['position_multiplier'] = 0.5
+        result['action'] = 'REDUCE_EXPOSURE'
+
+    return result
+```
+
+### 6.4 回退机制测试
+
+```python
+def test_extreme_market_handling():
+    """测试极端行情处理"""
+
+    # 场景 1: 极端利多顺势做多
+    result = handle_extreme_market(
+        volatility_5min=0.05,
+        price_change_1h=0.05,
+        signal='LONG',
+        sr_strength='WEAK'
+    )
+    assert result['market_condition'] == 'EXTREME_BULLISH'
+    assert result['tp_multiplier'] == 2.5  # 放大止盈
+    assert result['action'] == 'TREND_FOLLOW_LONG'
+
+    # 场景 2: 极端利空顺势做空
+    result = handle_extreme_market(
+        volatility_5min=0.05,
+        price_change_1h=-0.05,
+        signal='SHORT',
+        sr_strength='NONE'
+    )
+    assert result['market_condition'] == 'EXTREME_BEARISH'
+    assert result['tp_multiplier'] == 2.5  # 放大止盈
+
+    # 场景 3: 逆势交易 - 应收紧
+    result = handle_extreme_market(
+        volatility_5min=0.05,
+        price_change_1h=0.05,
+        signal='SHORT',  # 逆势
+        sr_strength='STRONG'
+    )
+    assert result['tp_multiplier'] == 0.7  # 收紧止盈
+    assert result['position_multiplier'] == 0.5  # 降低仓位
+
 def test_fallback_mechanisms():
-    """测试各种异常场景的回退机制"""
+    """测试其他异常场景的回退机制"""
 
     # 场景 1: S/R 数据缺失
     result = calculate_sl_tp(sr_zone=None, confidence='MEDIUM')
@@ -397,22 +645,18 @@ def test_fallback_mechanisms():
     quality = assess_data_quality(history, required=20)
     assert quality['is_sufficient'] == False
     assert quality['warning'] == 'Insufficient history data'
-
-    # 场景 3: 极端波动
-    volatility = calculate_5min_volatility()
-    if volatility > 0.03:  # 3%
-        config = get_risk_config()
-        assert config['use_conservative_sl_tp'] == True
 ```
 
-### 6.3 安全边界
+### 6.5 安全边界
 
 | 参数 | 硬限制 | 原因 |
 |-----|-------|------|
 | **最大止损** | ≤5% | 防止单笔巨亏 |
 | **最小止损** | ≥0.5% | 避免被噪音止损 |
-| **最大止盈** | ≤10% | 避免贪婪 |
+| **最大止盈** | ≤10% | 即使极端行情也有上限 |
 | **最小止盈** | ≥0.5% | 覆盖手续费 |
+| **最小仓位** | ≥10% 标准仓位 | 保持参与度 |
+| **逆势最大仓位** | ≤50% 标准仓位 | 控制逆势风险 |
 
 ---
 
