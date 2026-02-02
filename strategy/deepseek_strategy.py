@@ -4042,7 +4042,7 @@ class DeepSeekAIStrategy(Strategy):
 
             # Calculate stats from session data
             with self._state_lock:
-                timer_count = self.timer_count
+                timer_count = getattr(self, '_timer_count', 0)
                 signals_generated = getattr(self, '_signals_generated_today', timer_count)
                 signals_executed = getattr(self, '_signals_executed_today', 0)
 
