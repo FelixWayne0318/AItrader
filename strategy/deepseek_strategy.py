@@ -2292,31 +2292,32 @@ class DeepSeekAIStrategy(Strategy):
             - peak_pnl_pct, worst_pnl_pct, entry_confidence (Tier 2)
             - margin_used_pct (Tier 2)
         """
-        # Get open positions for this instrument
-        positions = self.cache.positions_open(instrument_id=self.instrument_id)
-
-        # v4.9: Fall back to Binance API if NautilusTrader cache is empty
-        # This handles server restart scenarios where cache is cleared but position still exists on Binance
-        use_binance_fallback = False
+        # v4.9.1: PRIORITY - Always try Binance API first for ground truth
+        # AI decisions must be based on real exchange data, not potentially stale cache
+        # This handles: server restart, manual trades on Binance web/app, cache sync issues
+        use_binance_data = False
         binance_position = None
 
-        if not positions:
-            # Try Binance API to check if position exists on exchange
-            try:
-                symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
-                binance_positions = self.binance_account.get_positions(symbol)
-                if binance_positions:
-                    binance_position = binance_positions[0]
-                    use_binance_fallback = True
-                    self._log.info(f"Using Binance API fallback for position data: {symbol}")
-            except Exception as e:
-                self._log.warning(f"Binance position fallback failed: {e}")
+        try:
+            symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+            binance_positions = self.binance_account.get_positions(symbol)
+            if binance_positions:
+                binance_position = binance_positions[0]
+                use_binance_data = True
+                self._log.debug(f"Using Binance API for real-time position data: {symbol}")
+        except Exception as e:
+            self._log.warning(f"Binance API position fetch failed, falling back to cache: {e}")
 
-        if not positions and not use_binance_fallback:
+        # Fallback to NautilusTrader cache only if Binance API failed
+        positions = None
+        if not use_binance_data:
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+
+        if not positions and not use_binance_data:
             return None
 
-        # v4.9: Handle Binance fallback data format
-        if use_binance_fallback and binance_position:
+        # v4.9.1: Handle Binance API data format (priority source)
+        if use_binance_data and binance_position:
             # Parse Binance position data format
             position_amt = float(binance_position.get('positionAmt', 0))
             if position_amt == 0:
@@ -2470,7 +2471,7 @@ class DeepSeekAIStrategy(Strategy):
                 'max_drawdown_duration_bars': max_drawdown_duration_bars,
                 'consecutive_lower_lows': consecutive_lower_lows,
                 # v4.9: Source indicator
-                '_source': 'binance_api',
+                '_source': 'binance_api_realtime',  # v4.9.1: Priority source for ground truth
             }
 
         # Get the first open position (should only be one for netting OMS)
@@ -2703,6 +2704,8 @@ class DeepSeekAIStrategy(Strategy):
                 'max_drawdown_pct': max_drawdown_pct,
                 'max_drawdown_duration_bars': max_drawdown_duration_bars,
                 'consecutive_lower_lows': consecutive_lower_lows,
+                # v4.9.1: Source indicator (fallback when Binance API failed)
+                '_source': 'nautilus_cache_fallback',
             }
 
         return None
