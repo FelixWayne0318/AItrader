@@ -95,9 +95,9 @@ class MTFComponentTester(DiagnosticStep):
             )
 
             if klines:
-                result = processor.process(klines)
+                result = processor.process_klines(klines)
                 if result:
-                    print(f"     ✅ process: buy_ratio={result.get('buy_ratio', 0):.4f}")
+                    print(f"     ✅ process_klines: buy_ratio={result.get('buy_ratio', 0):.4f}")
                     print(f"        cvd_trend: {result.get('cvd_trend', 'N/A')}")
                     print(f"        volume_usdt: ${result.get('volume_usdt', 0):,.0f}")
 
