@@ -264,26 +264,53 @@ class AIInputDataValidator(DiagnosticStep):
         print()
 
     def _print_account_context(self) -> None:
-        """Print account context (v4.7)."""
+        """
+        Print account context (v4.7).
+
+        v4.8.1: Fixed to use correct field names matching production _get_account_context()
+        """
         ac = self.ctx.account_context
 
         if ac:
             print("  [9] account_context (v4.7 Portfolio Risk - 13 fields):")
-            print(f"      total_balance:   ${ac.get('total_balance', 0):,.2f}")
-            print(f"      available:       ${ac.get('available_balance', 0):,.2f}")
-            print(f"      margin_used:     ${ac.get('margin_used', 0):,.2f}")
-            print(f"      margin_ratio:    {ac.get('margin_ratio', 0):.2f}%")
-            print(f"      max_position:    ${ac.get('max_position_value', 0):,.2f}")
-            print(f"      available_cap:   ${ac.get('available_capacity', 0):,.2f}")
-            print(f"      capacity_used:   {ac.get('capacity_used_pct', 0):.1f}%")
-            print(f"      leverage:        {ac.get('leverage', 1)}x")
 
-            # v4.7 portfolio risk
-            print(f"      unrealized_pnl:  ${ac.get('unrealized_pnl_total', 0):,.2f}")
-            print(f"      open_positions:  {ac.get('open_positions_count', 0)}")
-            print(f"      daily_pnl:       ${ac.get('daily_pnl_usd', 0):,.2f}")
-            print(f"      weekly_pnl:      ${ac.get('weekly_pnl_usd', 0):,.2f}")
-            print(f"      risk_score:      {ac.get('portfolio_risk_score', 0)}/100")
+            # Core fields (8 fields) - v4.8.1 correct names
+            print(f"      equity:             ${ac.get('equity', 0):,.2f}")
+            print(f"      leverage:           {ac.get('leverage', 1)}x")
+            print(f"      max_position_ratio: {ac.get('max_position_ratio', 0)*100:.0f}%")
+            print(f"      max_position_value: ${ac.get('max_position_value', 0):,.2f}")
+            print(f"      current_pos_value:  ${ac.get('current_position_value', 0):,.2f}")
+            print(f"      available_capacity: ${ac.get('available_capacity', 0):,.2f}")
+            print(f"      capacity_used_pct:  {ac.get('capacity_used_pct', 0):.1f}%")
+            print(f"      can_add_position:   {ac.get('can_add_position', False)}")
+
+            # v4.7 Portfolio-Level Risk Fields (5 fields)
+            print()
+            print("      [v4.7 Portfolio Risk]:")
+            print(f"      unrealized_pnl:     ${ac.get('total_unrealized_pnl_usd', 0):,.2f}")
+
+            liq_buffer = ac.get('liquidation_buffer_portfolio_min_pct')
+            if liq_buffer is not None:
+                risk_emoji = "🔴" if liq_buffer < 10 else "🟡" if liq_buffer < 15 else "🟢"
+                print(f"      min_liq_buffer:     {risk_emoji} {liq_buffer:.1f}%")
+            else:
+                print(f"      min_liq_buffer:     N/A")
+
+            daily_funding = ac.get('total_daily_funding_cost_usd')
+            if daily_funding is not None:
+                print(f"      daily_funding_cost: ${daily_funding:,.2f}")
+            else:
+                print(f"      daily_funding_cost: N/A")
+
+            cumulative_funding = ac.get('total_cumulative_funding_paid_usd')
+            if cumulative_funding is not None:
+                print(f"      cumulative_funding: ${cumulative_funding:,.2f}")
+            else:
+                print(f"      cumulative_funding: N/A")
+
+            can_safely = ac.get('can_add_position_safely', False)
+            safety_emoji = "✅" if can_safely else "⚠️"
+            print(f"      can_add_safely:     {safety_emoji} {can_safely}")
         else:
             print("  [9] account_context: None (未获取)")
 

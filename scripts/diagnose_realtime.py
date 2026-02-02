@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.4 (v11.16 功能完整恢复版)
+实盘信号诊断脚本 v2.4.1 (v11.16 功能完整恢复版)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.4.1 更新:
+- 新增: TradingAgents v3.3 架构验证 (已移除规则, AI接收数据, MTF状态估算)
+- 新增: 诊断总结 box (与 v11.14 一致的格式)
+- 新增: [分析5] 触发交易所需条件 (BUY/SELL 信号条件检查)
+- 修正: account_context 字段名称与生产代码一致
 
 v2.4 更新 (v11.16 功能恢复):
 - 新增: AI 输入数据验证 (完整显示传给 AI 的所有 9 类数据)
@@ -111,6 +117,10 @@ from scripts.diagnostics.lifecycle_test import (
     PostTradeLifecycleTest,
     OnBarMTFRoutingTest,
 )
+from scripts.diagnostics.architecture_verify import (
+    TradingAgentsArchitectureVerifier,
+    DiagnosticSummaryBox,
+)
 from scripts.diagnostics.summary import (
     DataFlowSummary,
     DeepAnalysis,
@@ -121,7 +131,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.4 (v11.16 功能完整恢复版)',
+        description='实盘信号诊断工具 v2.4.1 (v11.16 功能完整恢复版)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -202,6 +212,12 @@ Examples:
     # =========================================================================
     runner.add_step(MultiAgentAnalyzer)      # 运行 AI 分析 (含辩论记录+Prompt验证)
     runner.add_step(SignalProcessor)         # 信号处理和过滤
+
+    # =========================================================================
+    # Phase 5.5: Architecture Verification (v2.4 新增)
+    # =========================================================================
+    runner.add_step(TradingAgentsArchitectureVerifier)  # TradingAgents v3.3 架构验证
+    runner.add_step(DiagnosticSummaryBox)    # 诊断总结 box
 
     # =========================================================================
     # Phase 6: MTF Component Testing (Optional)

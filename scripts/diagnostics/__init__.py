@@ -40,7 +40,7 @@ from .base import (
     print_box,
 )
 
-__version__ = "2.4.0"  # v2.4: Restored v11.16 missing features (AI data validation, debate, prompts, lifecycle)
+__version__ = "2.4.1"  # v2.4.1: Added TradingAgents architecture verify, diagnostic summary box, trigger conditions analysis
 __all__ = [
     "DiagnosticContext",
     "DiagnosticStep",
