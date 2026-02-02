@@ -746,14 +746,18 @@ def validate_multiagent_sltp(
         if multi_tp <= entry_price:
             return False, None, None, f"BUY TP (${multi_tp:,.2f}) must be > entry (${entry_price:,.2f})"
 
-        # Check minimum distances
+        # v3.13: TradingAgents style - warn for close SL but trust AI's S/R-based decision
+        # Only reject for critical errors (wrong side), not for "too close"
         min_sl = get_min_sl_distance_pct()
         min_tp = get_min_tp_distance_pct()
+        warnings = []
         if sl_distance < min_sl:
-            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {min_sl*100}%)"
+            warnings.append(f"SL close to entry ({sl_distance*100:.2f}% < {min_sl*100}%)")
         if tp_distance < min_tp:
-            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {min_tp*100}%)"
+            warnings.append(f"TP close to entry ({tp_distance*100:.2f}% < {min_tp*100}%)")
 
+        if warnings:
+            return True, multi_sl, multi_tp, f"Valid with warnings: {'; '.join(warnings)}"
         return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
 
     else:  # SELL
@@ -763,14 +767,17 @@ def validate_multiagent_sltp(
         if multi_tp >= entry_price:
             return False, None, None, f"SELL TP (${multi_tp:,.2f}) must be < entry (${entry_price:,.2f})"
 
-        # Check minimum distances
+        # v3.13: TradingAgents style - warn for close SL but trust AI's S/R-based decision
         min_sl = get_min_sl_distance_pct()
         min_tp = get_min_tp_distance_pct()
+        warnings = []
         if sl_distance < min_sl:
-            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {min_sl*100}%)"
+            warnings.append(f"SL close to entry ({sl_distance*100:.2f}% < {min_sl*100}%)")
         if tp_distance < min_tp:
-            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {min_tp*100}%)"
+            warnings.append(f"TP close to entry ({tp_distance*100:.2f}% < {min_tp*100}%)")
 
+        if warnings:
+            return True, multi_sl, multi_tp, f"Valid with warnings: {'; '.join(warnings)}"
         return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
 
 

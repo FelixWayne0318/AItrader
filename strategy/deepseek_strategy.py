@@ -2929,12 +2929,35 @@ class DeepSeekAIStrategy(Strategy):
             self.log.debug(f"🗑️ Cleared trailing stop state for {instrument_key}")
 
         # v3.12: Calculate P&L percentage upfront (needed for both Telegram and memory system)
-        pnl = float(event.realized_pnl)
-        quantity = float(event.quantity) if hasattr(event, 'quantity') else 0.0
+        # v3.13: Fix - NautilusTrader uses Money/Quantity types, need .as_double()
+        # realized_pnl is Money type, quantity is Quantity type
+        try:
+            # Money type has .as_double() method
+            pnl = event.realized_pnl.as_double() if hasattr(event.realized_pnl, 'as_double') else float(event.realized_pnl)
+        except (AttributeError, TypeError, ValueError):
+            pnl = 0.0
+            self.log.warning(f"Failed to extract realized_pnl from event: {type(event.realized_pnl)}")
+
+        try:
+            # Quantity type has .as_double() method
+            if hasattr(event, 'quantity'):
+                quantity = event.quantity.as_double() if hasattr(event.quantity, 'as_double') else float(event.quantity)
+            else:
+                quantity = 0.0
+        except (AttributeError, TypeError, ValueError):
+            quantity = 0.0
+
+        # avg_px_open and avg_px_close are plain doubles in PositionClosed event
         entry_price = float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0
         exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
         position_value = entry_price * quantity
         pnl_pct = (pnl / position_value * 100) if position_value > 0 else 0.0
+
+        # v3.13: Debug logging to diagnose memory system issues
+        self.log.debug(
+            f"📊 P&L calculation: pnl={pnl:.4f}, qty={quantity:.4f}, "
+            f"entry={entry_price:.2f}, exit={exit_price:.2f}, pnl_pct={pnl_pct:.2f}%"
+        )
 
         # Send Telegram position closed notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:

@@ -597,6 +597,10 @@ TASK:
 1. Identify BULLISH signals with specific numbers from the data
 2. Present 2-3 compelling reasons for going LONG
 3. If bear made arguments, counter them with evidence
+4. Consider S/R ZONES for entry timing:
+   - If price is near MAJOR/HIGH resistance: acknowledge the risk of rejection
+   - If price just broke above resistance: this becomes new support (bullish)
+   - Ideal LONG entry: bouncing off support or breaking resistance with volume
 
 Deliver your argument (2-3 paragraphs):"""
 
@@ -664,6 +668,10 @@ TASK:
 1. Identify BEARISH signals or risks with specific numbers from the data
 2. Present 2-3 compelling reasons AGAINST going LONG
 3. Counter the bull's arguments with evidence
+4. Consider S/R ZONES for entry timing risks:
+   - If price is near MAJOR/HIGH support: warn about bounce risk for SHORT
+   - If price is at resistance without volume: high rejection probability
+   - Highlight if price is overextended from key support/resistance levels
 
 Deliver your argument (2-3 paragraphs):"""
 
@@ -852,10 +860,16 @@ YOUR TASK:
 2. Determine stop loss using S/R zones as reference:
    - For LONG: Place SL below nearest SUPPORT zone (preferably with ORDER_FLOW or HIGH strength)
    - For SHORT: Place SL above nearest RESISTANCE zone (preferably with ORDER_FLOW or HIGH strength)
+   - Consider market volatility: in high volatility, use wider SL to avoid noise-triggered stops
+   - Aim for SL distance of at least 0.5-1% to account for normal price fluctuation
 3. Determine take profit using S/R zones as reference:
    - For LONG: Target nearest RESISTANCE zone as TP (consider zone Level: MAJOR > INTERMEDIATE > MINOR)
    - For SHORT: Target nearest SUPPORT zone as TP
-4. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
+4. Evaluate Risk/Reward ratio:
+   - Minimum acceptable R/R is 1:1 (TP distance >= SL distance)
+   - Prefer R/R of 1.5:1 or better for HIGH confidence trades
+   - If R/R is unfavorable, consider HOLD instead
+5. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
 
 SIGNAL TYPES (v3.12 - choose the most appropriate):
 - LONG: Open new long or add to existing long position
@@ -1011,11 +1025,17 @@ OUTPUT FORMAT (JSON only, no other text):
             sl_distance = (current_price - sl) / current_price if sl > 0 else 0
 
             if sl >= current_price:
+                # Critical error: SL on wrong side - must fix
                 decision["stop_loss"] = current_price * (1 - default_sl)
                 self.logger.warning(f"Fixed BUY stop loss (wrong side): {sl} -> {decision['stop_loss']}")
             elif sl_distance < min_sl_distance:
-                decision["stop_loss"] = current_price * (1 - default_sl)
-                self.logger.warning(f"Fixed BUY stop loss (too close {sl_distance*100:.2f}%): {sl} -> {decision['stop_loss']}")
+                # v3.13: TradingAgents style - warn but trust AI's S/R-based decision
+                # The AI was prompted to consider volatility and R/R ratio
+                self.logger.info(
+                    f"📍 BUY stop loss is close ({sl_distance*100:.2f}%) - "
+                    f"trusting AI's S/R-based SL: ${sl:,.2f}"
+                )
+                decision["sl_warning"] = f"SL distance {sl_distance*100:.2f}% is below recommended {min_sl_distance*100:.1f}%"
 
             if tp <= current_price:
                 decision["take_profit"] = current_price * (1 + default_tp_buy)
@@ -1026,11 +1046,16 @@ OUTPUT FORMAT (JSON only, no other text):
             sl_distance = (sl - current_price) / current_price if sl > 0 else 0
 
             if sl <= current_price:
+                # Critical error: SL on wrong side - must fix
                 decision["stop_loss"] = current_price * (1 + default_sl)
                 self.logger.warning(f"Fixed SELL stop loss (wrong side): {sl} -> {decision['stop_loss']}")
             elif sl_distance < min_sl_distance:
-                decision["stop_loss"] = current_price * (1 + default_sl)
-                self.logger.warning(f"Fixed SELL stop loss (too close {sl_distance*100:.2f}%): {sl} -> {decision['stop_loss']}")
+                # v3.13: TradingAgents style - warn but trust AI's S/R-based decision
+                self.logger.info(
+                    f"📍 SELL stop loss is close ({sl_distance*100:.2f}%) - "
+                    f"trusting AI's S/R-based SL: ${sl:,.2f}"
+                )
+                decision["sl_warning"] = f"SL distance {sl_distance*100:.2f}% is below recommended {min_sl_distance*100:.1f}%"
 
             if tp >= current_price:
                 decision["take_profit"] = current_price * (1 - default_tp_sell)
