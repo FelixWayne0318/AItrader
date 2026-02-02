@@ -209,23 +209,34 @@ risk:
       min_interval_minutes: 30      # 最少 30 分钟间隔
       max_trades_per_day: 10        # 每日最多 10 笔
 
-  # ===== v3.13: Hybrid ATR-AI 仓位计算 =====
-  # 公式: 最终仓位 = ATR仓位 × AI调节系数
-  # - ATR 提供风险上限 (波动率适应)
-  # - AI 只能减仓，不能加仓 (风险可控)
+  # ===== v4.8: AI 控制仓位计算 =====
+  # 公式: 最终仓位 = max_usdt × AI建议百分比
+  # - max_usdt = equity × max_position_ratio × leverage
+  # - AI 根据信心程度建议仓位百分比 (0-100%)
+  # - 例: $1000 × 30% × 10杠杆 = $3000 最大仓位
   position_sizing:
-    method: "hybrid_atr_ai"         # fixed_pct | atr_based | kelly | hybrid_atr_ai
+    method: "ai_controlled"         # fixed_pct | atr_based | kelly | hybrid_atr_ai | ai_controlled
 
-    # ATR-Based 参数 (也用于 hybrid_atr_ai 的上限计算)
+    # AI 控制模式参数 (v4.8 默认)
+    ai_controlled:
+      # AI 未提供仓位时的默认百分比
+      default_size_pct: 50          # 默认使用 50% 最大仓位
+      # 信心等级对应的仓位百分比
+      confidence_mapping:
+        HIGH: 80                    # 高信心: 80% → $2400
+        MEDIUM: 50                  # 中信心: 50% → $1500
+        LOW: 30                     # 低信心: 30% → $900
+
+    # ATR-Based 参数 (备用/参考)
     atr_based:
-      risk_per_trade_pct: 0.01      # 每笔风险 1% of equity
+      risk_per_trade_pct: 0.02      # 每笔风险 2% of equity (提高)
       atr_period: 14                # ATR 周期
       atr_multiplier: 2.0           # 止损距离 = 2 × ATR
 
-    # v3.13: Hybrid ATR-AI 参数
+    # v3.13: Hybrid ATR-AI 参数 (备用)
     # AI调节系数 = min_mult + ai_weight × (AI_pct / 100), 范围 [min, max]
     hybrid_atr_ai:
-      enabled: true
+      enabled: false                # 已切换到 ai_controlled
       min_multiplier: 0.3           # AI 最低系数 (保底 30%)
       max_multiplier: 1.0           # AI 最高系数 (不超过 ATR)
       ai_weight: 0.7                # AI 影响权重

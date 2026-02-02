@@ -73,6 +73,14 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     trend_strength_multiplier: float = 1.2
     min_trade_amount: float = 0.001
 
+    # v4.8: Position sizing method configuration
+    position_sizing_method: str = "ai_controlled"  # fixed_pct | atr_based | ai_controlled | hybrid_atr_ai
+    position_sizing_default_pct: float = 50.0  # AI 未提供时的默认百分比
+    position_sizing_high_pct: float = 80.0     # HIGH 信心仓位百分比
+    position_sizing_medium_pct: float = 50.0   # MEDIUM 信心仓位百分比
+    position_sizing_low_pct: float = 30.0      # LOW 信心仓位百分比
+    position_sizing_cumulative: bool = True    # 累加模式：允许多次加仓 (v4.8)
+
     # Technical indicators
     sma_periods: Tuple[int, ...] = (5, 20, 50)
     rsi_period: int = 14
@@ -247,6 +255,20 @@ class DeepSeekAIStrategy(Strategy):
             'min_trade_amount': config.min_trade_amount,
             'adjustment_threshold': config.position_adjustment_threshold,
         }
+
+        # v4.8: Position sizing configuration
+        self.position_sizing_config = {
+            'method': config.position_sizing_method,
+            'ai_controlled': {
+                'default_size_pct': config.position_sizing_default_pct,
+                'confidence_mapping': {
+                    'HIGH': config.position_sizing_high_pct,
+                    'MEDIUM': config.position_sizing_medium_pct,
+                    'LOW': config.position_sizing_low_pct,
+                }
+            }
+        }
+        self.position_sizing_cumulative = config.position_sizing_cumulative
 
         # Risk management
         self.min_confidence = config.min_confidence_to_trade
@@ -763,6 +785,9 @@ class DeepSeekAIStrategy(Strategy):
         # Fetch real account balance from Binance
         self._update_real_balance()
 
+        # v4.8: Sync leverage from Binance API
+        self._sync_binance_leverage()
+
         # Record start time for uptime tracking
         from datetime import datetime
         self.strategy_start_time = datetime.utcnow()
@@ -934,6 +959,45 @@ class DeepSeekAIStrategy(Strategy):
         except Exception as e:
             self.log.error(f"Error fetching real balance: {e}")
             return {}
+
+    def _sync_binance_leverage(self) -> None:
+        """
+        v4.8: Sync leverage setting from Binance API.
+
+        This ensures the system uses the actual leverage configured on Binance
+        rather than relying solely on the config file value.
+
+        If the Binance leverage differs from config, we use the Binance value
+        and log a warning.
+        """
+        try:
+            symbol = str(self.instrument_id)
+            binance_leverage = self.binance_account.get_leverage(symbol)
+
+            if binance_leverage > 0:
+                config_leverage = self.config.leverage
+
+                if binance_leverage != int(config_leverage):
+                    self.log.warning(
+                        f"⚠️ Leverage mismatch detected! "
+                        f"Config: {config_leverage}x, Binance: {binance_leverage}x. "
+                        f"Using Binance value: {binance_leverage}x"
+                    )
+
+                # Always use Binance leverage (source of truth)
+                self.leverage = float(binance_leverage)
+                self.log.info(f"📊 Leverage synced from Binance: {binance_leverage}x")
+            else:
+                # Fallback to config if Binance fetch failed
+                self.log.warning(
+                    f"Could not fetch leverage from Binance, using config value: {self.config.leverage}x"
+                )
+                self.leverage = self.config.leverage
+
+        except Exception as e:
+            self.log.error(f"Error syncing leverage from Binance: {e}")
+            # Keep existing config value on error
+            self.leverage = self.config.leverage
 
     def _prefetch_historical_bars(self, limit: int = 200):
         """
@@ -1405,6 +1469,9 @@ class DeepSeekAIStrategy(Strategy):
             # Get current position
             current_position = self._get_current_position_data()
 
+            # Get account context for position sizing decisions (v4.6)
+            account_context = self._get_account_context(current_price)
+
             # Log current state
             self.log.info(f"Current Price: ${current_price:,.2f}")
             self.log.info(f"Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
@@ -1414,6 +1481,15 @@ class DeepSeekAIStrategy(Strategy):
                     f"Current Position: {current_position['side']} "
                     f"{current_position['quantity']} @ ${current_position['avg_px']:.2f}"
                 )
+                # v4.7: Log critical risk fields
+                liq_buffer = current_position.get('liquidation_buffer_pct')
+                if liq_buffer is not None:
+                    risk_level = "HIGH" if liq_buffer < 10 else "MEDIUM" if liq_buffer < 15 else "OK"
+                    self.log.info(f"Liquidation Buffer: {liq_buffer:.1f}% ({risk_level})")
+                funding_rate = current_position.get('funding_rate_current')
+                if funding_rate is not None:
+                    daily_cost = current_position.get('daily_funding_cost_usd', 0)
+                    self.log.info(f"Funding Rate: {funding_rate*100:.4f}%/8h (Daily Est: ${daily_cost:.2f})")
 
             # ========== 层级决策架构 (TradingAgents v3.1) ==========
             # 设计理念: AI 负责所有交易决策，本地仅做支撑/阻力位边界检查
@@ -1559,6 +1635,8 @@ class DeepSeekAIStrategy(Strategy):
                     derivatives_report=derivatives_data,
                     # ========== v3.7 新增参数 ==========
                     orderbook_report=orderbook_data,
+                    # ========== v4.6 新增参数 ==========
+                    account_context=account_context,
                 )
 
                 # v3.8: Store S/R Zone data for heartbeat (from MultiAgentAnalyzer cache)
@@ -1882,6 +1960,19 @@ class DeepSeekAIStrategy(Strategy):
                         ts_state = self.trailing_stop_state[instrument_key]
                         sl_price = ts_state.get('current_sl_price')
                         tp_price = ts_state.get('current_tp_price')
+
+                    # v4.9: Fall back to Binance orders if not in memory (server restart recovery)
+                    if sl_price is None or tp_price is None:
+                        try:
+                            symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+                            pos_side = position_side.lower() if position_side else 'long'
+                            sl_tp = self.binance_account.get_sl_tp_from_orders(symbol, pos_side)
+                            if sl_price is None:
+                                sl_price = sl_tp.get('sl_price')
+                            if tp_price is None:
+                                tp_price = sl_tp.get('tp_price')
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
@@ -1930,7 +2021,20 @@ class DeepSeekAIStrategy(Strategy):
                 }
 
             # 9. 获取信号执行状态 (v4.1)
+            # v4.4: 状态一致性检查 - 防止缓存状态与实时仓位矛盾
             signal_status_heartbeat = getattr(self, '_last_signal_status', None)
+            if signal_status_heartbeat and not position_side:
+                # 缓存状态说有仓位，但实时查询无仓位 → 状态过时
+                cached_reason = signal_status_heartbeat.get('reason', '')
+                if '已持有' in cached_reason:
+                    # 仓位已被止损/止盈平掉，清除过时状态
+                    signal_status_heartbeat = {
+                        'executed': False,
+                        'reason': '仓位已平仓 (SL/TP 触发)',
+                        'action_taken': '等待新信号',
+                    }
+                    self._last_signal_status = signal_status_heartbeat
+                    self.log.info("🔄 检测到仓位已平仓，更新信号状态")
 
             # 10. 发送消息 (v4.2: 添加 SL/TP)
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
@@ -2015,9 +2119,229 @@ class DeepSeekAIStrategy(Strategy):
             'period_hours': round(period_hours, 1),
         }
 
+    def _get_account_context(self, current_price: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Get account-level information for AI decision making (v4.6 + v4.7).
+
+        This provides context for add/reduce position decisions:
+        - How much capital is available
+        - Current leverage setting
+        - Maximum position capacity
+        - Remaining capacity for new positions
+        - Portfolio-level risk metrics (v4.7)
+
+        Returns
+        -------
+        Dict with account fields:
+            - equity: Total account equity (USDT)
+            - leverage: Current leverage multiplier
+            - max_position_value: Maximum position value allowed (equity * max_position_ratio * leverage)
+            - current_position_value: Current position value (if any)
+            - available_capacity: Remaining capacity for new positions
+            - capacity_used_pct: Percentage of max capacity currently used
+            - can_add_position: Boolean indicating if more positions can be added
+            v4.7 additions:
+            - total_unrealized_pnl_usd: Sum of all positions' unrealized P&L
+            - liquidation_buffer_portfolio_min_pct: Minimum liquidation buffer across all positions
+            - total_daily_funding_cost_usd: Daily funding cost for all positions
+            - total_cumulative_funding_paid_usd: Cumulative funding paid since positions opened
+            - can_add_position_safely: True if liquidation buffer > 15%
+        """
+        # v4.9.1: Always fetch fresh balance from Binance for accurate AI decisions
+        try:
+            balance = self.binance_account.get_balance()
+            if 'error' not in balance and balance.get('total_balance', 0) > 0:
+                real_total = balance['total_balance']
+                if self.config.use_real_balance_as_equity:
+                    self.equity = real_total
+        except Exception as e:
+            self._log.warning(f"Failed to refresh equity from Binance: {e}")
+
+        # Get equity (now guaranteed to be up-to-date)
+        equity = getattr(self, 'equity', 0) or self.config.equity
+
+        # Get leverage
+        leverage = getattr(self, 'leverage', self.config.leverage)
+
+        # Get max position ratio from config
+        max_position_ratio = getattr(self.config, 'max_position_ratio', 0.30)
+
+        # Calculate max position value (notional)
+        # max_position_value = equity * max_position_ratio * leverage
+        max_position_value = equity * max_position_ratio * leverage
+
+        # v4.9.1: Use Binance API for real-time position data (same as _get_current_position_data)
+        current_position_value = 0.0
+        total_unrealized_pnl_usd = 0.0
+        liquidation_buffer_portfolio_min_pct = 100.0  # Start high, find minimum
+        total_daily_funding_cost_usd = 0.0
+        total_cumulative_funding_paid_usd = 0.0
+
+        # Priority: Binance API for ground truth
+        binance_positions = []
+        try:
+            symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+            binance_positions = self.binance_account.get_positions(symbol)
+        except Exception as e:
+            self._log.warning(f"Binance position API failed, falling back to cache: {e}")
+            # Fallback to cache
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            binance_positions = None
+
+        maintenance_margin_ratio = 0.004  # Binance standard
+
+        # v4.9.1: Process Binance API positions (priority) or cache fallback
+        if binance_positions:
+            # Process Binance API format
+            for bp in binance_positions:
+                position_amt = float(bp.get('positionAmt', 0))
+                if position_amt == 0:
+                    continue
+
+                side = 'long' if position_amt > 0 else 'short'
+                quantity = abs(position_amt)
+                avg_px = float(bp.get('entryPrice', 0))
+                unrealized_pnl = float(bp.get('unrealizedProfit', 0))
+                mark_price = float(bp.get('markPrice', 0))
+                liq_price_binance = float(bp.get('liquidationPrice', 0))
+                pos_leverage = float(bp.get('leverage', leverage))
+
+                # Use mark price or current price
+                pos_price = mark_price if mark_price > 0 else (current_price if current_price and current_price > 0 else avg_px)
+                position_value = quantity * pos_price
+                current_position_value += position_value
+
+                # Unrealized PnL from Binance
+                total_unrealized_pnl_usd += unrealized_pnl
+
+                # Calculate liquidation buffer
+                if liq_price_binance and liq_price_binance > 0 and pos_price > 0:
+                    if side == 'long':
+                        buffer_pct = ((pos_price - liq_price_binance) / pos_price) * 100
+                    else:
+                        buffer_pct = ((liq_price_binance - pos_price) / pos_price) * 100
+                    liquidation_buffer_portfolio_min_pct = min(
+                        liquidation_buffer_portfolio_min_pct,
+                        max(0, buffer_pct)
+                    )
+
+                # Get funding rate and calculate costs
+                funding_data = getattr(self, 'latest_derivatives_data', None)
+                funding_rate = 0.0
+                if funding_data:
+                    fr = funding_data.get('funding_rate', {})
+                    if fr and isinstance(fr, dict):
+                        funding_rate = fr.get('value', 0) or 0
+
+                if funding_rate != 0 and position_value > 0:
+                    daily_cost = position_value * abs(funding_rate) * 3
+                    total_daily_funding_cost_usd += daily_cost
+                    # Note: Binance doesn't provide position open time, estimate 24h for cumulative
+                    cumulative = position_value * abs(funding_rate) * 3  # 1 day estimate
+                    total_cumulative_funding_paid_usd += cumulative
+
+        elif binance_positions is None:
+            # Fallback: use NautilusTrader cache
+            for position in positions:
+                if position and position.is_open:
+                    quantity = float(position.quantity)
+                    avg_px = float(position.avg_px_open)
+                    side = 'long' if position.side == PositionSide.LONG else 'short'
+
+                    pos_price = current_price if current_price and current_price > 0 else avg_px
+                    position_value = quantity * pos_price
+                    current_position_value += position_value
+
+                    try:
+                        pnl = float(position.unrealized_pnl(pos_price)) if pos_price else 0.0
+                        total_unrealized_pnl_usd += pnl
+                    except Exception:
+                        pass
+
+                    if avg_px > 0 and leverage > 0:
+                        buffer_pct = None
+                        if side == 'long':
+                            liq_price = avg_px * (1 - 1/leverage + maintenance_margin_ratio)
+                            if pos_price and liq_price > 0:
+                                buffer_pct = ((pos_price - liq_price) / pos_price) * 100
+                        else:
+                            liq_price = avg_px * (1 + 1/leverage - maintenance_margin_ratio)
+                            if pos_price and liq_price > 0:
+                                buffer_pct = ((liq_price - pos_price) / pos_price) * 100
+
+                        if buffer_pct is not None:
+                            liquidation_buffer_portfolio_min_pct = min(
+                                liquidation_buffer_portfolio_min_pct,
+                                max(0, buffer_pct)
+                            )
+
+                    funding_data = getattr(self, 'latest_derivatives_data', None)
+                    funding_rate = 0.0
+                    if funding_data:
+                        fr = funding_data.get('funding_rate', {})
+                        if fr and isinstance(fr, dict):
+                            funding_rate = fr.get('value', 0) or 0
+
+                    if funding_rate != 0 and position_value > 0:
+                        daily_cost = position_value * abs(funding_rate) * 3
+                        total_daily_funding_cost_usd += daily_cost
+
+                        try:
+                            ts_opened_ns = position.ts_opened
+                            if ts_opened_ns:
+                                now_ns = self.clock.timestamp_ns()
+                                hours_held = (now_ns - ts_opened_ns) / 1e9 / 3600
+                                settlements = hours_held / 8
+                                if side == 'long':
+                                    cumulative = position_value * funding_rate * settlements
+                                else:
+                                    cumulative = -position_value * funding_rate * settlements
+                                total_cumulative_funding_paid_usd += cumulative
+                        except Exception:
+                            pass
+
+        # If no positions, reset min buffer to N/A
+        has_positions = (binance_positions and len(binance_positions) > 0) or (binance_positions is None and positions)
+        if not has_positions or current_position_value == 0:
+            liquidation_buffer_portfolio_min_pct = None
+
+        # Calculate available capacity
+        available_capacity = max(0, max_position_value - current_position_value)
+
+        # Calculate capacity used percentage
+        capacity_used_pct = 0.0
+        if max_position_value > 0:
+            capacity_used_pct = (current_position_value / max_position_value) * 100
+
+        # Determine if can add position (at least 10% capacity remaining)
+        can_add_position = capacity_used_pct < 90
+
+        # v4.7: Safer check - also consider liquidation buffer
+        can_add_position_safely = can_add_position and (
+            liquidation_buffer_portfolio_min_pct is None or
+            liquidation_buffer_portfolio_min_pct > 15
+        )
+
+        return {
+            'equity': round(equity, 2),
+            'leverage': leverage,
+            'max_position_ratio': max_position_ratio,
+            'max_position_value': round(max_position_value, 2),
+            'current_position_value': round(current_position_value, 2),
+            'available_capacity': round(available_capacity, 2),
+            'capacity_used_pct': round(capacity_used_pct, 1),
+            'can_add_position': can_add_position,
+            # === v4.7: Portfolio-Level Risk Fields ===
+            'total_unrealized_pnl_usd': round(total_unrealized_pnl_usd, 2),
+            'liquidation_buffer_portfolio_min_pct': round(liquidation_buffer_portfolio_min_pct, 2) if liquidation_buffer_portfolio_min_pct is not None else None,
+            'total_daily_funding_cost_usd': round(total_daily_funding_cost_usd, 2),
+            'total_cumulative_funding_paid_usd': round(total_cumulative_funding_paid_usd, 2),
+            'can_add_position_safely': can_add_position_safely,
+        }
+
     def _get_current_position_data(self, current_price: Optional[float] = None, from_telegram: bool = False) -> Optional[Dict[str, Any]]:
         """
-        Get current position information.
+        Get current position information with enhanced data for AI decision making.
 
         Parameters
         ----------
@@ -2026,12 +2350,197 @@ class DeepSeekAIStrategy(Strategy):
         from_telegram : bool, default False
             If True, NEVER access indicator_manager (Telegram thread safety).
             When True, will use cache.price() as fallback instead of indicator_manager.
-        """
-        # Get open positions for this instrument
-        positions = self.cache.positions_open(instrument_id=self.instrument_id)
 
-        if not positions:
+        Returns
+        -------
+        Dict with Tier 1 + Tier 2 position fields for AI:
+            - side, quantity, avg_px, unrealized_pnl (basic)
+            - pnl_percentage, duration_minutes, entry_timestamp (Tier 1)
+            - sl_price, tp_price, risk_reward_ratio (Tier 1)
+            - peak_pnl_pct, worst_pnl_pct, entry_confidence (Tier 2)
+            - margin_used_pct (Tier 2)
+        """
+        # v4.9.1: PRIORITY - Always try Binance API first for ground truth
+        # AI decisions must be based on real exchange data, not potentially stale cache
+        # This handles: server restart, manual trades on Binance web/app, cache sync issues
+        use_binance_data = False
+        binance_position = None
+
+        try:
+            symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+            binance_positions = self.binance_account.get_positions(symbol)
+            if binance_positions:
+                binance_position = binance_positions[0]
+                use_binance_data = True
+                self._log.debug(f"Using Binance API for real-time position data: {symbol}")
+        except Exception as e:
+            self._log.warning(f"Binance API position fetch failed, falling back to cache: {e}")
+
+        # Fallback to NautilusTrader cache only if Binance API failed
+        positions = None
+        if not use_binance_data:
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+
+        if not positions and not use_binance_data:
             return None
+
+        # v4.9.1: Handle Binance API data format (priority source)
+        if use_binance_data and binance_position:
+            # Parse Binance position data format
+            position_amt = float(binance_position.get('positionAmt', 0))
+            if position_amt == 0:
+                return None
+
+            side = 'long' if position_amt > 0 else 'short'
+            quantity = abs(position_amt)
+            avg_px = float(binance_position.get('entryPrice', 0))
+            unrealized_pnl = float(binance_position.get('unrealizedProfit', 0))
+
+            # Get current price
+            if current_price is None or current_price == 0:
+                # Try markPrice from Binance position data first
+                current_price = float(binance_position.get('markPrice', 0))
+                if not current_price:
+                    if from_telegram:
+                        try:
+                            current_price = self.cache.price(self.instrument_id, PriceType.LAST)
+                        except (TypeError, AttributeError):
+                            current_price = None
+                    else:
+                        bars = self.indicator_manager.recent_bars
+                        current_price = float(bars[-1].close) if bars else None
+
+            # PnL percentage
+            pnl_percentage = 0.0
+            if avg_px > 0 and current_price:
+                if side == 'long':
+                    pnl_percentage = ((current_price - avg_px) / avg_px) * 100
+                else:
+                    pnl_percentage = ((avg_px - current_price) / avg_px) * 100
+
+            # Duration - unknown for Binance fallback
+            duration_minutes = 0
+            entry_timestamp = None
+
+            # v4.9: Get SL/TP from Binance open orders (critical for server restart recovery)
+            sl_price = None
+            tp_price = None
+            risk_reward_ratio = None
+            instrument_key = str(self.instrument_id)
+
+            # First try trailing_stop_state
+            if instrument_key in self.trailing_stop_state:
+                ts_state = self.trailing_stop_state[instrument_key]
+                sl_price = ts_state.get('current_sl_price')
+                tp_price = ts_state.get('current_tp_price')
+
+            # Fall back to Binance open orders if not in memory
+            if sl_price is None or tp_price is None:
+                try:
+                    symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+                    sl_tp = self.binance_account.get_sl_tp_from_orders(symbol, side)
+                    if sl_price is None:
+                        sl_price = sl_tp.get('sl_price')
+                    if tp_price is None:
+                        tp_price = sl_tp.get('tp_price')
+                    if sl_price or tp_price:
+                        self._log.info(f"Recovered SL/TP from Binance orders: SL={sl_price}, TP={tp_price}")
+                except Exception as e:
+                    self._log.warning(f"Failed to get SL/TP from Binance orders: {e}")
+
+            # Calculate R/R ratio
+            if sl_price and tp_price and avg_px > 0:
+                if side == 'long':
+                    risk = avg_px - sl_price
+                    reward = tp_price - avg_px
+                else:
+                    risk = sl_price - avg_px
+                    reward = avg_px - tp_price
+                if risk > 0:
+                    risk_reward_ratio = round(reward / risk, 2)
+
+            # Tier 2 fields - limited data from Binance
+            peak_pnl_pct = None
+            worst_pnl_pct = None
+            entry_confidence = None
+
+            # Margin used percentage
+            margin_used_pct = None
+            equity = getattr(self, 'equity', 0)
+            position_value = 0.0
+            if equity and equity > 0 and current_price:
+                position_value = quantity * current_price
+                margin_used_pct = round((position_value / equity) * 100, 2)
+
+            # v4.7: Liquidation fields from Binance
+            leverage = float(binance_position.get('leverage', self.config.leverage))
+            liquidation_price = float(binance_position.get('liquidationPrice', 0)) or None
+            liquidation_buffer_pct = None
+            is_liquidation_risk_high = False
+
+            if liquidation_price and current_price:
+                if side == 'long':
+                    liquidation_buffer_pct = ((current_price - liquidation_price) / current_price) * 100
+                else:
+                    liquidation_buffer_pct = ((liquidation_price - current_price) / current_price) * 100
+                liquidation_buffer_pct = round(max(0, liquidation_buffer_pct), 2)
+                is_liquidation_risk_high = liquidation_buffer_pct < 10
+
+            # v4.7: Funding fields - get from derivatives data
+            funding_rate_current = None
+            funding_rate_cumulative_usd = None
+            effective_pnl_after_funding = None
+            daily_funding_cost_usd = None
+
+            funding_data = getattr(self, 'latest_derivatives_data', None)
+            if funding_data:
+                fr = funding_data.get('funding_rate', {})
+                if fr and isinstance(fr, dict):
+                    funding_rate_current = fr.get('value', 0) or 0
+
+            if funding_rate_current is not None and position_value > 0:
+                daily_funding_cost_usd = round(position_value * abs(funding_rate_current) * 3, 2)
+
+            # v4.7: Drawdown fields - limited for Binance fallback
+            max_drawdown_pct = None
+            max_drawdown_duration_bars = None
+            consecutive_lower_lows = None
+
+            return {
+                # Basic
+                'side': side,
+                'quantity': quantity,
+                'avg_px': avg_px,
+                'unrealized_pnl': unrealized_pnl,
+                # Tier 1
+                'pnl_percentage': round(pnl_percentage, 2),
+                'duration_minutes': duration_minutes,
+                'entry_timestamp': entry_timestamp,
+                'sl_price': sl_price,
+                'tp_price': tp_price,
+                'risk_reward_ratio': risk_reward_ratio,
+                # Tier 2
+                'peak_pnl_pct': peak_pnl_pct,
+                'worst_pnl_pct': worst_pnl_pct,
+                'entry_confidence': entry_confidence,
+                'margin_used_pct': margin_used_pct,
+                'current_price': float(current_price) if current_price else None,
+                # v4.7: Liquidation
+                'liquidation_price': liquidation_price,
+                'liquidation_buffer_pct': liquidation_buffer_pct,
+                'is_liquidation_risk_high': is_liquidation_risk_high,
+                # v4.7: Funding
+                'funding_rate_current': funding_rate_current,
+                'funding_rate_cumulative_usd': funding_rate_cumulative_usd,
+                'effective_pnl_after_funding': effective_pnl_after_funding,
+                'daily_funding_cost_usd': daily_funding_cost_usd,
+                # v4.7: Drawdown
+                'max_drawdown_pct': max_drawdown_pct,
+                'max_drawdown_duration_bars': max_drawdown_duration_bars,
+                'consecutive_lower_lows': consecutive_lower_lows,
+                # v4.9: Source indicator
+                '_source': 'binance_api_realtime',  # v4.9.1: Priority source for ground truth
+            }
 
         # Get the first open position (should only be one for netting OMS)
         position = positions[0]
@@ -2057,11 +2566,214 @@ class DeepSeekAIStrategy(Strategy):
                         except (TypeError, AttributeError):
                             current_price = None
 
+            # === Basic fields (existing) ===
+            side = 'long' if position.side == PositionSide.LONG else 'short'
+            quantity = float(position.quantity)
+            avg_px = float(position.avg_px_open)
+            unrealized_pnl = float(position.unrealized_pnl(current_price)) if current_price else 0.0
+
+            # === Tier 1: Must have ===
+            # PnL percentage
+            pnl_percentage = 0.0
+            if avg_px > 0 and current_price:
+                if side == 'long':
+                    pnl_percentage = ((current_price - avg_px) / avg_px) * 100
+                else:
+                    pnl_percentage = ((avg_px - current_price) / avg_px) * 100
+
+            # Duration in minutes
+            duration_minutes = 0
+            entry_timestamp = None
+            try:
+                # NautilusTrader Position has ts_opened (nanoseconds)
+                ts_opened_ns = position.ts_opened
+                if ts_opened_ns:
+                    from datetime import datetime, timezone
+                    entry_timestamp = datetime.fromtimestamp(ts_opened_ns / 1e9, tz=timezone.utc).isoformat()
+                    now_ns = self.clock.timestamp_ns()
+                    duration_minutes = int((now_ns - ts_opened_ns) / 1e9 / 60)
+            except Exception:
+                pass
+
+            # SL/TP from trailing_stop_state
+            sl_price = None
+            tp_price = None
+            risk_reward_ratio = None
+            instrument_key = str(self.instrument_id)
+            if instrument_key in self.trailing_stop_state:
+                ts_state = self.trailing_stop_state[instrument_key]
+                sl_price = ts_state.get('current_sl_price')
+                tp_price = ts_state.get('current_tp_price')
+
+                # Calculate R/R ratio
+                if sl_price and tp_price and avg_px > 0:
+                    if side == 'long':
+                        risk = avg_px - sl_price
+                        reward = tp_price - avg_px
+                    else:
+                        risk = sl_price - avg_px
+                        reward = avg_px - tp_price
+                    if risk > 0:
+                        risk_reward_ratio = round(reward / risk, 2)
+
+            # === Tier 2: Recommended ===
+            # Peak/worst PnL (from trailing_stop_state if tracking)
+            peak_pnl_pct = None
+            worst_pnl_pct = None
+            if instrument_key in self.trailing_stop_state:
+                ts_state = self.trailing_stop_state[instrument_key]
+                highest_price = ts_state.get('highest_price')
+                lowest_price = ts_state.get('lowest_price')
+
+                if side == 'long':
+                    if highest_price and avg_px > 0:
+                        peak_pnl_pct = round(((highest_price - avg_px) / avg_px) * 100, 2)
+                    if lowest_price and avg_px > 0:
+                        worst_pnl_pct = round(((lowest_price - avg_px) / avg_px) * 100, 2)
+                else:  # short
+                    if lowest_price and avg_px > 0:
+                        peak_pnl_pct = round(((avg_px - lowest_price) / avg_px) * 100, 2)
+                    if highest_price and avg_px > 0:
+                        worst_pnl_pct = round(((avg_px - highest_price) / avg_px) * 100, 2)
+
+            # Entry confidence from last_signal
+            entry_confidence = None
+            last_signal = getattr(self, 'last_signal', None)
+            if last_signal:
+                entry_confidence = last_signal.get('confidence')
+
+            # Margin used percentage (position value / equity)
+            margin_used_pct = None
+            equity = getattr(self, 'equity', 0)
+            position_value = 0.0
+            if equity and equity > 0 and current_price:
+                position_value = quantity * current_price
+                margin_used_pct = round((position_value / equity) * 100, 2)
+
+            # === v4.7: Liquidation Risk Fields (CRITICAL) ===
+            # Calculate liquidation price using simplified formula
+            # LONG: liq_price = entry * (1 - 1/leverage + maintenance_margin)
+            # SHORT: liq_price = entry * (1 + 1/leverage - maintenance_margin)
+            leverage = getattr(self, 'leverage', self.config.leverage)
+            maintenance_margin_ratio = 0.004  # Binance standard for 20x leverage tier
+
+            liquidation_price = None
+            liquidation_buffer_pct = None
+            is_liquidation_risk_high = False
+
+            if avg_px > 0 and leverage > 0:
+                if side == 'long':
+                    liquidation_price = avg_px * (1 - 1/leverage + maintenance_margin_ratio)
+                    if current_price and liquidation_price > 0:
+                        liquidation_buffer_pct = ((current_price - liquidation_price) / current_price) * 100
+                else:  # short
+                    liquidation_price = avg_px * (1 + 1/leverage - maintenance_margin_ratio)
+                    if current_price and liquidation_price > 0:
+                        liquidation_buffer_pct = ((liquidation_price - current_price) / current_price) * 100
+
+                if liquidation_buffer_pct is not None:
+                    liquidation_buffer_pct = round(max(0, liquidation_buffer_pct), 2)
+                    is_liquidation_risk_high = liquidation_buffer_pct < 10  # < 10% buffer is risky
+
+            # === v4.7: Funding Rate Fields (CRITICAL for perpetuals) ===
+            funding_rate_current = None
+            funding_rate_cumulative_usd = None
+            effective_pnl_after_funding = None
+            daily_funding_cost_usd = None
+
+            # Get funding rate from latest_derivatives_data
+            funding_data = getattr(self, 'latest_derivatives_data', None)
+            if funding_data:
+                fr = funding_data.get('funding_rate', {})
+                if fr and isinstance(fr, dict):
+                    funding_rate_current = fr.get('value', 0) or 0
+
+            # Calculate funding costs if we have the rate
+            if funding_rate_current is not None and position_value > 0:
+                # Daily funding cost = position_value * |rate| * 3 settlements/day
+                daily_funding_cost_usd = round(position_value * abs(funding_rate_current) * 3, 2)
+
+                # Estimate cumulative funding based on position duration
+                # 8-hour settlements, so settlements_passed = hours_held / 8
+                hours_held = duration_minutes / 60 if duration_minutes > 0 else 0
+                settlements_passed = hours_held / 8
+
+                # For LONG with positive funding: we pay; for SHORT with positive funding: we receive
+                if side == 'long':
+                    funding_rate_cumulative_usd = round(position_value * funding_rate_current * settlements_passed, 2)
+                else:
+                    funding_rate_cumulative_usd = round(-position_value * funding_rate_current * settlements_passed, 2)
+
+                # Effective PnL = unrealized PnL - cumulative funding paid
+                effective_pnl_after_funding = round(unrealized_pnl - funding_rate_cumulative_usd, 2)
+
+            # === v4.7: Drawdown Attribution Fields (RECOMMENDED) ===
+            max_drawdown_pct = None
+            max_drawdown_duration_bars = None
+            consecutive_lower_lows = 0
+
+            # Calculate drawdown from peak
+            if peak_pnl_pct is not None and pnl_percentage is not None:
+                if peak_pnl_pct > pnl_percentage:
+                    max_drawdown_pct = round(peak_pnl_pct - pnl_percentage, 2)
+                else:
+                    max_drawdown_pct = 0.0
+
+            # Estimate drawdown duration in 15-min bars
+            if max_drawdown_pct and max_drawdown_pct > 0:
+                # Simplified: assume drawdown started at some point during position
+                max_drawdown_duration_bars = max(1, duration_minutes // 15)
+
+            # Count consecutive lower lows from recent bars (if accessible)
+            if not from_telegram:  # Only in main thread
+                try:
+                    bars = self.indicator_manager.recent_bars
+                    if bars and len(bars) >= 3:
+                        count = 0
+                        for i in range(len(bars) - 1, 0, -1):
+                            if bars[i].low < bars[i-1].low:
+                                count += 1
+                            else:
+                                break
+                        consecutive_lower_lows = count
+                except Exception:
+                    pass
+
             return {
-                'side': 'long' if position.side == PositionSide.LONG else 'short',
-                'quantity': float(position.quantity),
-                'avg_px': float(position.avg_px_open),
-                'unrealized_pnl': float(position.unrealized_pnl(current_price)) if current_price else 0.0,
+                # Basic (existing)
+                'side': side,
+                'quantity': quantity,
+                'avg_px': avg_px,
+                'unrealized_pnl': unrealized_pnl,
+                # Tier 1
+                'pnl_percentage': round(pnl_percentage, 2),
+                'duration_minutes': duration_minutes,
+                'entry_timestamp': entry_timestamp,
+                'sl_price': sl_price,
+                'tp_price': tp_price,
+                'risk_reward_ratio': risk_reward_ratio,
+                # Tier 2
+                'peak_pnl_pct': peak_pnl_pct,
+                'worst_pnl_pct': worst_pnl_pct,
+                'entry_confidence': entry_confidence,
+                'margin_used_pct': margin_used_pct,
+                # Context
+                'current_price': float(current_price) if current_price else None,
+                # === v4.7: Liquidation Risk (CRITICAL) ===
+                'liquidation_price': round(liquidation_price, 2) if liquidation_price else None,
+                'liquidation_buffer_pct': liquidation_buffer_pct,
+                'is_liquidation_risk_high': is_liquidation_risk_high,
+                # === v4.7: Funding Rate (CRITICAL) ===
+                'funding_rate_current': funding_rate_current,
+                'funding_rate_cumulative_usd': funding_rate_cumulative_usd,
+                'effective_pnl_after_funding': effective_pnl_after_funding,
+                'daily_funding_cost_usd': daily_funding_cost_usd,
+                # === v4.7: Drawdown Attribution (RECOMMENDED) ===
+                'max_drawdown_pct': max_drawdown_pct,
+                'max_drawdown_duration_bars': max_drawdown_duration_bars,
+                'consecutive_lower_lows': consecutive_lower_lows,
+                # v4.9.1: Source indicator (fallback when Binance API failed)
+                '_source': 'nautilus_cache_fallback',
             }
 
         return None
@@ -2174,12 +2886,23 @@ class DeepSeekAIStrategy(Strategy):
             self._reduce_position(current_position, position_size_pct)
             return
 
-        # For LONG/SHORT signals, calculate target position size
-        target_quantity = self._calculate_position_size(
+        # For LONG/SHORT signals, calculate position size
+        calculated_quantity = self._calculate_position_size(
             signal_data, price_data, technical_data, current_position
         )
 
-        if target_quantity == 0:
+        # v4.8: 累加模式下，calculated_quantity 是"本次加仓量"
+        # 需要转换为"目标仓位"供 _manage_existing_position 使用
+        if self.position_sizing_cumulative and current_position:
+            current_qty = current_position.get('quantity', 0)
+            target_quantity = current_qty + calculated_quantity
+            self.log.info(
+                f"📊 累加模式: 当前 {current_qty:.4f} + 加仓 {calculated_quantity:.4f} = 目标 {target_quantity:.4f} BTC"
+            )
+        else:
+            target_quantity = calculated_quantity
+
+        if target_quantity == 0 and calculated_quantity == 0:
             self.log.warning("⚠️ Calculated position size is 0, skipping trade")
             self._last_signal_status = {
                 'executed': False,
@@ -2268,6 +2991,7 @@ class DeepSeekAIStrategy(Strategy):
         config = {
             'base_usdt': self.base_usdt,
             'equity': self.equity,
+            'leverage': self.leverage,  # v4.8: 添加杠杆
             'high_confidence_multiplier': self.position_config.get('high_confidence_multiplier', 1.5),
             'medium_confidence_multiplier': self.position_config.get('medium_confidence_multiplier', 1.0),
             'low_confidence_multiplier': self.position_config.get('low_confidence_multiplier', 0.5),
@@ -2277,11 +3001,39 @@ class DeepSeekAIStrategy(Strategy):
             'rsi_extreme_lower': self.rsi_extreme_lower,
             'max_position_ratio': self.position_config.get('max_position_ratio', 0.3),
             'min_trade_amount': self.position_config.get('min_trade_amount', 0.001),
+            'position_sizing': self.position_sizing_config,  # v4.8: 添加仓位计算配置
         }
 
-        btc_quantity, _ = calculate_position_size(
+        btc_quantity, details = calculate_position_size(
             signal_data, price_data, technical_data, config, logger
         )
+
+        # v4.8: 累加模式 - 计算的是"本次加仓量"而不是"目标仓位"
+        if self.position_sizing_cumulative and current_position:
+            # 累加模式下，btc_quantity 就是本次要加的量
+            # 需要检查是否超过 max_usdt 限制
+            current_qty = current_position.get('quantity', 0)
+            current_price = price_data.get('price', 100000)
+            current_value = current_qty * current_price
+
+            max_usdt = details.get('max_usdt', self.equity * self.leverage * 0.3)
+            remaining_capacity = max_usdt - current_value
+
+            if remaining_capacity <= 0:
+                self.log.warning(
+                    f"⚠️ 仓位已达上限 (${current_value:.0f} >= ${max_usdt:.0f}), 无法加仓"
+                )
+                return 0.0
+
+            # 限制加仓量不超过剩余容量
+            max_add_btc = remaining_capacity / current_price
+            if btc_quantity > max_add_btc:
+                self.log.info(
+                    f"📊 加仓受限: {btc_quantity:.4f} → {max_add_btc:.4f} BTC "
+                    f"(剩余容量: ${remaining_capacity:.0f})"
+                )
+                btc_quantity = max_add_btc
+
         return btc_quantity
 
     def _manage_existing_position(
@@ -2358,9 +3110,23 @@ class DeepSeekAIStrategy(Strategy):
                     # Orphan cleanup will handle remaining orders later
                     self.log.warning("⚠️ Some orders failed to cancel, continuing with reduce (orphan cleanup will handle)")
 
+                # v4.4: Re-verify position exists before submitting reduce_only order
+                verified_position = self._get_current_position_data()
+                if not verified_position:
+                    self.log.warning("⚠️ Position no longer exists (likely closed by SL/TP), skipping reduce order")
+                    self._last_signal_status = {
+                        'executed': False,
+                        'reason': '仓位已平仓 (SL/TP 触发)',
+                        'action_taken': '',
+                    }
+                    return
+                # Use fresh position quantity for reduce calculation
+                fresh_qty = verified_position['quantity']
+                actual_reduce = min(abs(size_diff), fresh_qty)  # Can't reduce more than current
+
                 self._submit_order(
                     side=OrderSide.SELL if target_side == 'long' else OrderSide.BUY,
-                    quantity=abs(size_diff),
+                    quantity=actual_reduce,
                     reduce_only=True,
                 )
                 self.log.info(
@@ -2392,6 +3158,19 @@ class DeepSeekAIStrategy(Strategy):
                 return
 
             self.log.info(f"🔄 Reversing position: {current_side} → {target_side}")
+
+            # v4.4: Re-verify position exists before reversal
+            verified_position = self._get_current_position_data()
+            if not verified_position:
+                self.log.warning("⚠️ Position no longer exists (likely closed by SL/TP), skipping reversal")
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': '仓位已平仓 (SL/TP 触发)',
+                    'action_taken': '',
+                }
+                return
+            # Update with fresh position data
+            current_qty = verified_position['quantity']
 
             # v3.10: Cancel all pending orders BEFORE reversing to prevent -2022 ReduceOnly rejection
             # Old position's SL/TP orders are reduce_only=True, they'll be rejected if position closes first
@@ -2490,8 +3269,20 @@ class DeepSeekAIStrategy(Strategy):
 
         Different from reversal which closes then opens opposite.
         """
-        current_side = current_position['side']
-        current_qty = current_position['quantity']
+        # v4.4: Re-verify position exists before submitting reduce_only order
+        # Position might have been closed by SL/TP between signal analysis and execution
+        verified_position = self._get_current_position_data()
+        if not verified_position:
+            self.log.warning("⚠️ Position no longer exists (likely closed by SL/TP), skipping close order")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': '仓位已平仓 (SL/TP 触发)',
+                'action_taken': '',
+            }
+            return
+
+        current_side = verified_position['side']
+        current_qty = verified_position['quantity']
         side_cn = '多' if current_side == 'long' else '空'
 
         self.log.info(f"🔴 Closing {current_side} position: {current_qty:.4f} BTC (CLOSE signal)")
@@ -2536,8 +3327,19 @@ class DeepSeekAIStrategy(Strategy):
             target_pct: Target position size as percentage (0-100)
                        0 = close all, 50 = keep half, 100 = no change
         """
-        current_side = current_position['side']
-        current_qty = current_position['quantity']
+        # v4.4: Re-verify position exists before submitting reduce_only order
+        verified_position = self._get_current_position_data()
+        if not verified_position:
+            self.log.warning("⚠️ Position no longer exists (likely closed by SL/TP), skipping reduce order")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': '仓位已平仓 (SL/TP 触发)',
+                'action_taken': '',
+            }
+            return
+
+        current_side = verified_position['side']
+        current_qty = verified_position['quantity']
         side_cn = '多' if current_side == 'long' else '空'
 
         # Validate and calculate target quantity
@@ -2625,6 +3427,35 @@ class DeepSeekAIStrategy(Strategy):
                 f"{self.position_config['min_trade_amount']:.3f}, skipping"
             )
             return
+
+        # v4.9: Validate minimum notional for non-reduce orders
+        # Binance requires notional >= 100 USDT for futures orders
+        if not reduce_only:
+            from strategy.trading_logic import get_min_notional_usdt, get_min_notional_safety_margin
+            min_notional = get_min_notional_usdt()
+            safety_margin = get_min_notional_safety_margin()
+
+            # Get current price for notional calculation
+            current_price = getattr(self, '_cached_current_price', None)
+            if not current_price and self.indicator_manager.recent_bars:
+                current_price = float(self.indicator_manager.recent_bars[-1].close)
+
+            if current_price:
+                notional = quantity * current_price
+                min_required = min_notional * safety_margin
+
+                if notional < min_required:
+                    # Calculate minimum quantity needed
+                    min_qty = min_required / current_price
+                    # Round up to Binance precision
+                    import math
+                    min_qty = math.ceil(min_qty * 1000) / 1000  # 3 decimal places
+
+                    self.log.warning(
+                        f"⚠️ Order notional ${notional:.2f} below minimum ${min_notional:.0f}, "
+                        f"adjusting quantity from {quantity:.3f} to {min_qty:.3f} BTC"
+                    )
+                    quantity = min_qty
 
         # Create market order
         order = self.order_factory.market(
@@ -3157,9 +3988,10 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.warning(f"Failed to send Telegram alert for order denial: {e}")
 
         # Check if this leaves a position unprotected
+        # v4.9.1: Use Binance API for accurate position check
         try:
-            positions = self.cache.positions_open(instrument_id=self.instrument_id)
-            if positions:
+            pos_data = self._get_current_position_data()
+            if pos_data and pos_data.get('quantity', 0) != 0:
                 self.log.error(
                     f"⚠️ CRITICAL: Position exists but order was denied! "
                     f"Position may be unprotected. Manual intervention recommended."
@@ -3283,9 +4115,9 @@ class DeepSeekAIStrategy(Strategy):
         Note: OCO group management is no longer needed as NautilusTrader handles it automatically.
         """
         try:
-            # Get current positions
-            positions = self.cache.positions_open(instrument_id=self.instrument_id)
-            has_position = len(positions) > 0
+            # v4.9.1: Use Binance API for accurate position check
+            pos_data = self._get_current_position_data()
+            has_position = pos_data is not None and pos_data.get('quantity', 0) != 0
 
             if not has_position:
                 # No position but check for orphan orders
@@ -3635,15 +4467,11 @@ class DeepSeekAIStrategy(Strategy):
             real_balance = self.binance_account.get_balance()
             total_balance = real_balance.get('total_balance', 0)
 
-            # Get unrealized PnL from real balance or calculate from position
+            # v4.9.1: Get unrealized PnL from Binance API (real balance or position data)
             unrealized_pnl = real_balance.get('unrealized_pnl', 0)
-            positions = self.cache.positions_open(instrument_id=self.instrument_id)
-            if positions and current_price > 0:
-                position = positions[0]
-                # Use position-specific PnL if available
-                position_pnl = float(position.unrealized_pnl(current_price))
-                if position_pnl != 0:
-                    unrealized_pnl = position_pnl
+            pos_data = self._get_current_position_data(current_price=current_price, from_telegram=True)
+            if pos_data and pos_data.get('unrealized_pnl') is not None:
+                unrealized_pnl = pos_data['unrealized_pnl']
 
             # Calculate uptime
             uptime_str = "N/A"
@@ -3662,6 +4490,9 @@ class DeepSeekAIStrategy(Strategy):
             # Use real balance if available, otherwise fall back to configured equity
             display_equity = total_balance if total_balance > 0 else self.equity
 
+            # v4.7: Get account context for portfolio risk fields
+            account_context = self._get_account_context(current_price) if current_price > 0 else {}
+
             status_info = {
                 'is_running': True,  # If this method is called, strategy is running
                 'is_paused': self.is_trading_paused,
@@ -3672,6 +4503,15 @@ class DeepSeekAIStrategy(Strategy):
                 'last_signal': last_signal,
                 'last_signal_time': last_signal_time,
                 'uptime': uptime_str,
+                # v4.7: Portfolio Risk Fields (CRITICAL)
+                'total_unrealized_pnl_usd': account_context.get('total_unrealized_pnl_usd'),
+                'liquidation_buffer_portfolio_min_pct': account_context.get('liquidation_buffer_portfolio_min_pct'),
+                'total_daily_funding_cost_usd': account_context.get('total_daily_funding_cost_usd'),
+                'can_add_position_safely': account_context.get('can_add_position_safely'),
+                # v4.6: Account capacity fields
+                'available_margin': account_context.get('available_margin'),
+                'used_margin_pct': account_context.get('used_margin_pct'),
+                'leverage': account_context.get('leverage'),
             }
 
             message = self.telegram_bot.format_status_response(status_info) if self.telegram_bot else "Status unavailable"
@@ -3717,7 +4557,21 @@ class DeepSeekAIStrategy(Strategy):
                     'current_price': current_price,
                     'unrealized_pnl': pnl,
                     'pnl_pct': pnl_pct,
-                    # SL/TP prices would need to be tracked separately if needed
+                    # v4.7: Liquidation Risk Fields (CRITICAL)
+                    'liquidation_price': current_position.get('liquidation_price'),
+                    'liquidation_buffer_pct': current_position.get('liquidation_buffer_pct'),
+                    'is_liquidation_risk_high': current_position.get('is_liquidation_risk_high', False),
+                    # v4.7: Funding Rate Fields (CRITICAL for perpetuals)
+                    'funding_rate_current': current_position.get('funding_rate_current'),
+                    'daily_funding_cost_usd': current_position.get('daily_funding_cost_usd'),
+                    'funding_rate_cumulative_usd': current_position.get('funding_rate_cumulative_usd'),
+                    'effective_pnl_after_funding': current_position.get('effective_pnl_after_funding'),
+                    # v4.7: Drawdown Attribution Fields
+                    'max_drawdown_pct': current_position.get('max_drawdown_pct'),
+                    'peak_pnl_pct': current_position.get('peak_pnl_pct'),
+                    # v4.5: Position context fields
+                    'duration_minutes': current_position.get('duration_minutes'),
+                    'entry_confidence': current_position.get('entry_confidence'),
                 })
             
             message = self.telegram_bot.format_position_response(position_info) if self.telegram_bot else "Position unavailable"
@@ -3783,25 +4637,23 @@ class DeepSeekAIStrategy(Strategy):
         try:
             from nautilus_trader.model.enums import OrderSide
 
-            # Get open positions
-            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            # v4.9.1: Use Binance API for accurate position data
+            pos_data = self._get_current_position_data(from_telegram=True)
 
-            if not positions:
+            if not pos_data or pos_data.get('quantity', 0) == 0:
                 return {
                     'success': True,
                     'message': "ℹ️ *无持仓*\n\n当前没有需要平仓的仓位。"
                 }
 
-            position = positions[0]
-            quantity = float(position.quantity)
+            quantity = pos_data['quantity']
+            side_str = pos_data['side'].upper()
 
             # Determine closing side (opposite of position)
-            if position.side.name == 'LONG':
+            if side_str == 'LONG':
                 close_side = OrderSide.SELL
-                side_str = "LONG"
             else:
                 close_side = OrderSide.BUY
-                side_str = "SHORT"
 
             # v3.10: Cancel all pending orders BEFORE closing to prevent -2022 ReduceOnly rejection
             try:
@@ -3963,8 +4815,8 @@ class DeepSeekAIStrategy(Strategy):
             available_balance = real_balance.get('available_balance', 0)
             unrealized_pnl_total = real_balance.get('unrealized_pnl', 0)
 
-            # Get position info from NautilusTrader cache
-            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            # v4.9.1: Use Binance API for position data
+            pos_data = self._get_current_position_data(current_price=cached_price, from_telegram=True)
 
             msg = "📊 *风险指标*\n\n"
 
@@ -3984,27 +4836,16 @@ class DeepSeekAIStrategy(Strategy):
             # Use real balance for calculations if available, otherwise fall back to configured equity
             effective_equity = total_balance if total_balance > 0 else self.equity
 
-            # Position risk
-            if positions:
-                position = positions[0]
-                qty = float(position.quantity)
-                entry_price = float(position.avg_px_open)
-                side = position.side.name
+            # Position risk (from Binance API)
+            if pos_data and pos_data.get('quantity', 0) != 0:
+                qty = pos_data['quantity']
+                entry_price = pos_data['avg_px']
+                side = pos_data['side'].upper()
+                pnl = pos_data.get('unrealized_pnl', 0)
+                pnl_pct = pos_data.get('pnl_percentage', 0)
 
                 # Calculate position value
                 position_value = qty * cached_price if cached_price > 0 else qty * entry_price
-
-                # Calculate unrealized PnL
-                if cached_price > 0:
-                    if side == 'LONG':
-                        pnl = (cached_price - entry_price) * qty
-                        pnl_pct = ((cached_price / entry_price) - 1) * 100
-                    else:
-                        pnl = (entry_price - cached_price) * qty
-                        pnl_pct = ((entry_price / cached_price) - 1) * 100
-                else:
-                    pnl = 0
-                    pnl_pct = 0
 
                 pnl_emoji = "📈" if pnl >= 0 else "📉"
                 side_cn = "多头" if side == "LONG" else "空头"

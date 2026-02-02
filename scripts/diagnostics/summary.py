@@ -114,19 +114,18 @@ class DataFlowSummary(DiagnosticStep):
 
     def _print_derivatives_data(self) -> None:
         """Print derivatives data."""
-        if not self.ctx.derivatives_report:
+        if not self.ctx.derivatives_report and not self.ctx.binance_funding_rate:
             return
 
         print()
-        print_box("衍生品数据 (Coinalyze)")
+        print_box("衍生品数据")
         print()
-        dr = self.ctx.derivatives_report
+        dr = self.ctx.derivatives_report or {}
 
         oi_data = dr.get('open_interest', {})
-        fr_data = dr.get('funding_rate', {})
         liq_data = dr.get('liquidations', {})
 
-        print(f"  Open Interest:")
+        print(f"  Open Interest (Coinalyze):")
         if oi_data:
             print(f"    OI (BTC):    {oi_data.get('value', 0):,.2f}")
             print(f"    OI (USD):    ${oi_data.get('total_usd', 0):,.0f}")
@@ -134,13 +133,15 @@ class DataFlowSummary(DiagnosticStep):
         else:
             print(f"    (数据不可用)")
 
+        # v4.8: 使用 Binance 作为 Funding Rate 主要数据源
         print()
-        print(f"  Funding Rate:")
-        if fr_data:
-            fr_value = fr_data.get('value', 0)
-            source = fr_data.get('source', 'unknown')
-            print(f"    Current:     {fr_value:.6f} ({fr_value*100:.4f}%)")
-            print(f"    Source:      {source}")
+        print(f"  Funding Rate (Binance 8h):")
+        if self.ctx.binance_funding_rate:
+            fr = self.ctx.binance_funding_rate
+            fr_raw = fr.get('funding_rate', 0)
+            fr_pct = fr.get('funding_rate_pct', fr_raw * 100)
+            print(f"    Current:     {fr_pct:.4f}%")
+            print(f"    Source:      binance_direct")
         else:
             print(f"    (数据不可用)")
 
@@ -162,21 +163,139 @@ class DataFlowSummary(DiagnosticStep):
             print(f"    (数据不可用)")
 
     def _print_position_data(self) -> None:
-        """Print current position data."""
+        """
+        Print current position data.
+
+        v4.8.1: Updated to use correct field names and display all v4.5/v4.7 fields
+        """
         print()
-        print_box("当前持仓")
+        print_box("当前持仓 & v4.8 仓位状态")
         print()
+
+        # v4.8.1: Use correct field names (max_position_value, available_capacity)
+        leverage = self.ctx.binance_leverage
+        ctx = self.ctx.account_context or {}
+        equity = ctx.get('equity', 0)
+        max_position_value = ctx.get('max_position_value', 0)
+
+        print(f"  v4.8 仓位参数:")
+        print(f"    杠杆 (Binance): {leverage}x")
+        print(f"    资金 (equity):  ${equity:,.2f}")
+        print(f"    max_position_value: ${max_position_value:,.2f}")
 
         if self.ctx.current_position:
             pos = self.ctx.current_position
+            position_value = pos.get('position_value_usdt', 0)
+            available_capacity = ctx.get('available_capacity', max(0, max_position_value - position_value))
+
+            print()
             print(f"  持仓状态: 有持仓")
+            # === Basic (4 fields) ===
             print(f"    方向:     {pos.get('side', 'N/A').upper()}")
-            print(f"    数量:     {pos.get('quantity', 0)} BTC")
-            print(f"    入场价:   ${pos.get('entry_price', 0):,.2f}")
+            print(f"    数量:     {pos.get('quantity', 0):.6f} BTC")
+            print(f"    持仓价值: ${position_value:,.2f}")
+            print(f"    入场价:   ${pos.get('avg_px', 0):,.2f}")
             print(f"    未实现PnL: ${pos.get('unrealized_pnl', 0):,.2f}")
-            print(f"    盈亏比例: {pos.get('pnl_pct', 0):+.2f}%")
+            # v4.8.1: Use correct field name pnl_percentage
+            print(f"    盈亏比例: {pos.get('pnl_percentage', 0):+.2f}%")
+
+            # === v4.5 Tier 1 fields ===
+            print()
+            print(f"  v4.5 Tier 1 数据:")
+            duration = pos.get('duration_minutes')
+            if duration is not None:
+                hours = duration // 60
+                mins = duration % 60
+                print(f"    持仓时长: {hours}h {mins}m")
+            else:
+                print(f"    持仓时长: (诊断脚本不可用)")
+
+            sl_price = pos.get('sl_price')
+            tp_price = pos.get('tp_price')
+            rr_ratio = pos.get('risk_reward_ratio')
+            if sl_price:
+                print(f"    止损价:   ${sl_price:,.2f}")
+            if tp_price:
+                print(f"    止盈价:   ${tp_price:,.2f}")
+            if rr_ratio:
+                print(f"    风险收益比: 1:{rr_ratio:.2f}")
+
+            # === v4.5 Tier 2 fields ===
+            print()
+            print(f"  v4.5 Tier 2 数据:")
+            peak_pnl = pos.get('peak_pnl_pct')
+            worst_pnl = pos.get('worst_pnl_pct')
+            entry_conf = pos.get('entry_confidence')
+            margin_pct = pos.get('margin_used_pct')
+
+            if peak_pnl is not None:
+                print(f"    峰值盈亏: {peak_pnl:+.2f}%")
+            if worst_pnl is not None:
+                print(f"    最差盈亏: {worst_pnl:+.2f}%")
+            if entry_conf:
+                print(f"    入场信心: {entry_conf}")
+            if margin_pct is not None:
+                print(f"    保证金占用: {margin_pct:.1f}%")
+
+            # === v4.7 Liquidation Risk ===
+            print()
+            print(f"  v4.7 爆仓风险:")
+            liq_price = pos.get('liquidation_price')
+            liq_buffer = pos.get('liquidation_buffer_pct')
+            is_risk_high = pos.get('is_liquidation_risk_high', False)
+
+            if liq_price:
+                print(f"    爆仓价:   ${liq_price:,.2f}")
+            if liq_buffer is not None:
+                risk_emoji = "🔴" if is_risk_high else "🟢"
+                print(f"    爆仓距离: {risk_emoji} {liq_buffer:.1f}%")
+                if is_risk_high:
+                    print(f"    ⚠️ 警告: 爆仓风险高 (<10%)")
+
+            # === v4.7 Funding Rate ===
+            print()
+            print(f"  v4.7 资金费率影响:")
+            fr_current = pos.get('funding_rate_current')
+            daily_cost = pos.get('daily_funding_cost_usd')
+            cumulative = pos.get('funding_rate_cumulative_usd')
+            effective_pnl = pos.get('effective_pnl_after_funding')
+
+            if fr_current is not None:
+                print(f"    当前费率: {fr_current*100:+.4f}%")
+            if daily_cost is not None:
+                print(f"    日资金费用: ${daily_cost:,.2f}")
+            if cumulative is not None:
+                print(f"    累计资金费: ${cumulative:,.2f}")
+            if effective_pnl is not None:
+                print(f"    扣费后PnL: ${effective_pnl:,.2f}")
+
+            # === v4.7 Drawdown ===
+            print()
+            print(f"  v4.7 回撤分析:")
+            max_dd = pos.get('max_drawdown_pct')
+            dd_bars = pos.get('max_drawdown_duration_bars')
+            lower_lows = pos.get('consecutive_lower_lows', 0)
+
+            if max_dd is not None:
+                print(f"    最大回撤: {max_dd:.2f}%")
+            if dd_bars is not None:
+                print(f"    回撤持续: {dd_bars} bars")
+            print(f"    连续新低: {lower_lows} bars")
+
+            # === v4.8 累加模式 ===
+            print()
+            print(f"  v4.8 累加模式:")
+            capacity_pct = ctx.get('capacity_used_pct', 0)
+            if max_position_value > 0 and capacity_pct == 0:
+                capacity_pct = (position_value / max_position_value * 100)
+            print(f"    容量使用率: {capacity_pct:.1f}%")
+            print(f"    可用容量: ${available_capacity:,.2f}")
+            if available_capacity <= 0:
+                print(f"    ⚠️ 已达上限，无法加仓")
         else:
+            print()
             print(f"  持仓状态: 无持仓 (FLAT)")
+            print(f"  v4.8 累加模式: 可开首仓")
 
     def _print_ai_decision(self) -> None:
         """Print AI decision results."""
@@ -265,6 +384,7 @@ class DeepAnalysis(DiagnosticStep):
         self._analyze_trend()
         self._analyze_sentiment()
         self._analyze_judge_decision()
+        self._analyze_trigger_conditions()
         self._provide_recommendations()
 
         return True
@@ -420,10 +540,85 @@ class DeepAnalysis(DiagnosticStep):
         reason = sd.get('reason', 'N/A')
         print_wrapped(reason)
 
+        # Show debate summary if available
+        debate_summary = sd.get('debate_summary')
+        if debate_summary:
+            print()
+            print("  🗣️ 辩论摘要:")
+            print_wrapped(debate_summary[:200] + "..." if len(debate_summary) > 200 else debate_summary)
+
+    def _analyze_trigger_conditions(self) -> None:
+        """
+        Analyze conditions to trigger BUY/SELL signals.
+
+        Based on v11.16: [分析5] 触发交易所需条件
+        """
+        print()
+        print("[分析5] 触发交易所需条件 (最新提示词)")
+        print("-" * 50)
+
+        td = self.ctx.technical_data
+        price = self.ctx.current_price
+        sma_5 = td.get('sma_5', 0)
+        sma_20 = td.get('sma_20', 0)
+        rsi = td.get('rsi', 50)
+        macd = td.get('macd', 0)
+        macd_signal = td.get('macd_signal', 0)
+        macd_histogram = td.get('macd_histogram', 0)
+        bb_upper = td.get('bb_upper', 0)
+        bb_lower = td.get('bb_lower', 0)
+        support = td.get('support', 0)
+        resistance = td.get('resistance', 0)
+
+        # Calculate BB position
+        bb_position = 50.0
+        if bb_upper and bb_lower and bb_upper > bb_lower:
+            bb_width = bb_upper - bb_lower
+            bb_position = ((price - bb_lower) / bb_width) * 100
+
+        # BUY conditions
+        print("  要触发 BUY 信号 (ANY 2 of these is sufficient):")
+
+        cond1_buy = price > sma_5 and price > sma_20
+        print(f"    • 价格在 SMA5/SMA20 上方 (当前: {'✅' if cond1_buy else '❌'})")
+
+        cond2_buy = rsi < 60 and rsi < 70
+        print(f"    • RSI < 60 且不超买 (当前: {rsi:.1f}, {'✅' if cond2_buy else '❌'})")
+
+        cond3_buy = macd > macd_signal or macd_histogram > 0
+        print(f"    • MACD 金叉或柱状图为正 (当前: {'✅' if cond3_buy else '❌'})")
+
+        cond4_buy = bb_position < 30 or (support > 0 and price < support * 1.02)
+        print(f"    • 价格接近支撑或 BB 下轨 (当前位置: {bb_position:.1f}%)")
+
+        print()
+
+        # SELL conditions
+        print("  要触发 SELL 信号 (ANY 2 of these is sufficient):")
+
+        cond1_sell = price < sma_5 and price < sma_20
+        print(f"    • 价格在 SMA5/SMA20 下方 (当前: {'✅' if cond1_sell else '❌'})")
+
+        cond2_sell = rsi > 40 and rsi < 70  # Not overbought
+        print(f"    • RSI > 40 且显示弱势 (当前: {rsi:.1f}, {'✅' if cond2_sell else '❌'})")
+
+        cond3_sell = macd < macd_signal or macd_histogram < 0
+        print(f"    • MACD 死叉或柱状图为负 (当前: {'✅' if cond3_sell else '❌'})")
+
+        cond4_sell = bb_position > 70 or (resistance > 0 and price > resistance * 0.98)
+        print(f"    • 价格接近阻力或 BB 上轨 (当前位置: {bb_position:.1f}%)")
+
+        print()
+        print("  📌 提示词更新后，HOLD 仅在信号真正冲突时使用")
+
+        cfg = self.ctx.strategy_config
+        min_conf = getattr(cfg, 'min_confidence_to_trade', 'MEDIUM')
+        print(f"     当前 min_confidence_to_trade: {min_conf}")
+
     def _provide_recommendations(self) -> None:
         """Provide recommendations based on analysis."""
         print()
-        print("[分析5] 诊断建议")
+        print("[分析6] 诊断建议")
         print("-" * 50)
 
         td = self.ctx.technical_data

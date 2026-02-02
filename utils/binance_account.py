@@ -206,6 +206,40 @@ class BinanceAccountFetcher:
 
         return active_positions
 
+    def get_leverage(self, symbol: str) -> int:
+        """
+        Get the actual leverage setting for a symbol from Binance.
+
+        Parameters
+        ----------
+        symbol : str
+            Trading symbol (e.g., 'BTCUSDT' or 'BTCUSDT-PERP.BINANCE')
+
+        Returns
+        -------
+        int
+            Leverage multiplier (e.g., 10 for 10x leverage)
+            Returns 1 if unable to fetch
+        """
+        account = self.get_account_info()
+        if not account:
+            self.logger.warning("Cannot fetch leverage: account info unavailable")
+            return 1
+
+        # Clean symbol format
+        clean_symbol = symbol.replace('-PERP', '').replace('.BINANCE', '').upper()
+
+        # Find position info for this symbol
+        positions = account.get('positions', [])
+        for pos in positions:
+            if pos.get('symbol', '').upper() == clean_symbol:
+                leverage = int(pos.get('leverage', 1))
+                self.logger.debug(f"Binance leverage for {clean_symbol}: {leverage}x")
+                return leverage
+
+        self.logger.warning(f"Symbol {clean_symbol} not found in account positions")
+        return 1
+
     def get_position_summary(self, symbol: Optional[str] = None) -> Dict[str, Any]:
         """
         Get a summary of position information.
@@ -224,6 +258,102 @@ class BinanceAccountFetcher:
             'positions_count': len(positions),
             'has_position': len(positions) > 0,
         }
+
+    def get_open_orders(self, symbol: Optional[str] = None) -> list:
+        """
+        获取当前挂单列表 (用于恢复 SL/TP 状态).
+
+        Parameters
+        ----------
+        symbol : str, optional
+            交易对 (e.g., 'BTCUSDT')，不指定则返回所有挂单
+
+        Returns
+        -------
+        list
+            挂单列表，每个订单包含:
+            - orderId, symbol, type, side, price, stopPrice, origQty, status
+        """
+        params = {}
+        if symbol:
+            clean_symbol = symbol.replace('-PERP', '').replace('.BINANCE', '').upper()
+            params['symbol'] = clean_symbol
+
+        data = self._make_request("/fapi/v1/openOrders", params)
+
+        if data is None:
+            return []
+
+        return data
+
+    def get_sl_tp_from_orders(self, symbol: str, position_side: str) -> Dict[str, Optional[float]]:
+        """
+        从挂单中提取止损止盈价格.
+
+        服务器重启后，trailing_stop_state 会丢失，但 Binance 上的挂单还在。
+        此方法用于恢复 SL/TP 状态。
+
+        Parameters
+        ----------
+        symbol : str
+            交易对 (e.g., 'BTCUSDT')
+        position_side : str
+            持仓方向 ('long' 或 'short')
+
+        Returns
+        -------
+        dict
+            {'sl_price': float or None, 'tp_price': float or None}
+        """
+        orders = self.get_open_orders(symbol)
+        if not orders:
+            return {'sl_price': None, 'tp_price': None}
+
+        sl_price = None
+        tp_price = None
+
+        # 分析每个挂单
+        for order in orders:
+            order_type = order.get('type', '').upper()
+            order_side = order.get('side', '').upper()
+            stop_price = float(order.get('stopPrice', 0))
+            limit_price = float(order.get('price', 0))
+            reduce_only = order.get('reduceOnly', False)
+
+            # 只看 reduce-only 订单 (SL/TP 都是 reduce-only)
+            if not reduce_only:
+                continue
+
+            is_long = position_side.lower() == 'long'
+
+            # LONG 持仓的 SL: SELL + STOP_MARKET (stop < entry)
+            # LONG 持仓的 TP: SELL + TAKE_PROFIT_MARKET (stop > entry)
+            # SHORT 持仓的 SL: BUY + STOP_MARKET (stop > entry)
+            # SHORT 持仓的 TP: BUY + TAKE_PROFIT_MARKET (stop < entry)
+
+            if order_type in ['STOP_MARKET', 'STOP']:
+                # 止损单
+                if is_long and order_side == 'SELL':
+                    sl_price = stop_price
+                elif not is_long and order_side == 'BUY':
+                    sl_price = stop_price
+
+            elif order_type in ['TAKE_PROFIT_MARKET', 'TAKE_PROFIT']:
+                # 止盈单
+                if is_long and order_side == 'SELL':
+                    tp_price = stop_price
+                elif not is_long and order_side == 'BUY':
+                    tp_price = stop_price
+
+            elif order_type == 'LIMIT' and reduce_only:
+                # 限价止盈单
+                if is_long and order_side == 'SELL' and limit_price > 0:
+                    tp_price = limit_price
+                elif not is_long and order_side == 'BUY' and limit_price > 0:
+                    tp_price = limit_price
+
+        self.logger.debug(f"从 Binance 挂单恢复 SL/TP: SL=${sl_price}, TP=${tp_price}")
+        return {'sl_price': sl_price, 'tp_price': tp_price}
 
     def get_trades(self, symbol: str, limit: int = 10) -> list:
         """

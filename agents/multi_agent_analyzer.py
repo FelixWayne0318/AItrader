@@ -390,6 +390,8 @@ class MultiAgentAnalyzer:
         binance_derivatives_report: Optional[Dict[str, Any]] = None,
         # ========== v3.7: Order Book Depth ==========
         orderbook_report: Optional[Dict[str, Any]] = None,
+        # ========== v4.6: Account Context for Add/Reduce Decisions ==========
+        account_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis with Bull/Bear debate.
@@ -421,6 +423,12 @@ class MultiAgentAnalyzer:
             Derivatives market data (OI, funding, liquidations) - MTF v2.1
         binance_derivatives_report : Dict, optional
             Binance-specific derivatives (top traders, taker ratio) - v3.0
+        orderbook_report : Dict, optional
+            Order book depth data (OBI, liquidity, slippage) - v3.7
+        account_context : Dict, optional
+            Account-level info for add/reduce decisions (v4.6):
+            - equity, leverage, max_position_value
+            - available_capacity, capacity_used_pct, can_add_position
 
         Returns
         -------
@@ -542,6 +550,7 @@ class MultiAgentAnalyzer:
                 current_position=current_position,
                 current_price=current_price,
                 technical_data=technical_report,  # v3.7: Pass dict for BB checks
+                account_context=account_context,  # v4.6: Account info for add/reduce
             )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
@@ -774,6 +783,7 @@ OUTPUT FORMAT (JSON only, no other text):
         current_position: Optional[Dict[str, Any]],
         current_price: float,
         technical_data: Optional[Dict[str, Any]] = None,
+        account_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Final risk evaluation and position sizing.
@@ -783,6 +793,7 @@ OUTPUT FORMAT (JSON only, no other text):
         v3.7: Added BB position hardcoded checks for support/resistance risk control
         v3.8: Replaced BB-only check with multi-source S/R Zone check
         v3.11: Removed preset rules from prompt, let AI decide autonomously
+        v4.6: Added account_context for position sizing decisions
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
@@ -852,6 +863,9 @@ MARKET DATA:
 
 CURRENT POSITION:
 {self._format_position(current_position)}
+
+ACCOUNT CONTEXT:
+{self._format_account(account_context)}
 
 CURRENT PRICE: ${current_price:,.2f}
 
@@ -1186,30 +1200,242 @@ MARKET SENTIMENT (Binance Long/Short Ratio):
 """
 
     def _format_position(self, position: Optional[Dict[str, Any]]) -> str:
-        """Format current position for prompts."""
+        """
+        Format current position for AI prompts with Tier 1 + Tier 2 + v4.7 fields.
+
+        v4.5: Enhanced position data for better AI decision making.
+        v4.7: Added liquidation risk, funding rate, and drawdown attribution.
+        """
         if not position:
             return "No current position (FLAT)"
 
-        # Fix: Ensure numeric types for formatting (API may return strings)
-        try:
-            qty = float(position.get('quantity') or 0)
-        except (ValueError, TypeError):
-            qty = 0.0
-        try:
-            avg_px = float(position.get('avg_px') or 0)
-        except (ValueError, TypeError):
-            avg_px = 0.0
-        try:
-            unrealized_pnl = float(position.get('unrealized_pnl') or 0)
-        except (ValueError, TypeError):
-            unrealized_pnl = 0.0
+        # === Safe extraction of all fields ===
+        def safe_float(val, default=0.0):
+            try:
+                return float(val) if val is not None else default
+            except (ValueError, TypeError):
+                return default
 
-        return f"""
-Side: {position.get('side', 'N/A')}
-Size: {qty:.4f} BTC
-Avg Entry: ${avg_px:,.2f}
-Unrealized P&L: ${unrealized_pnl:,.2f}
-"""
+        def safe_str(val, default='N/A'):
+            return str(val) if val is not None else default
+
+        # Basic fields
+        side = position.get('side', 'N/A').upper()
+        qty = safe_float(position.get('quantity'))
+        avg_px = safe_float(position.get('avg_px'))
+        unrealized_pnl = safe_float(position.get('unrealized_pnl'))
+        current_price = safe_float(position.get('current_price'))
+
+        # Tier 1 fields
+        pnl_pct = safe_float(position.get('pnl_percentage'))
+        duration_mins = position.get('duration_minutes', 0) or 0
+        sl_price = position.get('sl_price')
+        tp_price = position.get('tp_price')
+        rr_ratio = position.get('risk_reward_ratio')
+
+        # Tier 2 fields
+        peak_pnl = position.get('peak_pnl_pct')
+        worst_pnl = position.get('worst_pnl_pct')
+        entry_conf = position.get('entry_confidence')
+        margin_pct = position.get('margin_used_pct')
+
+        # v4.7: Liquidation risk fields
+        liquidation_price = position.get('liquidation_price')
+        liquidation_buffer_pct = position.get('liquidation_buffer_pct')
+        is_liquidation_risk_high = position.get('is_liquidation_risk_high', False)
+
+        # v4.7: Funding rate fields
+        funding_rate_current = position.get('funding_rate_current')
+        funding_rate_cumulative_usd = position.get('funding_rate_cumulative_usd')
+        effective_pnl = position.get('effective_pnl_after_funding')
+        daily_funding_cost = position.get('daily_funding_cost_usd')
+
+        # v4.7: Drawdown fields
+        max_drawdown_pct = position.get('max_drawdown_pct')
+        max_drawdown_duration_bars = position.get('max_drawdown_duration_bars')
+        consecutive_lower_lows = position.get('consecutive_lower_lows', 0)
+
+        # === Build formatted output ===
+        lines = []
+
+        # Header
+        lines.append(f"Side: {side} | Size: {qty:.4f} BTC | Entry: ${avg_px:,.2f}")
+        lines.append("")
+
+        # Performance section
+        lines.append("Performance:")
+        pnl_sign = '+' if pnl_pct >= 0 else ''
+        lines.append(f"  P&L: ${unrealized_pnl:+,.2f} ({pnl_sign}{pnl_pct:.2f}%)")
+
+        # v4.7: Show effective PnL after funding
+        if effective_pnl is not None and funding_rate_cumulative_usd:
+            eff_sign = '+' if effective_pnl >= 0 else ''
+            lines.append(f"  Effective P&L (after funding): ${effective_pnl:+,.2f}")
+
+        # Peak/worst if available
+        if peak_pnl is not None or worst_pnl is not None:
+            peak_str = f"+{peak_pnl:.2f}%" if peak_pnl is not None else "N/A"
+            worst_str = f"{worst_pnl:+.2f}%" if worst_pnl is not None else "N/A"
+            lines.append(f"  Peak: {peak_str} | Worst: {worst_str}")
+
+        # v4.7: Drawdown attribution
+        if max_drawdown_pct is not None and max_drawdown_pct > 0:
+            dd_bars = max_drawdown_duration_bars or 0
+            lines.append(f"  Current Drawdown: -{max_drawdown_pct:.2f}% (for {dd_bars} bars)")
+
+        # Duration
+        if duration_mins > 0:
+            if duration_mins >= 60:
+                hours = duration_mins // 60
+                mins = duration_mins % 60
+                duration_str = f"{hours}h {mins}m"
+            else:
+                duration_str = f"{duration_mins} minutes"
+            lines.append(f"  Duration: {duration_str}")
+
+        lines.append("")
+
+        # v4.7: Liquidation Risk section (CRITICAL)
+        lines.append("Liquidation Risk:")
+        if liquidation_price is not None:
+            lines.append(f"  Liquidation Price: ${liquidation_price:,.2f}")
+            if liquidation_buffer_pct is not None:
+                risk_emoji = "🔴" if is_liquidation_risk_high else "🟢"
+                lines.append(f"  Buffer: {risk_emoji} {liquidation_buffer_pct:.1f}%")
+                if is_liquidation_risk_high:
+                    lines.append("  ⚠️ WARNING: Liquidation risk HIGH (<10% buffer)")
+        else:
+            lines.append("  Liquidation data not available")
+
+        lines.append("")
+
+        # v4.7: Funding Rate section (for perpetuals)
+        lines.append("Funding Rate Impact:")
+        if funding_rate_current is not None:
+            fr_pct = funding_rate_current * 100
+            fr_emoji = "🔴" if fr_pct > 0.01 else "🟢" if fr_pct < -0.01 else "⚪"
+            lines.append(f"  Current Rate: {fr_emoji} {fr_pct:.4f}% per 8h")
+            if daily_funding_cost is not None:
+                lines.append(f"  Daily Cost: ${daily_funding_cost:.2f}")
+            if funding_rate_cumulative_usd is not None:
+                cum_sign = '+' if funding_rate_cumulative_usd >= 0 else ''
+                lines.append(f"  Cumulative Paid: ${funding_rate_cumulative_usd:+.2f}")
+        else:
+            lines.append("  Funding rate data not available")
+
+        lines.append("")
+
+        # Risk Management section
+        lines.append("Risk Management:")
+        if sl_price is not None:
+            sl_dist = ((sl_price - avg_px) / avg_px * 100) if avg_px > 0 else 0
+            lines.append(f"  Stop Loss: ${sl_price:,.2f} ({sl_dist:+.2f}%)")
+        else:
+            lines.append("  Stop Loss: NOT SET")
+
+        if tp_price is not None:
+            tp_dist = ((tp_price - avg_px) / avg_px * 100) if avg_px > 0 else 0
+            lines.append(f"  Take Profit: ${tp_price:,.2f} ({tp_dist:+.2f}%)")
+        else:
+            lines.append("  Take Profit: NOT SET")
+
+        if rr_ratio is not None:
+            lines.append(f"  Risk/Reward Ratio: {rr_ratio:.1f}:1")
+
+        if margin_pct is not None:
+            lines.append(f"  Margin Used: {margin_pct:.1f}% of equity")
+
+        lines.append("")
+
+        # Entry Context section
+        lines.append("Entry Context:")
+        if entry_conf:
+            lines.append(f"  Entry Confidence: {entry_conf}")
+        else:
+            lines.append("  Entry Confidence: UNKNOWN")
+
+        if current_price and avg_px > 0:
+            price_vs_entry = ((current_price - avg_px) / avg_px * 100)
+            lines.append(f"  Current vs Entry: {price_vs_entry:+.2f}%")
+
+        # v4.7: Market structure hint
+        if consecutive_lower_lows and consecutive_lower_lows >= 3:
+            lines.append(f"  ⚠️ Bearish structure: {consecutive_lower_lows} consecutive lower lows")
+
+        return "\n".join(lines)
+
+    def _format_account(self, account: Optional[Dict[str, Any]]) -> str:
+        """
+        Format account context for AI prompts (v4.6 + v4.7).
+
+        Provides capital, capacity, and portfolio-level risk information.
+        v4.7: Added liquidation buffer, funding costs, and total P&L.
+        """
+        if not account:
+            return "Account context not available"
+
+        lines = []
+
+        # Capital info
+        equity = account.get('equity', 0)
+        leverage = account.get('leverage', 1)
+        lines.append(f"Equity: ${equity:,.2f} | Leverage: {leverage}x")
+
+        # Position capacity
+        max_pos_value = account.get('max_position_value', 0)
+        current_pos_value = account.get('current_position_value', 0)
+        available = account.get('available_capacity', 0)
+        capacity_pct = account.get('capacity_used_pct', 0)
+
+        lines.append("")
+        lines.append("Position Capacity:")
+        lines.append(f"  Max Allowed: ${max_pos_value:,.2f}")
+        lines.append(f"  Currently Used: ${current_pos_value:,.2f} ({capacity_pct:.1f}%)")
+        lines.append(f"  Available: ${available:,.2f}")
+
+        # v4.7: Portfolio P&L
+        total_pnl = account.get('total_unrealized_pnl_usd')
+        if total_pnl is not None:
+            lines.append("")
+            lines.append("Portfolio P&L:")
+            pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+            lines.append(f"  Total Unrealized: {pnl_emoji} ${total_pnl:+,.2f}")
+
+        # v4.7: Portfolio Liquidation Risk
+        liq_buffer_min = account.get('liquidation_buffer_portfolio_min_pct')
+        if liq_buffer_min is not None:
+            lines.append("")
+            lines.append("Portfolio Liquidation Risk:")
+            risk_emoji = "🔴" if liq_buffer_min < 10 else "🟡" if liq_buffer_min < 15 else "🟢"
+            lines.append(f"  Min Liquidation Buffer: {risk_emoji} {liq_buffer_min:.1f}%")
+            if liq_buffer_min < 10:
+                lines.append("  ⚠️ CRITICAL: Portfolio near liquidation!")
+            elif liq_buffer_min < 15:
+                lines.append("  ⚠️ WARNING: Reduce risk or add margin")
+
+        # v4.7: Funding Costs
+        daily_funding = account.get('total_daily_funding_cost_usd')
+        cumulative_funding = account.get('total_cumulative_funding_paid_usd')
+        if daily_funding is not None or cumulative_funding is not None:
+            lines.append("")
+            lines.append("Funding Costs:")
+            if daily_funding is not None:
+                lines.append(f"  Daily Cost: ${daily_funding:.2f}")
+            if cumulative_funding is not None:
+                lines.append(f"  Cumulative Paid: ${cumulative_funding:+.2f}")
+
+        # Add/reduce guidance
+        can_add = account.get('can_add_position', False)
+        can_add_safely = account.get('can_add_position_safely', False)
+        lines.append("")
+        if can_add_safely:
+            lines.append("✅ Safe to add position (capacity + liquidation buffer OK)")
+        elif can_add:
+            lines.append("⚠️ Capacity available but liquidation buffer low - add with caution")
+        else:
+            lines.append("🔴 Near max capacity - consider REDUCE or HOLD")
+
+        return "\n".join(lines)
 
     # =========================================================================
     # v3.12: Persistent Memory System (TradingGroup-style experience summary)
