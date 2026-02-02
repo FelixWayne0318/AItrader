@@ -198,6 +198,14 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         trend_strength_multiplier=config_manager.get('position', 'trend_strength_multiplier', default=1.2),
         min_trade_amount=config_manager.get('position', 'min_trade_amount', default=0.001),
 
+        # v4.8: Position sizing method configuration
+        position_sizing_method=config_manager.get('risk', 'position_sizing', 'method', default='ai_controlled'),
+        position_sizing_default_pct=config_manager.get('risk', 'position_sizing', 'ai_controlled', 'default_size_pct', default=50.0),
+        position_sizing_high_pct=config_manager.get('risk', 'position_sizing', 'ai_controlled', 'confidence_mapping', 'HIGH', default=80.0),
+        position_sizing_medium_pct=config_manager.get('risk', 'position_sizing', 'ai_controlled', 'confidence_mapping', 'MEDIUM', default=50.0),
+        position_sizing_low_pct=config_manager.get('risk', 'position_sizing', 'ai_controlled', 'confidence_mapping', 'LOW', default=30.0),
+        position_sizing_cumulative=True,  # v4.8: 累加模式，允许多次加仓
+
         # Technical indicators (all from ConfigManager)
         # For 1m timeframe, use development.yaml with shorter periods
         sma_periods=config_manager.get('indicators', 'sma_periods', default=[5, 20, 50]),

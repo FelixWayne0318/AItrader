@@ -73,6 +73,14 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     trend_strength_multiplier: float = 1.2
     min_trade_amount: float = 0.001
 
+    # v4.8: Position sizing method configuration
+    position_sizing_method: str = "ai_controlled"  # fixed_pct | atr_based | ai_controlled | hybrid_atr_ai
+    position_sizing_default_pct: float = 50.0  # AI 未提供时的默认百分比
+    position_sizing_high_pct: float = 80.0     # HIGH 信心仓位百分比
+    position_sizing_medium_pct: float = 50.0   # MEDIUM 信心仓位百分比
+    position_sizing_low_pct: float = 30.0      # LOW 信心仓位百分比
+    position_sizing_cumulative: bool = True    # 累加模式：允许多次加仓 (v4.8)
+
     # Technical indicators
     sma_periods: Tuple[int, ...] = (5, 20, 50)
     rsi_period: int = 14
@@ -247,6 +255,20 @@ class DeepSeekAIStrategy(Strategy):
             'min_trade_amount': config.min_trade_amount,
             'adjustment_threshold': config.position_adjustment_threshold,
         }
+
+        # v4.8: Position sizing configuration
+        self.position_sizing_config = {
+            'method': config.position_sizing_method,
+            'ai_controlled': {
+                'default_size_pct': config.position_sizing_default_pct,
+                'confidence_mapping': {
+                    'HIGH': config.position_sizing_high_pct,
+                    'MEDIUM': config.position_sizing_medium_pct,
+                    'LOW': config.position_sizing_low_pct,
+                }
+            }
+        }
+        self.position_sizing_cumulative = config.position_sizing_cumulative
 
         # Risk management
         self.min_confidence = config.min_confidence_to_trade
@@ -2563,12 +2585,23 @@ class DeepSeekAIStrategy(Strategy):
             self._reduce_position(current_position, position_size_pct)
             return
 
-        # For LONG/SHORT signals, calculate target position size
-        target_quantity = self._calculate_position_size(
+        # For LONG/SHORT signals, calculate position size
+        calculated_quantity = self._calculate_position_size(
             signal_data, price_data, technical_data, current_position
         )
 
-        if target_quantity == 0:
+        # v4.8: 累加模式下，calculated_quantity 是"本次加仓量"
+        # 需要转换为"目标仓位"供 _manage_existing_position 使用
+        if self.position_sizing_cumulative and current_position:
+            current_qty = current_position.get('quantity', 0)
+            target_quantity = current_qty + calculated_quantity
+            self.log.info(
+                f"📊 累加模式: 当前 {current_qty:.4f} + 加仓 {calculated_quantity:.4f} = 目标 {target_quantity:.4f} BTC"
+            )
+        else:
+            target_quantity = calculated_quantity
+
+        if target_quantity == 0 and calculated_quantity == 0:
             self.log.warning("⚠️ Calculated position size is 0, skipping trade")
             self._last_signal_status = {
                 'executed': False,
@@ -2657,6 +2690,7 @@ class DeepSeekAIStrategy(Strategy):
         config = {
             'base_usdt': self.base_usdt,
             'equity': self.equity,
+            'leverage': self.leverage,  # v4.8: 添加杠杆
             'high_confidence_multiplier': self.position_config.get('high_confidence_multiplier', 1.5),
             'medium_confidence_multiplier': self.position_config.get('medium_confidence_multiplier', 1.0),
             'low_confidence_multiplier': self.position_config.get('low_confidence_multiplier', 0.5),
@@ -2666,11 +2700,39 @@ class DeepSeekAIStrategy(Strategy):
             'rsi_extreme_lower': self.rsi_extreme_lower,
             'max_position_ratio': self.position_config.get('max_position_ratio', 0.3),
             'min_trade_amount': self.position_config.get('min_trade_amount', 0.001),
+            'position_sizing': self.position_sizing_config,  # v4.8: 添加仓位计算配置
         }
 
-        btc_quantity, _ = calculate_position_size(
+        btc_quantity, details = calculate_position_size(
             signal_data, price_data, technical_data, config, logger
         )
+
+        # v4.8: 累加模式 - 计算的是"本次加仓量"而不是"目标仓位"
+        if self.position_sizing_cumulative and current_position:
+            # 累加模式下，btc_quantity 就是本次要加的量
+            # 需要检查是否超过 max_usdt 限制
+            current_qty = current_position.get('quantity', 0)
+            current_price = price_data.get('price', 100000)
+            current_value = current_qty * current_price
+
+            max_usdt = details.get('max_usdt', self.equity * self.leverage * 0.3)
+            remaining_capacity = max_usdt - current_value
+
+            if remaining_capacity <= 0:
+                self.log.warning(
+                    f"⚠️ 仓位已达上限 (${current_value:.0f} >= ${max_usdt:.0f}), 无法加仓"
+                )
+                return 0.0
+
+            # 限制加仓量不超过剩余容量
+            max_add_btc = remaining_capacity / current_price
+            if btc_quantity > max_add_btc:
+                self.log.info(
+                    f"📊 加仓受限: {btc_quantity:.4f} → {max_add_btc:.4f} BTC "
+                    f"(剩余容量: ${remaining_capacity:.0f})"
+                )
+                btc_quantity = max_add_btc
+
         return btc_quantity
 
     def _manage_existing_position(
