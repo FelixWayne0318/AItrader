@@ -142,11 +142,13 @@ class MTFComponentTester(DiagnosticStep):
                 else:
                     print("        ❌ OI 获取失败")
 
-                # Test Funding Rate
+                # Test Funding Rate (使用 Binance 作为主要数据源)
                 kline_client = BinanceKlineClient(timeout=10)
                 binance_fr = kline_client.get_funding_rate(symbol=self.ctx.symbol)
                 if binance_fr:
                     print(f"        ✅ Funding Rate (Binance 8h): {binance_fr.get('funding_rate_pct', 0):.4f}%")
+                    # v4.8: 保存 Binance funding rate 到 context (主要数据源)
+                    self.ctx.binance_funding_rate = binance_fr
 
         except ImportError as e:
             print(f"     ❌ 无法导入 CoinalyzeClient: {e}")

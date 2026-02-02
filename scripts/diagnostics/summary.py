@@ -114,19 +114,18 @@ class DataFlowSummary(DiagnosticStep):
 
     def _print_derivatives_data(self) -> None:
         """Print derivatives data."""
-        if not self.ctx.derivatives_report:
+        if not self.ctx.derivatives_report and not self.ctx.binance_funding_rate:
             return
 
         print()
-        print_box("衍生品数据 (Coinalyze)")
+        print_box("衍生品数据")
         print()
-        dr = self.ctx.derivatives_report
+        dr = self.ctx.derivatives_report or {}
 
         oi_data = dr.get('open_interest', {})
-        fr_data = dr.get('funding_rate', {})
         liq_data = dr.get('liquidations', {})
 
-        print(f"  Open Interest:")
+        print(f"  Open Interest (Coinalyze):")
         if oi_data:
             print(f"    OI (BTC):    {oi_data.get('value', 0):,.2f}")
             print(f"    OI (USD):    ${oi_data.get('total_usd', 0):,.0f}")
@@ -134,13 +133,15 @@ class DataFlowSummary(DiagnosticStep):
         else:
             print(f"    (数据不可用)")
 
+        # v4.8: 使用 Binance 作为 Funding Rate 主要数据源
         print()
-        print(f"  Funding Rate:")
-        if fr_data:
-            fr_value = fr_data.get('value', 0)
-            source = fr_data.get('source', 'unknown')
-            print(f"    Current:     {fr_value:.6f} ({fr_value*100:.4f}%)")
-            print(f"    Source:      {source}")
+        print(f"  Funding Rate (Binance 8h):")
+        if self.ctx.binance_funding_rate:
+            fr = self.ctx.binance_funding_rate
+            fr_raw = fr.get('funding_rate', 0)
+            fr_pct = fr.get('funding_rate_pct', fr_raw * 100)
+            print(f"    Current:     {fr_pct:.4f}%")
+            print(f"    Source:      binance_direct")
         else:
             print(f"    (数据不可用)")
 

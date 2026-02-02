@@ -305,6 +305,7 @@ class DiagnosticContext:
     order_flow_report: Optional[Dict] = None
     derivatives_report: Optional[Dict] = None
     orderbook_report: Optional[Dict] = None
+    binance_funding_rate: Optional[Dict] = None  # v4.8: Binance 8h funding rate (主要数据源)
 
     # AI decision data
     multi_agent: Any = None

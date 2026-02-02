@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.1 (v4.8 适配版)
+实盘信号诊断脚本 v2.2 (v4.8 适配版)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.2 更新:
+- Funding Rate 统一使用 Binance 8h 资金费率 (不再使用 Coinalyze)
+- 修复衍生品数据显示，明确标注数据来源
 
 v2.1 更新 (v4.8 适配):
 - 杠杆从 Binance API 同步 (不再硬编码)
@@ -93,7 +97,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.1 (v4.8 适配版)',
+        description='实盘信号诊断工具 v2.2 (v4.8 适配版)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

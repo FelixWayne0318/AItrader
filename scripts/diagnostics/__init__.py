@@ -39,7 +39,7 @@ from .base import (
     print_box,
 )
 
-__version__ = "2.0.0"
+__version__ = "2.2.0"
 __all__ = [
     "DiagnosticContext",
     "DiagnosticStep",
