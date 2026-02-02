@@ -859,32 +859,33 @@ class TelegramBot:
             if macd is not None:
                 msg += f"  • MACD: {macd:.4f}\n"
 
-        # Add risk management
-        if sl_price or tp_price:
-            msg += "\n🛡️ *风险管理*:\n"
+        # v4.3: Combined "关键价位" section (SL/TP + S/R Zone)
+        sr_zone = execution_data.get('sr_zone') or {}
+        nearest_support = sr_zone.get('nearest_support')
+        nearest_resistance = sr_zone.get('nearest_resistance')
+
+        has_key_levels = (sl_price or tp_price or
+                         nearest_support is not None or nearest_resistance is not None)
+        if has_key_levels:
+            msg += "\n📍 *关键价位*:\n"
+            # SL/TP first (risk management)
             if sl_price:
                 sl_pct = ((sl_price / entry_price) - 1) * 100 if entry_price > 0 else 0
                 if side == "SHORT":
                     sl_pct = -sl_pct  # SHORT position: SL above entry is positive distance
-                msg += f"  • 止损: ${sl_price:,.2f} ({abs(sl_pct):.2f}%)\n"
+                msg += f"  🛑 止损: ${sl_price:,.2f} ({abs(sl_pct):.2f}%)\n"
             if tp_price:
                 tp_pct = ((tp_price / entry_price) - 1) * 100 if entry_price > 0 else 0
                 if side == "SHORT":
                     tp_pct = -tp_pct  # SHORT position: TP below entry is positive profit
-                msg += f"  • 止盈: ${tp_price:,.2f} (+{abs(tp_pct):.2f}%)\n"
-
-        # v4.2: Add S/R Zone data if available
-        sr_zone = execution_data.get('sr_zone') or {}
-        nearest_support = sr_zone.get('nearest_support')
-        nearest_resistance = sr_zone.get('nearest_resistance')
-        if nearest_support is not None or nearest_resistance is not None:
-            msg += "\n🎯 *支撑/阻力*:\n"
+                msg += f"  🎯 止盈: ${tp_price:,.2f} (+{abs(tp_pct):.2f}%)\n"
+            # S/R Zone
             if nearest_support is not None:
                 sup_dist = ((entry_price - nearest_support) / entry_price * 100) if entry_price > 0 else 0
-                msg += f"  • 支撑: ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
+                msg += f"  📉 支撑: ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
             if nearest_resistance is not None:
                 res_dist = ((nearest_resistance - entry_price) / entry_price * 100) if entry_price > 0 else 0
-                msg += f"  • 阻力: ${nearest_resistance:,.2f} (+{res_dist:.2f}%)\n"
+                msg += f"  📈 阻力: ${nearest_resistance:,.2f} (+{res_dist:.2f}%)\n"
 
         # Add AI analysis if available
         if winning_side or reasoning:
@@ -1087,24 +1088,34 @@ class TelegramBot:
 
             msg += f"📋 状态: {status_emoji} {status_text}\n"
 
-        # v3.8 S/R Zone Hard Control (if available)
-        if nearest_support is not None or nearest_resistance is not None:
+        # v4.3: Combined "关键价位" section (SL/TP + S/R Zone)
+        has_key_levels = (sl_price is not None or tp_price is not None or
+                         nearest_support is not None or nearest_resistance is not None)
+        if has_key_levels:
             msg += f"━━━━━━━━━━━━━━━━\n"
-            msg += f"🎯 *S/R Zone (v3.8)*\n"
+            msg += f"📍 *关键价位*\n"
+            # SL/TP first (more important for risk management)
+            if sl_price is not None:
+                sl_dist = ((sl_price - price) / price * 100) if price > 0 else 0
+                msg += f"  🛑 止损: ${sl_price:,.2f} ({sl_dist:+.2f}%)\n"
+            if tp_price is not None:
+                tp_dist = ((tp_price - price) / price * 100) if price > 0 else 0
+                msg += f"  🎯 止盈: ${tp_price:,.2f} ({tp_dist:+.2f}%)\n"
+            # S/R Zone
             if nearest_support is not None:
                 dist_sup = ((price - nearest_support) / price * 100) if price > 0 else 0
-                msg += f"  支撑: ${nearest_support:,.2f} ({dist_sup:+.2f}%)\n"
+                msg += f"  📉 支撑: ${nearest_support:,.2f} ({dist_sup:+.2f}%)\n"
             if nearest_resistance is not None:
                 dist_res = ((nearest_resistance - price) / price * 100) if price > 0 else 0
-                msg += f"  阻力: ${nearest_resistance:,.2f} (+{dist_res:.2f}%)\n"
-            # Block status
+                msg += f"  📈 阻力: ${nearest_resistance:,.2f} (+{dist_res:.2f}%)\n"
+            # Block status (hard control)
             if block_long or block_short:
                 block_str = []
                 if block_long:
                     block_str.append("🚫 LONG")
                 if block_short:
                     block_str.append("🚫 SHORT")
-                msg += f"  风控: {' | '.join(block_str)}\n"
+                msg += f"  ⚠️ 风控: {' | '.join(block_str)}\n"
 
         # v3.6 Order Flow (if available)
         if buy_ratio is not None or cvd_trend:
@@ -1144,14 +1155,6 @@ class TelegramBot:
         msg += f"📍 入场: ${entry_price:,.2f}\n"
         msg += f"📦 数量: {position_size:.4f}\n"
         msg += f"💹 盈亏: {pnl_emoji} {position_pnl_pct:+.2f}%\n"
-        # v4.2: Show SL/TP if available
-        if sl_price is not None or tp_price is not None:
-            if sl_price is not None:
-                sl_dist = ((sl_price - price) / price * 100) if price > 0 else 0
-                msg += f"🛑 止损: ${sl_price:,.2f} ({sl_dist:+.2f}%)\n"
-            if tp_price is not None:
-                tp_dist = ((tp_price - price) / price * 100) if price > 0 else 0
-                msg += f"🎯 止盈: ${tp_price:,.2f} ({tp_dist:+.2f}%)\n"
         msg += f"━━━━━━━━━━━━━━━━\n"
         msg += f"🏦 余额: ${equity:,.2f}\n"
         msg += f"⏱ 运行: {uptime_str}\n"
