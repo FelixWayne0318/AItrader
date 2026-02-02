@@ -84,11 +84,7 @@ class MTFComponentTester(DiagnosticStep):
             from utils.order_flow_processor import OrderFlowProcessor
             from utils.binance_kline_client import BinanceKlineClient
 
-            processor = OrderFlowProcessor(
-                logger=None,
-                bullish_threshold=0.55,
-                bearish_threshold=0.45,
-            )
+            processor = OrderFlowProcessor(logger=None)
             print("     ✅ OrderFlowProcessor 导入成功")
 
             kline_client = BinanceKlineClient(timeout=10)
