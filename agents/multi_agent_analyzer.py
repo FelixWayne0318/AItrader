@@ -390,6 +390,8 @@ class MultiAgentAnalyzer:
         binance_derivatives_report: Optional[Dict[str, Any]] = None,
         # ========== v3.7: Order Book Depth ==========
         orderbook_report: Optional[Dict[str, Any]] = None,
+        # ========== v4.6: Account Context for Add/Reduce Decisions ==========
+        account_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis with Bull/Bear debate.
@@ -421,6 +423,12 @@ class MultiAgentAnalyzer:
             Derivatives market data (OI, funding, liquidations) - MTF v2.1
         binance_derivatives_report : Dict, optional
             Binance-specific derivatives (top traders, taker ratio) - v3.0
+        orderbook_report : Dict, optional
+            Order book depth data (OBI, liquidity, slippage) - v3.7
+        account_context : Dict, optional
+            Account-level info for add/reduce decisions (v4.6):
+            - equity, leverage, max_position_value
+            - available_capacity, capacity_used_pct, can_add_position
 
         Returns
         -------
@@ -542,6 +550,7 @@ class MultiAgentAnalyzer:
                 current_position=current_position,
                 current_price=current_price,
                 technical_data=technical_report,  # v3.7: Pass dict for BB checks
+                account_context=account_context,  # v4.6: Account info for add/reduce
             )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
@@ -774,6 +783,7 @@ OUTPUT FORMAT (JSON only, no other text):
         current_position: Optional[Dict[str, Any]],
         current_price: float,
         technical_data: Optional[Dict[str, Any]] = None,
+        account_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Final risk evaluation and position sizing.
@@ -783,6 +793,7 @@ OUTPUT FORMAT (JSON only, no other text):
         v3.7: Added BB position hardcoded checks for support/resistance risk control
         v3.8: Replaced BB-only check with multi-source S/R Zone check
         v3.11: Removed preset rules from prompt, let AI decide autonomously
+        v4.6: Added account_context for position sizing decisions
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
@@ -852,6 +863,9 @@ MARKET DATA:
 
 CURRENT POSITION:
 {self._format_position(current_position)}
+
+ACCOUNT CONTEXT:
+{self._format_account(account_context)}
 
 CURRENT PRICE: ${current_price:,.2f}
 
@@ -1286,6 +1300,44 @@ MARKET SENTIMENT (Binance Long/Short Ratio):
         if current_price and avg_px > 0:
             price_vs_entry = ((current_price - avg_px) / avg_px * 100)
             lines.append(f"  Current vs Entry: {price_vs_entry:+.2f}%")
+
+        return "\n".join(lines)
+
+    def _format_account(self, account: Optional[Dict[str, Any]]) -> str:
+        """
+        Format account context for AI prompts (v4.6).
+
+        Provides capital and capacity information for position sizing decisions.
+        """
+        if not account:
+            return "Account context not available"
+
+        lines = []
+
+        # Capital info
+        equity = account.get('equity', 0)
+        leverage = account.get('leverage', 1)
+        lines.append(f"Equity: ${equity:,.2f} | Leverage: {leverage}x")
+
+        # Position capacity
+        max_pos_value = account.get('max_position_value', 0)
+        current_pos_value = account.get('current_position_value', 0)
+        available = account.get('available_capacity', 0)
+        capacity_pct = account.get('capacity_used_pct', 0)
+
+        lines.append("")
+        lines.append("Position Capacity:")
+        lines.append(f"  Max Allowed: ${max_pos_value:,.2f}")
+        lines.append(f"  Currently Used: ${current_pos_value:,.2f} ({capacity_pct:.1f}%)")
+        lines.append(f"  Available: ${available:,.2f}")
+
+        # Add/reduce guidance
+        can_add = account.get('can_add_position', False)
+        lines.append("")
+        if can_add:
+            lines.append("✅ Capacity available for adding to position")
+        else:
+            lines.append("⚠️ Near max capacity - consider REDUCE or HOLD")
 
         return "\n".join(lines)
 

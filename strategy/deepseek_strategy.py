@@ -1405,6 +1405,9 @@ class DeepSeekAIStrategy(Strategy):
             # Get current position
             current_position = self._get_current_position_data()
 
+            # Get account context for position sizing decisions (v4.6)
+            account_context = self._get_account_context(current_price)
+
             # Log current state
             self.log.info(f"Current Price: ${current_price:,.2f}")
             self.log.info(f"Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
@@ -1559,6 +1562,8 @@ class DeepSeekAIStrategy(Strategy):
                     derivatives_report=derivatives_data,
                     # ========== v3.7 新增参数 ==========
                     orderbook_report=orderbook_data,
+                    # ========== v4.6 新增参数 ==========
+                    account_context=account_context,
                 )
 
                 # v3.8: Store S/R Zone data for heartbeat (from MultiAgentAnalyzer cache)
@@ -2026,6 +2031,74 @@ class DeepSeekAIStrategy(Strategy):
             'period_low': period_low,
             'period_change_pct': period_change_pct,
             'period_hours': round(period_hours, 1),
+        }
+
+    def _get_account_context(self, current_price: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Get account-level information for AI decision making (v4.6).
+
+        This provides context for add/reduce position decisions:
+        - How much capital is available
+        - Current leverage setting
+        - Maximum position capacity
+        - Remaining capacity for new positions
+
+        Returns
+        -------
+        Dict with account fields:
+            - equity: Total account equity (USDT)
+            - leverage: Current leverage multiplier
+            - max_position_value: Maximum position value allowed (equity * max_position_ratio * leverage)
+            - current_position_value: Current position value (if any)
+            - available_capacity: Remaining capacity for new positions
+            - capacity_used_pct: Percentage of max capacity currently used
+            - can_add_position: Boolean indicating if more positions can be added
+        """
+        # Get equity (real balance or configured)
+        equity = getattr(self, 'equity', 0) or self.config.equity
+
+        # Get leverage
+        leverage = getattr(self, 'leverage', self.config.leverage)
+
+        # Get max position ratio from config
+        max_position_ratio = getattr(self.config, 'max_position_ratio', 0.30)
+
+        # Calculate max position value (notional)
+        # max_position_value = equity * max_position_ratio * leverage
+        max_position_value = equity * max_position_ratio * leverage
+
+        # Calculate current position value
+        current_position_value = 0.0
+        positions = self.cache.positions_open(instrument_id=self.instrument_id)
+        if positions and positions[0].is_open:
+            position = positions[0]
+            quantity = float(position.quantity)
+            if current_price and current_price > 0:
+                current_position_value = quantity * current_price
+            else:
+                # Use entry price as fallback
+                current_position_value = quantity * float(position.avg_px_open)
+
+        # Calculate available capacity
+        available_capacity = max(0, max_position_value - current_position_value)
+
+        # Calculate capacity used percentage
+        capacity_used_pct = 0.0
+        if max_position_value > 0:
+            capacity_used_pct = (current_position_value / max_position_value) * 100
+
+        # Determine if can add position (at least 10% capacity remaining)
+        can_add_position = capacity_used_pct < 90
+
+        return {
+            'equity': round(equity, 2),
+            'leverage': leverage,
+            'max_position_ratio': max_position_ratio,
+            'max_position_value': round(max_position_value, 2),
+            'current_position_value': round(current_position_value, 2),
+            'available_capacity': round(available_capacity, 2),
+            'capacity_used_pct': round(capacity_used_pct, 1),
+            'can_add_position': can_add_position,
         }
 
     def _get_current_position_data(self, current_price: Optional[float] = None, from_telegram: bool = False) -> Optional[Dict[str, Any]]:
