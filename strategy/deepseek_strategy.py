@@ -1960,6 +1960,19 @@ class DeepSeekAIStrategy(Strategy):
                         ts_state = self.trailing_stop_state[instrument_key]
                         sl_price = ts_state.get('current_sl_price')
                         tp_price = ts_state.get('current_tp_price')
+
+                    # v4.9: Fall back to Binance orders if not in memory (server restart recovery)
+                    if sl_price is None or tp_price is None:
+                        try:
+                            symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+                            pos_side = position_side.lower() if position_side else 'long'
+                            sl_tp = self.binance_account.get_sl_tp_from_orders(symbol, pos_side)
+                            if sl_price is None:
+                                sl_price = sl_tp.get('sl_price')
+                            if tp_price is None:
+                                tp_price = sl_tp.get('tp_price')
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
@@ -2282,8 +2295,183 @@ class DeepSeekAIStrategy(Strategy):
         # Get open positions for this instrument
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
 
+        # v4.9: Fall back to Binance API if NautilusTrader cache is empty
+        # This handles server restart scenarios where cache is cleared but position still exists on Binance
+        use_binance_fallback = False
+        binance_position = None
+
         if not positions:
+            # Try Binance API to check if position exists on exchange
+            try:
+                symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+                binance_positions = self.binance_account.get_positions(symbol)
+                if binance_positions:
+                    binance_position = binance_positions[0]
+                    use_binance_fallback = True
+                    self._log.info(f"Using Binance API fallback for position data: {symbol}")
+            except Exception as e:
+                self._log.warning(f"Binance position fallback failed: {e}")
+
+        if not positions and not use_binance_fallback:
             return None
+
+        # v4.9: Handle Binance fallback data format
+        if use_binance_fallback and binance_position:
+            # Parse Binance position data format
+            position_amt = float(binance_position.get('positionAmt', 0))
+            if position_amt == 0:
+                return None
+
+            side = 'long' if position_amt > 0 else 'short'
+            quantity = abs(position_amt)
+            avg_px = float(binance_position.get('entryPrice', 0))
+            unrealized_pnl = float(binance_position.get('unrealizedProfit', 0))
+
+            # Get current price
+            if current_price is None or current_price == 0:
+                # Try markPrice from Binance position data first
+                current_price = float(binance_position.get('markPrice', 0))
+                if not current_price:
+                    if from_telegram:
+                        try:
+                            current_price = self.cache.price(self.instrument_id, PriceType.LAST)
+                        except (TypeError, AttributeError):
+                            current_price = None
+                    else:
+                        bars = self.indicator_manager.recent_bars
+                        current_price = float(bars[-1].close) if bars else None
+
+            # PnL percentage
+            pnl_percentage = 0.0
+            if avg_px > 0 and current_price:
+                if side == 'long':
+                    pnl_percentage = ((current_price - avg_px) / avg_px) * 100
+                else:
+                    pnl_percentage = ((avg_px - current_price) / avg_px) * 100
+
+            # Duration - unknown for Binance fallback
+            duration_minutes = 0
+            entry_timestamp = None
+
+            # v4.9: Get SL/TP from Binance open orders (critical for server restart recovery)
+            sl_price = None
+            tp_price = None
+            risk_reward_ratio = None
+            instrument_key = str(self.instrument_id)
+
+            # First try trailing_stop_state
+            if instrument_key in self.trailing_stop_state:
+                ts_state = self.trailing_stop_state[instrument_key]
+                sl_price = ts_state.get('current_sl_price')
+                tp_price = ts_state.get('current_tp_price')
+
+            # Fall back to Binance open orders if not in memory
+            if sl_price is None or tp_price is None:
+                try:
+                    symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+                    sl_tp = self.binance_account.get_sl_tp_from_orders(symbol, side)
+                    if sl_price is None:
+                        sl_price = sl_tp.get('sl_price')
+                    if tp_price is None:
+                        tp_price = sl_tp.get('tp_price')
+                    if sl_price or tp_price:
+                        self._log.info(f"Recovered SL/TP from Binance orders: SL={sl_price}, TP={tp_price}")
+                except Exception as e:
+                    self._log.warning(f"Failed to get SL/TP from Binance orders: {e}")
+
+            # Calculate R/R ratio
+            if sl_price and tp_price and avg_px > 0:
+                if side == 'long':
+                    risk = avg_px - sl_price
+                    reward = tp_price - avg_px
+                else:
+                    risk = sl_price - avg_px
+                    reward = avg_px - tp_price
+                if risk > 0:
+                    risk_reward_ratio = round(reward / risk, 2)
+
+            # Tier 2 fields - limited data from Binance
+            peak_pnl_pct = None
+            worst_pnl_pct = None
+            entry_confidence = None
+
+            # Margin used percentage
+            margin_used_pct = None
+            equity = getattr(self, 'equity', 0)
+            position_value = 0.0
+            if equity and equity > 0 and current_price:
+                position_value = quantity * current_price
+                margin_used_pct = round((position_value / equity) * 100, 2)
+
+            # v4.7: Liquidation fields from Binance
+            leverage = float(binance_position.get('leverage', self.config.leverage))
+            liquidation_price = float(binance_position.get('liquidationPrice', 0)) or None
+            liquidation_buffer_pct = None
+            is_liquidation_risk_high = False
+
+            if liquidation_price and current_price:
+                if side == 'long':
+                    liquidation_buffer_pct = ((current_price - liquidation_price) / current_price) * 100
+                else:
+                    liquidation_buffer_pct = ((liquidation_price - current_price) / current_price) * 100
+                liquidation_buffer_pct = round(max(0, liquidation_buffer_pct), 2)
+                is_liquidation_risk_high = liquidation_buffer_pct < 10
+
+            # v4.7: Funding fields - get from derivatives data
+            funding_rate_current = None
+            funding_rate_cumulative_usd = None
+            effective_pnl_after_funding = None
+            daily_funding_cost_usd = None
+
+            funding_data = getattr(self, 'latest_derivatives_data', None)
+            if funding_data:
+                fr = funding_data.get('funding_rate', {})
+                if fr and isinstance(fr, dict):
+                    funding_rate_current = fr.get('value', 0) or 0
+
+            if funding_rate_current is not None and position_value > 0:
+                daily_funding_cost_usd = round(position_value * abs(funding_rate_current) * 3, 2)
+
+            # v4.7: Drawdown fields - limited for Binance fallback
+            max_drawdown_pct = None
+            max_drawdown_duration_bars = None
+            consecutive_lower_lows = None
+
+            return {
+                # Basic
+                'side': side,
+                'quantity': quantity,
+                'avg_px': avg_px,
+                'unrealized_pnl': unrealized_pnl,
+                # Tier 1
+                'pnl_percentage': round(pnl_percentage, 2),
+                'duration_minutes': duration_minutes,
+                'entry_timestamp': entry_timestamp,
+                'sl_price': sl_price,
+                'tp_price': tp_price,
+                'risk_reward_ratio': risk_reward_ratio,
+                # Tier 2
+                'peak_pnl_pct': peak_pnl_pct,
+                'worst_pnl_pct': worst_pnl_pct,
+                'entry_confidence': entry_confidence,
+                'margin_used_pct': margin_used_pct,
+                'current_price': float(current_price) if current_price else None,
+                # v4.7: Liquidation
+                'liquidation_price': liquidation_price,
+                'liquidation_buffer_pct': liquidation_buffer_pct,
+                'is_liquidation_risk_high': is_liquidation_risk_high,
+                # v4.7: Funding
+                'funding_rate_current': funding_rate_current,
+                'funding_rate_cumulative_usd': funding_rate_cumulative_usd,
+                'effective_pnl_after_funding': effective_pnl_after_funding,
+                'daily_funding_cost_usd': daily_funding_cost_usd,
+                # v4.7: Drawdown
+                'max_drawdown_pct': max_drawdown_pct,
+                'max_drawdown_duration_bars': max_drawdown_duration_bars,
+                'consecutive_lower_lows': consecutive_lower_lows,
+                # v4.9: Source indicator
+                '_source': 'binance_api',
+            }
 
         # Get the first open position (should only be one for netting OMS)
         position = positions[0]
@@ -3168,6 +3356,35 @@ class DeepSeekAIStrategy(Strategy):
                 f"{self.position_config['min_trade_amount']:.3f}, skipping"
             )
             return
+
+        # v4.9: Validate minimum notional for non-reduce orders
+        # Binance requires notional >= 100 USDT for futures orders
+        if not reduce_only:
+            from strategy.trading_logic import get_min_notional_usdt, get_min_notional_safety_margin
+            min_notional = get_min_notional_usdt()
+            safety_margin = get_min_notional_safety_margin()
+
+            # Get current price for notional calculation
+            current_price = getattr(self, '_cached_current_price', None)
+            if not current_price and self.indicator_manager.recent_bars:
+                current_price = float(self.indicator_manager.recent_bars[-1].close)
+
+            if current_price:
+                notional = quantity * current_price
+                min_required = min_notional * safety_margin
+
+                if notional < min_required:
+                    # Calculate minimum quantity needed
+                    min_qty = min_required / current_price
+                    # Round up to Binance precision
+                    import math
+                    min_qty = math.ceil(min_qty * 1000) / 1000  # 3 decimal places
+
+                    self.log.warning(
+                        f"⚠️ Order notional ${notional:.2f} below minimum ${min_notional:.0f}, "
+                        f"adjusting quantity from {quantity:.3f} to {min_qty:.3f} BTC"
+                    )
+                    quantity = min_qty
 
         # Create market order
         order = self.order_factory.market(
