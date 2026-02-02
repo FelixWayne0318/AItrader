@@ -250,27 +250,44 @@ class OrderSimulator(DiagnosticStep):
 
         cfg = self.ctx.strategy_config
 
-        # Build config dict
-        calc_config = {
-            'base_usdt': getattr(cfg, 'base_usdt_amount', 100),
-            'equity': getattr(cfg, 'equity', 1000),
-            'high_confidence_multiplier': getattr(cfg, 'high_confidence_multiplier', 1.5),
-            'medium_confidence_multiplier': getattr(cfg, 'medium_confidence_multiplier', 1.0),
-            'low_confidence_multiplier': getattr(cfg, 'low_confidence_multiplier', 0.5),
-            'trend_strength_multiplier': getattr(cfg, 'trend_strength_multiplier', 1.2),
-            'rsi_extreme_multiplier': getattr(cfg, 'rsi_extreme_multiplier', 0.7),
-            'rsi_extreme_upper': getattr(cfg, 'rsi_extreme_threshold_upper', 70),
-            'rsi_extreme_lower': getattr(cfg, 'rsi_extreme_threshold_lower', 30),
-            'max_position_ratio': getattr(cfg, 'max_position_ratio', 0.30),
-            'min_trade_amount': getattr(cfg, 'min_trade_amount', 0.001),
+        # v4.8: Get equity and leverage from context (real Binance values)
+        equity = getattr(self.ctx, 'account_balance', {}).get('total_balance', 0)
+        if equity <= 0:
+            equity = getattr(cfg, 'equity', 1000)
+
+        leverage = getattr(self.ctx, 'binance_leverage', 10)
+        max_position_ratio = getattr(cfg, 'max_position_ratio', 0.30)
+
+        # v4.8: ai_controlled config
+        confidence_mapping = {
+            'HIGH': getattr(cfg, 'position_sizing_high_pct', 80),
+            'MEDIUM': getattr(cfg, 'position_sizing_medium_pct', 50),
+            'LOW': getattr(cfg, 'position_sizing_low_pct', 30),
         }
 
-        quantity, _ = calculate_position_size(
-            self.ctx.signal_data,
-            self.ctx.price_data,
-            self.ctx.technical_data,
-            calc_config
-        )
+        calc_config = {
+            'equity': equity,
+            'leverage': leverage,
+            'max_position_ratio': max_position_ratio,
+            'min_trade_amount': getattr(cfg, 'min_trade_amount', 0.001),
+            # v4.8: ai_controlled method
+            'method': 'ai_controlled',
+            'confidence_mapping': confidence_mapping,
+            'default_size_pct': getattr(cfg, 'position_sizing_default_pct', 50),
+        }
+
+        # v4.8: Calculate position using ai_controlled formula
+        max_usdt = equity * max_position_ratio * leverage
+        size_pct = confidence_mapping.get(confidence.upper(), 50)
+        usdt_amount = max_usdt * (size_pct / 100)
+
+        # Apply remaining capacity in cumulative mode
+        if self.ctx.current_position:
+            current_value = self.ctx.current_position.get('position_value_usdt', 0)
+            remaining = max(0, max_usdt - current_value)
+            usdt_amount = min(usdt_amount, remaining)
+
+        quantity = usdt_amount / self.ctx.current_price if self.ctx.current_price else 0
 
         # Validate SL/TP
         multi_sl = safe_float(self.ctx.signal_data.get('stop_loss'))
@@ -359,10 +376,10 @@ class PositionCalculator(DiagnosticStep):
     """
     Test position size calculation.
 
-    Tests calculate_position_size() with different confidence levels.
+    Tests calculate_position_size() with v4.8 ai_controlled method.
     """
 
-    name = "仓位计算函数测试 (calculate_position_size)"
+    name = "v4.8 仓位计算测试 (ai_controlled 累加模式)"
 
     def run(self) -> bool:
         print("-" * 70)
@@ -373,51 +390,87 @@ class PositionCalculator(DiagnosticStep):
             cfg = self.ctx.strategy_config
             signal = self.ctx.signal_data.get('signal', 'HOLD')
 
-            calc_config = {
-                'base_usdt': getattr(cfg, 'base_usdt_amount', 100),
-                'equity': getattr(cfg, 'equity', 1000),
-                'high_confidence_multiplier': getattr(cfg, 'high_confidence_multiplier', 1.5),
-                'medium_confidence_multiplier': getattr(cfg, 'medium_confidence_multiplier', 1.0),
-                'low_confidence_multiplier': getattr(cfg, 'low_confidence_multiplier', 0.5),
-                'trend_strength_multiplier': getattr(cfg, 'trend_strength_multiplier', 1.2),
-                'rsi_extreme_multiplier': getattr(cfg, 'rsi_extreme_multiplier', 0.7),
-                'rsi_extreme_upper': getattr(cfg, 'rsi_extreme_threshold_upper', 70),
-                'rsi_extreme_lower': getattr(cfg, 'rsi_extreme_threshold_lower', 30),
-                'max_position_ratio': getattr(cfg, 'max_position_ratio', 0.30),
-                'min_trade_amount': getattr(cfg, 'min_trade_amount', 0.001),
+            # v4.8: Get equity and leverage from context (real Binance values)
+            equity = getattr(self.ctx, 'account_balance', {}).get('total_balance', 0)
+            if equity <= 0:
+                equity = getattr(cfg, 'equity', 1000)
+
+            leverage = getattr(self.ctx, 'binance_leverage', 10)
+
+            # v4.8: ai_controlled config
+            max_position_ratio = getattr(cfg, 'max_position_ratio', 0.30)
+            max_usdt = equity * max_position_ratio * leverage
+
+            # v4.8 confidence mapping (percentage of max_usdt)
+            confidence_mapping = {
+                'HIGH': getattr(cfg, 'position_sizing_high_pct', 80),
+                'MEDIUM': getattr(cfg, 'position_sizing_medium_pct', 50),
+                'LOW': getattr(cfg, 'position_sizing_low_pct', 30),
             }
 
-            print("  📋 仓位计算配置:")
-            print(f"     base_usdt: ${calc_config['base_usdt']}")
-            print(f"     equity: ${calc_config['equity']}")
-            print(f"     max_position_ratio: {calc_config['max_position_ratio']*100:.0f}%")
+            calc_config = {
+                'equity': equity,
+                'leverage': leverage,
+                'max_position_ratio': max_position_ratio,
+                'min_trade_amount': getattr(cfg, 'min_trade_amount', 0.001),
+                # v4.8: ai_controlled method
+                'method': 'ai_controlled',
+                'confidence_mapping': confidence_mapping,
+                'default_size_pct': getattr(cfg, 'position_sizing_default_pct', 50),
+            }
+
+            print("  📋 v4.8 仓位计算配置 (ai_controlled):")
+            print(f"     equity: ${equity:,.2f} (from Binance)")
+            print(f"     leverage: {leverage}x (from Binance)")
+            print(f"     max_position_ratio: {max_position_ratio*100:.0f}%")
+            print(f"     max_usdt: ${max_usdt:,.2f}")
             print()
 
-            print("  📋 信心乘数配置:")
-            base = calc_config['base_usdt']
-            print(f"     HIGH: {calc_config['high_confidence_multiplier']}x → ${base * calc_config['high_confidence_multiplier']:.0f}")
-            print(f"     MEDIUM: {calc_config['medium_confidence_multiplier']}x → ${base * calc_config['medium_confidence_multiplier']:.0f}")
-            print(f"     LOW: {calc_config['low_confidence_multiplier']}x → ${base * calc_config['low_confidence_multiplier']:.0f}")
+            print("  📋 v4.8 信心百分比映射:")
+            for conf, pct in confidence_mapping.items():
+                usdt = max_usdt * (pct / 100)
+                btc = usdt / self.ctx.current_price if self.ctx.current_price else 0
+                print(f"     {conf} ({pct}%): ${usdt:,.0f} ({btc:.6f} BTC)")
+            print()
+
+            # v4.8: Show cumulative mode status
+            current_position_value = 0
+            if self.ctx.current_position:
+                current_position_value = self.ctx.current_position.get('position_value_usdt', 0)
+            remaining_capacity = max(0, max_usdt - current_position_value)
+
+            print("  📋 v4.8 累加模式状态:")
+            print(f"     当前持仓价值: ${current_position_value:,.2f}")
+            print(f"     剩余可加仓: ${remaining_capacity:,.2f}")
+            capacity_pct = (current_position_value / max_usdt * 100) if max_usdt > 0 else 0
+            print(f"     已用容量: {capacity_pct:.1f}%")
             print()
 
             if signal == 'HOLD':
-                print("  📊 当前信号仓位计算:")
-                print(f"     输入信号: HOLD")
-                print(f"     ℹ️ HOLD 信号不计算仓位 (与实盘一致)")
+                print("  📊 当前信号: HOLD (不计算仓位)")
                 print()
                 print("  📊 不同信心级别仓位参考 (假设 BUY/SELL 信号时):")
             else:
+                print(f"  📊 当前信号: {signal}")
+                print()
                 print("  📊 不同信心级别仓位对比:")
 
             for conf_level in ['HIGH', 'MEDIUM', 'LOW']:
-                test_signal = {'signal': 'BUY' if signal == 'HOLD' else signal, 'confidence': conf_level}
-                q, _ = calculate_position_size(
-                    test_signal, self.ctx.price_data, self.ctx.technical_data, calc_config
-                )
-                print(f"     {conf_level}: {q:.6f} BTC (${q * self.ctx.current_price:,.2f})")
+                # v4.8: Direct calculation using ai_controlled formula
+                size_pct = confidence_mapping.get(conf_level, 50)
+                usdt_amount = max_usdt * (size_pct / 100)
+
+                # Apply remaining capacity limit in cumulative mode
+                if self.ctx.current_position:
+                    usdt_amount = min(usdt_amount, remaining_capacity)
+
+                btc_qty = usdt_amount / self.ctx.current_price if self.ctx.current_price else 0
+
+                capped = " (受限)" if usdt_amount < max_usdt * (size_pct / 100) else ""
+                print(f"     {conf_level}: {btc_qty:.6f} BTC (${usdt_amount:,.2f}){capped}")
 
             print()
-            print("  ✅ 仓位计算测试完成")
+            print("  ✅ v4.8 仓位计算测试完成")
             return True
 
         except Exception as e:

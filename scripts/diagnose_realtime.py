@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.0 (模块化重构版)
+实盘信号诊断脚本 v2.1 (v4.8 适配版)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
 
-主要改进:
-- 模块化架构，代码从 4234 行重构为独立模块
-- DiagnosticContext 数据类替代全局变量
-- DiagnosticStep 抽象基类统一步骤定义
-- 更好的错误处理和步骤跟踪
-- 安全的 API 密钥显示 (mask_sensitive)
+v2.1 更新 (v4.8 适配):
+- 杠杆从 Binance API 同步 (不再硬编码)
+- ai_controlled 仓位计算方法支持
+- 累加模式 (cumulative) 容量检查
+- 显示 max_usdt 和剩余可加仓容量
 
-功能:
+主要功能:
 - 检查关键配置 (load_all, reconciliation, SL/TP 字段)
 - 验证 MTF 多时间框架配置
 - 加载策略配置
 - 获取实时市场数据 (K线、情绪)
 - 初始化并测试技术指标
-- 检查 Binance 真实持仓
+- 检查 Binance 真实持仓和杠杆
 - 运行 AI 决策流程 (Bull/Bear/Judge)
 - 测试 MTF 组件 (OrderFlow, Coinalyze, OrderBook)
 - 验证 Telegram 配置
-- 模拟订单提交流程
+- v4.8 仓位计算测试 (ai_controlled + 累加模式)
 
 使用方法:
     cd /home/linuxuser/nautilus_AItrader
@@ -94,7 +93,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.0 (模块化重构版)',
+        description='实盘信号诊断工具 v2.1 (v4.8 适配版)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

@@ -2,6 +2,10 @@
 Position Check Module
 
 Checks Binance account positions and balance.
+
+v4.8 Updates:
+- Get leverage from Binance API instead of hardcoded value
+- Display cumulative position info for add-on scenarios
 """
 
 from typing import Dict, Optional
@@ -27,6 +31,11 @@ class PositionChecker(DiagnosticStep):
             account_fetcher = BinanceAccountFetcher()
             positions = account_fetcher.get_positions(symbol=self.ctx.symbol)
 
+            # v4.8: Get real leverage from Binance
+            binance_leverage = account_fetcher.get_leverage(self.ctx.symbol)
+            self.ctx.binance_leverage = binance_leverage
+            print(f"  📊 杠杆倍数 (from Binance): {binance_leverage}x")
+
             if positions:
                 pos = positions[0]
                 pos_amt = float(pos.get('positionAmt', 0))
@@ -34,14 +43,14 @@ class PositionChecker(DiagnosticStep):
                 unrealized_pnl = float(pos.get('unRealizedProfit', 0))
 
                 if pos_amt != 0:
-                    self._process_position(pos_amt, entry_price, unrealized_pnl)
+                    self._process_position(pos_amt, entry_price, unrealized_pnl, binance_leverage)
                 else:
                     print("  ✅ 无持仓")
             else:
                 print("  ✅ 无持仓")
 
             # Get account balance
-            self._get_account_balance(account_fetcher)
+            self._get_account_balance(account_fetcher, binance_leverage)
 
             return True
 
@@ -54,7 +63,8 @@ class PositionChecker(DiagnosticStep):
         self,
         pos_amt: float,
         entry_price: float,
-        unrealized_pnl: float
+        unrealized_pnl: float,
+        leverage: int = 10
     ) -> None:
         """Process and display position data."""
         side = 'long' if pos_amt > 0 else 'short'
@@ -71,8 +81,7 @@ class PositionChecker(DiagnosticStep):
         if entry_price > 0 and abs(pos_amt) > 0:
             pnl_pct = (unrealized_pnl / (entry_price * abs(pos_amt))) * 100
 
-        # v4.7: Calculate liquidation price (using 5x leverage as default)
-        leverage = 5  # Default leverage, could be fetched from config
+        # v4.8: Use real leverage from Binance
         maintenance_margin_ratio = 0.004  # Binance standard for 20x tier
         liquidation_price = None
         liquidation_buffer_pct = None
@@ -92,6 +101,9 @@ class PositionChecker(DiagnosticStep):
                 liquidation_buffer_pct = round(max(0, liquidation_buffer_pct), 2)
                 is_liquidation_risk_high = liquidation_buffer_pct < 10
 
+        # v4.8: Calculate position value for cumulative mode display
+        position_value = abs(pos_amt) * self.ctx.current_price if self.ctx.current_price else 0
+
         self.ctx.current_position = {
             'side': side,
             'quantity': abs(pos_amt),
@@ -109,11 +121,14 @@ class PositionChecker(DiagnosticStep):
             # v4.7: Drawdown (cannot calculate without history)
             'max_drawdown_pct': None,
             'peak_pnl_pct': pnl_pct if pnl_pct > 0 else 0,
+            # v4.8: Position value for cumulative mode
+            'position_value_usdt': position_value,
         }
 
         print(f"  ⚠️ 检测到现有持仓!")
         print(f"     方向: {side.upper()}")
         print(f"     数量: {abs(pos_amt):.4f} BTC")
+        print(f"     持仓价值: ${position_value:,.2f}")
         print(f"     入场价: ${entry_price:,.2f}")
         print(f"     未实现盈亏: ${unrealized_pnl:,.2f}")
         print(f"     盈亏比例: {pnl_pct:+.2f}%")
@@ -126,7 +141,7 @@ class PositionChecker(DiagnosticStep):
             if is_liquidation_risk_high:
                 print(f"     ⚠️ 警告: 爆仓风险高 (<10%)")
 
-    def _get_account_balance(self, account_fetcher) -> None:
+    def _get_account_balance(self, account_fetcher, leverage: int = 10) -> None:
         """Get and display account balance."""
         print()
         print("  📊 账户资金详情:")
@@ -151,6 +166,16 @@ class PositionChecker(DiagnosticStep):
             print(f"     保证金率:     {margin_ratio:.1f}%")
             print(f"     总未实现PnL:  ${account_unrealized_pnl:,.2f}")
 
+            # v4.8: Calculate max_usdt for position sizing display
+            max_position_ratio = 0.30  # Default from base.yaml
+            max_usdt = total_balance * max_position_ratio * leverage
+            print()
+            print(f"  📊 v4.8 仓位计算参数:")
+            print(f"     equity: ${total_balance:,.2f}")
+            print(f"     leverage: {leverage}x")
+            print(f"     max_position_ratio: {max_position_ratio*100:.0f}%")
+            print(f"     max_usdt: ${max_usdt:,.2f}")
+
             # v4.7: Build account_context for AI
             used_margin_pct = ((total_balance - available_balance) / total_balance * 100) if total_balance > 0 else 0
             can_add_position = used_margin_pct < 80  # 80% threshold
@@ -162,11 +187,17 @@ class PositionChecker(DiagnosticStep):
 
             can_add_safely = can_add_position and (liq_buffer_min is None or liq_buffer_min > 15)
 
+            # v4.8: Calculate remaining capacity for cumulative mode
+            current_position_value = 0
+            if self.ctx.current_position:
+                current_position_value = self.ctx.current_position.get('position_value_usdt', 0)
+            remaining_capacity = max(0, max_usdt - current_position_value)
+
             self.ctx.account_context = {
                 'equity': total_balance,
                 'available_margin': available_balance,
                 'used_margin_pct': round(used_margin_pct, 2),
-                'leverage': 5,  # Default, could be fetched
+                'leverage': leverage,  # v4.8: Use real leverage
                 'can_add_position': can_add_position,
                 # v4.7: Portfolio risk fields
                 'total_unrealized_pnl_usd': account_unrealized_pnl,
@@ -174,7 +205,22 @@ class PositionChecker(DiagnosticStep):
                 'total_daily_funding_cost_usd': None,  # Would need funding rate data
                 'total_cumulative_funding_paid_usd': None,
                 'can_add_position_safely': can_add_safely,
+                # v4.8: Cumulative position sizing fields
+                'max_usdt': max_usdt,
+                'current_position_value': current_position_value,
+                'remaining_capacity': remaining_capacity,
             }
+
+            # v4.8: Display cumulative mode capacity
+            if self.ctx.current_position:
+                print()
+                print(f"  📊 v4.8 累加模式状态:")
+                print(f"     当前持仓价值: ${current_position_value:,.2f}")
+                print(f"     剩余可加仓: ${remaining_capacity:,.2f}")
+                capacity_pct = (current_position_value / max_usdt * 100) if max_usdt > 0 else 0
+                print(f"     已用容量: {capacity_pct:.1f}%")
+                if remaining_capacity <= 0:
+                    print(f"     ⚠️ 已达 max_usdt 上限，无法加仓")
 
             # v4.7: Display portfolio risk
             print()
