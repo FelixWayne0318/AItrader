@@ -120,7 +120,7 @@ class TechnicalDataFetcher(DiagnosticStep):
             print(f"  [诊断用] Resistance: ${technical_data.get('resistance', 0):,.2f}")
             print(f"  [诊断用] Overall Trend: {technical_data.get('overall_trend', 'N/A')}")
             print("  ✅ 技术数据获取成功")
-            print("  📝 v3.3: AI 只接收原始数值 (SMA/RSI/MACD/BB)，不接收 support/resistance/trend 标签")
+            print("  📝 v3.8+: AI 接收原始指标 + S/R Zone v2.0 (动态计算)，不接收预计算的 trend 标签")
 
             # Load MTF data
             self._load_mtf_data()
