@@ -674,22 +674,23 @@ class TelegramCommandHandler:
             return
 
         help_msg = (
-            "🤖 *Available Commands*\n\n"
-            "*Query Commands*:\n"
-            "• `/status` - View strategy status\n"
-            "• `/position` - View current position\n"
-            "• `/orders` - View open orders\n"
-            "• `/history` - Recent trade history\n"
-            "• `/risk` - View risk metrics\n"
-            "• `/daily` - Daily performance summary (v3.13)\n"
-            "• `/weekly` - Weekly performance summary (v3.13)\n"
-            "• `/help` - Show this help message\n"
-            "• `/menu` - Show interactive buttons\n\n"
-            "*Control Commands*:\n"
-            "• `/pause` - Pause trading (no new orders)\n"
-            "• `/resume` - Resume trading\n"
-            "• `/close` - Close current position\n\n"
-            "💡 _Commands are case-insensitive_\n"
+            "🤖 *可用命令*\n\n"
+            "*📊 查询命令*:\n"
+            "• `/status` - 查看策略状态\n"
+            "• `/position` - 查看当前持仓\n"
+            "• `/orders` - 查看挂单\n"
+            "• `/history` - 查看交易记录\n"
+            "• `/risk` - 查看风险指标\n"
+            "• `/daily` - 查看日报\n"
+            "• `/weekly` - 查看周报\n\n"
+            "*⚙️ 控制命令*:\n"
+            "• `/pause` - 暂停交易\n"
+            "• `/resume` - 恢复交易\n"
+            "• `/close` - 平仓\n\n"
+            "*📋 其他命令*:\n"
+            "• `/menu` - 显示按钮菜单\n"
+            "• `/help` - 显示帮助信息\n\n"
+            "💡 _命令不区分大小写_\n"
         )
         await self._send_response(update, help_msg)
 
@@ -844,6 +845,8 @@ class TelegramCommandHandler:
                 BotCommand("orders", "查看挂单"),
                 BotCommand("history", "最近交易记录"),
                 BotCommand("risk", "风险指标"),
+                BotCommand("daily", "查看日报"),
+                BotCommand("weekly", "查看周报"),
                 BotCommand("pause", "暂停交易"),
                 BotCommand("resume", "恢复交易"),
                 BotCommand("close", "平仓"),

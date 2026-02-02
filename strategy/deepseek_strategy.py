@@ -3785,7 +3785,7 @@ class DeepSeekAIStrategy(Strategy):
             if not positions:
                 return {
                     'success': True,
-                    'message': "ℹ️ *No Open Position*\n\nThere is no position to close."
+                    'message': "ℹ️ *无持仓*\n\n当前没有需要平仓的仓位。"
                 }
 
             position = positions[0]
@@ -3824,10 +3824,10 @@ class DeepSeekAIStrategy(Strategy):
 
             return {
                 'success': True,
-                'message': f"✅ *Position Closing*\n\n"
-                          f"Closing {side_str} position\n"
-                          f"Quantity: {quantity:.4f} BTC\n\n"
-                          f"⏳ Order submitted, waiting for fill..."
+                'message': f"✅ *正在平仓*\n\n"
+                          f"平仓方向: {side_str}\n"
+                          f"数量: {quantity:.4f} BTC\n\n"
+                          f"⏳ 订单已提交，等待成交..."
             }
         except Exception as e:
             self.log.error(f"Error closing position: {e}")
@@ -3849,14 +3849,15 @@ class DeepSeekAIStrategy(Strategy):
             if not orders:
                 return {
                     'success': True,
-                    'message': "ℹ️ *No Open Orders*\n\nThere are no pending orders."
+                    'message': "ℹ️ *无挂单*\n\n当前没有待处理的订单。"
                 }
 
-            msg = f"📋 *Open Orders* ({len(orders)})\n\n"
+            msg = f"📋 *挂单列表* ({len(orders)} 个)\n\n"
 
             for i, order in enumerate(orders, 1):
                 order_type = order.order_type.name
                 side = order.side.name
+                side_cn = "买入" if side == "BUY" else "卖出"
                 qty = float(order.quantity)
 
                 # Get price for limit/stop orders
@@ -3864,15 +3865,15 @@ class DeepSeekAIStrategy(Strategy):
                 if hasattr(order, 'price') and order.price:
                     price_str = f"@ ${float(order.price):,.2f}"
                 elif hasattr(order, 'trigger_price') and order.trigger_price:
-                    price_str = f"trigger @ ${float(order.trigger_price):,.2f}"
+                    price_str = f"触发价 @ ${float(order.trigger_price):,.2f}"
 
                 # Order status
                 status = order.status.name
                 reduce_only = "🔻" if order.is_reduce_only else ""
 
-                msg += f"{i}. {side} {order_type} {reduce_only}\n"
-                msg += f"   Qty: {qty:.4f} BTC {price_str}\n"
-                msg += f"   Status: {status}\n\n"
+                msg += f"{i}. {side_cn} {order_type} {reduce_only}\n"
+                msg += f"   数量: {qty:.4f} BTC {price_str}\n"
+                msg += f"   状态: {status}\n\n"
 
             return {
                 'success': True,
@@ -3888,37 +3889,48 @@ class DeepSeekAIStrategy(Strategy):
         """
         Handle /history command - view recent trade history.
 
-        Thread-safe: Does not access indicator_manager.
+        Thread-safe: Uses Binance API directly.
         """
         try:
-            # Get recent fills (last 10)
-            fills = list(self.cache.order_fills())[-10:]
+            from datetime import datetime
+            from utils.binance_account import get_binance_fetcher
 
-            if not fills:
+            # 获取交易对 symbol
+            symbol = str(self.instrument_id).split('.')[0] if self.instrument_id else "BTCUSDT"
+
+            # 从 Binance API 获取最近交易
+            fetcher = get_binance_fetcher()
+            trades = fetcher.get_trades(symbol=symbol, limit=10)
+
+            if not trades:
                 return {
                     'success': True,
-                    'message': "ℹ️ *No Trade History*\n\nNo trades have been executed yet."
+                    'message': "ℹ️ *无交易记录*\n\n暂无已执行的交易。"
                 }
 
-            msg = f"📊 *Recent Trades* (last {len(fills)})\n\n"
+            msg = f"📊 *最近交易记录* (最近 {len(trades)} 笔)\n\n"
 
-            for fill in reversed(fills):  # Most recent first
-                side = fill.order_side.name
+            for trade in reversed(trades):  # 最新的在前
+                side = trade.get('side', 'UNKNOWN')
                 side_emoji = "🟢" if side == "BUY" else "🔴"
-                qty = float(fill.last_qty)
-                price = float(fill.last_px)
-                ts = fill.ts_event
+                side_cn = "买入" if side == "BUY" else "卖出"
+                qty = float(trade.get('qty', 0))
+                price = float(trade.get('price', 0))
+                realized_pnl = float(trade.get('realizedPnl', 0))
+                commission = float(trade.get('commission', 0))
+                ts = trade.get('time', 0)
 
-                # Format timestamp with defensive handling
-                from datetime import datetime
+                # 格式化时间
                 try:
-                    dt = datetime.utcfromtimestamp(ts / 1e9) if ts else datetime.utcnow()
+                    dt = datetime.utcfromtimestamp(ts / 1000) if ts else datetime.utcnow()
                     time_str = dt.strftime("%m-%d %H:%M")
                 except (ValueError, TypeError, OSError):
                     time_str = "N/A"
 
-                msg += f"{side_emoji} {side} {qty:.4f} @ ${price:,.2f}\n"
-                msg += f"   Time: {time_str} UTC\n\n"
+                pnl_emoji = "📈" if realized_pnl > 0 else ("📉" if realized_pnl < 0 else "➖")
+                msg += f"{side_emoji} {side_cn} {qty:.4f} @ ${price:,.2f}\n"
+                msg += f"   {pnl_emoji} 盈亏: ${realized_pnl:+,.2f}\n"
+                msg += f"   ⏰ 时间: {time_str} UTC\n\n"
 
             return {
                 'success': True,
@@ -3950,20 +3962,20 @@ class DeepSeekAIStrategy(Strategy):
             # Get position info from NautilusTrader cache
             positions = self.cache.positions_open(instrument_id=self.instrument_id)
 
-            msg = "📊 *Risk Metrics*\n\n"
+            msg = "📊 *风险指标*\n\n"
 
             # Real Account Balance from Binance
-            msg += "*Account (Real-time)*:\n"
+            msg += "*账户 (实时)*:\n"
             if total_balance > 0:
-                msg += f"• Balance: ${total_balance:,.2f} USDT\n"
-                msg += f"• Available: ${available_balance:,.2f} USDT\n"
+                msg += f"• 余额: ${total_balance:,.2f} USDT\n"
+                msg += f"• 可用: ${available_balance:,.2f} USDT\n"
                 if unrealized_pnl_total != 0:
                     pnl_emoji = "📈" if unrealized_pnl_total >= 0 else "📉"
-                    msg += f"• Unrealized P&L: {pnl_emoji} ${unrealized_pnl_total:,.2f}\n"
+                    msg += f"• 未实现盈亏: {pnl_emoji} ${unrealized_pnl_total:,.2f}\n"
             else:
-                msg += f"• Balance: ⚠️ Unable to fetch (configured: ${self.equity:,.2f})\n"
-            msg += f"• Leverage: {self.leverage}x\n"
-            msg += f"• Max Position: {self.position_config.get('max_position_ratio', 0.3)*100:.0f}%\n\n"
+                msg += f"• 余额: ⚠️ 无法获取 (配置值: ${self.equity:,.2f})\n"
+            msg += f"• 杠杆: {self.leverage}x\n"
+            msg += f"• 最大仓位: {self.position_config.get('max_position_ratio', 0.3)*100:.0f}%\n\n"
 
             # Use real balance for calculations if available, otherwise fall back to configured equity
             effective_equity = total_balance if total_balance > 0 else self.equity
@@ -3991,29 +4003,30 @@ class DeepSeekAIStrategy(Strategy):
                     pnl_pct = 0
 
                 pnl_emoji = "📈" if pnl >= 0 else "📉"
+                side_cn = "多头" if side == "LONG" else "空头"
 
-                msg += "*Current Position*:\n"
-                msg += f"• Side: {side}\n"
-                msg += f"• Size: {qty:.4f} BTC (${position_value:,.2f})\n"
-                msg += f"• Entry: ${entry_price:,.2f}\n"
-                msg += f"• Current: ${cached_price:,.2f}\n"
-                msg += f"• P&L: {pnl_emoji} ${pnl:,.2f} ({pnl_pct:+.2f}%)\n\n"
+                msg += "*当前持仓*:\n"
+                msg += f"• 方向: {side_cn}\n"
+                msg += f"• 数量: {qty:.4f} BTC (${position_value:,.2f})\n"
+                msg += f"• 开仓价: ${entry_price:,.2f}\n"
+                msg += f"• 当前价: ${cached_price:,.2f}\n"
+                msg += f"• 盈亏: {pnl_emoji} ${pnl:,.2f} ({pnl_pct:+.2f}%)\n\n"
 
                 # Risk exposure using real balance
                 exposure_pct = (position_value / effective_equity) * 100 if effective_equity > 0 else 0
-                msg += "*Risk Exposure*:\n"
-                msg += f"• Position/Balance: {exposure_pct:.1f}%\n"
-                msg += f"• Leveraged Exposure: {exposure_pct * self.leverage:.1f}%\n"
+                msg += "*风险敞口*:\n"
+                msg += f"• 仓位/余额: {exposure_pct:.1f}%\n"
+                msg += f"• 杠杆敞口: {exposure_pct * self.leverage:.1f}%\n"
             else:
-                msg += "*Current Position*: None\n"
-                msg += "*Risk Exposure*: 0%\n"
+                msg += "*当前持仓*: 无\n"
+                msg += "*风险敞口*: 0%\n"
 
             # Strategy settings
-            msg += f"\n*Strategy Settings*:\n"
-            msg += f"• Min Confidence: {self.min_confidence}\n"
-            msg += f"• Auto SL/TP: {'✅' if self.enable_auto_sl_tp else '❌'}\n"
-            msg += f"• Trailing Stop: {'✅' if self.enable_trailing_stop else '❌'}\n"
-            msg += f"• Trading Paused: {'⏸️ Yes' if self.is_trading_paused else '▶️ No'}\n"
+            msg += f"\n*策略设置*:\n"
+            msg += f"• 最低信心: {self.min_confidence}\n"
+            msg += f"• 自动止损止盈: {'✅' if self.enable_auto_sl_tp else '❌'}\n"
+            msg += f"• 移动止损: {'✅' if self.enable_trailing_stop else '❌'}\n"
+            msg += f"• 交易暂停: {'⏸️ 是' if self.is_trading_paused else '▶️ 否'}\n"
 
             return {
                 'success': True,
