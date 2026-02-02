@@ -530,6 +530,73 @@ def is_improvement_significant(
 
 ---
 
+## 4.5 行业实践调研
+
+### 4.5.1 调研结论
+
+> **基于 S/R 价位设置止盈止损是专业交易的主流做法**
+
+| 方法 | 使用者 | 优点 | 缺点 |
+|-----|-------|------|------|
+| **固定百分比** | 散户、简单策略 | 简单易用 | 不考虑市场结构 |
+| **S/R 价位** | 机构、专业交易者 | 符合市场心理 | 实现复杂 |
+
+### 4.5.2 机构观点
+
+**Analyzing Alpha (机构交易研究)**:
+> "The institutional trader at the margin determines most securities' prices and the support and resistance levels... Institutions have target buy and sell prices for every security."
+
+机构交易者为每个持仓设定目标买入/卖出价位，这些价位通常就是 S/R 水平。
+
+**D.E. Shaw (量化基金巨头)**:
+> "Stop-losses are set in advance, which accounts for the staleness, and they are a function of only **one form of information – price**."
+
+David Shaw 认为固定止损的问题是**信息单一且陈旧**，支持动态/结构化止损。
+
+### 4.5.3 主流平台实现
+
+| 平台 | S/R 功能 | 备注 |
+|-----|---------|------|
+| **3Commas** | "Placing SL/TP based on key S/R levels... These levels often act as price barriers" | 交易机器人平台 |
+| **TradingView** | AI 指标验证 S/R 区域 | 图表分析平台 |
+| **ATAS** | 专业订单流 + S/R 分析 | 机构级工具 |
+| **Pionex** | Grid Bot 上下限基于 S/R | 网格交易 |
+
+### 4.5.4 学术研究支持
+
+[MDPI 论文 - S/R Levels in Algorithmic Trading](https://www.mdpi.com/2227-7390/10/20/3888):
+使用神经网络学习 S/R 与价格运动的关系，证明了 S/R 对交易决策的价值。
+
+### 4.5.5 最佳实践建议
+
+来自 [Algorithmic Trading Library](https://algotradinglib.com/en/pedia/d/dynamic_stop-loss_strategies.html):
+
+| 实践 | 说明 |
+|-----|------|
+| **缓冲区** | "Place stops 0.5-1.0 ATR beyond the S/R zone" |
+| **多时间框架** | "Use larger time frames (daily/4H) for significant S/R, smaller for entries" |
+| **动态调整** | "Adaptive algorithms adjust stop parameters based on changing market conditions" |
+
+### 4.5.6 我们的方案定位
+
+| 对比项 | 散户工具 (如 Pionex) | 我们的方案 | 机构标准 |
+|-------|---------------------|-----------|---------|
+| 止盈止损 | 固定百分比或网格 | S/R 价位 + 行情动态调整 | S/R 价位 + 多因子 |
+| 极端行情 | 无特殊处理 | 顺势放大止盈 | 风险模型调整 |
+| 数据来源 | 单一指标 | 多层 S/R + 订单流 | 多层 S/R + 订单流 + 私有数据 |
+
+**结论**: 我们的方案符合专业交易标准，超越大多数散户交易机器人。
+
+### 4.5.7 参考资料
+
+- [Analyzing Alpha - Support and Resistance](https://analyzingalpha.com/support-and-resistance)
+- [Quantified Strategies - Stop Loss Strategy](https://www.quantifiedstrategies.com/stop-loss-trading-strategy/)
+- [3Commas - Advanced Stop-Loss Logic 2025](https://3commas.io/blog/optimizing-your-trades-advanced-stop-loss-and-take)
+- [Algorithmic Trading Library - Dynamic Stop-Loss](https://algotradinglib.com/en/pedia/d/dynamic_stop-loss_strategies.html)
+- [MDPI - S/R Levels in Algorithmic Trading](https://www.mdpi.com/2227-7390/10/20/3888)
+
+---
+
 ## 五、AI 决策质量标准
 
 ### 5.1 信号质量指标
@@ -948,13 +1015,26 @@ def test_fallback_mechanisms():
 
 ## 十、参考资料
 
+### 项目文档
 - S/R 强度研究报告: [SR_STRENGTH_RESEARCH.md](./SR_STRENGTH_RESEARCH.md)
+
+### 学术研究
 - Cont et al. (2014). The Price Impact of Order Book Events
+- [MDPI - S/R Levels in Algorithmic Trading](https://www.mdpi.com/2227-7390/10/20/3888)
+
+### 行业实践
+- [Analyzing Alpha - Support and Resistance](https://analyzingalpha.com/support-and-resistance)
+- [Quantified Strategies - Stop Loss Strategy](https://www.quantifiedstrategies.com/stop-loss-trading-strategy/)
+- [3Commas - Advanced Stop-Loss Logic 2025](https://3commas.io/blog/optimizing-your-trades-advanced-stop-loss-and-take)
+- [Algorithmic Trading Library - Dynamic Stop-Loss](https://algotradinglib.com/en/pedia/d/dynamic_stop-loss_strategies.html)
+
+### 工具
 - 12-Factor App Configuration: https://12factor.net/config
 - A/B Testing Calculator: https://www.evanmiller.org/ab-testing/
 
 ---
 
-**文档版本**: v1.0
+**文档版本**: v1.1
 **创建日期**: 2026-02-02
 **最后更新**: 2026-02-02
+**更新内容**: 添加行业实践调研章节 (4.5)
