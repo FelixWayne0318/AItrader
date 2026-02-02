@@ -160,12 +160,12 @@ class V47IntegrationDiagnostic:
 
         # 测试 _get_current_position_data 函数签名
         try:
-            from strategy.deepseek_strategy import DeepSeekSignalStrategy
+            from strategy.deepseek_strategy import DeepSeekAIStrategy
             import inspect
 
             # 检查方法存在
-            if hasattr(DeepSeekSignalStrategy, '_get_current_position_data'):
-                sig = inspect.signature(DeepSeekSignalStrategy._get_current_position_data)
+            if hasattr(DeepSeekAIStrategy, '_get_current_position_data'):
+                sig = inspect.signature(DeepSeekAIStrategy._get_current_position_data)
                 params = list(sig.parameters.keys())
 
                 self.results.append(TestResult(
@@ -185,8 +185,8 @@ class V47IntegrationDiagnostic:
                 print(f"  ❌ _get_current_position_data 方法不存在")
 
             # 检查 _get_account_context 方法
-            if hasattr(DeepSeekSignalStrategy, '_get_account_context'):
-                sig = inspect.signature(DeepSeekSignalStrategy._get_account_context)
+            if hasattr(DeepSeekAIStrategy, '_get_account_context'):
+                sig = inspect.signature(DeepSeekAIStrategy._get_account_context)
                 params = list(sig.parameters.keys())
 
                 self.results.append(TestResult(
