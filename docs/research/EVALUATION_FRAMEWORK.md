@@ -207,83 +207,182 @@ def calculate_sr_accuracy(predictions: List[Dict]) -> Dict:
 
 ### 4.2 动态止盈策略 (核心创新)
 
-#### 4.2.1 止盈决策因素
+#### 4.2.1 核心理念
 
-| 因素 | 影响 | 权重 |
-|-----|------|-----|
-| **S/R 强度** | 强阻力 → 保守 TP，弱/无阻力 → 激进 TP | 高 |
-| **行情类型** | 极端行情顺势 → 放大 TP | 高 |
-| **信心等级** | HIGH → 更大 TP 空间 | 中 |
-| **S/R 距离** | 距离近 → TP 设在 S/R 前 | 中 |
+> **止盈止损不是固定比例，而是由市场结构 (S/R 价位) 决定**
 
-#### 4.2.2 动态止盈公式
+```
+错误思路: 止盈 = 入场价 × (1 + 2%)        ← 固定比例
+正确思路: 止盈 = 下一个阻力位价格         ← 市场结构决定
+
+一般行情 → 止盈设在最近的 S/R 价位
+大行情   → 止盈设在更远/更强的 S/R 价位
+```
+
+#### 4.2.2 止盈目标选择逻辑
+
+| 行情类型 | 做多止盈目标 | 做空止盈目标 |
+|---------|-------------|-------------|
+| **一般行情** | 最近的阻力位 | 最近的支撑位 |
+| **大行情 (顺势)** | 更远/更强的阻力位 | 更远/更强的支撑位 |
+| **无明显 S/R** | 备选: 固定比例 3% | 备选: 固定比例 3% |
+
+#### 4.2.3 动态止盈公式
 
 ```python
 def calculate_dynamic_tp(
-    signal: str,           # LONG/SHORT
-    confidence: str,       # HIGH/MEDIUM/LOW
-    market_condition: str, # NORMAL/EXTREME_BULLISH/EXTREME_BEARISH
-    sr_strength: str,      # STRONG/MEDIUM/WEAK/NONE
-    nearest_sr_distance: float,  # 最近 S/R 距离 (%)
-) -> float:
+    signal: str,                    # LONG/SHORT
+    entry_price: float,             # 入场价格
+    market_condition: str,          # NORMAL/EXTREME_BULLISH/EXTREME_BEARISH
+    resistance_levels: List[Dict],  # [{'price': 76000, 'strength': 'WEAK'}, ...]
+    support_levels: List[Dict],     # [{'price': 74000, 'strength': 'MEDIUM'}, ...]
+) -> Dict:
     """
-    动态计算止盈比例
+    动态计算止盈价位
 
     核心逻辑:
-    1. 极端行情顺势 → 放大止盈 (捕捉大行情)
-    2. S/R 强度弱/无 → 更大止盈空间
-    3. S/R 强度强且距离近 → 止盈设在 S/R 前
+    1. 止盈设在 S/R 价位，不是固定比例
+    2. 一般行情 → 最近的 S/R
+    3. 大行情 → 更远/更强的 S/R
+    4. 无 S/R 时用固定比例作为备选
     """
-    # 基础止盈 (根据信心)
-    base_tp = {
-        'HIGH': 0.03,    # 3%
-        'MEDIUM': 0.02,  # 2%
-        'LOW': 0.01,     # 1%
-    }[confidence]
+    result = {
+        'tp_price': None,
+        'tp_type': None,      # 'SR_LEVEL' or 'FALLBACK_PCT'
+        'target_sr': None,
+        'distance_pct': None,
+    }
 
-    # 极端行情放大系数 (顺势交易)
-    extreme_multiplier = 1.0
-    if market_condition == 'EXTREME_BULLISH' and signal == 'LONG':
-        extreme_multiplier = 2.5  # 极端利多做多，放大 2.5 倍
-    elif market_condition == 'EXTREME_BEARISH' and signal == 'SHORT':
-        extreme_multiplier = 2.5  # 极端利空做空，放大 2.5 倍
-    elif market_condition == 'EXTREME_BULLISH' and signal == 'SHORT':
-        extreme_multiplier = 0.7  # 逆势，收紧止盈
-    elif market_condition == 'EXTREME_BEARISH' and signal == 'LONG':
-        extreme_multiplier = 0.7  # 逆势，收紧止盈
+    # 根据信号方向选择 S/R 列表
+    if signal == 'LONG':
+        # 做多: 止盈在阻力位
+        sr_levels = [r for r in resistance_levels if r['price'] > entry_price]
+        sr_levels.sort(key=lambda x: x['price'])  # 按价格升序
+    else:
+        # 做空: 止盈在支撑位
+        sr_levels = [s for s in support_levels if s['price'] < entry_price]
+        sr_levels.sort(key=lambda x: x['price'], reverse=True)  # 按价格降序
 
-    # S/R 强度调整
-    sr_multiplier = 1.0
-    dynamic_tp = base_tp * extreme_multiplier
-
-    if sr_strength == 'STRONG':
-        if nearest_sr_distance < dynamic_tp:
-            # 强 S/R 在止盈范围内，设在 S/R 前 10%
-            return nearest_sr_distance * 0.9
+    if not sr_levels:
+        # 无 S/R 数据，使用固定比例备选
+        fallback_pct = 0.03  # 3%
+        if signal == 'LONG':
+            result['tp_price'] = entry_price * (1 + fallback_pct)
         else:
-            sr_multiplier = 0.9  # 略微保守
-    elif sr_strength == 'MEDIUM':
-        sr_multiplier = 1.0  # 标准
-    elif sr_strength == 'WEAK':
-        sr_multiplier = 1.2  # 可以更激进
-    elif sr_strength == 'NONE':
-        sr_multiplier = 1.5  # 无阻力，最激进
+            result['tp_price'] = entry_price * (1 - fallback_pct)
+        result['tp_type'] = 'FALLBACK_PCT'
+        result['distance_pct'] = fallback_pct
+        return result
 
-    final_tp = dynamic_tp * sr_multiplier
+    # 根据行情类型选择目标 S/R
+    if market_condition == 'NORMAL':
+        # 一般行情: 选择最近的 S/R
+        target_sr = sr_levels[0]
+    elif market_condition in ['EXTREME_BULLISH', 'EXTREME_BEARISH']:
+        # 大行情: 选择更远/更强的 S/R
+        # 优先选择 STRONG 或 MEDIUM 强度的
+        strong_levels = [s for s in sr_levels if s['strength'] in ['STRONG', 'MEDIUM']]
+        if strong_levels:
+            target_sr = strong_levels[0]  # 最近的强 S/R
+        elif len(sr_levels) >= 2:
+            target_sr = sr_levels[1]  # 第二个 S/R (跳过最近的弱 S/R)
+        else:
+            target_sr = sr_levels[0]  # 只有一个，就用它
+    else:
+        target_sr = sr_levels[0]
 
-    # 安全边界
-    return max(0.005, min(final_tp, 0.10))  # 0.5% - 10%
+    # 设置止盈价位 (在 S/R 前留一点缓冲)
+    buffer = 0.001  # 0.1% 缓冲
+    if signal == 'LONG':
+        result['tp_price'] = target_sr['price'] * (1 - buffer)
+    else:
+        result['tp_price'] = target_sr['price'] * (1 + buffer)
+
+    result['tp_type'] = 'SR_LEVEL'
+    result['target_sr'] = target_sr
+    result['distance_pct'] = abs(result['tp_price'] - entry_price) / entry_price
+
+    return result
 ```
 
-#### 4.2.3 止盈场景示例
+#### 4.2.4 止盈场景示例
 
-| 场景 | 信心 | 行情 | S/R | TP 计算 | 最终 TP |
-|-----|------|------|-----|---------|--------|
-| 正常做多，强阻力近 | MEDIUM | NORMAL | STRONG@2% | 2%×1×0.9=1.8%, 但 S/R@2% | **1.8%** |
-| 正常做多，无阻力 | MEDIUM | NORMAL | NONE | 2%×1×1.5 | **3%** |
-| 极端利多做多，弱阻力 | HIGH | EXTREME_BULL | WEAK | 3%×2.5×1.2 | **9%→8%** (上限) |
-| 极端利空做空，无阻力 | MEDIUM | EXTREME_BEAR | NONE | 2%×2.5×1.5 | **7.5%** |
-| 极端利多逆势做空 | LOW | EXTREME_BULL | - | 1%×0.7×1 | **0.7%** |
+```
+当前价格: $75,000
+做多信号
+
+阻力位分布:
+  R1: $76,000 (WEAK)   - 距离 1.3%
+  R2: $78,000 (MEDIUM) - 距离 4.0%
+  R3: $82,000 (STRONG) - 距离 9.3%
+
+支撑位分布:
+  S1: $74,000 (WEAK)   - 距离 1.3%
+  S2: $72,000 (MEDIUM) - 距离 4.0%
+  S3: $68,000 (STRONG) - 距离 9.3%
+```
+
+| 场景 | 行情 | 止盈目标 | 止盈价 | 盈亏比* |
+|-----|------|---------|-------|--------|
+| 做多，一般行情 | NORMAL | R1 (最近阻力) | $75,900 | 1.3:2 |
+| 做多，大行情 | EXTREME_BULL | R2 (中等阻力) | $77,920 | 4:2 |
+| 做多，超大行情 | EXTREME_BULL | R3 (强阻力) | $81,920 | 9:2 |
+| 做空，一般行情 | NORMAL | S1 (最近支撑) | $74,070 | 1.3:2 |
+| 做空，大行情 | EXTREME_BEAR | S2 (中等支撑) | $72,070 | 4:2 |
+
+*假设止损固定 2%
+
+#### 4.2.5 止损同理
+
+```python
+def calculate_dynamic_sl(
+    signal: str,
+    entry_price: float,
+    support_levels: List[Dict],
+    resistance_levels: List[Dict],
+) -> Dict:
+    """
+    动态计算止损价位
+
+    做多: 止损设在最近的支撑位下方
+    做空: 止损设在最近的阻力位上方
+    """
+    result = {
+        'sl_price': None,
+        'sl_type': None,
+        'reference_sr': None,
+    }
+
+    if signal == 'LONG':
+        # 做多: 止损在支撑位下方
+        supports = [s for s in support_levels if s['price'] < entry_price]
+        if supports:
+            supports.sort(key=lambda x: x['price'], reverse=True)
+            nearest_support = supports[0]
+            buffer = 0.002  # 0.2% 缓冲
+            result['sl_price'] = nearest_support['price'] * (1 - buffer)
+            result['sl_type'] = 'SR_LEVEL'
+            result['reference_sr'] = nearest_support
+        else:
+            # 无支撑数据，用固定比例
+            result['sl_price'] = entry_price * (1 - 0.02)
+            result['sl_type'] = 'FALLBACK_PCT'
+    else:
+        # 做空: 止损在阻力位上方
+        resistances = [r for r in resistance_levels if r['price'] > entry_price]
+        if resistances:
+            resistances.sort(key=lambda x: x['price'])
+            nearest_resistance = resistances[0]
+            buffer = 0.002
+            result['sl_price'] = nearest_resistance['price'] * (1 + buffer)
+            result['sl_type'] = 'SR_LEVEL'
+            result['reference_sr'] = nearest_resistance
+        else:
+            result['sl_price'] = entry_price * (1 + 0.02)
+            result['sl_type'] = 'FALLBACK_PCT'
+
+    return result
+```
 
 ### 4.3 核心绩效指标
 
