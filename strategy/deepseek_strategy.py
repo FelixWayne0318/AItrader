@@ -151,6 +151,10 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     telegram_notify_trailing_stop: bool = True  # v3.13: 移动止损更新通知
     telegram_notify_startup: bool = True  # v3.13: 策略启动通知
     telegram_notify_shutdown: bool = True  # v3.13: 策略关闭通知
+    telegram_auto_daily: bool = False  # v3.13: 自动发送每日总结
+    telegram_auto_weekly: bool = False  # v3.13: 自动发送每周总结
+    telegram_daily_hour_utc: int = 0  # v3.13: 每日总结发送时间 (UTC 小时)
+    telegram_weekly_day: int = 0  # v3.13: 每周总结发送日 (0=周一)
 
     # Telegram Queue (v4.0 - Non-blocking message sending)
     telegram_queue_enabled: bool = True  # 启用消息队列 (默认开启)
@@ -458,6 +462,14 @@ class DeepSeekAIStrategy(Strategy):
                     self.telegram_notify_trailing_stop = config.telegram_notify_trailing_stop
                     self.telegram_notify_startup = config.telegram_notify_startup
                     self.telegram_notify_shutdown = config.telegram_notify_shutdown
+                    # v3.13: 自动总结配置
+                    self.telegram_auto_daily = config.telegram_auto_daily
+                    self.telegram_auto_weekly = config.telegram_auto_weekly
+                    self.telegram_daily_hour_utc = config.telegram_daily_hour_utc
+                    self.telegram_weekly_day = config.telegram_weekly_day
+                    # v3.13: 日期跟踪 (避免重复发送)
+                    self._last_daily_summary_date = None
+                    self._last_weekly_summary_date = None
 
                     self.log.info("✅ Telegram Bot initialized successfully")
                     
@@ -1292,6 +1304,9 @@ class DeepSeekAIStrategy(Strategy):
             # v2.1: 发送心跳 - 移到 on_timer 开始位置，确保每次都发送
             # 即使后续分析失败，用户也能知道服务器在运行
             self._send_heartbeat_notification()
+
+            # v3.13: 检查是否需要发送定时总结 (每日/每周)
+            self._check_scheduled_summaries()
 
             # Check if indicators are ready
             if not self.indicator_manager.is_initialized():
@@ -4199,3 +4214,60 @@ class DeepSeekAIStrategy(Strategy):
                 'success': False,
                 'error': str(e)
             }
+
+    def _check_scheduled_summaries(self):
+        """
+        Check if daily/weekly summaries need to be sent (v3.13).
+
+        Called from on_timer. Checks current UTC time against configured schedule.
+        Uses date tracking to avoid duplicate sends.
+        """
+        if not self.telegram_bot or not self.enable_telegram:
+            return
+
+        try:
+            from datetime import datetime
+
+            now = datetime.utcnow()
+            current_hour = now.hour
+            current_weekday = now.weekday()  # 0=Monday, 6=Sunday
+            today_str = now.strftime('%Y-%m-%d')
+            week_str = now.strftime('%Y-W%W')  # Year-Week format
+
+            # Check daily summary
+            if getattr(self, 'telegram_auto_daily', False):
+                daily_hour = getattr(self, 'telegram_daily_hour_utc', 0)
+
+                # Send at the configured hour, once per day
+                if current_hour == daily_hour:
+                    last_daily = getattr(self, '_last_daily_summary_date', None)
+                    if last_daily != today_str:
+                        self.log.info(f"📊 Sending scheduled daily summary...")
+                        result = self._cmd_daily_summary()
+                        if result.get('success') and result.get('message'):
+                            self.telegram_bot.send_message_sync(result['message'])
+                            self._last_daily_summary_date = today_str
+                            self.log.info("✅ Daily summary sent")
+                        else:
+                            self.log.warning(f"Failed to generate daily summary: {result.get('error')}")
+
+            # Check weekly summary
+            if getattr(self, 'telegram_auto_weekly', False):
+                weekly_day = getattr(self, 'telegram_weekly_day', 0)  # 0=Monday
+                daily_hour = getattr(self, 'telegram_daily_hour_utc', 0)
+
+                # Send on the configured day at the configured hour
+                if current_weekday == weekly_day and current_hour == daily_hour:
+                    last_weekly = getattr(self, '_last_weekly_summary_date', None)
+                    if last_weekly != week_str:
+                        self.log.info(f"📊 Sending scheduled weekly summary...")
+                        result = self._cmd_weekly_summary()
+                        if result.get('success') and result.get('message'):
+                            self.telegram_bot.send_message_sync(result['message'])
+                            self._last_weekly_summary_date = week_str
+                            self.log.info("✅ Weekly summary sent")
+                        else:
+                            self.log.warning(f"Failed to generate weekly summary: {result.get('error')}")
+
+        except Exception as e:
+            self.log.warning(f"Error checking scheduled summaries: {e}")

@@ -272,6 +272,15 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         telegram_notify_positions=config_manager.get('telegram', 'notify', 'positions', default=True),
         telegram_notify_errors=config_manager.get('telegram', 'notify', 'errors', default=True),
         telegram_notify_heartbeat=config_manager.get('telegram', 'notify', 'heartbeat', default=True),  # v2.1
+        # v3.13: 新增通知开关
+        telegram_notify_trailing_stop=config_manager.get('telegram', 'notify', 'trailing_stop', default=True),
+        telegram_notify_startup=config_manager.get('telegram', 'notify', 'startup', default=True),
+        telegram_notify_shutdown=config_manager.get('telegram', 'notify', 'shutdown', default=True),
+        # v3.13: 自动总结配置
+        telegram_auto_daily=config_manager.get('telegram', 'summary', 'auto_daily', default=False),
+        telegram_auto_weekly=config_manager.get('telegram', 'summary', 'auto_weekly', default=False),
+        telegram_daily_hour_utc=config_manager.get('telegram', 'summary', 'daily_hour_utc', default=0),
+        telegram_weekly_day=config_manager.get('telegram', 'summary', 'weekly_day', default=0),
 
         # Telegram Queue (v4.0 - Non-blocking message sending)
         telegram_queue_enabled=config_manager.get('telegram', 'queue', 'enabled', default=True),
