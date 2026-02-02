@@ -1930,7 +1930,20 @@ class DeepSeekAIStrategy(Strategy):
                 }
 
             # 9. 获取信号执行状态 (v4.1)
+            # v4.4: 状态一致性检查 - 防止缓存状态与实时仓位矛盾
             signal_status_heartbeat = getattr(self, '_last_signal_status', None)
+            if signal_status_heartbeat and not position_side:
+                # 缓存状态说有仓位，但实时查询无仓位 → 状态过时
+                cached_reason = signal_status_heartbeat.get('reason', '')
+                if '已持有' in cached_reason:
+                    # 仓位已被止损/止盈平掉，清除过时状态
+                    signal_status_heartbeat = {
+                        'executed': False,
+                        'reason': '仓位已平仓 (SL/TP 触发)',
+                        'action_taken': '等待新信号',
+                    }
+                    self._last_signal_status = signal_status_heartbeat
+                    self.log.info("🔄 检测到仓位已平仓，更新信号状态")
 
             # 10. 发送消息 (v4.2: 添加 SL/TP)
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
@@ -2358,9 +2371,23 @@ class DeepSeekAIStrategy(Strategy):
                     # Orphan cleanup will handle remaining orders later
                     self.log.warning("⚠️ Some orders failed to cancel, continuing with reduce (orphan cleanup will handle)")
 
+                # v4.4: Re-verify position exists before submitting reduce_only order
+                verified_position = self._get_current_position_data()
+                if not verified_position:
+                    self.log.warning("⚠️ Position no longer exists (likely closed by SL/TP), skipping reduce order")
+                    self._last_signal_status = {
+                        'executed': False,
+                        'reason': '仓位已平仓 (SL/TP 触发)',
+                        'action_taken': '',
+                    }
+                    return
+                # Use fresh position quantity for reduce calculation
+                fresh_qty = verified_position['quantity']
+                actual_reduce = min(abs(size_diff), fresh_qty)  # Can't reduce more than current
+
                 self._submit_order(
                     side=OrderSide.SELL if target_side == 'long' else OrderSide.BUY,
-                    quantity=abs(size_diff),
+                    quantity=actual_reduce,
                     reduce_only=True,
                 )
                 self.log.info(
@@ -2392,6 +2419,19 @@ class DeepSeekAIStrategy(Strategy):
                 return
 
             self.log.info(f"🔄 Reversing position: {current_side} → {target_side}")
+
+            # v4.4: Re-verify position exists before reversal
+            verified_position = self._get_current_position_data()
+            if not verified_position:
+                self.log.warning("⚠️ Position no longer exists (likely closed by SL/TP), skipping reversal")
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': '仓位已平仓 (SL/TP 触发)',
+                    'action_taken': '',
+                }
+                return
+            # Update with fresh position data
+            current_qty = verified_position['quantity']
 
             # v3.10: Cancel all pending orders BEFORE reversing to prevent -2022 ReduceOnly rejection
             # Old position's SL/TP orders are reduce_only=True, they'll be rejected if position closes first
@@ -2490,8 +2530,20 @@ class DeepSeekAIStrategy(Strategy):
 
         Different from reversal which closes then opens opposite.
         """
-        current_side = current_position['side']
-        current_qty = current_position['quantity']
+        # v4.4: Re-verify position exists before submitting reduce_only order
+        # Position might have been closed by SL/TP between signal analysis and execution
+        verified_position = self._get_current_position_data()
+        if not verified_position:
+            self.log.warning("⚠️ Position no longer exists (likely closed by SL/TP), skipping close order")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': '仓位已平仓 (SL/TP 触发)',
+                'action_taken': '',
+            }
+            return
+
+        current_side = verified_position['side']
+        current_qty = verified_position['quantity']
         side_cn = '多' if current_side == 'long' else '空'
 
         self.log.info(f"🔴 Closing {current_side} position: {current_qty:.4f} BTC (CLOSE signal)")
@@ -2536,8 +2588,19 @@ class DeepSeekAIStrategy(Strategy):
             target_pct: Target position size as percentage (0-100)
                        0 = close all, 50 = keep half, 100 = no change
         """
-        current_side = current_position['side']
-        current_qty = current_position['quantity']
+        # v4.4: Re-verify position exists before submitting reduce_only order
+        verified_position = self._get_current_position_data()
+        if not verified_position:
+            self.log.warning("⚠️ Position no longer exists (likely closed by SL/TP), skipping reduce order")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': '仓位已平仓 (SL/TP 触发)',
+                'action_taken': '',
+            }
+            return
+
+        current_side = verified_position['side']
+        current_qty = verified_position['quantity']
         side_cn = '多' if current_side == 'long' else '空'
 
         # Validate and calculate target quantity
