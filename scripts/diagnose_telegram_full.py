@@ -284,9 +284,9 @@ def check_data_authenticity():
         print("\n[5.3] 测试 Binance API 真实数据...")
 
         try:
-            from utils.binance_account import BinanceAccountUtils
+            from utils.binance_account import BinanceAccountFetcher
 
-            binance = BinanceAccountUtils()
+            binance = BinanceAccountFetcher()
             balance = binance.get_balance()
 
             if balance and balance.get('total_balance', 0) > 0:
