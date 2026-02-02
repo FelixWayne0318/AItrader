@@ -384,8 +384,11 @@ def calculate_position_size(
         return 0.0, {'error': 'Invalid price'}
 
     equity = config.get('equity', 1000)
+    leverage = config.get('leverage', 5)
     max_position_ratio = config.get('max_position_ratio', 0.30)
-    max_usdt = equity * max_position_ratio
+    # v4.8: max_usdt 现在包含杠杆
+    # 例: $1000 × 30% × 10杠杆 = $3000 最大仓位
+    max_usdt = equity * max_position_ratio * leverage
 
     # v3.12: Determine sizing method
     sizing_config = config.get('position_sizing', {})
@@ -531,11 +534,32 @@ def calculate_position_size(
         }
 
     elif method == 'ai_controlled':
-        # v3.12: AI specifies target position as percentage
-        size_pct = float(ai_size_pct) / 100.0  # Convert 0-100 to 0-1
+        # v4.8: AI 控制仓位计算
+        # 公式: 最终仓位 = max_usdt × AI建议百分比
+        # max_usdt = equity × max_position_ratio × leverage (已在上面计算)
 
-        # Calculate target USDT based on percentage of max allowed
-        position_usdt = max_usdt * size_pct
+        ai_config = sizing_config.get('ai_controlled', {})
+        default_size_pct = ai_config.get('default_size_pct', 50)
+        confidence_mapping = ai_config.get('confidence_mapping', {
+            'HIGH': 80,
+            'MEDIUM': 50,
+            'LOW': 30
+        })
+
+        # 确定仓位百分比 (优先级: AI 输出 > 信心映射 > 默认值)
+        if ai_size_pct is not None and ai_size_pct >= 0:
+            # AI 直接提供了仓位百分比
+            size_pct = float(ai_size_pct)
+            size_source = 'ai_provided'
+        else:
+            # 根据信心等级映射
+            confidence = signal_data.get('confidence', 'MEDIUM').upper()
+            size_pct = confidence_mapping.get(confidence, default_size_pct)
+            size_source = f'confidence_{confidence}'
+
+        # 转换为小数并计算仓位
+        size_ratio = size_pct / 100.0  # Convert 0-100 to 0-1
+        position_usdt = max_usdt * size_ratio
 
         # Apply risk multiplier
         position_usdt *= risk_multiplier
@@ -545,14 +569,23 @@ def calculate_position_size(
         details = {
             'method': 'ai_controlled',
             'ai_size_pct': ai_size_pct,
+            'size_pct_used': size_pct,
+            'size_source': size_source,
+            'confidence': signal_data.get('confidence', 'MEDIUM'),
             'equity': equity,
+            'leverage': leverage,
+            'max_position_ratio': max_position_ratio,
             'max_usdt': max_usdt,
             'risk_multiplier': risk_multiplier,
             'final_usdt': final_usdt,
         }
 
         if logger:
-            logger.info(f"📊 AI-controlled sizing: {ai_size_pct}% of max = ${final_usdt:.2f}")
+            logger.info(
+                f"📊 AI-controlled sizing: {size_pct}% of ${max_usdt:.0f} "
+                f"(equity=${equity} × {max_position_ratio*100:.0f}% × {leverage}x) "
+                f"({size_source}) = ${final_usdt:.2f}"
+            )
 
     else:
         # Original fixed_pct method (legacy)

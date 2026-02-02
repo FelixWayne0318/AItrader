@@ -911,14 +911,36 @@ TELEGRAM_CHAT_ID=xxx          # 你的个人用户 ID
 | `leverage` | 5 | 杠杆倍数 (建议 3-10) |
 | `use_real_balance_as_equity` | true | 自动从 Binance 获取真实余额 |
 
-#### 仓位管理
+#### 仓位管理 (v4.8 更新)
+
+**v4.8 重大变更**: 仓位计算改为 AI 控制模式 (`ai_controlled`)
+
+**计算公式**:
+```
+max_usdt = equity × max_position_ratio × leverage
+final_usdt = max_usdt × confidence_pct
+
+例: $1000 × 30% × 10杠杆 = $3000 最大仓位
+```
+
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `base_usdt_amount` | 100 | 基础仓位 USDT (Binance 最低 $100) |
-| `high_confidence_multiplier` | 1.5 | 高信心仓位乘数 → $150 |
-| `medium_confidence_multiplier` | 1.0 | 中等信心 → $100 |
-| `low_confidence_multiplier` | 0.5 | 低信心 → $50 |
-| `max_position_ratio` | 0.30 | 最大仓位比例 (30% of equity) |
+| `position_sizing.method` | ai_controlled | 仓位计算方法 (v4.8 默认) |
+| `max_position_ratio` | 0.30 | 最大仓位比例 (占 equity 的比例) |
+| `ai_controlled.default_size_pct` | 50 | AI 未提供时的默认百分比 |
+
+**信心等级仓位映射** (以 $1000 资金, 10x 杠杆为例):
+| 信心等级 | 百分比 | 仓位金额 |
+|---------|-------|---------|
+| HIGH | 80% | $2400 |
+| MEDIUM | 50% | $1500 |
+| LOW | 30% | $900 |
+
+**旧版参数** (fixed_pct 方法, 已不再默认使用):
+| `base_usdt_amount` | 100 | 基础仓位 USDT |
+| `high_confidence_multiplier` | 1.5 | 高信心乘数 |
+| `medium_confidence_multiplier` | 1.0 | 中等信心乘数 |
+| `low_confidence_multiplier` | 0.5 | 低信心乘数 |
 
 #### 风险管理
 | 参数 | 默认值 | 说明 |
