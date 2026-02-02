@@ -315,7 +315,7 @@ class DiagnosticContext:
 
     # Step tracking
     current_step: int = 0
-    total_steps: int = 17  # Updated for modular architecture
+    total_steps: int = 19  # 17 main steps + 2 summary steps
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 

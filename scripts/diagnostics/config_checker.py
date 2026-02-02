@@ -264,6 +264,14 @@ class MTFConfigChecker(DiagnosticStep):
     def run(self) -> bool:
         print("-" * 70)
 
+        # Load environment variables early (for API key checks)
+        from dotenv import load_dotenv
+        env_permanent = Path.home() / ".env.aitrader"
+        if env_permanent.exists():
+            load_dotenv(env_permanent)
+        else:
+            load_dotenv()
+
         try:
             mtf_config_path = self.ctx.project_root / "configs" / "base.yaml"
 

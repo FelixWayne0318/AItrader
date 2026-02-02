@@ -92,11 +92,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
             import os
 
             kline_client = BinanceKlineClient(timeout=10)
-            processor = OrderFlowProcessor(
-                logger=None,
-                bullish_threshold=0.55,
-                bearish_threshold=0.45,
-            )
+            processor = OrderFlowProcessor(logger=None)
 
             # Get Coinalyze config
             coinalyze_cfg = self.ctx.base_config.get('order_flow', {}).get('coinalyze', {})
