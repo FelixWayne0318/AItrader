@@ -836,7 +836,7 @@ class TelegramCommandHandler:
         or types "/" in private chat with the bot.
         """
         try:
-            from telegram import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+            from telegram import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, BotCommandScopeDefault
 
             commands = [
                 BotCommand("menu", "显示操作菜单"),
@@ -853,14 +853,21 @@ class TelegramCommandHandler:
                 BotCommand("help", "帮助信息"),
             ]
 
-            # Register commands ONLY for private chats
+            # 1. Clear default/global scope first (removes old commands)
+            await self.application.bot.set_my_commands(
+                [],
+                scope=BotCommandScopeDefault()
+            )
+            self.logger.info("✅ Cleared default bot commands")
+
+            # 2. Register commands ONLY for private chats
             await self.application.bot.set_my_commands(
                 commands,
                 scope=BotCommandScopeAllPrivateChats()
             )
             self.logger.info("✅ Bot commands registered for private chats")
 
-            # Remove commands from group chats (set empty list)
+            # 3. Explicitly remove commands from group chats
             await self.application.bot.set_my_commands(
                 [],
                 scope=BotCommandScopeAllGroupChats()
