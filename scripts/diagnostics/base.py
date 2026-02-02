@@ -318,7 +318,7 @@ class DiagnosticContext:
 
     # Step tracking
     current_step: int = 0
-    total_steps: int = 19  # 17 main steps + 2 summary steps
+    total_steps: int = 22  # v2.4: 19 steps + 3 new (AI data validation, lifecycle, MTF routing)
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
@@ -444,7 +444,7 @@ class DiagnosticRunner:
             self.setup_output_capture()
 
             print("=" * 70)
-            print("  实盘信号诊断工具 v2.0 (模块化重构版)")
+            print("  实盘信号诊断工具 v2.4 (v11.16 功能完整恢复版)")
             print("  基于 TradingAgents v3.12 架构")
             print("=" * 70)
             print()

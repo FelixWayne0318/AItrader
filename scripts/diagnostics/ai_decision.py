@@ -2,11 +2,293 @@
 AI Decision Module
 
 Handles MultiAgent AI analysis and decision-making.
+Enhanced from v11.16 monolithic script with:
+- AI input data validation
+- AI Prompt structure verification
+- Bull/Bear debate transcript display
 """
 
 from typing import Any, Dict, Optional
 
-from .base import DiagnosticContext, DiagnosticStep, safe_float, print_wrapped
+from .base import DiagnosticContext, DiagnosticStep, safe_float, print_wrapped, print_box
+
+
+class AIInputDataValidator(DiagnosticStep):
+    """
+    Validate and display all data passed to MultiAgent AI.
+
+    Shows exactly what data the AI receives for decision-making.
+
+    Based on v11.16: AI 输入数据验证 (传给 MultiAgent)
+    """
+
+    name = "AI 输入数据验证 (传给 MultiAgent)"
+
+    def run(self) -> bool:
+        print("-" * 70)
+        print()
+        print_box("AI 输入数据验证 (传给 MultiAgent)", 65)
+        print()
+
+        # [1] Technical data
+        self._print_technical_data()
+
+        # [2] Sentiment data
+        self._print_sentiment_data()
+
+        # [3] Price data
+        self._print_price_data()
+
+        # [4] Order flow report
+        self._print_order_flow_data()
+
+        # [5] Derivatives report
+        self._print_derivatives_data()
+
+        # [5.5] Order book data
+        self._print_orderbook_data()
+
+        # [6] MTF Decision layer (4H)
+        self._print_mtf_decision_data()
+
+        # [7] MTF Trend layer (1D)
+        self._print_mtf_trend_data()
+
+        # [8] Current position
+        self._print_position_data()
+
+        # [9] Account context (v4.7)
+        self._print_account_context()
+
+        print()
+        print("  ────────────────────────────────────────────────────────────────")
+        print("  ✅ AI 输入数据验证完成")
+        return True
+
+    def _print_technical_data(self) -> None:
+        """Print technical indicator data."""
+        td = self.ctx.technical_data
+
+        print("  [1] technical_data (15M 技术指标):")
+        print(f"      price:           ${td.get('price', 0):,.2f}")
+        print(f"      sma_5:           ${td.get('sma_5', 0):,.2f}")
+        print(f"      sma_20:          ${td.get('sma_20', 0):,.2f}")
+        print(f"      sma_50:          ${td.get('sma_50', 0):,.2f}")
+        print(f"      rsi:             {td.get('rsi', 0):.2f}")
+        print(f"      macd:            {td.get('macd', 0):.4f}")
+        print(f"      macd_histogram:  {td.get('macd_histogram', 0):.4f}")
+        print(f"      bb_upper:        ${td.get('bb_upper', 0):,.2f}")
+        print(f"      bb_lower:        ${td.get('bb_lower', 0):,.2f}")
+        bb_pos = td.get('bb_position', 0.5)
+        print(f"      bb_position:     {bb_pos * 100:.1f}% (0%=下轨, 100%=上轨)")
+        print(f"      [诊断用] overall_trend: {td.get('overall_trend', 'N/A')}")
+        print()
+
+    def _print_sentiment_data(self) -> None:
+        """Print sentiment data."""
+        sd = self.ctx.sentiment_data
+
+        print("  [2] sentiment_data (情绪数据):")
+        pos_ratio = sd.get('positive_ratio', sd.get('long_account_pct', 0))
+        neg_ratio = sd.get('negative_ratio', sd.get('short_account_pct', 0))
+        net_sent = sd.get('net_sentiment', 0)
+        print(f"      positive_ratio:  {pos_ratio:.4f} ({pos_ratio*100:.2f}%)")
+        print(f"      negative_ratio:  {neg_ratio:.4f} ({neg_ratio*100:.2f}%)")
+        print(f"      net_sentiment:   {net_sent:.4f}")
+        print()
+
+    def _print_price_data(self) -> None:
+        """Print price data."""
+        pd = self.ctx.price_data
+
+        print("  [3] price_data (价格数据 v3.6):")
+        print(f"      price:           ${pd.get('price', 0):,.2f}")
+        print(f"      price_change:    {pd.get('price_change', 0):.2f}% (上一根K线)")
+        period_hours = pd.get('period_hours', 0)
+        print(f"      period_high:     ${pd.get('period_high', 0):,.2f} ({period_hours:.0f}h)")
+        print(f"      period_low:      ${pd.get('period_low', 0):,.2f} ({period_hours:.0f}h)")
+        print(f"      period_change:   {pd.get('period_change_pct', 0):+.2f}% ({period_hours:.0f}h)")
+        print()
+
+    def _print_order_flow_data(self) -> None:
+        """Print order flow data."""
+        of = self.ctx.order_flow_report
+
+        if of:
+            print("  [4] order_flow_report (订单流 v3.6):")
+            print(f"      buy_ratio:       {of.get('buy_ratio', 0):.4f} ({of.get('buy_ratio', 0)*100:.2f}%)")
+            print(f"      volume_usdt:     ${of.get('volume_usdt', 0):,.0f}")
+            print(f"      avg_trade_usdt:  ${of.get('avg_trade_usdt', 0):,.2f}")
+            print(f"      trades_count:    {of.get('trades_count', 0):,}")
+            print(f"      [诊断用] cvd_trend: {of.get('cvd_trend', 'N/A')}")
+            print(f"      data_source:     {of.get('data_source', 'N/A')}")
+        else:
+            print("  [4] order_flow_report: None (未获取)")
+        print()
+
+    def _print_derivatives_data(self) -> None:
+        """Print derivatives data."""
+        dr = self.ctx.derivatives_report
+
+        if dr:
+            print("  [5] derivatives_report (衍生品数据):")
+            oi = dr.get('open_interest', {})
+            fr = dr.get('funding_rate', {})
+            liq = dr.get('liquidations', {})
+            print(f"      OI value (BTC):  {oi.get('value', 0) if oi else 0:,.2f}")
+            print(f"      Funding rate:    {fr.get('value', 0) if fr else 0:.6f} ({fr.get('value', 0)*100 if fr else 0:.4f}%)")
+
+            # v4.8: 优先显示 Binance 8h funding rate
+            if self.ctx.binance_funding_rate:
+                bfr = self.ctx.binance_funding_rate
+                print(f"      [Binance 8h FR]: {bfr.get('funding_rate_pct', 0):.4f}% (主要数据源)")
+
+            if liq:
+                history = liq.get('history', [])
+                if history:
+                    latest = history[-1]
+                    print(f"      Liq history[-1]:  l={latest.get('l', 0)} BTC, s={latest.get('s', 0)} BTC")
+                else:
+                    print("      Liq history:      empty")
+            else:
+                print("      liquidations:    None")
+        else:
+            print("  [5] derivatives_report: None (未获取)")
+        print()
+
+    def _print_orderbook_data(self) -> None:
+        """Print order book data."""
+        ob = self.ctx.orderbook_report
+        ob_cfg = self.ctx.base_config.get('order_book', {})
+
+        if ob:
+            status = ob.get('_status', {})
+            status_code = status.get('code', 'UNKNOWN')
+            print(f"  [5.5] order_book_data (订单簿深度 v3.7) [状态: {status_code}]:")
+
+            if status_code == 'OK':
+                obi = ob.get('obi', {})
+                dynamics = ob.get('dynamics', {})
+                gradient = ob.get('pressure_gradient', {})
+                liquidity = ob.get('liquidity', {})
+
+                print(f"      OBI (simple):    {obi.get('simple', 0):+.4f}")
+                print(f"      OBI (weighted):  {obi.get('weighted', 0):+.4f}")
+                print(f"      OBI (adaptive):  {obi.get('adaptive_weighted', 0):+.4f}")
+
+                if dynamics.get('samples_count', 0) > 0:
+                    print(f"      OBI change:      {dynamics.get('obi_change', 0):+.4f}")
+                    print(f"      Depth change:    {dynamics.get('depth_change_pct', 0):+.2f}%")
+                    print(f"      Trend:           {dynamics.get('trend', 'N/A')}")
+                else:
+                    print("      Dynamics:        首次运行，无历史数据")
+                    print("      ⚠️ 注意: adaptive OBI 无历史基线，数值可靠性降低")
+
+                bid_near_5 = gradient.get('bid_near_5', 0) * 100
+                ask_near_5 = gradient.get('ask_near_5', 0) * 100
+                print(f"      Bid pressure:    near_5={bid_near_5:.1f}%")
+                print(f"      Ask pressure:    near_5={ask_near_5:.1f}%")
+                print(f"      Spread:          {liquidity.get('spread_pct', 0):.4f}%")
+            else:
+                print(f"      reason:          {status.get('reason', 'Unknown')}")
+        else:
+            if ob_cfg.get('enabled', False):
+                print("  [5.5] order_book_data: 获取失败")
+            else:
+                print("  [5.5] order_book_data: 未启用 (order_book.enabled = false)")
+        print()
+
+    def _print_mtf_decision_data(self) -> None:
+        """Print MTF 4H decision layer data."""
+        td = self.ctx.technical_data
+        mtf_decision = td.get('mtf_decision_layer')
+
+        if mtf_decision:
+            print("  [6] mtf_decision_layer (4H 决策层):")
+            print(f"      rsi:             {mtf_decision.get('rsi', 0):.2f}")
+            print(f"      macd:            {mtf_decision.get('macd', 0):.4f}")
+            print(f"      sma_20:          ${mtf_decision.get('sma_20', 0):,.2f}")
+            print(f"      sma_50:          ${mtf_decision.get('sma_50', 0):,.2f}")
+            print(f"      bb_upper:        ${mtf_decision.get('bb_upper', 0):,.2f}")
+            print(f"      bb_lower:        ${mtf_decision.get('bb_lower', 0):,.2f}")
+            bb_pos = mtf_decision.get('bb_position', 0.5)
+            print(f"      bb_position:     {bb_pos * 100:.1f}%")
+        else:
+            print("  [6] mtf_decision_layer (4H): 未初始化或未启用")
+        print()
+
+    def _print_mtf_trend_data(self) -> None:
+        """Print MTF 1D trend layer data."""
+        td = self.ctx.technical_data
+        mtf_trend = td.get('mtf_trend_layer')
+
+        if mtf_trend:
+            print("  [7] mtf_trend_layer (1D 趋势层):")
+            sma_200 = mtf_trend.get('sma_200', 0)
+            print(f"      sma_200:         ${sma_200:,.2f}")
+            if sma_200 > 0:
+                price_vs_sma200 = ((self.ctx.current_price / sma_200 - 1) * 100)
+                print(f"      price vs SMA200: {'+' if price_vs_sma200 >= 0 else ''}{price_vs_sma200:.2f}%")
+            print(f"      macd:            {mtf_trend.get('macd', 0):.4f}")
+            print(f"      macd_signal:     {mtf_trend.get('macd_signal', 0):.4f}")
+        else:
+            print("  [7] mtf_trend_layer (1D): 未初始化或未启用")
+        print()
+
+    def _print_position_data(self) -> None:
+        """Print current position data."""
+        pos = self.ctx.current_position
+
+        if pos:
+            print("  [8] current_position (当前持仓 - 25 fields v4.8.1):")
+            print(f"      side:            {pos.get('side', 'N/A')}")
+            print(f"      quantity:        {pos.get('quantity', 0)} BTC")
+            entry = pos.get('entry_price') or pos.get('avg_px', 0)
+            print(f"      entry_price:     ${entry:,.2f}")
+            print(f"      unrealized_pnl:  ${pos.get('unrealized_pnl', 0):,.2f}")
+            print(f"      pnl_percentage:  {pos.get('pnl_percentage', 0):+.2f}%")
+            print(f"      duration_min:    {pos.get('duration_minutes', 0)}")
+
+            # v4.7 fields
+            liq_price = pos.get('liquidation_price')
+            if liq_price:
+                print(f"      liquidation:     ${liq_price:,.2f} (buffer: {pos.get('liquidation_buffer_pct', 0):.1f}%)")
+            fr_cumulative = pos.get('funding_rate_cumulative_usd')
+            if fr_cumulative:
+                print(f"      funding_cost:    ${fr_cumulative:,.2f} (cumulative)")
+            max_dd = pos.get('max_drawdown_pct')
+            if max_dd:
+                print(f"      max_drawdown:    {max_dd:.2f}%")
+        else:
+            print("  [8] current_position: None (无持仓)")
+        print()
+
+    def _print_account_context(self) -> None:
+        """Print account context (v4.7)."""
+        ac = self.ctx.account_context
+
+        if ac:
+            print("  [9] account_context (v4.7 Portfolio Risk - 13 fields):")
+            print(f"      total_balance:   ${ac.get('total_balance', 0):,.2f}")
+            print(f"      available:       ${ac.get('available_balance', 0):,.2f}")
+            print(f"      margin_used:     ${ac.get('margin_used', 0):,.2f}")
+            print(f"      margin_ratio:    {ac.get('margin_ratio', 0):.2f}%")
+            print(f"      max_position:    ${ac.get('max_position_value', 0):,.2f}")
+            print(f"      available_cap:   ${ac.get('available_capacity', 0):,.2f}")
+            print(f"      capacity_used:   {ac.get('capacity_used_pct', 0):.1f}%")
+            print(f"      leverage:        {ac.get('leverage', 1)}x")
+
+            # v4.7 portfolio risk
+            print(f"      unrealized_pnl:  ${ac.get('unrealized_pnl_total', 0):,.2f}")
+            print(f"      open_positions:  {ac.get('open_positions_count', 0)}")
+            print(f"      daily_pnl:       ${ac.get('daily_pnl_usd', 0):,.2f}")
+            print(f"      weekly_pnl:      ${ac.get('weekly_pnl_usd', 0):,.2f}")
+            print(f"      risk_score:      {ac.get('portfolio_risk_score', 0)}/100")
+        else:
+            print("  [9] account_context: None (未获取)")
+
+    def should_skip(self) -> bool:
+        return self.ctx.summary_mode
 
 
 class MultiAgentAnalyzer(DiagnosticStep):
@@ -134,32 +416,157 @@ class MultiAgentAnalyzer(DiagnosticStep):
     def _display_results(self, signal_data: Dict) -> None:
         """Display analysis results."""
         print()
-        print("  📊 决策结果:")
-        print(f"     信号: {signal_data.get('signal', 'N/A')}")
-        print(f"     信心: {signal_data.get('confidence', 'N/A')}")
-        print(f"     风险: {signal_data.get('risk_level', 'N/A')}")
+        print("  🎯 Judge 最终决策:")
+        judge_signal = signal_data.get('signal', 'N/A')
+        print(f"     Signal: {judge_signal}")
+        print(f"     Confidence: {signal_data.get('confidence', 'N/A')}")
+        print(f"     Risk Level: {signal_data.get('risk_level', 'N/A')}")
 
-        # Judge decision details
+        # SL/TP (v11.14: label HOLD signals)
+        sltp_suffix = " (仅供参考，HOLD 不使用)" if judge_signal == 'HOLD' else ""
+        sl = safe_float(signal_data.get('stop_loss'))
+        tp = safe_float(signal_data.get('take_profit'))
+        if sl:
+            print(f"     Stop Loss: ${sl:,.2f}{sltp_suffix}")
+        if tp:
+            print(f"     Take Profit: ${tp:,.2f}{sltp_suffix}")
+
+        # Judge decision details (v3.0 AI 完全自主)
         judge = signal_data.get('judge_decision', {})
         if judge:
-            print(f"     胜出方: {judge.get('winning_side', 'N/A')}")
+            winning_side = judge.get('winning_side', 'N/A')
+            print(f"     Winning Side: {winning_side}")
+            print()
+            print("     📋 Judge 决策 (v3.0 AI 完全自主):")
+            print("        - AI 自主分析 Bull/Bear 辩论")
+            print("        - AI 自主判断证据强度")
+            print("        - 无硬编码规则或阈值")
 
             key_reasons = judge.get('key_reasons', [])
             if key_reasons:
-                print("     关键理由:")
+                print()
+                print(f"     Key Reasons:")
                 for reason in key_reasons[:3]:
-                    print(f"       • {reason[:60]}...")
+                    reason_text = reason[:80] + "..." if len(reason) > 80 else reason
+                    print(f"       • {reason_text}")
 
-        # SL/TP
-        sl = signal_data.get('stop_loss')
-        tp = signal_data.get('take_profit')
-        if sl:
-            print(f"     止损: ${safe_float(sl):,.2f}" if safe_float(sl) else "     止损: N/A")
-        if tp:
-            print(f"     止盈: ${safe_float(tp):,.2f}" if safe_float(tp) else "     止盈: N/A")
+            acknowledged_risks = judge.get('acknowledged_risks', [])
+            if acknowledged_risks:
+                print(f"     Acknowledged Risks:")
+                for risk in acknowledged_risks[:2]:
+                    risk_text = risk[:80] + "..." if len(risk) > 80 else risk
+                    print(f"       • {risk_text}")
+
+        # Debate summary
+        if signal_data.get('debate_summary'):
+            summary = signal_data['debate_summary']
+            print()
+            print(f"     Debate Summary:")
+            summary_text = summary[:200] + "..." if len(summary) > 200 else summary
+            print_wrapped(summary_text, indent="       ")
+
+        # Reason
+        reason = signal_data.get('reason', 'N/A')
+        print()
+        reason_text = reason[:200] + "..." if len(reason) > 200 else reason
+        print(f"     Reason: {reason_text}")
+
+        # Display debate transcript (v11.16)
+        self._display_debate_transcript()
+
+        # Display AI Prompt structure (v11.15)
+        self._display_prompt_structure()
 
         print()
         print("  ✅ MultiAgent 分析完成")
+
+    def _display_debate_transcript(self) -> None:
+        """Display Bull/Bear debate transcript."""
+        if not self.ctx.multi_agent:
+            return
+
+        if hasattr(self.ctx.multi_agent, 'get_last_debate') and callable(self.ctx.multi_agent.get_last_debate):
+            debate_transcript = self.ctx.multi_agent.get_last_debate()
+            if debate_transcript:
+                print()
+                print("  📜 辩论记录 (Bull/Bear Debate):")
+                # Show first 600 characters
+                if len(debate_transcript) > 600:
+                    lines = debate_transcript[:600].split('\n')
+                    for line in lines[:8]:
+                        print(f"     {line[:100]}")
+                    print(f"     [截断, 完整长度: {len(debate_transcript)} 字符]")
+                else:
+                    for line in debate_transcript.split('\n')[:8]:
+                        print(f"     {line[:100]}")
+
+    def _display_prompt_structure(self) -> None:
+        """Display AI Prompt structure verification (v11.15)."""
+        if not self.ctx.multi_agent:
+            return
+
+        if not hasattr(self.ctx.multi_agent, 'get_last_prompts'):
+            return
+
+        last_prompts = self.ctx.multi_agent.get_last_prompts()
+        if not last_prompts:
+            return
+
+        print()
+        print_box("AI Prompt 结构验证 (v3.12 System/User + Memory)", 65)
+        print()
+
+        for agent_name in ["bull", "bear", "judge", "risk"]:
+            if agent_name not in last_prompts:
+                continue
+
+            prompts = last_prompts[agent_name]
+            system_prompt = prompts.get("system", "")
+            user_prompt = prompts.get("user", "")
+
+            # Check INDICATOR_DEFINITIONS in System Prompt
+            has_indicator_defs = "INDICATOR REFERENCE" in system_prompt
+
+            # v11.15: Check PAST REFLECTIONS (memory) in Judge's User Prompt
+            has_past_memories = "PAST REFLECTIONS" in user_prompt
+
+            print(f"  [{agent_name.upper()}] Prompt 结构:")
+            print(f"     System Prompt 长度: {len(system_prompt)} 字符")
+            print(f"     User Prompt 长度:   {len(user_prompt)} 字符")
+            print(f"     INDICATOR_DEFINITIONS 在 System: {'✅ 是' if has_indicator_defs else '❌ 否'}")
+
+            # v11.15: Judge-specific check - memory system
+            if agent_name == "judge":
+                print(f"     PAST REFLECTIONS (记忆): {'✅ 是' if has_past_memories else '⚠️ 无历史交易'}")
+
+            # Show System Prompt preview (first 150 chars)
+            if system_prompt:
+                preview = system_prompt[:150].replace('\n', ' ')
+                print(f"     System 预览: {preview}...")
+
+            # Show User Prompt preview (first 150 chars)
+            if user_prompt:
+                preview = user_prompt[:150].replace('\n', ' ')
+                print(f"     User 预览:   {preview}...")
+
+            # v11.15: For Judge, show memory section preview
+            if agent_name == "judge" and has_past_memories:
+                start_idx = user_prompt.find("PAST REFLECTIONS")
+                if start_idx != -1:
+                    end_idx = user_prompt.find("\n\nYOUR TASK", start_idx)
+                    if end_idx == -1:
+                        end_idx = start_idx + 300
+                    memory_section = user_prompt[start_idx:end_idx]
+                    memory_preview = memory_section[:200].replace('\n', '\n        ')
+                    print(f"     📝 记忆内容预览:")
+                    print(f"        {memory_preview}...")
+
+            print()
+
+        print("  📋 v3.12 架构要求:")
+        print("     - System Prompt: 角色定义 + INDICATOR_DEFINITIONS (知识背景)")
+        print("     - User Prompt: 原始数据 + 任务指令 (当前任务)")
+        print("     - Judge Prompt: 包含 PAST REFLECTIONS (过去交易记忆)")
 
 
 class SignalProcessor(DiagnosticStep):

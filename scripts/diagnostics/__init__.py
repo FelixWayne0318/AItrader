@@ -14,6 +14,7 @@ Module Structure:
 - position_check.py: Position and account checking
 - ai_decision.py: AI decision analysis (MultiAgent)
 - mtf_components.py: Multi-timeframe component testing
+- lifecycle_test.py: Post-trade lifecycle and MTF routing tests
 - summary.py: Results summary and export
 
 Usage:
@@ -21,7 +22,7 @@ Usage:
     runner = DiagnosticRunner(env='production')
     runner.run_all()
 
-Version: 2.0.0
+Version: 2.4.0 - Restored v11.16 missing features
 """
 
 from .base import (
@@ -39,7 +40,7 @@ from .base import (
     print_box,
 )
 
-__version__ = "2.3.0"  # v4.8.1: Complete position/account field coverage
+__version__ = "2.4.0"  # v2.4: Restored v11.16 missing features (AI data validation, debate, prompts, lifecycle)
 __all__ = [
     "DiagnosticContext",
     "DiagnosticStep",

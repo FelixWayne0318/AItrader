@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.3 (v4.8.1 适配版)
+实盘信号诊断脚本 v2.4 (v11.16 功能完整恢复版)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.4 更新 (v11.16 功能恢复):
+- 新增: AI 输入数据验证 (完整显示传给 AI 的所有 9 类数据)
+- 新增: AI Prompt 结构验证 (System/User Prompt + INDICATOR_DEFINITIONS + 记忆系统)
+- 新增: Bull/Bear 辩论记录显示
+- 新增: Post-Trade 生命周期测试 (OCO 清理 + Trailing Stop)
+- 新增: on_bar MTF 路由逻辑模拟 (1D/4H/15M bar 分发)
+- 增强: 决策结果显示 (Key Reasons, Acknowledged Risks, Debate Summary)
 
 v2.3 更新 (v4.8.1 字段完整性修复):
 - Position 字段完整覆盖: 25 个字段与生产代码 _get_current_position_data() 一致
@@ -28,8 +36,12 @@ v2.1 更新 (v4.8 适配):
 - 获取实时市场数据 (K线、情绪)
 - 初始化并测试技术指标
 - 检查 Binance 真实持仓和杠杆
+- AI 输入数据验证 (9 类完整数据)
 - 运行 AI 决策流程 (Bull/Bear/Judge)
+- AI Prompt 结构验证 (记忆系统)
 - 测试 MTF 组件 (OrderFlow, Coinalyze, OrderBook)
+- Post-Trade 生命周期测试 (OCO + Trailing Stop)
+- on_bar MTF 路由逻辑模拟
 - 验证 Telegram 配置
 - v4.8 仓位计算测试 (ai_controlled + 累加模式)
 
@@ -84,6 +96,7 @@ from scripts.diagnostics.position_check import (
     MemorySystemChecker,
 )
 from scripts.diagnostics.ai_decision import (
+    AIInputDataValidator,
     MultiAgentAnalyzer,
     SignalProcessor,
     OrderSimulator,
@@ -93,6 +106,10 @@ from scripts.diagnostics.mtf_components import (
     MTFComponentTester,
     TelegramChecker,
     ErrorRecoveryChecker,
+)
+from scripts.diagnostics.lifecycle_test import (
+    PostTradeLifecycleTest,
+    OnBarMTFRoutingTest,
 )
 from scripts.diagnostics.summary import (
     DataFlowSummary,
@@ -104,7 +121,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.3 (v4.8.1 适配版)',
+        description='实盘信号诊断工具 v2.4 (v11.16 功能完整恢复版)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -152,53 +169,64 @@ Examples:
     # =========================================================================
     # Phase 0: Configuration Validation
     # =========================================================================
-    runner.add_step(CriticalConfigChecker)   # [1/14] 检查关键配置
-    runner.add_step(MTFConfigChecker)        # [2/14] 检查 MTF 配置
-    runner.add_step(StrategyConfigLoader)    # [3/14] 加载策略配置
+    runner.add_step(CriticalConfigChecker)   # 检查关键配置
+    runner.add_step(MTFConfigChecker)        # 检查 MTF 配置
+    runner.add_step(StrategyConfigLoader)    # 加载策略配置
 
     # =========================================================================
     # Phase 1: Market Data Collection
     # =========================================================================
-    runner.add_step(MarketDataFetcher)       # [4/14] 获取 K 线数据
-    runner.add_step(SentimentDataFetcher)    # [5/14] 获取情绪数据
+    runner.add_step(MarketDataFetcher)       # 获取 K 线数据
+    runner.add_step(SentimentDataFetcher)    # 获取情绪数据
 
     # =========================================================================
     # Phase 2: Technical Indicator Initialization
     # =========================================================================
-    runner.add_step(IndicatorInitializer)    # [6/14] 初始化技术指标管理器
-    runner.add_step(TechnicalDataFetcher)    # [7/14] 获取技术指标数据
-    runner.add_step(PriceDataBuilder)        # [8/14] 构建价格数据
+    runner.add_step(IndicatorInitializer)    # 初始化技术指标管理器
+    runner.add_step(TechnicalDataFetcher)    # 获取技术指标数据
+    runner.add_step(PriceDataBuilder)        # 构建价格数据
 
     # =========================================================================
     # Phase 3: Position and Account Check
     # =========================================================================
-    runner.add_step(PositionChecker)         # [9/14] 检查 Binance 持仓
-    runner.add_step(MemorySystemChecker)     # [9.5/14] 记忆系统检查 (v3.12)
+    runner.add_step(PositionChecker)         # 检查 Binance 持仓
+    runner.add_step(MemorySystemChecker)     # 记忆系统检查 (v3.12)
 
     # =========================================================================
-    # Phase 4: AI Decision Process
+    # Phase 4: AI Input Data Validation (v2.4 新增)
     # =========================================================================
-    runner.add_step(MultiAgentAnalyzer)      # [10/14] 运行 AI 分析
-    runner.add_step(SignalProcessor)         # [11/14] 信号处理和过滤
+    runner.add_step(AIInputDataValidator)    # AI 输入数据验证 (9 类完整数据)
 
     # =========================================================================
-    # Phase 5: MTF Component Testing (Optional)
+    # Phase 5: AI Decision Process
     # =========================================================================
-    runner.add_step(MTFComponentTester)      # [12/14] 测试 MTF 组件
-    runner.add_step(TelegramChecker)         # [12.5/14] Telegram 配置检查
-    runner.add_step(ErrorRecoveryChecker)    # [12.6/14] 错误恢复机制检查
+    runner.add_step(MultiAgentAnalyzer)      # 运行 AI 分析 (含辩论记录+Prompt验证)
+    runner.add_step(SignalProcessor)         # 信号处理和过滤
 
     # =========================================================================
-    # Phase 6: Order Simulation
+    # Phase 6: MTF Component Testing (Optional)
     # =========================================================================
-    runner.add_step(OrderSimulator)          # [13/14] 模拟订单提交
-    runner.add_step(PositionCalculator)      # [13.5/14] 仓位计算测试
+    runner.add_step(MTFComponentTester)      # 测试 MTF 组件
+    runner.add_step(TelegramChecker)         # Telegram 配置检查
+    runner.add_step(ErrorRecoveryChecker)    # 错误恢复机制检查
 
     # =========================================================================
-    # Phase 7: Summary and Analysis
+    # Phase 7: Post-Trade Lifecycle (v2.4 新增)
     # =========================================================================
-    runner.add_step(DataFlowSummary)         # [14/14] 数据流汇总
-    runner.add_step(DeepAnalysis)            # [14.5/14] 深入分析 (非 summary 模式)
+    runner.add_step(PostTradeLifecycleTest)  # Post-Trade 生命周期测试 (OCO + Trailing)
+    runner.add_step(OnBarMTFRoutingTest)     # on_bar MTF 路由逻辑模拟
+
+    # =========================================================================
+    # Phase 8: Order Simulation
+    # =========================================================================
+    runner.add_step(OrderSimulator)          # 模拟订单提交
+    runner.add_step(PositionCalculator)      # 仓位计算测试
+
+    # =========================================================================
+    # Phase 9: Summary and Analysis
+    # =========================================================================
+    runner.add_step(DataFlowSummary)         # 数据流汇总
+    runner.add_step(DeepAnalysis)            # 深入分析 (非 summary 模式)
 
     # Run all diagnostic steps
     success = runner.run_all()
