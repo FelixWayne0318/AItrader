@@ -3988,9 +3988,10 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.warning(f"Failed to send Telegram alert for order denial: {e}")
 
         # Check if this leaves a position unprotected
+        # v4.9.1: Use Binance API for accurate position check
         try:
-            positions = self.cache.positions_open(instrument_id=self.instrument_id)
-            if positions:
+            pos_data = self._get_current_position_data()
+            if pos_data and pos_data.get('quantity', 0) != 0:
                 self.log.error(
                     f"⚠️ CRITICAL: Position exists but order was denied! "
                     f"Position may be unprotected. Manual intervention recommended."
@@ -4114,9 +4115,9 @@ class DeepSeekAIStrategy(Strategy):
         Note: OCO group management is no longer needed as NautilusTrader handles it automatically.
         """
         try:
-            # Get current positions
-            positions = self.cache.positions_open(instrument_id=self.instrument_id)
-            has_position = len(positions) > 0
+            # v4.9.1: Use Binance API for accurate position check
+            pos_data = self._get_current_position_data()
+            has_position = pos_data is not None and pos_data.get('quantity', 0) != 0
 
             if not has_position:
                 # No position but check for orphan orders
@@ -4466,15 +4467,11 @@ class DeepSeekAIStrategy(Strategy):
             real_balance = self.binance_account.get_balance()
             total_balance = real_balance.get('total_balance', 0)
 
-            # Get unrealized PnL from real balance or calculate from position
+            # v4.9.1: Get unrealized PnL from Binance API (real balance or position data)
             unrealized_pnl = real_balance.get('unrealized_pnl', 0)
-            positions = self.cache.positions_open(instrument_id=self.instrument_id)
-            if positions and current_price > 0:
-                position = positions[0]
-                # Use position-specific PnL if available
-                position_pnl = float(position.unrealized_pnl(current_price))
-                if position_pnl != 0:
-                    unrealized_pnl = position_pnl
+            pos_data = self._get_current_position_data(current_price=current_price, from_telegram=True)
+            if pos_data and pos_data.get('unrealized_pnl') is not None:
+                unrealized_pnl = pos_data['unrealized_pnl']
 
             # Calculate uptime
             uptime_str = "N/A"
@@ -4640,25 +4637,23 @@ class DeepSeekAIStrategy(Strategy):
         try:
             from nautilus_trader.model.enums import OrderSide
 
-            # Get open positions
-            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            # v4.9.1: Use Binance API for accurate position data
+            pos_data = self._get_current_position_data(from_telegram=True)
 
-            if not positions:
+            if not pos_data or pos_data.get('quantity', 0) == 0:
                 return {
                     'success': True,
                     'message': "ℹ️ *无持仓*\n\n当前没有需要平仓的仓位。"
                 }
 
-            position = positions[0]
-            quantity = float(position.quantity)
+            quantity = pos_data['quantity']
+            side_str = pos_data['side'].upper()
 
             # Determine closing side (opposite of position)
-            if position.side.name == 'LONG':
+            if side_str == 'LONG':
                 close_side = OrderSide.SELL
-                side_str = "LONG"
             else:
                 close_side = OrderSide.BUY
-                side_str = "SHORT"
 
             # v3.10: Cancel all pending orders BEFORE closing to prevent -2022 ReduceOnly rejection
             try:
@@ -4820,8 +4815,8 @@ class DeepSeekAIStrategy(Strategy):
             available_balance = real_balance.get('available_balance', 0)
             unrealized_pnl_total = real_balance.get('unrealized_pnl', 0)
 
-            # Get position info from NautilusTrader cache
-            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            # v4.9.1: Use Binance API for position data
+            pos_data = self._get_current_position_data(current_price=cached_price, from_telegram=True)
 
             msg = "📊 *风险指标*\n\n"
 
@@ -4841,27 +4836,16 @@ class DeepSeekAIStrategy(Strategy):
             # Use real balance for calculations if available, otherwise fall back to configured equity
             effective_equity = total_balance if total_balance > 0 else self.equity
 
-            # Position risk
-            if positions:
-                position = positions[0]
-                qty = float(position.quantity)
-                entry_price = float(position.avg_px_open)
-                side = position.side.name
+            # Position risk (from Binance API)
+            if pos_data and pos_data.get('quantity', 0) != 0:
+                qty = pos_data['quantity']
+                entry_price = pos_data['avg_px']
+                side = pos_data['side'].upper()
+                pnl = pos_data.get('unrealized_pnl', 0)
+                pnl_pct = pos_data.get('pnl_percentage', 0)
 
                 # Calculate position value
                 position_value = qty * cached_price if cached_price > 0 else qty * entry_price
-
-                # Calculate unrealized PnL
-                if cached_price > 0:
-                    if side == 'LONG':
-                        pnl = (cached_price - entry_price) * qty
-                        pnl_pct = ((cached_price / entry_price) - 1) * 100
-                    else:
-                        pnl = (entry_price - cached_price) * qty
-                        pnl_pct = ((entry_price / cached_price) - 1) * 100
-                else:
-                    pnl = 0
-                    pnl_pct = 0
 
                 pnl_emoji = "📈" if pnl >= 0 else "📉"
                 side_cn = "多头" if side == "LONG" else "空头"
