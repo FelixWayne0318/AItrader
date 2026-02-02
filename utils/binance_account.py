@@ -206,6 +206,40 @@ class BinanceAccountFetcher:
 
         return active_positions
 
+    def get_leverage(self, symbol: str) -> int:
+        """
+        Get the actual leverage setting for a symbol from Binance.
+
+        Parameters
+        ----------
+        symbol : str
+            Trading symbol (e.g., 'BTCUSDT' or 'BTCUSDT-PERP.BINANCE')
+
+        Returns
+        -------
+        int
+            Leverage multiplier (e.g., 10 for 10x leverage)
+            Returns 1 if unable to fetch
+        """
+        account = self.get_account_info()
+        if not account:
+            self.logger.warning("Cannot fetch leverage: account info unavailable")
+            return 1
+
+        # Clean symbol format
+        clean_symbol = symbol.replace('-PERP', '').replace('.BINANCE', '').upper()
+
+        # Find position info for this symbol
+        positions = account.get('positions', [])
+        for pos in positions:
+            if pos.get('symbol', '').upper() == clean_symbol:
+                leverage = int(pos.get('leverage', 1))
+                self.logger.debug(f"Binance leverage for {clean_symbol}: {leverage}x")
+                return leverage
+
+        self.logger.warning(f"Symbol {clean_symbol} not found in account positions")
+        return 1
+
     def get_position_summary(self, symbol: Optional[str] = None) -> Dict[str, Any]:
         """
         Get a summary of position information.

@@ -785,6 +785,9 @@ class DeepSeekAIStrategy(Strategy):
         # Fetch real account balance from Binance
         self._update_real_balance()
 
+        # v4.8: Sync leverage from Binance API
+        self._sync_binance_leverage()
+
         # Record start time for uptime tracking
         from datetime import datetime
         self.strategy_start_time = datetime.utcnow()
@@ -956,6 +959,45 @@ class DeepSeekAIStrategy(Strategy):
         except Exception as e:
             self.log.error(f"Error fetching real balance: {e}")
             return {}
+
+    def _sync_binance_leverage(self) -> None:
+        """
+        v4.8: Sync leverage setting from Binance API.
+
+        This ensures the system uses the actual leverage configured on Binance
+        rather than relying solely on the config file value.
+
+        If the Binance leverage differs from config, we use the Binance value
+        and log a warning.
+        """
+        try:
+            symbol = str(self.instrument_id)
+            binance_leverage = self.binance_account.get_leverage(symbol)
+
+            if binance_leverage > 0:
+                config_leverage = self.config.leverage
+
+                if binance_leverage != int(config_leverage):
+                    self.log.warning(
+                        f"⚠️ Leverage mismatch detected! "
+                        f"Config: {config_leverage}x, Binance: {binance_leverage}x. "
+                        f"Using Binance value: {binance_leverage}x"
+                    )
+
+                # Always use Binance leverage (source of truth)
+                self.leverage = float(binance_leverage)
+                self.log.info(f"📊 Leverage synced from Binance: {binance_leverage}x")
+            else:
+                # Fallback to config if Binance fetch failed
+                self.log.warning(
+                    f"Could not fetch leverage from Binance, using config value: {self.config.leverage}x"
+                )
+                self.leverage = self.config.leverage
+
+        except Exception as e:
+            self.log.error(f"Error syncing leverage from Binance: {e}")
+            # Keep existing config value on error
+            self.leverage = self.config.leverage
 
     def _prefetch_historical_bars(self, limit: int = 200):
         """
