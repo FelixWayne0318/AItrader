@@ -39,7 +39,7 @@ from .base import (
     print_box,
 )
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"  # v4.8.1: Complete position/account field coverage
 __all__ = [
     "DiagnosticContext",
     "DiagnosticStep",

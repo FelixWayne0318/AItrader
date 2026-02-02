@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.2 (v4.8 适配版)
+实盘信号诊断脚本 v2.3 (v4.8.1 适配版)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.3 更新 (v4.8.1 字段完整性修复):
+- Position 字段完整覆盖: 25 个字段与生产代码 _get_current_position_data() 一致
+- Account 字段名称修正: max_usdt → max_position_value, remaining_capacity → available_capacity
+- 新增字段: capacity_used_pct, max_position_ratio
+- 字段名修正: pnl_pct → pnl_percentage (与 AI 格式化器一致)
+- Summary 输出增加 v4.5 Tier 1/2 和 v4.7 完整字段显示
 
 v2.2 更新:
 - Funding Rate 统一使用 Binance 8h 资金费率 (不再使用 Coinalyze)
@@ -97,7 +104,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.2 (v4.8 适配版)',
+        description='实盘信号诊断工具 v2.3 (v4.8.1 适配版)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

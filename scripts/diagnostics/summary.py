@@ -163,41 +163,134 @@ class DataFlowSummary(DiagnosticStep):
             print(f"    (数据不可用)")
 
     def _print_position_data(self) -> None:
-        """Print current position data."""
+        """
+        Print current position data.
+
+        v4.8.1: Updated to use correct field names and display all v4.5/v4.7 fields
+        """
         print()
         print_box("当前持仓 & v4.8 仓位状态")
         print()
 
-        # v4.8: Display leverage and max_usdt
+        # v4.8.1: Use correct field names (max_position_value, available_capacity)
         leverage = self.ctx.binance_leverage
-        ctx = self.ctx.account_context
+        ctx = self.ctx.account_context or {}
         equity = ctx.get('equity', 0)
-        max_usdt = ctx.get('max_usdt', 0)
+        max_position_value = ctx.get('max_position_value', 0)
 
         print(f"  v4.8 仓位参数:")
         print(f"    杠杆 (Binance): {leverage}x")
         print(f"    资金 (equity):  ${equity:,.2f}")
-        print(f"    max_usdt:       ${max_usdt:,.2f}")
+        print(f"    max_position_value: ${max_position_value:,.2f}")
 
         if self.ctx.current_position:
             pos = self.ctx.current_position
             position_value = pos.get('position_value_usdt', 0)
-            remaining = ctx.get('remaining_capacity', max_usdt - position_value)
+            available_capacity = ctx.get('available_capacity', max(0, max_position_value - position_value))
 
             print()
             print(f"  持仓状态: 有持仓")
+            # === Basic (4 fields) ===
             print(f"    方向:     {pos.get('side', 'N/A').upper()}")
-            print(f"    数量:     {pos.get('quantity', 0)} BTC")
+            print(f"    数量:     {pos.get('quantity', 0):.6f} BTC")
             print(f"    持仓价值: ${position_value:,.2f}")
-            print(f"    入场价:   ${pos.get('entry_price', 0):,.2f}")
+            print(f"    入场价:   ${pos.get('avg_px', 0):,.2f}")
             print(f"    未实现PnL: ${pos.get('unrealized_pnl', 0):,.2f}")
-            print(f"    盈亏比例: {pos.get('pnl_pct', 0):+.2f}%")
+            # v4.8.1: Use correct field name pnl_percentage
+            print(f"    盈亏比例: {pos.get('pnl_percentage', 0):+.2f}%")
+
+            # === v4.5 Tier 1 fields ===
+            print()
+            print(f"  v4.5 Tier 1 数据:")
+            duration = pos.get('duration_minutes')
+            if duration is not None:
+                hours = duration // 60
+                mins = duration % 60
+                print(f"    持仓时长: {hours}h {mins}m")
+            else:
+                print(f"    持仓时长: (诊断脚本不可用)")
+
+            sl_price = pos.get('sl_price')
+            tp_price = pos.get('tp_price')
+            rr_ratio = pos.get('risk_reward_ratio')
+            if sl_price:
+                print(f"    止损价:   ${sl_price:,.2f}")
+            if tp_price:
+                print(f"    止盈价:   ${tp_price:,.2f}")
+            if rr_ratio:
+                print(f"    风险收益比: 1:{rr_ratio:.2f}")
+
+            # === v4.5 Tier 2 fields ===
+            print()
+            print(f"  v4.5 Tier 2 数据:")
+            peak_pnl = pos.get('peak_pnl_pct')
+            worst_pnl = pos.get('worst_pnl_pct')
+            entry_conf = pos.get('entry_confidence')
+            margin_pct = pos.get('margin_used_pct')
+
+            if peak_pnl is not None:
+                print(f"    峰值盈亏: {peak_pnl:+.2f}%")
+            if worst_pnl is not None:
+                print(f"    最差盈亏: {worst_pnl:+.2f}%")
+            if entry_conf:
+                print(f"    入场信心: {entry_conf}")
+            if margin_pct is not None:
+                print(f"    保证金占用: {margin_pct:.1f}%")
+
+            # === v4.7 Liquidation Risk ===
+            print()
+            print(f"  v4.7 爆仓风险:")
+            liq_price = pos.get('liquidation_price')
+            liq_buffer = pos.get('liquidation_buffer_pct')
+            is_risk_high = pos.get('is_liquidation_risk_high', False)
+
+            if liq_price:
+                print(f"    爆仓价:   ${liq_price:,.2f}")
+            if liq_buffer is not None:
+                risk_emoji = "🔴" if is_risk_high else "🟢"
+                print(f"    爆仓距离: {risk_emoji} {liq_buffer:.1f}%")
+                if is_risk_high:
+                    print(f"    ⚠️ 警告: 爆仓风险高 (<10%)")
+
+            # === v4.7 Funding Rate ===
+            print()
+            print(f"  v4.7 资金费率影响:")
+            fr_current = pos.get('funding_rate_current')
+            daily_cost = pos.get('daily_funding_cost_usd')
+            cumulative = pos.get('funding_rate_cumulative_usd')
+            effective_pnl = pos.get('effective_pnl_after_funding')
+
+            if fr_current is not None:
+                print(f"    当前费率: {fr_current*100:+.4f}%")
+            if daily_cost is not None:
+                print(f"    日资金费用: ${daily_cost:,.2f}")
+            if cumulative is not None:
+                print(f"    累计资金费: ${cumulative:,.2f}")
+            if effective_pnl is not None:
+                print(f"    扣费后PnL: ${effective_pnl:,.2f}")
+
+            # === v4.7 Drawdown ===
+            print()
+            print(f"  v4.7 回撤分析:")
+            max_dd = pos.get('max_drawdown_pct')
+            dd_bars = pos.get('max_drawdown_duration_bars')
+            lower_lows = pos.get('consecutive_lower_lows', 0)
+
+            if max_dd is not None:
+                print(f"    最大回撤: {max_dd:.2f}%")
+            if dd_bars is not None:
+                print(f"    回撤持续: {dd_bars} bars")
+            print(f"    连续新低: {lower_lows} bars")
+
+            # === v4.8 累加模式 ===
             print()
             print(f"  v4.8 累加模式:")
-            capacity_pct = (position_value / max_usdt * 100) if max_usdt > 0 else 0
-            print(f"    已用容量: {capacity_pct:.1f}%")
-            print(f"    剩余可加仓: ${remaining:,.2f}")
-            if remaining <= 0:
+            capacity_pct = ctx.get('capacity_used_pct', 0)
+            if max_position_value > 0 and capacity_pct == 0:
+                capacity_pct = (position_value / max_position_value * 100)
+            print(f"    容量使用率: {capacity_pct:.1f}%")
+            print(f"    可用容量: ${available_capacity:,.2f}")
+            if available_capacity <= 0:
                 print(f"    ⚠️ 已达上限，无法加仓")
         else:
             print()

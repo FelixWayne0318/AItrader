@@ -423,7 +423,7 @@ class PositionCalculator(DiagnosticStep):
             print(f"     equity: ${equity:,.2f} (from Binance)")
             print(f"     leverage: {leverage}x (from Binance)")
             print(f"     max_position_ratio: {max_position_ratio*100:.0f}%")
-            print(f"     max_usdt: ${max_usdt:,.2f}")
+            print(f"     max_position_value: ${max_usdt:,.2f}")
             print()
 
             print("  📋 v4.8 信心百分比映射:")
@@ -441,9 +441,9 @@ class PositionCalculator(DiagnosticStep):
 
             print("  📋 v4.8 累加模式状态:")
             print(f"     当前持仓价值: ${current_position_value:,.2f}")
-            print(f"     剩余可加仓: ${remaining_capacity:,.2f}")
+            print(f"     可用容量: ${remaining_capacity:,.2f}")
             capacity_pct = (current_position_value / max_usdt * 100) if max_usdt > 0 else 0
-            print(f"     已用容量: {capacity_pct:.1f}%")
+            print(f"     容量使用率: {capacity_pct:.1f}%")
             print()
 
             if signal == 'HOLD':
