@@ -1918,11 +1918,13 @@ class DeepSeekAIStrategy(Strategy):
 
             sr_zone_heartbeat = None
             if self.latest_sr_zones_data:
-                zones = self.latest_sr_zones_data.get('zones', {})
+                # v3.8 fix: Access SRZone objects directly, extract price_center
+                nearest_sup = self.latest_sr_zones_data.get('nearest_support')
+                nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
                 hard_control = self.latest_sr_zones_data.get('hard_control', {})
                 sr_zone_heartbeat = {
-                    'nearest_support': zones.get('nearest_support'),
-                    'nearest_resistance': zones.get('nearest_resistance'),
+                    'nearest_support': nearest_sup.price_center if nearest_sup else None,
+                    'nearest_resistance': nearest_res.price_center if nearest_res else None,
                     'block_long': hard_control.get('block_long', False),
                     'block_short': hard_control.get('block_short', False),
                 }
@@ -2925,13 +2927,14 @@ class DeepSeekAIStrategy(Strategy):
                     sl_price = state.get("current_sl_price")
                     tp_price = state.get("current_tp_price")
 
-                # v4.2: Retrieve S/R Zone data
+                # v4.2: Retrieve S/R Zone data (v3.8 fix: extract price_center)
                 sr_zone_data = None
                 if self.latest_sr_zones_data:
-                    zones = self.latest_sr_zones_data.get('zones', {})
+                    nearest_sup = self.latest_sr_zones_data.get('nearest_support')
+                    nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
                     sr_zone_data = {
-                        'nearest_support': zones.get('nearest_support'),
-                        'nearest_resistance': zones.get('nearest_resistance'),
+                        'nearest_support': nearest_sup.price_center if nearest_sup else None,
+                        'nearest_resistance': nearest_res.price_center if nearest_res else None,
                     }
 
                 # Build unified execution data from pending data + event data
@@ -3016,13 +3019,14 @@ class DeepSeekAIStrategy(Strategy):
         # Send Telegram position closed notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
-                # v4.2: Retrieve S/R Zone data for close message
+                # v4.2: Retrieve S/R Zone data for close message (v3.8 fix: extract price_center)
                 sr_zone_data = None
                 if self.latest_sr_zones_data:
-                    zones = self.latest_sr_zones_data.get('zones', {})
+                    nearest_sup = self.latest_sr_zones_data.get('nearest_support')
+                    nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
                     sr_zone_data = {
-                        'nearest_support': zones.get('nearest_support'),
-                        'nearest_resistance': zones.get('nearest_resistance'),
+                        'nearest_support': nearest_sup.price_center if nearest_sup else None,
+                        'nearest_resistance': nearest_res.price_center if nearest_res else None,
                     }
 
                 position_msg = self.telegram_bot.format_position_update({
