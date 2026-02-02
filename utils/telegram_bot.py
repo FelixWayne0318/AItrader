@@ -454,6 +454,156 @@ class TelegramBot:
 
         return msg
 
+    def format_daily_summary(self, summary_data: Dict[str, Any]) -> str:
+        """
+        Format daily performance summary (v3.13).
+
+        Parameters
+        ----------
+        summary_data : dict
+            Daily summary data containing:
+            - date: str (YYYY-MM-DD)
+            - total_trades: int
+            - winning_trades: int
+            - losing_trades: int
+            - total_pnl: float (USDT)
+            - total_pnl_pct: float (%)
+            - largest_win: float
+            - largest_loss: float
+            - starting_equity: float
+            - ending_equity: float
+            - signals_generated: int
+            - signals_executed: int
+        """
+        date = summary_data.get('date', datetime.utcnow().strftime('%Y-%m-%d'))
+        total_trades = summary_data.get('total_trades', 0)
+        winning_trades = summary_data.get('winning_trades', 0)
+        losing_trades = summary_data.get('losing_trades', 0)
+        total_pnl = summary_data.get('total_pnl', 0.0)
+        total_pnl_pct = summary_data.get('total_pnl_pct', 0.0)
+        largest_win = summary_data.get('largest_win', 0.0)
+        largest_loss = summary_data.get('largest_loss', 0.0)
+        starting_equity = summary_data.get('starting_equity', 0.0)
+        ending_equity = summary_data.get('ending_equity', 0.0)
+        signals_generated = summary_data.get('signals_generated', 0)
+        signals_executed = summary_data.get('signals_executed', 0)
+
+        # Calculate win rate
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+
+        # PnL emoji
+        pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+        trend_emoji = "📈" if total_pnl >= 0 else "📉"
+
+        msg = f"""
+📊 *每日绩效总结*
+━━━━━━━━━━━━━━━━
+📅 *日期*: {date}
+
+💰 *收益情况*:
+  {pnl_emoji} 总盈亏: ${total_pnl:+,.2f} ({total_pnl_pct:+.2f}%)
+  📈 最大盈利: ${largest_win:,.2f}
+  📉 最大亏损: ${largest_loss:,.2f}
+
+📈 *交易统计*:
+  • 总交易: {total_trades} 笔
+  • 盈利: {winning_trades} 笔
+  • 亏损: {losing_trades} 笔
+  • 胜率: {win_rate:.1f}%
+
+🎯 *信号统计*:
+  • 生成信号: {signals_generated}
+  • 执行信号: {signals_executed}
+
+💵 *资金变化*:
+  • 起始: ${starting_equity:,.2f}
+  • 结束: ${ending_equity:,.2f}
+  • {trend_emoji} 变化: ${ending_equity - starting_equity:+,.2f}
+"""
+        return msg
+
+    def format_weekly_summary(self, summary_data: Dict[str, Any]) -> str:
+        """
+        Format weekly performance summary (v3.13).
+
+        Parameters
+        ----------
+        summary_data : dict
+            Weekly summary data containing:
+            - week_start: str (YYYY-MM-DD)
+            - week_end: str (YYYY-MM-DD)
+            - total_trades: int
+            - winning_trades: int
+            - losing_trades: int
+            - total_pnl: float (USDT)
+            - total_pnl_pct: float (%)
+            - best_day: dict (date, pnl)
+            - worst_day: dict (date, pnl)
+            - avg_daily_pnl: float
+            - starting_equity: float
+            - ending_equity: float
+            - max_drawdown_pct: float
+            - daily_breakdown: list of dict
+        """
+        week_start = summary_data.get('week_start', 'N/A')
+        week_end = summary_data.get('week_end', 'N/A')
+        total_trades = summary_data.get('total_trades', 0)
+        winning_trades = summary_data.get('winning_trades', 0)
+        losing_trades = summary_data.get('losing_trades', 0)
+        total_pnl = summary_data.get('total_pnl', 0.0)
+        total_pnl_pct = summary_data.get('total_pnl_pct', 0.0)
+        best_day = summary_data.get('best_day', {})
+        worst_day = summary_data.get('worst_day', {})
+        avg_daily_pnl = summary_data.get('avg_daily_pnl', 0.0)
+        starting_equity = summary_data.get('starting_equity', 0.0)
+        ending_equity = summary_data.get('ending_equity', 0.0)
+        max_drawdown_pct = summary_data.get('max_drawdown_pct', 0.0)
+        daily_breakdown = summary_data.get('daily_breakdown', [])
+
+        # Calculate win rate
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+
+        # PnL emoji
+        pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+        trend_emoji = "📈" if total_pnl >= 0 else "📉"
+
+        msg = f"""
+📊 *每周绩效总结*
+━━━━━━━━━━━━━━━━
+📅 *周期*: {week_start} ~ {week_end}
+
+💰 *收益情况*:
+  {pnl_emoji} 总盈亏: ${total_pnl:+,.2f} ({total_pnl_pct:+.2f}%)
+  📊 日均盈亏: ${avg_daily_pnl:+,.2f}
+  📉 最大回撤: {max_drawdown_pct:.2f}%
+
+📈 *交易统计*:
+  • 总交易: {total_trades} 笔
+  • 盈利: {winning_trades} 笔
+  • 亏损: {losing_trades} 笔
+  • 胜率: {win_rate:.1f}%
+
+🏆 *最佳/最差日*:
+  • 最佳: {best_day.get('date', 'N/A')} (${best_day.get('pnl', 0):+,.2f})
+  • 最差: {worst_day.get('date', 'N/A')} (${worst_day.get('pnl', 0):+,.2f})
+
+💵 *资金变化*:
+  • 起始: ${starting_equity:,.2f}
+  • 结束: ${ending_equity:,.2f}
+  • {trend_emoji} 变化: ${ending_equity - starting_equity:+,.2f}
+"""
+
+        # Add daily breakdown if available (max 7 days)
+        if daily_breakdown:
+            msg += "\n📋 *每日明细*:\n"
+            for day in daily_breakdown[:7]:
+                day_date = day.get('date', 'N/A')[-5:]  # MM-DD
+                day_pnl = day.get('pnl', 0)
+                day_emoji = "🟢" if day_pnl >= 0 else "🔴"
+                msg += f"  {day_emoji} {day_date}: ${day_pnl:+,.2f}\n"
+
+        return msg
+
     def format_trade_signal(self, signal_data: Dict[str, Any]) -> str:
         """Format trading signal notification (v3.12 - Extended signal types)."""
         signal = signal_data.get('signal', 'UNKNOWN')

@@ -627,6 +627,44 @@ class TelegramCommandHandler:
             self.logger.error(f"Error handling /risk: {e}")
             await self._send_response(update, f"❌ Error: {str(e)}")
 
+    async def cmd_daily(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /daily command - view daily performance summary (v3.13)."""
+        self.logger.info("Received /daily command")
+
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        try:
+            result = self.strategy_callback('daily_summary', {})
+
+            if result.get('success'):
+                await self._send_response(update, result.get('message', 'No daily data available'))
+            else:
+                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
+        except Exception as e:
+            self.logger.error(f"Error handling /daily: {e}")
+            await self._send_response(update, f"❌ Error: {str(e)}")
+
+    async def cmd_weekly(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /weekly command - view weekly performance summary (v3.13)."""
+        self.logger.info("Received /weekly command")
+
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        try:
+            result = self.strategy_callback('weekly_summary', {})
+
+            if result.get('success'):
+                await self._send_response(update, result.get('message', 'No weekly data available'))
+            else:
+                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
+        except Exception as e:
+            self.logger.error(f"Error handling /weekly: {e}")
+            await self._send_response(update, f"❌ Error: {str(e)}")
+
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
         self.logger.info("Received /help command")
@@ -643,6 +681,8 @@ class TelegramCommandHandler:
             "• `/orders` - View open orders\n"
             "• `/history` - Recent trade history\n"
             "• `/risk` - View risk metrics\n"
+            "• `/daily` - Daily performance summary (v3.13)\n"
+            "• `/weekly` - Weekly performance summary (v3.13)\n"
             "• `/help` - Show this help message\n"
             "• `/menu` - Show interactive buttons\n\n"
             "*Control Commands*:\n"
@@ -674,12 +714,17 @@ class TelegramCommandHandler:
                 InlineKeyboardButton("📈 历史", callback_data='cmd_history'),
                 InlineKeyboardButton("⚠️ 风险", callback_data='cmd_risk'),
             ],
-            # Row 3: Control commands
+            # Row 3: Performance summaries (v3.13)
+            [
+                InlineKeyboardButton("📅 日报", callback_data='cmd_daily'),
+                InlineKeyboardButton("📆 周报", callback_data='cmd_weekly'),
+            ],
+            # Row 4: Control commands
             [
                 InlineKeyboardButton("⏸️ 暂停", callback_data='cmd_pause'),
                 InlineKeyboardButton("▶️ 恢复", callback_data='cmd_resume'),
             ],
-            # Row 4: Dangerous command (separate row)
+            # Row 5: Dangerous command (separate row)
             [
                 InlineKeyboardButton("🔴 平仓", callback_data='cmd_close'),
             ],
@@ -753,6 +798,8 @@ class TelegramCommandHandler:
             'cmd_orders': 'orders',
             'cmd_history': 'history',
             'cmd_risk': 'risk',
+            'cmd_daily': 'daily_summary',    # v3.13
+            'cmd_weekly': 'weekly_summary',  # v3.13
             'cmd_pause': 'pause',
             'cmd_resume': 'resume',
         }
@@ -881,6 +928,8 @@ class TelegramCommandHandler:
                 self.application.add_handler(CommandHandler("orders", self.cmd_orders))
                 self.application.add_handler(CommandHandler("history", self.cmd_history))
                 self.application.add_handler(CommandHandler("risk", self.cmd_risk))
+                self.application.add_handler(CommandHandler("daily", self.cmd_daily))    # v3.13
+                self.application.add_handler(CommandHandler("weekly", self.cmd_weekly))  # v3.13
                 self.application.add_handler(CommandHandler("pause", self.cmd_pause))
                 self.application.add_handler(CommandHandler("resume", self.cmd_resume))
                 self.application.add_handler(CommandHandler("close", self.cmd_close))

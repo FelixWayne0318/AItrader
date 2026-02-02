@@ -3585,6 +3585,10 @@ class DeepSeekAIStrategy(Strategy):
                 return self._cmd_resume()
             elif command == 'close':
                 return self._cmd_close()
+            elif command == 'daily_summary':
+                return self._cmd_daily_summary()
+            elif command == 'weekly_summary':
+                return self._cmd_weekly_summary()
             else:
                 return {
                     'success': False,
@@ -4001,6 +4005,196 @@ class DeepSeekAIStrategy(Strategy):
                 'message': msg
             }
         except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_daily_summary(self) -> Dict[str, Any]:
+        """
+        Handle /daily command - view daily performance summary (v3.13).
+
+        Thread-safe: Uses thread-safe state and cached data.
+        """
+        try:
+            from datetime import datetime, timedelta
+
+            today = datetime.utcnow().strftime('%Y-%m-%d')
+
+            # Get real balance from Binance
+            real_balance = self.binance_account.get_balance()
+            current_equity = real_balance.get('total_balance', self.equity)
+
+            # Calculate stats from session data
+            with self._state_lock:
+                timer_count = self.timer_count
+                signals_generated = getattr(self, '_signals_generated_today', timer_count)
+                signals_executed = getattr(self, '_signals_executed_today', 0)
+
+            # Get trade history for today from memory system
+            total_trades = 0
+            winning_trades = 0
+            losing_trades = 0
+            total_pnl = 0.0
+            largest_win = 0.0
+            largest_loss = 0.0
+
+            if hasattr(self, 'multi_agent_analyzer') and self.multi_agent_analyzer:
+                memories = self.multi_agent_analyzer.decision_memory
+                today_memories = [m for m in memories if m.get('timestamp', '').startswith(today)]
+
+                for m in today_memories:
+                    pnl = m.get('pnl', 0)
+                    if pnl != 0:  # Only count actual trades
+                        total_trades += 1
+                        total_pnl += pnl
+                        if pnl > 0:
+                            winning_trades += 1
+                            largest_win = max(largest_win, pnl)
+                        else:
+                            losing_trades += 1
+                            largest_loss = min(largest_loss, pnl)
+
+            # Calculate PnL percentage
+            starting_equity = getattr(self, '_daily_starting_equity', current_equity)
+            pnl_pct = ((current_equity - starting_equity) / starting_equity * 100) if starting_equity > 0 else 0.0
+
+            summary_data = {
+                'date': today,
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'total_pnl': total_pnl,
+                'total_pnl_pct': pnl_pct,
+                'largest_win': largest_win,
+                'largest_loss': abs(largest_loss),
+                'starting_equity': starting_equity,
+                'ending_equity': current_equity,
+                'signals_generated': signals_generated,
+                'signals_executed': signals_executed,
+            }
+
+            if self.telegram_bot:
+                msg = self.telegram_bot.format_daily_summary(summary_data)
+            else:
+                # Fallback simple format
+                msg = f"📊 Daily Summary ({today})\n"
+                msg += f"Trades: {total_trades} (W: {winning_trades}, L: {losing_trades})\n"
+                msg += f"PnL: ${total_pnl:+,.2f} ({pnl_pct:+.2f}%)\n"
+                msg += f"Equity: ${current_equity:,.2f}"
+
+            return {
+                'success': True,
+                'message': msg
+            }
+        except Exception as e:
+            self.log.error(f"Error in _cmd_daily_summary: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_weekly_summary(self) -> Dict[str, Any]:
+        """
+        Handle /weekly command - view weekly performance summary (v3.13).
+
+        Thread-safe: Uses thread-safe state and cached data.
+        """
+        try:
+            from datetime import datetime, timedelta
+
+            today = datetime.utcnow()
+            # Calculate week start (Monday) and end (Sunday)
+            week_start = today - timedelta(days=today.weekday())
+            week_end = week_start + timedelta(days=6)
+            week_start_str = week_start.strftime('%Y-%m-%d')
+            week_end_str = week_end.strftime('%Y-%m-%d')
+
+            # Get real balance from Binance
+            real_balance = self.binance_account.get_balance()
+            current_equity = real_balance.get('total_balance', self.equity)
+
+            # Initialize stats
+            total_trades = 0
+            winning_trades = 0
+            losing_trades = 0
+            total_pnl = 0.0
+            daily_pnls = {}
+            max_drawdown_pct = 0.0
+
+            if hasattr(self, 'multi_agent_analyzer') and self.multi_agent_analyzer:
+                memories = self.multi_agent_analyzer.decision_memory
+
+                # Filter memories for this week
+                for m in memories:
+                    ts = m.get('timestamp', '')[:10]  # YYYY-MM-DD
+                    if ts >= week_start_str and ts <= week_end_str:
+                        pnl = m.get('pnl', 0)
+                        if pnl != 0:
+                            total_trades += 1
+                            total_pnl += pnl
+                            if pnl > 0:
+                                winning_trades += 1
+                            else:
+                                losing_trades += 1
+
+                            # Track daily PnL
+                            if ts not in daily_pnls:
+                                daily_pnls[ts] = 0.0
+                            daily_pnls[ts] += pnl
+
+            # Calculate best/worst days
+            best_day = {'date': 'N/A', 'pnl': 0.0}
+            worst_day = {'date': 'N/A', 'pnl': 0.0}
+            daily_breakdown = []
+
+            for date, pnl in sorted(daily_pnls.items()):
+                daily_breakdown.append({'date': date, 'pnl': pnl})
+                if pnl > best_day['pnl']:
+                    best_day = {'date': date, 'pnl': pnl}
+                if pnl < worst_day['pnl']:
+                    worst_day = {'date': date, 'pnl': pnl}
+
+            # Calculate averages
+            days_with_trades = len(daily_pnls)
+            avg_daily_pnl = total_pnl / days_with_trades if days_with_trades > 0 else 0.0
+
+            # Calculate PnL percentage
+            starting_equity = getattr(self, '_weekly_starting_equity', current_equity)
+            pnl_pct = ((current_equity - starting_equity) / starting_equity * 100) if starting_equity > 0 else 0.0
+
+            summary_data = {
+                'week_start': week_start_str,
+                'week_end': week_end_str,
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'total_pnl': total_pnl,
+                'total_pnl_pct': pnl_pct,
+                'best_day': best_day,
+                'worst_day': worst_day,
+                'avg_daily_pnl': avg_daily_pnl,
+                'starting_equity': starting_equity,
+                'ending_equity': current_equity,
+                'max_drawdown_pct': max_drawdown_pct,
+                'daily_breakdown': daily_breakdown,
+            }
+
+            if self.telegram_bot:
+                msg = self.telegram_bot.format_weekly_summary(summary_data)
+            else:
+                # Fallback simple format
+                msg = f"📊 Weekly Summary ({week_start_str} ~ {week_end_str})\n"
+                msg += f"Trades: {total_trades} (W: {winning_trades}, L: {losing_trades})\n"
+                msg += f"PnL: ${total_pnl:+,.2f} ({pnl_pct:+.2f}%)\n"
+                msg += f"Equity: ${current_equity:,.2f}"
+
+            return {
+                'success': True,
+                'message': msg
+            }
+        except Exception as e:
+            self.log.error(f"Error in _cmd_weekly_summary: {e}")
             return {
                 'success': False,
                 'error': str(e)

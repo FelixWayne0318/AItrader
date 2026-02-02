@@ -301,6 +301,15 @@ telegram:
     trailing_stop: true       # v3.13: 移动止损更新通知
     startup: true             # v3.13: 策略启动通知
     shutdown: true            # v3.13: 策略关闭通知
+    daily_summary: false      # v3.13: 每日绩效总结 (需手动触发 /daily 或启用自动)
+    weekly_summary: false     # v3.13: 每周绩效总结 (需手动触发 /weekly 或启用自动)
+
+  # v3.13: 定时总结配置
+  summary:
+    auto_daily: false              # 自动发送每日总结 (UTC 00:00)
+    auto_weekly: false             # 自动发送每周总结 (周一 UTC 00:00)
+    daily_hour_utc: 0              # 每日总结发送时间 (UTC 小时)
+    weekly_day: 0                  # 每周总结发送日 (0=周一, 6=周日)
 
   # v2.0: 消息队列配置 (异步非阻塞发送)
   queue:
