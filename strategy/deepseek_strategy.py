@@ -2030,7 +2030,7 @@ class DeepSeekAIStrategy(Strategy):
 
     def _get_current_position_data(self, current_price: Optional[float] = None, from_telegram: bool = False) -> Optional[Dict[str, Any]]:
         """
-        Get current position information.
+        Get current position information with enhanced data for AI decision making.
 
         Parameters
         ----------
@@ -2039,6 +2039,15 @@ class DeepSeekAIStrategy(Strategy):
         from_telegram : bool, default False
             If True, NEVER access indicator_manager (Telegram thread safety).
             When True, will use cache.price() as fallback instead of indicator_manager.
+
+        Returns
+        -------
+        Dict with Tier 1 + Tier 2 position fields for AI:
+            - side, quantity, avg_px, unrealized_pnl (basic)
+            - pnl_percentage, duration_minutes, entry_timestamp (Tier 1)
+            - sl_price, tp_price, risk_reward_ratio (Tier 1)
+            - peak_pnl_pct, worst_pnl_pct, entry_confidence (Tier 2)
+            - margin_used_pct (Tier 2)
         """
         # Get open positions for this instrument
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
@@ -2070,11 +2079,109 @@ class DeepSeekAIStrategy(Strategy):
                         except (TypeError, AttributeError):
                             current_price = None
 
+            # === Basic fields (existing) ===
+            side = 'long' if position.side == PositionSide.LONG else 'short'
+            quantity = float(position.quantity)
+            avg_px = float(position.avg_px_open)
+            unrealized_pnl = float(position.unrealized_pnl(current_price)) if current_price else 0.0
+
+            # === Tier 1: Must have ===
+            # PnL percentage
+            pnl_percentage = 0.0
+            if avg_px > 0 and current_price:
+                if side == 'long':
+                    pnl_percentage = ((current_price - avg_px) / avg_px) * 100
+                else:
+                    pnl_percentage = ((avg_px - current_price) / avg_px) * 100
+
+            # Duration in minutes
+            duration_minutes = 0
+            entry_timestamp = None
+            try:
+                # NautilusTrader Position has ts_opened (nanoseconds)
+                ts_opened_ns = position.ts_opened
+                if ts_opened_ns:
+                    from datetime import datetime, timezone
+                    entry_timestamp = datetime.fromtimestamp(ts_opened_ns / 1e9, tz=timezone.utc).isoformat()
+                    now_ns = self.clock.timestamp_ns()
+                    duration_minutes = int((now_ns - ts_opened_ns) / 1e9 / 60)
+            except Exception:
+                pass
+
+            # SL/TP from trailing_stop_state
+            sl_price = None
+            tp_price = None
+            risk_reward_ratio = None
+            instrument_key = str(self.instrument_id)
+            if instrument_key in self.trailing_stop_state:
+                ts_state = self.trailing_stop_state[instrument_key]
+                sl_price = ts_state.get('current_sl_price')
+                tp_price = ts_state.get('current_tp_price')
+
+                # Calculate R/R ratio
+                if sl_price and tp_price and avg_px > 0:
+                    if side == 'long':
+                        risk = avg_px - sl_price
+                        reward = tp_price - avg_px
+                    else:
+                        risk = sl_price - avg_px
+                        reward = avg_px - tp_price
+                    if risk > 0:
+                        risk_reward_ratio = round(reward / risk, 2)
+
+            # === Tier 2: Recommended ===
+            # Peak/worst PnL (from trailing_stop_state if tracking)
+            peak_pnl_pct = None
+            worst_pnl_pct = None
+            if instrument_key in self.trailing_stop_state:
+                ts_state = self.trailing_stop_state[instrument_key]
+                highest_price = ts_state.get('highest_price')
+                lowest_price = ts_state.get('lowest_price')
+
+                if side == 'long':
+                    if highest_price and avg_px > 0:
+                        peak_pnl_pct = round(((highest_price - avg_px) / avg_px) * 100, 2)
+                    if lowest_price and avg_px > 0:
+                        worst_pnl_pct = round(((lowest_price - avg_px) / avg_px) * 100, 2)
+                else:  # short
+                    if lowest_price and avg_px > 0:
+                        peak_pnl_pct = round(((avg_px - lowest_price) / avg_px) * 100, 2)
+                    if highest_price and avg_px > 0:
+                        worst_pnl_pct = round(((avg_px - highest_price) / avg_px) * 100, 2)
+
+            # Entry confidence from last_signal
+            entry_confidence = None
+            last_signal = getattr(self, 'last_signal', None)
+            if last_signal:
+                entry_confidence = last_signal.get('confidence')
+
+            # Margin used percentage (position value / equity)
+            margin_used_pct = None
+            equity = getattr(self, 'equity', 0)
+            if equity and equity > 0 and current_price:
+                position_value = quantity * current_price
+                margin_used_pct = round((position_value / equity) * 100, 2)
+
             return {
-                'side': 'long' if position.side == PositionSide.LONG else 'short',
-                'quantity': float(position.quantity),
-                'avg_px': float(position.avg_px_open),
-                'unrealized_pnl': float(position.unrealized_pnl(current_price)) if current_price else 0.0,
+                # Basic (existing)
+                'side': side,
+                'quantity': quantity,
+                'avg_px': avg_px,
+                'unrealized_pnl': unrealized_pnl,
+                # Tier 1
+                'pnl_percentage': round(pnl_percentage, 2),
+                'duration_minutes': duration_minutes,
+                'entry_timestamp': entry_timestamp,
+                'sl_price': sl_price,
+                'tp_price': tp_price,
+                'risk_reward_ratio': risk_reward_ratio,
+                # Tier 2
+                'peak_pnl_pct': peak_pnl_pct,
+                'worst_pnl_pct': worst_pnl_pct,
+                'entry_confidence': entry_confidence,
+                'margin_used_pct': margin_used_pct,
+                # Context
+                'current_price': float(current_price) if current_price else None,
             }
 
         return None

@@ -1186,30 +1186,108 @@ MARKET SENTIMENT (Binance Long/Short Ratio):
 """
 
     def _format_position(self, position: Optional[Dict[str, Any]]) -> str:
-        """Format current position for prompts."""
+        """
+        Format current position for AI prompts with Tier 1 + Tier 2 fields.
+
+        v4.5: Enhanced position data for better AI decision making.
+        """
         if not position:
             return "No current position (FLAT)"
 
-        # Fix: Ensure numeric types for formatting (API may return strings)
-        try:
-            qty = float(position.get('quantity') or 0)
-        except (ValueError, TypeError):
-            qty = 0.0
-        try:
-            avg_px = float(position.get('avg_px') or 0)
-        except (ValueError, TypeError):
-            avg_px = 0.0
-        try:
-            unrealized_pnl = float(position.get('unrealized_pnl') or 0)
-        except (ValueError, TypeError):
-            unrealized_pnl = 0.0
+        # === Safe extraction of all fields ===
+        def safe_float(val, default=0.0):
+            try:
+                return float(val) if val is not None else default
+            except (ValueError, TypeError):
+                return default
 
-        return f"""
-Side: {position.get('side', 'N/A')}
-Size: {qty:.4f} BTC
-Avg Entry: ${avg_px:,.2f}
-Unrealized P&L: ${unrealized_pnl:,.2f}
-"""
+        def safe_str(val, default='N/A'):
+            return str(val) if val is not None else default
+
+        # Basic fields
+        side = position.get('side', 'N/A').upper()
+        qty = safe_float(position.get('quantity'))
+        avg_px = safe_float(position.get('avg_px'))
+        unrealized_pnl = safe_float(position.get('unrealized_pnl'))
+        current_price = safe_float(position.get('current_price'))
+
+        # Tier 1 fields
+        pnl_pct = safe_float(position.get('pnl_percentage'))
+        duration_mins = position.get('duration_minutes', 0) or 0
+        sl_price = position.get('sl_price')
+        tp_price = position.get('tp_price')
+        rr_ratio = position.get('risk_reward_ratio')
+
+        # Tier 2 fields
+        peak_pnl = position.get('peak_pnl_pct')
+        worst_pnl = position.get('worst_pnl_pct')
+        entry_conf = position.get('entry_confidence')
+        margin_pct = position.get('margin_used_pct')
+
+        # === Build formatted output ===
+        lines = []
+
+        # Header
+        lines.append(f"Side: {side} | Size: {qty:.4f} BTC | Entry: ${avg_px:,.2f}")
+        lines.append("")
+
+        # Performance section
+        lines.append("Performance:")
+        pnl_sign = '+' if pnl_pct >= 0 else ''
+        lines.append(f"  P&L: ${unrealized_pnl:+,.2f} ({pnl_sign}{pnl_pct:.2f}%)")
+
+        # Peak/worst if available
+        if peak_pnl is not None or worst_pnl is not None:
+            peak_str = f"+{peak_pnl:.2f}%" if peak_pnl is not None else "N/A"
+            worst_str = f"{worst_pnl:+.2f}%" if worst_pnl is not None else "N/A"
+            lines.append(f"  Peak: {peak_str} | Worst: {worst_str}")
+
+        # Duration
+        if duration_mins > 0:
+            if duration_mins >= 60:
+                hours = duration_mins // 60
+                mins = duration_mins % 60
+                duration_str = f"{hours}h {mins}m"
+            else:
+                duration_str = f"{duration_mins} minutes"
+            lines.append(f"  Duration: {duration_str}")
+
+        lines.append("")
+
+        # Risk Management section
+        lines.append("Risk Management:")
+        if sl_price is not None:
+            sl_dist = ((sl_price - avg_px) / avg_px * 100) if avg_px > 0 else 0
+            lines.append(f"  Stop Loss: ${sl_price:,.2f} ({sl_dist:+.2f}%)")
+        else:
+            lines.append("  Stop Loss: NOT SET")
+
+        if tp_price is not None:
+            tp_dist = ((tp_price - avg_px) / avg_px * 100) if avg_px > 0 else 0
+            lines.append(f"  Take Profit: ${tp_price:,.2f} ({tp_dist:+.2f}%)")
+        else:
+            lines.append("  Take Profit: NOT SET")
+
+        if rr_ratio is not None:
+            lines.append(f"  Risk/Reward Ratio: {rr_ratio:.1f}:1")
+
+        if margin_pct is not None:
+            lines.append(f"  Margin Used: {margin_pct:.1f}% of equity")
+
+        lines.append("")
+
+        # Entry Context section
+        lines.append("Entry Context:")
+        if entry_conf:
+            lines.append(f"  Entry Confidence: {entry_conf}")
+        else:
+            lines.append("  Entry Confidence: UNKNOWN")
+
+        if current_price and avg_px > 0:
+            price_vs_entry = ((current_price - avg_px) / avg_px * 100)
+            lines.append(f"  Current vs Entry: {price_vs_entry:+.2f}%")
+
+        return "\n".join(lines)
 
     # =========================================================================
     # v3.12: Persistent Memory System (TradingGroup-style experience summary)
