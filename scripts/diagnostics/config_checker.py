@@ -453,4 +453,5 @@ class StrategyConfigLoader(DiagnosticStep):
             return False
 
     def should_skip(self) -> bool:
-        return self.ctx.summary_mode
+        # Never skip - all other steps depend on strategy_config
+        return False
