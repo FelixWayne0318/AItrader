@@ -2147,7 +2147,17 @@ class DeepSeekAIStrategy(Strategy):
             - total_cumulative_funding_paid_usd: Cumulative funding paid since positions opened
             - can_add_position_safely: True if liquidation buffer > 15%
         """
-        # Get equity (real balance or configured)
+        # v4.9.1: Always fetch fresh balance from Binance for accurate AI decisions
+        try:
+            balance = self.binance_account.get_balance()
+            if 'error' not in balance and balance.get('total_balance', 0) > 0:
+                real_total = balance['total_balance']
+                if self.config.use_real_balance_as_equity:
+                    self.equity = real_total
+        except Exception as e:
+            self._log.warning(f"Failed to refresh equity from Binance: {e}")
+
+        # Get equity (now guaranteed to be up-to-date)
         equity = getattr(self, 'equity', 0) or self.config.equity
 
         # Get leverage
@@ -2160,50 +2170,60 @@ class DeepSeekAIStrategy(Strategy):
         # max_position_value = equity * max_position_ratio * leverage
         max_position_value = equity * max_position_ratio * leverage
 
-        # Calculate current position value and aggregate portfolio metrics
+        # v4.9.1: Use Binance API for real-time position data (same as _get_current_position_data)
         current_position_value = 0.0
         total_unrealized_pnl_usd = 0.0
         liquidation_buffer_portfolio_min_pct = 100.0  # Start high, find minimum
         total_daily_funding_cost_usd = 0.0
         total_cumulative_funding_paid_usd = 0.0
 
-        positions = self.cache.positions_open(instrument_id=self.instrument_id)
+        # Priority: Binance API for ground truth
+        binance_positions = []
+        try:
+            symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+            binance_positions = self.binance_account.get_positions(symbol)
+        except Exception as e:
+            self._log.warning(f"Binance position API failed, falling back to cache: {e}")
+            # Fallback to cache
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            binance_positions = None
+
         maintenance_margin_ratio = 0.004  # Binance standard
 
-        for position in positions:
-            if position and position.is_open:
-                quantity = float(position.quantity)
-                avg_px = float(position.avg_px_open)
-                side = 'long' if position.side == PositionSide.LONG else 'short'
+        # v4.9.1: Process Binance API positions (priority) or cache fallback
+        if binance_positions:
+            # Process Binance API format
+            for bp in binance_positions:
+                position_amt = float(bp.get('positionAmt', 0))
+                if position_amt == 0:
+                    continue
 
-                # Use current_price or entry price
-                pos_price = current_price if current_price and current_price > 0 else avg_px
+                side = 'long' if position_amt > 0 else 'short'
+                quantity = abs(position_amt)
+                avg_px = float(bp.get('entryPrice', 0))
+                unrealized_pnl = float(bp.get('unrealizedProfit', 0))
+                mark_price = float(bp.get('markPrice', 0))
+                liq_price_binance = float(bp.get('liquidationPrice', 0))
+                pos_leverage = float(bp.get('leverage', leverage))
+
+                # Use mark price or current price
+                pos_price = mark_price if mark_price > 0 else (current_price if current_price and current_price > 0 else avg_px)
                 position_value = quantity * pos_price
                 current_position_value += position_value
 
-                # Unrealized PnL
-                try:
-                    pnl = float(position.unrealized_pnl(pos_price)) if pos_price else 0.0
-                    total_unrealized_pnl_usd += pnl
-                except Exception:
-                    pass
+                # Unrealized PnL from Binance
+                total_unrealized_pnl_usd += unrealized_pnl
 
-                # Calculate liquidation buffer for this position
-                if avg_px > 0 and leverage > 0:
+                # Calculate liquidation buffer
+                if liq_price_binance and liq_price_binance > 0 and pos_price > 0:
                     if side == 'long':
-                        liq_price = avg_px * (1 - 1/leverage + maintenance_margin_ratio)
-                        if pos_price and liq_price > 0:
-                            buffer_pct = ((pos_price - liq_price) / pos_price) * 100
+                        buffer_pct = ((pos_price - liq_price_binance) / pos_price) * 100
                     else:
-                        liq_price = avg_px * (1 + 1/leverage - maintenance_margin_ratio)
-                        if pos_price and liq_price > 0:
-                            buffer_pct = ((liq_price - pos_price) / pos_price) * 100
-
-                    if buffer_pct is not None:
-                        liquidation_buffer_portfolio_min_pct = min(
-                            liquidation_buffer_portfolio_min_pct,
-                            max(0, buffer_pct)
-                        )
+                        buffer_pct = ((liq_price_binance - pos_price) / pos_price) * 100
+                    liquidation_buffer_portfolio_min_pct = min(
+                        liquidation_buffer_portfolio_min_pct,
+                        max(0, buffer_pct)
+                    )
 
                 # Get funding rate and calculate costs
                 funding_data = getattr(self, 'latest_derivatives_data', None)
@@ -2214,27 +2234,75 @@ class DeepSeekAIStrategy(Strategy):
                         funding_rate = fr.get('value', 0) or 0
 
                 if funding_rate != 0 and position_value > 0:
-                    # Daily funding cost
                     daily_cost = position_value * abs(funding_rate) * 3
                     total_daily_funding_cost_usd += daily_cost
+                    # Note: Binance doesn't provide position open time, estimate 24h for cumulative
+                    cumulative = position_value * abs(funding_rate) * 3  # 1 day estimate
+                    total_cumulative_funding_paid_usd += cumulative
 
-                    # Estimate cumulative funding
+        elif binance_positions is None:
+            # Fallback: use NautilusTrader cache
+            for position in positions:
+                if position and position.is_open:
+                    quantity = float(position.quantity)
+                    avg_px = float(position.avg_px_open)
+                    side = 'long' if position.side == PositionSide.LONG else 'short'
+
+                    pos_price = current_price if current_price and current_price > 0 else avg_px
+                    position_value = quantity * pos_price
+                    current_position_value += position_value
+
                     try:
-                        ts_opened_ns = position.ts_opened
-                        if ts_opened_ns:
-                            now_ns = self.clock.timestamp_ns()
-                            hours_held = (now_ns - ts_opened_ns) / 1e9 / 3600
-                            settlements = hours_held / 8
-                            if side == 'long':
-                                cumulative = position_value * funding_rate * settlements
-                            else:
-                                cumulative = -position_value * funding_rate * settlements
-                            total_cumulative_funding_paid_usd += cumulative
+                        pnl = float(position.unrealized_pnl(pos_price)) if pos_price else 0.0
+                        total_unrealized_pnl_usd += pnl
                     except Exception:
                         pass
 
+                    if avg_px > 0 and leverage > 0:
+                        buffer_pct = None
+                        if side == 'long':
+                            liq_price = avg_px * (1 - 1/leverage + maintenance_margin_ratio)
+                            if pos_price and liq_price > 0:
+                                buffer_pct = ((pos_price - liq_price) / pos_price) * 100
+                        else:
+                            liq_price = avg_px * (1 + 1/leverage - maintenance_margin_ratio)
+                            if pos_price and liq_price > 0:
+                                buffer_pct = ((liq_price - pos_price) / pos_price) * 100
+
+                        if buffer_pct is not None:
+                            liquidation_buffer_portfolio_min_pct = min(
+                                liquidation_buffer_portfolio_min_pct,
+                                max(0, buffer_pct)
+                            )
+
+                    funding_data = getattr(self, 'latest_derivatives_data', None)
+                    funding_rate = 0.0
+                    if funding_data:
+                        fr = funding_data.get('funding_rate', {})
+                        if fr and isinstance(fr, dict):
+                            funding_rate = fr.get('value', 0) or 0
+
+                    if funding_rate != 0 and position_value > 0:
+                        daily_cost = position_value * abs(funding_rate) * 3
+                        total_daily_funding_cost_usd += daily_cost
+
+                        try:
+                            ts_opened_ns = position.ts_opened
+                            if ts_opened_ns:
+                                now_ns = self.clock.timestamp_ns()
+                                hours_held = (now_ns - ts_opened_ns) / 1e9 / 3600
+                                settlements = hours_held / 8
+                                if side == 'long':
+                                    cumulative = position_value * funding_rate * settlements
+                                else:
+                                    cumulative = -position_value * funding_rate * settlements
+                                total_cumulative_funding_paid_usd += cumulative
+                        except Exception:
+                            pass
+
         # If no positions, reset min buffer to N/A
-        if not positions or current_position_value == 0:
+        has_positions = (binance_positions and len(binance_positions) > 0) or (binance_positions is None and positions)
+        if not has_positions or current_position_value == 0:
             liquidation_buffer_portfolio_min_pct = None
 
         # Calculate available capacity
