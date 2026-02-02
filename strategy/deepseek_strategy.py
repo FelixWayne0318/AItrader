@@ -2035,13 +2035,14 @@ class DeepSeekAIStrategy(Strategy):
 
     def _get_account_context(self, current_price: Optional[float] = None) -> Dict[str, Any]:
         """
-        Get account-level information for AI decision making (v4.6).
+        Get account-level information for AI decision making (v4.6 + v4.7).
 
         This provides context for add/reduce position decisions:
         - How much capital is available
         - Current leverage setting
         - Maximum position capacity
         - Remaining capacity for new positions
+        - Portfolio-level risk metrics (v4.7)
 
         Returns
         -------
@@ -2053,6 +2054,12 @@ class DeepSeekAIStrategy(Strategy):
             - available_capacity: Remaining capacity for new positions
             - capacity_used_pct: Percentage of max capacity currently used
             - can_add_position: Boolean indicating if more positions can be added
+            v4.7 additions:
+            - total_unrealized_pnl_usd: Sum of all positions' unrealized P&L
+            - liquidation_buffer_portfolio_min_pct: Minimum liquidation buffer across all positions
+            - total_daily_funding_cost_usd: Daily funding cost for all positions
+            - total_cumulative_funding_paid_usd: Cumulative funding paid since positions opened
+            - can_add_position_safely: True if liquidation buffer > 15%
         """
         # Get equity (real balance or configured)
         equity = getattr(self, 'equity', 0) or self.config.equity
@@ -2067,17 +2074,82 @@ class DeepSeekAIStrategy(Strategy):
         # max_position_value = equity * max_position_ratio * leverage
         max_position_value = equity * max_position_ratio * leverage
 
-        # Calculate current position value
+        # Calculate current position value and aggregate portfolio metrics
         current_position_value = 0.0
+        total_unrealized_pnl_usd = 0.0
+        liquidation_buffer_portfolio_min_pct = 100.0  # Start high, find minimum
+        total_daily_funding_cost_usd = 0.0
+        total_cumulative_funding_paid_usd = 0.0
+
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
-        if positions and positions[0].is_open:
-            position = positions[0]
-            quantity = float(position.quantity)
-            if current_price and current_price > 0:
-                current_position_value = quantity * current_price
-            else:
-                # Use entry price as fallback
-                current_position_value = quantity * float(position.avg_px_open)
+        maintenance_margin_ratio = 0.004  # Binance standard
+
+        for position in positions:
+            if position and position.is_open:
+                quantity = float(position.quantity)
+                avg_px = float(position.avg_px_open)
+                side = 'long' if position.side == PositionSide.LONG else 'short'
+
+                # Use current_price or entry price
+                pos_price = current_price if current_price and current_price > 0 else avg_px
+                position_value = quantity * pos_price
+                current_position_value += position_value
+
+                # Unrealized PnL
+                try:
+                    pnl = float(position.unrealized_pnl(pos_price)) if pos_price else 0.0
+                    total_unrealized_pnl_usd += pnl
+                except Exception:
+                    pass
+
+                # Calculate liquidation buffer for this position
+                if avg_px > 0 and leverage > 0:
+                    if side == 'long':
+                        liq_price = avg_px * (1 - 1/leverage + maintenance_margin_ratio)
+                        if pos_price and liq_price > 0:
+                            buffer_pct = ((pos_price - liq_price) / pos_price) * 100
+                    else:
+                        liq_price = avg_px * (1 + 1/leverage - maintenance_margin_ratio)
+                        if pos_price and liq_price > 0:
+                            buffer_pct = ((liq_price - pos_price) / pos_price) * 100
+
+                    if buffer_pct is not None:
+                        liquidation_buffer_portfolio_min_pct = min(
+                            liquidation_buffer_portfolio_min_pct,
+                            max(0, buffer_pct)
+                        )
+
+                # Get funding rate and calculate costs
+                funding_data = getattr(self, 'latest_derivatives_data', None)
+                funding_rate = 0.0
+                if funding_data:
+                    fr = funding_data.get('funding_rate', {})
+                    if fr and isinstance(fr, dict):
+                        funding_rate = fr.get('value', 0) or 0
+
+                if funding_rate != 0 and position_value > 0:
+                    # Daily funding cost
+                    daily_cost = position_value * abs(funding_rate) * 3
+                    total_daily_funding_cost_usd += daily_cost
+
+                    # Estimate cumulative funding
+                    try:
+                        ts_opened_ns = position.ts_opened
+                        if ts_opened_ns:
+                            now_ns = self.clock.timestamp_ns()
+                            hours_held = (now_ns - ts_opened_ns) / 1e9 / 3600
+                            settlements = hours_held / 8
+                            if side == 'long':
+                                cumulative = position_value * funding_rate * settlements
+                            else:
+                                cumulative = -position_value * funding_rate * settlements
+                            total_cumulative_funding_paid_usd += cumulative
+                    except Exception:
+                        pass
+
+        # If no positions, reset min buffer to N/A
+        if not positions or current_position_value == 0:
+            liquidation_buffer_portfolio_min_pct = None
 
         # Calculate available capacity
         available_capacity = max(0, max_position_value - current_position_value)
@@ -2090,6 +2162,12 @@ class DeepSeekAIStrategy(Strategy):
         # Determine if can add position (at least 10% capacity remaining)
         can_add_position = capacity_used_pct < 90
 
+        # v4.7: Safer check - also consider liquidation buffer
+        can_add_position_safely = can_add_position and (
+            liquidation_buffer_portfolio_min_pct is None or
+            liquidation_buffer_portfolio_min_pct > 15
+        )
+
         return {
             'equity': round(equity, 2),
             'leverage': leverage,
@@ -2099,6 +2177,12 @@ class DeepSeekAIStrategy(Strategy):
             'available_capacity': round(available_capacity, 2),
             'capacity_used_pct': round(capacity_used_pct, 1),
             'can_add_position': can_add_position,
+            # === v4.7: Portfolio-Level Risk Fields ===
+            'total_unrealized_pnl_usd': round(total_unrealized_pnl_usd, 2),
+            'liquidation_buffer_portfolio_min_pct': round(liquidation_buffer_portfolio_min_pct, 2) if liquidation_buffer_portfolio_min_pct is not None else None,
+            'total_daily_funding_cost_usd': round(total_daily_funding_cost_usd, 2),
+            'total_cumulative_funding_paid_usd': round(total_cumulative_funding_paid_usd, 2),
+            'can_add_position_safely': can_add_position_safely,
         }
 
     def _get_current_position_data(self, current_price: Optional[float] = None, from_telegram: bool = False) -> Optional[Dict[str, Any]]:
@@ -2231,9 +2315,99 @@ class DeepSeekAIStrategy(Strategy):
             # Margin used percentage (position value / equity)
             margin_used_pct = None
             equity = getattr(self, 'equity', 0)
+            position_value = 0.0
             if equity and equity > 0 and current_price:
                 position_value = quantity * current_price
                 margin_used_pct = round((position_value / equity) * 100, 2)
+
+            # === v4.7: Liquidation Risk Fields (CRITICAL) ===
+            # Calculate liquidation price using simplified formula
+            # LONG: liq_price = entry * (1 - 1/leverage + maintenance_margin)
+            # SHORT: liq_price = entry * (1 + 1/leverage - maintenance_margin)
+            leverage = getattr(self, 'leverage', self.config.leverage)
+            maintenance_margin_ratio = 0.004  # Binance standard for 20x leverage tier
+
+            liquidation_price = None
+            liquidation_buffer_pct = None
+            is_liquidation_risk_high = False
+
+            if avg_px > 0 and leverage > 0:
+                if side == 'long':
+                    liquidation_price = avg_px * (1 - 1/leverage + maintenance_margin_ratio)
+                    if current_price and liquidation_price > 0:
+                        liquidation_buffer_pct = ((current_price - liquidation_price) / current_price) * 100
+                else:  # short
+                    liquidation_price = avg_px * (1 + 1/leverage - maintenance_margin_ratio)
+                    if current_price and liquidation_price > 0:
+                        liquidation_buffer_pct = ((liquidation_price - current_price) / current_price) * 100
+
+                if liquidation_buffer_pct is not None:
+                    liquidation_buffer_pct = round(max(0, liquidation_buffer_pct), 2)
+                    is_liquidation_risk_high = liquidation_buffer_pct < 10  # < 10% buffer is risky
+
+            # === v4.7: Funding Rate Fields (CRITICAL for perpetuals) ===
+            funding_rate_current = None
+            funding_rate_cumulative_usd = None
+            effective_pnl_after_funding = None
+            daily_funding_cost_usd = None
+
+            # Get funding rate from latest_derivatives_data
+            funding_data = getattr(self, 'latest_derivatives_data', None)
+            if funding_data:
+                fr = funding_data.get('funding_rate', {})
+                if fr and isinstance(fr, dict):
+                    funding_rate_current = fr.get('value', 0) or 0
+
+            # Calculate funding costs if we have the rate
+            if funding_rate_current is not None and position_value > 0:
+                # Daily funding cost = position_value * |rate| * 3 settlements/day
+                daily_funding_cost_usd = round(position_value * abs(funding_rate_current) * 3, 2)
+
+                # Estimate cumulative funding based on position duration
+                # 8-hour settlements, so settlements_passed = hours_held / 8
+                hours_held = duration_minutes / 60 if duration_minutes > 0 else 0
+                settlements_passed = hours_held / 8
+
+                # For LONG with positive funding: we pay; for SHORT with positive funding: we receive
+                if side == 'long':
+                    funding_rate_cumulative_usd = round(position_value * funding_rate_current * settlements_passed, 2)
+                else:
+                    funding_rate_cumulative_usd = round(-position_value * funding_rate_current * settlements_passed, 2)
+
+                # Effective PnL = unrealized PnL - cumulative funding paid
+                effective_pnl_after_funding = round(unrealized_pnl - funding_rate_cumulative_usd, 2)
+
+            # === v4.7: Drawdown Attribution Fields (RECOMMENDED) ===
+            max_drawdown_pct = None
+            max_drawdown_duration_bars = None
+            consecutive_lower_lows = 0
+
+            # Calculate drawdown from peak
+            if peak_pnl_pct is not None and pnl_percentage is not None:
+                if peak_pnl_pct > pnl_percentage:
+                    max_drawdown_pct = round(peak_pnl_pct - pnl_percentage, 2)
+                else:
+                    max_drawdown_pct = 0.0
+
+            # Estimate drawdown duration in 15-min bars
+            if max_drawdown_pct and max_drawdown_pct > 0:
+                # Simplified: assume drawdown started at some point during position
+                max_drawdown_duration_bars = max(1, duration_minutes // 15)
+
+            # Count consecutive lower lows from recent bars (if accessible)
+            if not from_telegram:  # Only in main thread
+                try:
+                    bars = self.indicator_manager.recent_bars
+                    if bars and len(bars) >= 3:
+                        count = 0
+                        for i in range(len(bars) - 1, 0, -1):
+                            if bars[i].low < bars[i-1].low:
+                                count += 1
+                            else:
+                                break
+                        consecutive_lower_lows = count
+                except Exception:
+                    pass
 
             return {
                 # Basic (existing)
@@ -2255,6 +2429,19 @@ class DeepSeekAIStrategy(Strategy):
                 'margin_used_pct': margin_used_pct,
                 # Context
                 'current_price': float(current_price) if current_price else None,
+                # === v4.7: Liquidation Risk (CRITICAL) ===
+                'liquidation_price': round(liquidation_price, 2) if liquidation_price else None,
+                'liquidation_buffer_pct': liquidation_buffer_pct,
+                'is_liquidation_risk_high': is_liquidation_risk_high,
+                # === v4.7: Funding Rate (CRITICAL) ===
+                'funding_rate_current': funding_rate_current,
+                'funding_rate_cumulative_usd': funding_rate_cumulative_usd,
+                'effective_pnl_after_funding': effective_pnl_after_funding,
+                'daily_funding_cost_usd': daily_funding_cost_usd,
+                # === v4.7: Drawdown Attribution (RECOMMENDED) ===
+                'max_drawdown_pct': max_drawdown_pct,
+                'max_drawdown_duration_bars': max_drawdown_duration_bars,
+                'consecutive_lower_lows': consecutive_lower_lows,
             }
 
         return None
