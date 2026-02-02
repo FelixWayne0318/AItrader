@@ -52,7 +52,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
             # Get MTF data if available
             order_flow_report, derivatives_report = self._get_mtf_data()
 
-            # Run analysis
+            # Run analysis (v4.7: include account_context for portfolio risk)
             signal_data = self.ctx.multi_agent.analyze(
                 symbol=self.ctx.symbol,
                 technical_report=self.ctx.technical_data,
@@ -61,6 +61,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 price_data=self.ctx.price_data,
                 order_flow_report=order_flow_report,
                 derivatives_report=derivatives_report,
+                account_context=self.ctx.account_context,  # v4.7
             )
 
             self.ctx.signal_data = signal_data

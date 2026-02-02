@@ -292,6 +292,7 @@ class DiagnosticContext:
     # Position data
     current_position: Optional[Dict] = None
     account_balance: Dict = field(default_factory=dict)
+    account_context: Dict = field(default_factory=dict)  # v4.7: Portfolio risk fields
 
     # Sentiment data
     sentiment_data: Dict = field(default_factory=dict)

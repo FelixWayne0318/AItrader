@@ -71,6 +71,27 @@ class PositionChecker(DiagnosticStep):
         if entry_price > 0 and abs(pos_amt) > 0:
             pnl_pct = (unrealized_pnl / (entry_price * abs(pos_amt))) * 100
 
+        # v4.7: Calculate liquidation price (using 5x leverage as default)
+        leverage = 5  # Default leverage, could be fetched from config
+        maintenance_margin_ratio = 0.004  # Binance standard for 20x tier
+        liquidation_price = None
+        liquidation_buffer_pct = None
+        is_liquidation_risk_high = False
+
+        if entry_price > 0 and leverage > 0:
+            if side == 'long':
+                liquidation_price = entry_price * (1 - 1/leverage + maintenance_margin_ratio)
+                if self.ctx.current_price and liquidation_price > 0:
+                    liquidation_buffer_pct = ((self.ctx.current_price - liquidation_price) / self.ctx.current_price) * 100
+            else:  # short
+                liquidation_price = entry_price * (1 + 1/leverage - maintenance_margin_ratio)
+                if self.ctx.current_price and liquidation_price > 0:
+                    liquidation_buffer_pct = ((liquidation_price - self.ctx.current_price) / self.ctx.current_price) * 100
+
+            if liquidation_buffer_pct is not None:
+                liquidation_buffer_pct = round(max(0, liquidation_buffer_pct), 2)
+                is_liquidation_risk_high = liquidation_buffer_pct < 10
+
         self.ctx.current_position = {
             'side': side,
             'quantity': abs(pos_amt),
@@ -78,6 +99,16 @@ class PositionChecker(DiagnosticStep):
             'avg_px': entry_price,  # Compatibility
             'unrealized_pnl': unrealized_pnl,
             'pnl_pct': pnl_pct,
+            # v4.7: Liquidation Risk Fields (CRITICAL)
+            'liquidation_price': liquidation_price,
+            'liquidation_buffer_pct': liquidation_buffer_pct,
+            'is_liquidation_risk_high': is_liquidation_risk_high,
+            # v4.7: Funding rate (will be updated later if available)
+            'funding_rate_current': None,
+            'daily_funding_cost_usd': None,
+            # v4.7: Drawdown (cannot calculate without history)
+            'max_drawdown_pct': None,
+            'peak_pnl_pct': pnl_pct if pnl_pct > 0 else 0,
         }
 
         print(f"  ⚠️ 检测到现有持仓!")
@@ -86,6 +117,14 @@ class PositionChecker(DiagnosticStep):
         print(f"     入场价: ${entry_price:,.2f}")
         print(f"     未实现盈亏: ${unrealized_pnl:,.2f}")
         print(f"     盈亏比例: {pnl_pct:+.2f}%")
+
+        # v4.7: Display liquidation risk
+        if liquidation_price is not None:
+            risk_emoji = "🔴" if is_liquidation_risk_high else "🟢"
+            print(f"     爆仓价: ${liquidation_price:,.2f}")
+            print(f"     爆仓距离: {risk_emoji} {liquidation_buffer_pct:.1f}%")
+            if is_liquidation_risk_high:
+                print(f"     ⚠️ 警告: 爆仓风险高 (<10%)")
 
     def _get_account_balance(self, account_fetcher) -> None:
         """Get and display account balance."""
@@ -111,6 +150,42 @@ class PositionChecker(DiagnosticStep):
             print(f"     已用保证金:   ${used_margin:,.2f}")
             print(f"     保证金率:     {margin_ratio:.1f}%")
             print(f"     总未实现PnL:  ${account_unrealized_pnl:,.2f}")
+
+            # v4.7: Build account_context for AI
+            used_margin_pct = ((total_balance - available_balance) / total_balance * 100) if total_balance > 0 else 0
+            can_add_position = used_margin_pct < 80  # 80% threshold
+
+            # Get liquidation buffer from position if available
+            liq_buffer_min = None
+            if self.ctx.current_position:
+                liq_buffer_min = self.ctx.current_position.get('liquidation_buffer_pct')
+
+            can_add_safely = can_add_position and (liq_buffer_min is None or liq_buffer_min > 15)
+
+            self.ctx.account_context = {
+                'equity': total_balance,
+                'available_margin': available_balance,
+                'used_margin_pct': round(used_margin_pct, 2),
+                'leverage': 5,  # Default, could be fetched
+                'can_add_position': can_add_position,
+                # v4.7: Portfolio risk fields
+                'total_unrealized_pnl_usd': account_unrealized_pnl,
+                'liquidation_buffer_portfolio_min_pct': liq_buffer_min,
+                'total_daily_funding_cost_usd': None,  # Would need funding rate data
+                'total_cumulative_funding_paid_usd': None,
+                'can_add_position_safely': can_add_safely,
+            }
+
+            # v4.7: Display portfolio risk
+            print()
+            print("  ⚠️ 组合风险:")
+            print(f"     已用保证金比例: {used_margin_pct:.1f}%")
+            if liq_buffer_min is not None:
+                risk_emoji = "🔴" if liq_buffer_min < 10 else "🟡" if liq_buffer_min < 15 else "🟢"
+                print(f"     最小爆仓距离: {risk_emoji} {liq_buffer_min:.1f}%")
+            safety_emoji = "✅" if can_add_safely else "⚠️"
+            safety_text = "可安全加仓" if can_add_safely else "加仓需谨慎"
+            print(f"     加仓建议: {safety_emoji} {safety_text}")
 
         except Exception as e:
             self.ctx.add_warning(f"无法获取账户余额: {e}")

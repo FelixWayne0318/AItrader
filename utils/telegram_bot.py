@@ -1198,6 +1198,13 @@ class TelegramBot:
             - last_signal: str
             - last_signal_time: str
             - uptime: str
+            - total_unrealized_pnl_usd: float (v4.7)
+            - liquidation_buffer_portfolio_min_pct: float (v4.7)
+            - total_daily_funding_cost_usd: float (v4.7)
+            - can_add_position_safely: bool (v4.7)
+            - available_margin: float (v4.6)
+            - used_margin_pct: float (v4.6)
+            - leverage: int (v4.6)
         """
         is_running = status_info.get('is_running', False)
         is_paused = status_info.get('is_paused', False)
@@ -1227,8 +1234,42 @@ class TelegramBot:
         msg += f"*信号时间*: {self.escape_markdown(str(status_info.get('last_signal_time', 'N/A')))}\n"
         msg += f"*运行时长*: {self.escape_markdown(str(status_info.get('uptime', 'N/A')))}\n"
 
+        # v4.7: Portfolio Risk Section (CRITICAL)
+        liq_buffer_min = status_info.get('liquidation_buffer_portfolio_min_pct')
+        total_funding = status_info.get('total_daily_funding_cost_usd')
+        can_add_safely = status_info.get('can_add_position_safely')
+
+        # Only show portfolio risk if we have data
+        if liq_buffer_min is not None or total_funding is not None:
+            msg += f"\n⚠️ *组合风险*\n"
+
+            if liq_buffer_min is not None:
+                risk_emoji = "🔴" if liq_buffer_min < 10 else "🟡" if liq_buffer_min < 15 else "🟢"
+                msg += f"最小爆仓距离: {risk_emoji} {liq_buffer_min:.1f}%\n"
+                if liq_buffer_min < 10:
+                    msg += "⚠️ *警告: 组合爆仓风险高*\n"
+
+            if total_funding is not None and total_funding > 0:
+                msg += f"日资金费: ${total_funding:.2f}\n"
+
+        # v4.6: Account capacity
+        used_margin = status_info.get('used_margin_pct')
+        leverage = status_info.get('leverage')
+
+        if used_margin is not None or leverage is not None:
+            msg += f"\n📊 *账户容量*\n"
+            if leverage is not None:
+                msg += f"杠杆: {leverage}x\n"
+            if used_margin is not None:
+                cap_emoji = "🔴" if used_margin > 80 else "🟡" if used_margin > 60 else "🟢"
+                msg += f"已用保证金: {cap_emoji} {used_margin:.1f}%\n"
+            if can_add_safely is not None:
+                safety_emoji = "✅" if can_add_safely else "⚠️"
+                safety_text = "可安全加仓" if can_add_safely else "加仓需谨慎"
+                msg += f"{safety_emoji} {safety_text}\n"
+
         return msg
-    
+
     def format_position_response(self, position_info: Dict[str, Any]) -> str:
         """
         Format position information response for /position command.
@@ -1246,6 +1287,17 @@ class TelegramBot:
             - pnl_pct: float
             - sl_price: float (optional)
             - tp_price: float (optional)
+            - liquidation_price: float (v4.7)
+            - liquidation_buffer_pct: float (v4.7)
+            - is_liquidation_risk_high: bool (v4.7)
+            - funding_rate_current: float (v4.7)
+            - daily_funding_cost_usd: float (v4.7)
+            - funding_rate_cumulative_usd: float (v4.7)
+            - effective_pnl_after_funding: float (v4.7)
+            - max_drawdown_pct: float (v4.7)
+            - peak_pnl_pct: float (v4.7)
+            - duration_minutes: int (v4.5)
+            - entry_confidence: str (v4.5)
         """
         if not position_info.get('has_position', False):
             return "ℹ️ *无持仓*\n\n当前没有任何持仓。"
@@ -1273,6 +1325,60 @@ class TelegramBot:
             msg += f"🛡️ *止损*: ${sl_price:,.2f}\n"
         if tp_price:
             msg += f"🎯 *止盈*: ${tp_price:,.2f}\n"
+
+        # v4.7: Liquidation Risk Section (CRITICAL)
+        liq_price = position_info.get('liquidation_price')
+        liq_buffer = position_info.get('liquidation_buffer_pct')
+        is_liq_risk_high = position_info.get('is_liquidation_risk_high', False)
+
+        if liq_price is not None:
+            msg += f"\n⚠️ *爆仓风险*\n"
+            msg += f"爆仓价: ${liq_price:,.2f}\n"
+            if liq_buffer is not None:
+                risk_emoji = "🔴" if is_liq_risk_high else "🟢"
+                msg += f"距离: {risk_emoji} {liq_buffer:.1f}%\n"
+                if is_liq_risk_high:
+                    msg += "⚠️ *警告: 爆仓风险高* \\(<10%\\)\n"
+
+        # v4.7: Funding Rate Section (for perpetuals)
+        funding_rate = position_info.get('funding_rate_current')
+        daily_cost = position_info.get('daily_funding_cost_usd')
+        cumulative_funding = position_info.get('funding_rate_cumulative_usd')
+        effective_pnl = position_info.get('effective_pnl_after_funding')
+
+        if funding_rate is not None:
+            msg += f"\n💰 *资金费率*\n"
+            fr_pct = funding_rate * 100
+            fr_emoji = "🔴" if fr_pct > 0.01 else "🟢" if fr_pct < -0.01 else "⚪"
+            msg += f"当前费率: {fr_emoji} {fr_pct:.4f}%/8h\n"
+            if daily_cost is not None:
+                msg += f"日预估: ${daily_cost:.2f}\n"
+            if cumulative_funding is not None and cumulative_funding != 0:
+                cum_emoji = "🔴" if cumulative_funding > 0 else "🟢"
+                msg += f"累计支付: {cum_emoji} ${cumulative_funding:+.2f}\n"
+            if effective_pnl is not None:
+                eff_emoji = "📈" if effective_pnl > 0 else "📉" if effective_pnl < 0 else "➖"
+                msg += f"扣费后盈亏: {eff_emoji} ${effective_pnl:,.2f}\n"
+
+        # v4.7: Drawdown Section
+        max_dd = position_info.get('max_drawdown_pct')
+        peak_pnl = position_info.get('peak_pnl_pct')
+
+        if max_dd is not None and max_dd > 0:
+            msg += f"\n📊 *回撤*\n"
+            msg += f"峰值盈利: {peak_pnl:+.2f}%\n" if peak_pnl else ""
+            msg += f"最大回撤: \\-{max_dd:.2f}%\n"
+
+        # v4.5: Duration and confidence
+        duration = position_info.get('duration_minutes')
+        confidence = position_info.get('entry_confidence')
+
+        if duration is not None:
+            hours = duration // 60
+            mins = duration % 60
+            msg += f"\n⏱️ *持仓时长*: {int(hours)}h {int(mins)}m\n"
+        if confidence:
+            msg += f"📊 *入场信心*: {confidence}\n"
 
         return msg
     

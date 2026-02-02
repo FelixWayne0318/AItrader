@@ -1417,6 +1417,15 @@ class DeepSeekAIStrategy(Strategy):
                     f"Current Position: {current_position['side']} "
                     f"{current_position['quantity']} @ ${current_position['avg_px']:.2f}"
                 )
+                # v4.7: Log critical risk fields
+                liq_buffer = current_position.get('liquidation_buffer_pct')
+                if liq_buffer is not None:
+                    risk_level = "HIGH" if liq_buffer < 10 else "MEDIUM" if liq_buffer < 15 else "OK"
+                    self.log.info(f"Liquidation Buffer: {liq_buffer:.1f}% ({risk_level})")
+                funding_rate = current_position.get('funding_rate_current')
+                if funding_rate is not None:
+                    daily_cost = current_position.get('daily_funding_cost_usd', 0)
+                    self.log.info(f"Funding Rate: {funding_rate*100:.4f}%/8h (Daily Est: ${daily_cost:.2f})")
 
             # ========== 层级决策架构 (TradingAgents v3.1) ==========
             # 设计理念: AI 负责所有交易决策，本地仅做支撑/阻力位边界检查
@@ -4092,6 +4101,9 @@ class DeepSeekAIStrategy(Strategy):
             # Use real balance if available, otherwise fall back to configured equity
             display_equity = total_balance if total_balance > 0 else self.equity
 
+            # v4.7: Get account context for portfolio risk fields
+            account_context = self._get_account_context(current_price) if current_price > 0 else {}
+
             status_info = {
                 'is_running': True,  # If this method is called, strategy is running
                 'is_paused': self.is_trading_paused,
@@ -4102,6 +4114,15 @@ class DeepSeekAIStrategy(Strategy):
                 'last_signal': last_signal,
                 'last_signal_time': last_signal_time,
                 'uptime': uptime_str,
+                # v4.7: Portfolio Risk Fields (CRITICAL)
+                'total_unrealized_pnl_usd': account_context.get('total_unrealized_pnl_usd'),
+                'liquidation_buffer_portfolio_min_pct': account_context.get('liquidation_buffer_portfolio_min_pct'),
+                'total_daily_funding_cost_usd': account_context.get('total_daily_funding_cost_usd'),
+                'can_add_position_safely': account_context.get('can_add_position_safely'),
+                # v4.6: Account capacity fields
+                'available_margin': account_context.get('available_margin'),
+                'used_margin_pct': account_context.get('used_margin_pct'),
+                'leverage': account_context.get('leverage'),
             }
 
             message = self.telegram_bot.format_status_response(status_info) if self.telegram_bot else "Status unavailable"
@@ -4147,7 +4168,21 @@ class DeepSeekAIStrategy(Strategy):
                     'current_price': current_price,
                     'unrealized_pnl': pnl,
                     'pnl_pct': pnl_pct,
-                    # SL/TP prices would need to be tracked separately if needed
+                    # v4.7: Liquidation Risk Fields (CRITICAL)
+                    'liquidation_price': current_position.get('liquidation_price'),
+                    'liquidation_buffer_pct': current_position.get('liquidation_buffer_pct'),
+                    'is_liquidation_risk_high': current_position.get('is_liquidation_risk_high', False),
+                    # v4.7: Funding Rate Fields (CRITICAL for perpetuals)
+                    'funding_rate_current': current_position.get('funding_rate_current'),
+                    'daily_funding_cost_usd': current_position.get('daily_funding_cost_usd'),
+                    'funding_rate_cumulative_usd': current_position.get('funding_rate_cumulative_usd'),
+                    'effective_pnl_after_funding': current_position.get('effective_pnl_after_funding'),
+                    # v4.7: Drawdown Attribution Fields
+                    'max_drawdown_pct': current_position.get('max_drawdown_pct'),
+                    'peak_pnl_pct': current_position.get('peak_pnl_pct'),
+                    # v4.5: Position context fields
+                    'duration_minutes': current_position.get('duration_minutes'),
+                    'entry_confidence': current_position.get('entry_confidence'),
                 })
             
             message = self.telegram_bot.format_position_response(position_info) if self.telegram_bot else "Position unavailable"
