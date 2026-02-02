@@ -291,13 +291,25 @@ telegram:
   bot_token: ""
   chat_id: ""
 
-  # 通知类型
+  # 通知类型 (v3.13: 完善配置开关)
   notify:
-    signals: true
-    fills: true
-    positions: true
-    errors: true
+    signals: true             # 交易信号通知
+    fills: true               # 订单成交通知
+    positions: true           # 持仓开仓/平仓通知
+    errors: true              # 错误警报
     heartbeat: true           # v2.1: 每次 on_timer 运行发送心跳状态 (测试阶段推荐开启)
+    trailing_stop: true       # v3.13: 移动止损更新通知
+    startup: true             # v3.13: 策略启动通知
+    shutdown: true            # v3.13: 策略关闭通知
+    daily_summary: true       # v3.13: 每日绩效总结 (已启用自动发送)
+    weekly_summary: true      # v3.13: 每周绩效总结 (已启用自动发送)
+
+  # v3.13: 定时总结配置
+  summary:
+    auto_daily: true               # 自动发送每日总结 (UTC 00:00)
+    auto_weekly: true              # 自动发送每周总结 (周一 UTC 00:00)
+    daily_hour_utc: 0              # 每日总结发送时间 (UTC 小时)
+    weekly_day: 0                  # 每周总结发送日 (0=周一, 6=周日)
 
   # v2.0: 消息队列配置 (异步非阻塞发送)
   queue:
@@ -306,6 +318,13 @@ telegram:
     max_retries: 3                # 失败消息最大重试次数
     alert_cooldown: 300           # 告警收敛冷却时间 (秒)
     send_interval: 0.5            # 发送间隔 (秒，防止速率限制)
+
+  # v3.13: 静音时段 (可选)
+  quiet_hours:
+    enabled: false                # 启用静音时段
+    start: "00:00"                # 开始时间 (UTC)
+    end: "08:00"                  # 结束时间 (UTC)
+    urgent_only: true             # 静音时段只发送紧急消息 (errors)
 
   # v2.0: 安全配置
   security:

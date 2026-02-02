@@ -148,6 +148,13 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     telegram_notify_positions: bool = True
     telegram_notify_errors: bool = True
     telegram_notify_heartbeat: bool = True  # v2.1: 每次 on_timer 发送心跳状态
+    telegram_notify_trailing_stop: bool = True  # v3.13: 移动止损更新通知
+    telegram_notify_startup: bool = True  # v3.13: 策略启动通知
+    telegram_notify_shutdown: bool = True  # v3.13: 策略关闭通知
+    telegram_auto_daily: bool = False  # v3.13: 自动发送每日总结
+    telegram_auto_weekly: bool = False  # v3.13: 自动发送每周总结
+    telegram_daily_hour_utc: int = 0  # v3.13: 每日总结发送时间 (UTC 小时)
+    telegram_weekly_day: int = 0  # v3.13: 每周总结发送日 (0=周一)
 
     # Telegram Queue (v4.0 - Non-blocking message sending)
     telegram_queue_enabled: bool = True  # 启用消息队列 (默认开启)
@@ -451,6 +458,18 @@ class DeepSeekAIStrategy(Strategy):
                     self.telegram_notify_positions = config.telegram_notify_positions
                     self.telegram_notify_errors = config.telegram_notify_errors
                     self.telegram_notify_heartbeat = config.telegram_notify_heartbeat  # v2.1
+                    # v3.13: 新增通知开关
+                    self.telegram_notify_trailing_stop = config.telegram_notify_trailing_stop
+                    self.telegram_notify_startup = config.telegram_notify_startup
+                    self.telegram_notify_shutdown = config.telegram_notify_shutdown
+                    # v3.13: 自动总结配置
+                    self.telegram_auto_daily = config.telegram_auto_daily
+                    self.telegram_auto_weekly = config.telegram_auto_weekly
+                    self.telegram_daily_hour_utc = config.telegram_daily_hour_utc
+                    self.telegram_weekly_day = config.telegram_weekly_day
+                    # v3.13: 日期跟踪 (避免重复发送)
+                    self._last_daily_summary_date = None
+                    self._last_weekly_summary_date = None
 
                     self.log.info("✅ Telegram Bot initialized successfully")
                     
@@ -752,7 +771,9 @@ class DeepSeekAIStrategy(Strategy):
         self._timer_count = 0
 
         # Send Telegram startup notification
-        if self.telegram_bot and self.enable_telegram:
+        # v3.13: Added notify_startup switch
+        if (self.telegram_bot and self.enable_telegram and
+            getattr(self, 'telegram_notify_startup', True)):
             try:
                 # v4.0: Extract timeframe from bar_type for display
                 bar_type_str = str(self.bar_type)
@@ -793,6 +814,36 @@ class DeepSeekAIStrategy(Strategy):
     def on_stop(self):
         """Actions to be performed on strategy stop."""
         self.log.info("Stopping DeepSeek AI Strategy...")
+
+        # v3.13: Send shutdown notification
+        if (self.telegram_bot and self.enable_telegram and
+            getattr(self, 'telegram_notify_shutdown', True)):
+            try:
+                # Calculate uptime
+                uptime_str = "N/A"
+                if self.strategy_start_time:
+                    uptime_delta = datetime.utcnow() - self.strategy_start_time
+                    hours = int(uptime_delta.total_seconds() // 3600)
+                    minutes = int((uptime_delta.total_seconds() % 3600) // 60)
+                    uptime_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+
+                shutdown_msg = self.telegram_bot.format_shutdown_message({
+                    'instrument_id': str(self.instrument_id),
+                    'reason': 'normal',
+                    'uptime': uptime_str,
+                })
+                # Use direct send (not queue) to ensure message is sent before shutdown
+                self.telegram_bot.send_message_sync(shutdown_msg, use_queue=False)
+                self.log.info("📱 Sent shutdown notification to Telegram")
+            except Exception as e:
+                self.log.warning(f"Failed to send shutdown notification: {e}")
+
+        # Stop Telegram message queue if running
+        if self.telegram_bot:
+            try:
+                self.telegram_bot.stop_queue()
+            except Exception as e:
+                self.log.warning(f"Error stopping Telegram queue: {e}")
 
         # Cancel any pending orders
         self.cancel_all_orders(self.instrument_id)
@@ -1253,6 +1304,9 @@ class DeepSeekAIStrategy(Strategy):
             # v2.1: 发送心跳 - 移到 on_timer 开始位置，确保每次都发送
             # 即使后续分析失败，用户也能知道服务器在运行
             self._send_heartbeat_notification()
+
+            # v3.13: 检查是否需要发送定时总结 (每日/每周)
+            self._check_scheduled_summaries()
 
             # Check if indicators are ready
             if not self.indicator_manager.is_initialized():
@@ -1864,11 +1918,13 @@ class DeepSeekAIStrategy(Strategy):
 
             sr_zone_heartbeat = None
             if self.latest_sr_zones_data:
-                zones = self.latest_sr_zones_data.get('zones', {})
+                # v3.8 fix: Access SRZone objects directly, extract price_center
+                nearest_sup = self.latest_sr_zones_data.get('nearest_support')
+                nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
                 hard_control = self.latest_sr_zones_data.get('hard_control', {})
                 sr_zone_heartbeat = {
-                    'nearest_support': zones.get('nearest_support'),
-                    'nearest_resistance': zones.get('nearest_resistance'),
+                    'nearest_support': nearest_sup.price_center if nearest_sup else None,
+                    'nearest_resistance': nearest_res.price_center if nearest_res else None,
                     'block_long': hard_control.get('block_long', False),
                     'block_short': hard_control.get('block_short', False),
                 }
@@ -2871,13 +2927,14 @@ class DeepSeekAIStrategy(Strategy):
                     sl_price = state.get("current_sl_price")
                     tp_price = state.get("current_tp_price")
 
-                # v4.2: Retrieve S/R Zone data
+                # v4.2: Retrieve S/R Zone data (v3.8 fix: extract price_center)
                 sr_zone_data = None
                 if self.latest_sr_zones_data:
-                    zones = self.latest_sr_zones_data.get('zones', {})
+                    nearest_sup = self.latest_sr_zones_data.get('nearest_support')
+                    nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
                     sr_zone_data = {
-                        'nearest_support': zones.get('nearest_support'),
-                        'nearest_resistance': zones.get('nearest_resistance'),
+                        'nearest_support': nearest_sup.price_center if nearest_sup else None,
+                        'nearest_resistance': nearest_res.price_center if nearest_res else None,
                     }
 
                 # Build unified execution data from pending data + event data
@@ -2929,23 +2986,47 @@ class DeepSeekAIStrategy(Strategy):
             self.log.debug(f"🗑️ Cleared trailing stop state for {instrument_key}")
 
         # v3.12: Calculate P&L percentage upfront (needed for both Telegram and memory system)
-        pnl = float(event.realized_pnl)
-        quantity = float(event.quantity) if hasattr(event, 'quantity') else 0.0
+        # v3.13: Fix - NautilusTrader uses Money/Quantity types, need .as_double()
+        # realized_pnl is Money type, quantity is Quantity type
+        try:
+            # Money type has .as_double() method
+            pnl = event.realized_pnl.as_double() if hasattr(event.realized_pnl, 'as_double') else float(event.realized_pnl)
+        except (AttributeError, TypeError, ValueError):
+            pnl = 0.0
+            self.log.warning(f"Failed to extract realized_pnl from event: {type(event.realized_pnl)}")
+
+        try:
+            # Quantity type has .as_double() method
+            if hasattr(event, 'quantity'):
+                quantity = event.quantity.as_double() if hasattr(event.quantity, 'as_double') else float(event.quantity)
+            else:
+                quantity = 0.0
+        except (AttributeError, TypeError, ValueError):
+            quantity = 0.0
+
+        # avg_px_open and avg_px_close are plain doubles in PositionClosed event
         entry_price = float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0
         exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
         position_value = entry_price * quantity
         pnl_pct = (pnl / position_value * 100) if position_value > 0 else 0.0
 
+        # v3.13: Debug logging to diagnose memory system issues
+        self.log.debug(
+            f"📊 P&L calculation: pnl={pnl:.4f}, qty={quantity:.4f}, "
+            f"entry={entry_price:.2f}, exit={exit_price:.2f}, pnl_pct={pnl_pct:.2f}%"
+        )
+
         # Send Telegram position closed notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
-                # v4.2: Retrieve S/R Zone data for close message
+                # v4.2: Retrieve S/R Zone data for close message (v3.8 fix: extract price_center)
                 sr_zone_data = None
                 if self.latest_sr_zones_data:
-                    zones = self.latest_sr_zones_data.get('zones', {})
+                    nearest_sup = self.latest_sr_zones_data.get('nearest_support')
+                    nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
                     sr_zone_data = {
-                        'nearest_support': zones.get('nearest_support'),
-                        'nearest_resistance': zones.get('nearest_resistance'),
+                        'nearest_support': nearest_sup.price_center if nearest_sup else None,
+                        'nearest_resistance': nearest_res.price_center if nearest_res else None,
                     }
 
                 position_msg = self.telegram_bot.format_position_update({
@@ -3451,7 +3532,9 @@ class DeepSeekAIStrategy(Strategy):
             self.log.info(f"✅ New trailing SL order submitted @ ${new_sl_price:,.2f}")
 
             # Send Telegram notification for trailing stop update (with throttle)
-            if self.telegram_bot and self.enable_telegram and old_sl_price:
+            # v3.13: Added notify_trailing_stop switch
+            if (self.telegram_bot and self.enable_telegram and old_sl_price and
+                getattr(self, 'telegram_notify_trailing_stop', True)):
                 import time
                 current_time = time.time()
                 time_since_last = current_time - self._last_trailing_stop_notify_time
@@ -3521,6 +3604,10 @@ class DeepSeekAIStrategy(Strategy):
                 return self._cmd_resume()
             elif command == 'close':
                 return self._cmd_close()
+            elif command == 'daily_summary':
+                return self._cmd_daily_summary()
+            elif command == 'weekly_summary':
+                return self._cmd_weekly_summary()
             else:
                 return {
                     'success': False,
@@ -3702,7 +3789,7 @@ class DeepSeekAIStrategy(Strategy):
             if not positions:
                 return {
                     'success': True,
-                    'message': "ℹ️ *No Open Position*\n\nThere is no position to close."
+                    'message': "ℹ️ *无持仓*\n\n当前没有需要平仓的仓位。"
                 }
 
             position = positions[0]
@@ -3741,10 +3828,10 @@ class DeepSeekAIStrategy(Strategy):
 
             return {
                 'success': True,
-                'message': f"✅ *Position Closing*\n\n"
-                          f"Closing {side_str} position\n"
-                          f"Quantity: {quantity:.4f} BTC\n\n"
-                          f"⏳ Order submitted, waiting for fill..."
+                'message': f"✅ *正在平仓*\n\n"
+                          f"平仓方向: {side_str}\n"
+                          f"数量: {quantity:.4f} BTC\n\n"
+                          f"⏳ 订单已提交，等待成交..."
             }
         except Exception as e:
             self.log.error(f"Error closing position: {e}")
@@ -3766,14 +3853,15 @@ class DeepSeekAIStrategy(Strategy):
             if not orders:
                 return {
                     'success': True,
-                    'message': "ℹ️ *No Open Orders*\n\nThere are no pending orders."
+                    'message': "ℹ️ *无挂单*\n\n当前没有待处理的订单。"
                 }
 
-            msg = f"📋 *Open Orders* ({len(orders)})\n\n"
+            msg = f"📋 *挂单列表* ({len(orders)} 个)\n\n"
 
             for i, order in enumerate(orders, 1):
                 order_type = order.order_type.name
                 side = order.side.name
+                side_cn = "买入" if side == "BUY" else "卖出"
                 qty = float(order.quantity)
 
                 # Get price for limit/stop orders
@@ -3781,15 +3869,15 @@ class DeepSeekAIStrategy(Strategy):
                 if hasattr(order, 'price') and order.price:
                     price_str = f"@ ${float(order.price):,.2f}"
                 elif hasattr(order, 'trigger_price') and order.trigger_price:
-                    price_str = f"trigger @ ${float(order.trigger_price):,.2f}"
+                    price_str = f"触发价 @ ${float(order.trigger_price):,.2f}"
 
                 # Order status
                 status = order.status.name
                 reduce_only = "🔻" if order.is_reduce_only else ""
 
-                msg += f"{i}. {side} {order_type} {reduce_only}\n"
-                msg += f"   Qty: {qty:.4f} BTC {price_str}\n"
-                msg += f"   Status: {status}\n\n"
+                msg += f"{i}. {side_cn} {order_type} {reduce_only}\n"
+                msg += f"   数量: {qty:.4f} BTC {price_str}\n"
+                msg += f"   状态: {status}\n\n"
 
             return {
                 'success': True,
@@ -3805,37 +3893,48 @@ class DeepSeekAIStrategy(Strategy):
         """
         Handle /history command - view recent trade history.
 
-        Thread-safe: Does not access indicator_manager.
+        Thread-safe: Uses Binance API directly.
         """
         try:
-            # Get recent fills (last 10)
-            fills = list(self.cache.order_fills())[-10:]
+            from datetime import datetime
+            from utils.binance_account import get_binance_fetcher
 
-            if not fills:
+            # 获取交易对 symbol
+            symbol = str(self.instrument_id).split('.')[0] if self.instrument_id else "BTCUSDT"
+
+            # 从 Binance API 获取最近交易
+            fetcher = get_binance_fetcher()
+            trades = fetcher.get_trades(symbol=symbol, limit=10)
+
+            if not trades:
                 return {
                     'success': True,
-                    'message': "ℹ️ *No Trade History*\n\nNo trades have been executed yet."
+                    'message': "ℹ️ *无交易记录*\n\n暂无已执行的交易。"
                 }
 
-            msg = f"📊 *Recent Trades* (last {len(fills)})\n\n"
+            msg = f"📊 *最近交易记录* (最近 {len(trades)} 笔)\n\n"
 
-            for fill in reversed(fills):  # Most recent first
-                side = fill.order_side.name
+            for trade in reversed(trades):  # 最新的在前
+                side = trade.get('side', 'UNKNOWN')
                 side_emoji = "🟢" if side == "BUY" else "🔴"
-                qty = float(fill.last_qty)
-                price = float(fill.last_px)
-                ts = fill.ts_event
+                side_cn = "买入" if side == "BUY" else "卖出"
+                qty = float(trade.get('qty', 0))
+                price = float(trade.get('price', 0))
+                realized_pnl = float(trade.get('realizedPnl', 0))
+                commission = float(trade.get('commission', 0))
+                ts = trade.get('time', 0)
 
-                # Format timestamp with defensive handling
-                from datetime import datetime
+                # 格式化时间
                 try:
-                    dt = datetime.utcfromtimestamp(ts / 1e9) if ts else datetime.utcnow()
+                    dt = datetime.utcfromtimestamp(ts / 1000) if ts else datetime.utcnow()
                     time_str = dt.strftime("%m-%d %H:%M")
                 except (ValueError, TypeError, OSError):
                     time_str = "N/A"
 
-                msg += f"{side_emoji} {side} {qty:.4f} @ ${price:,.2f}\n"
-                msg += f"   Time: {time_str} UTC\n\n"
+                pnl_emoji = "📈" if realized_pnl > 0 else ("📉" if realized_pnl < 0 else "➖")
+                msg += f"{side_emoji} {side_cn} {qty:.4f} @ ${price:,.2f}\n"
+                msg += f"   {pnl_emoji} 盈亏: ${realized_pnl:+,.2f}\n"
+                msg += f"   ⏰ 时间: {time_str} UTC\n\n"
 
             return {
                 'success': True,
@@ -3867,20 +3966,20 @@ class DeepSeekAIStrategy(Strategy):
             # Get position info from NautilusTrader cache
             positions = self.cache.positions_open(instrument_id=self.instrument_id)
 
-            msg = "📊 *Risk Metrics*\n\n"
+            msg = "📊 *风险指标*\n\n"
 
             # Real Account Balance from Binance
-            msg += "*Account (Real-time)*:\n"
+            msg += "*账户 (实时)*:\n"
             if total_balance > 0:
-                msg += f"• Balance: ${total_balance:,.2f} USDT\n"
-                msg += f"• Available: ${available_balance:,.2f} USDT\n"
+                msg += f"• 余额: ${total_balance:,.2f} USDT\n"
+                msg += f"• 可用: ${available_balance:,.2f} USDT\n"
                 if unrealized_pnl_total != 0:
                     pnl_emoji = "📈" if unrealized_pnl_total >= 0 else "📉"
-                    msg += f"• Unrealized P&L: {pnl_emoji} ${unrealized_pnl_total:,.2f}\n"
+                    msg += f"• 未实现盈亏: {pnl_emoji} ${unrealized_pnl_total:,.2f}\n"
             else:
-                msg += f"• Balance: ⚠️ Unable to fetch (configured: ${self.equity:,.2f})\n"
-            msg += f"• Leverage: {self.leverage}x\n"
-            msg += f"• Max Position: {self.position_config.get('max_position_ratio', 0.3)*100:.0f}%\n\n"
+                msg += f"• 余额: ⚠️ 无法获取 (配置值: ${self.equity:,.2f})\n"
+            msg += f"• 杠杆: {self.leverage}x\n"
+            msg += f"• 最大仓位: {self.position_config.get('max_position_ratio', 0.3)*100:.0f}%\n\n"
 
             # Use real balance for calculations if available, otherwise fall back to configured equity
             effective_equity = total_balance if total_balance > 0 else self.equity
@@ -3908,29 +4007,30 @@ class DeepSeekAIStrategy(Strategy):
                     pnl_pct = 0
 
                 pnl_emoji = "📈" if pnl >= 0 else "📉"
+                side_cn = "多头" if side == "LONG" else "空头"
 
-                msg += "*Current Position*:\n"
-                msg += f"• Side: {side}\n"
-                msg += f"• Size: {qty:.4f} BTC (${position_value:,.2f})\n"
-                msg += f"• Entry: ${entry_price:,.2f}\n"
-                msg += f"• Current: ${cached_price:,.2f}\n"
-                msg += f"• P&L: {pnl_emoji} ${pnl:,.2f} ({pnl_pct:+.2f}%)\n\n"
+                msg += "*当前持仓*:\n"
+                msg += f"• 方向: {side_cn}\n"
+                msg += f"• 数量: {qty:.4f} BTC (${position_value:,.2f})\n"
+                msg += f"• 开仓价: ${entry_price:,.2f}\n"
+                msg += f"• 当前价: ${cached_price:,.2f}\n"
+                msg += f"• 盈亏: {pnl_emoji} ${pnl:,.2f} ({pnl_pct:+.2f}%)\n\n"
 
                 # Risk exposure using real balance
                 exposure_pct = (position_value / effective_equity) * 100 if effective_equity > 0 else 0
-                msg += "*Risk Exposure*:\n"
-                msg += f"• Position/Balance: {exposure_pct:.1f}%\n"
-                msg += f"• Leveraged Exposure: {exposure_pct * self.leverage:.1f}%\n"
+                msg += "*风险敞口*:\n"
+                msg += f"• 仓位/余额: {exposure_pct:.1f}%\n"
+                msg += f"• 杠杆敞口: {exposure_pct * self.leverage:.1f}%\n"
             else:
-                msg += "*Current Position*: None\n"
-                msg += "*Risk Exposure*: 0%\n"
+                msg += "*当前持仓*: 无\n"
+                msg += "*风险敞口*: 0%\n"
 
             # Strategy settings
-            msg += f"\n*Strategy Settings*:\n"
-            msg += f"• Min Confidence: {self.min_confidence}\n"
-            msg += f"• Auto SL/TP: {'✅' if self.enable_auto_sl_tp else '❌'}\n"
-            msg += f"• Trailing Stop: {'✅' if self.enable_trailing_stop else '❌'}\n"
-            msg += f"• Trading Paused: {'⏸️ Yes' if self.is_trading_paused else '▶️ No'}\n"
+            msg += f"\n*策略设置*:\n"
+            msg += f"• 最低信心: {self.min_confidence}\n"
+            msg += f"• 自动止损止盈: {'✅' if self.enable_auto_sl_tp else '❌'}\n"
+            msg += f"• 移动止损: {'✅' if self.enable_trailing_stop else '❌'}\n"
+            msg += f"• 交易暂停: {'⏸️ 是' if self.is_trading_paused else '▶️ 否'}\n"
 
             return {
                 'success': True,
@@ -3941,3 +4041,250 @@ class DeepSeekAIStrategy(Strategy):
                 'success': False,
                 'error': str(e)
             }
+
+    def _cmd_daily_summary(self) -> Dict[str, Any]:
+        """
+        Handle /daily command - view daily performance summary (v3.13).
+
+        Thread-safe: Uses thread-safe state and cached data.
+        """
+        try:
+            from datetime import datetime, timedelta
+
+            today = datetime.utcnow().strftime('%Y-%m-%d')
+
+            # Get real balance from Binance
+            real_balance = self.binance_account.get_balance()
+            current_equity = real_balance.get('total_balance', self.equity)
+
+            # Calculate stats from session data
+            with self._state_lock:
+                timer_count = getattr(self, '_timer_count', 0)
+                signals_generated = getattr(self, '_signals_generated_today', timer_count)
+                signals_executed = getattr(self, '_signals_executed_today', 0)
+
+            # Get trade history for today from memory system
+            total_trades = 0
+            winning_trades = 0
+            losing_trades = 0
+            total_pnl = 0.0
+            largest_win = 0.0
+            largest_loss = 0.0
+
+            if hasattr(self, 'multi_agent_analyzer') and self.multi_agent_analyzer:
+                memories = self.multi_agent_analyzer.decision_memory
+                today_memories = [m for m in memories if m.get('timestamp', '').startswith(today)]
+
+                for m in today_memories:
+                    pnl = m.get('pnl', 0)
+                    if pnl != 0:  # Only count actual trades
+                        total_trades += 1
+                        total_pnl += pnl
+                        if pnl > 0:
+                            winning_trades += 1
+                            largest_win = max(largest_win, pnl)
+                        else:
+                            losing_trades += 1
+                            largest_loss = min(largest_loss, pnl)
+
+            # Calculate PnL percentage
+            starting_equity = getattr(self, '_daily_starting_equity', current_equity)
+            pnl_pct = ((current_equity - starting_equity) / starting_equity * 100) if starting_equity > 0 else 0.0
+
+            summary_data = {
+                'date': today,
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'total_pnl': total_pnl,
+                'total_pnl_pct': pnl_pct,
+                'largest_win': largest_win,
+                'largest_loss': abs(largest_loss),
+                'starting_equity': starting_equity,
+                'ending_equity': current_equity,
+                'signals_generated': signals_generated,
+                'signals_executed': signals_executed,
+            }
+
+            if self.telegram_bot:
+                msg = self.telegram_bot.format_daily_summary(summary_data)
+            else:
+                # Fallback simple format
+                msg = f"📊 Daily Summary ({today})\n"
+                msg += f"Trades: {total_trades} (W: {winning_trades}, L: {losing_trades})\n"
+                msg += f"PnL: ${total_pnl:+,.2f} ({pnl_pct:+.2f}%)\n"
+                msg += f"Equity: ${current_equity:,.2f}"
+
+            return {
+                'success': True,
+                'message': msg
+            }
+        except Exception as e:
+            self.log.error(f"Error in _cmd_daily_summary: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _cmd_weekly_summary(self) -> Dict[str, Any]:
+        """
+        Handle /weekly command - view weekly performance summary (v3.13).
+
+        Thread-safe: Uses thread-safe state and cached data.
+        """
+        try:
+            from datetime import datetime, timedelta
+
+            today = datetime.utcnow()
+            # Calculate week start (Monday) and end (Sunday)
+            week_start = today - timedelta(days=today.weekday())
+            week_end = week_start + timedelta(days=6)
+            week_start_str = week_start.strftime('%Y-%m-%d')
+            week_end_str = week_end.strftime('%Y-%m-%d')
+
+            # Get real balance from Binance
+            real_balance = self.binance_account.get_balance()
+            current_equity = real_balance.get('total_balance', self.equity)
+
+            # Initialize stats
+            total_trades = 0
+            winning_trades = 0
+            losing_trades = 0
+            total_pnl = 0.0
+            daily_pnls = {}
+            max_drawdown_pct = 0.0
+
+            if hasattr(self, 'multi_agent_analyzer') and self.multi_agent_analyzer:
+                memories = self.multi_agent_analyzer.decision_memory
+
+                # Filter memories for this week
+                for m in memories:
+                    ts = m.get('timestamp', '')[:10]  # YYYY-MM-DD
+                    if ts >= week_start_str and ts <= week_end_str:
+                        pnl = m.get('pnl', 0)
+                        if pnl != 0:
+                            total_trades += 1
+                            total_pnl += pnl
+                            if pnl > 0:
+                                winning_trades += 1
+                            else:
+                                losing_trades += 1
+
+                            # Track daily PnL
+                            if ts not in daily_pnls:
+                                daily_pnls[ts] = 0.0
+                            daily_pnls[ts] += pnl
+
+            # Calculate best/worst days
+            best_day = {'date': 'N/A', 'pnl': 0.0}
+            worst_day = {'date': 'N/A', 'pnl': 0.0}
+            daily_breakdown = []
+
+            for date, pnl in sorted(daily_pnls.items()):
+                daily_breakdown.append({'date': date, 'pnl': pnl})
+                if pnl > best_day['pnl']:
+                    best_day = {'date': date, 'pnl': pnl}
+                if pnl < worst_day['pnl']:
+                    worst_day = {'date': date, 'pnl': pnl}
+
+            # Calculate averages
+            days_with_trades = len(daily_pnls)
+            avg_daily_pnl = total_pnl / days_with_trades if days_with_trades > 0 else 0.0
+
+            # Calculate PnL percentage
+            starting_equity = getattr(self, '_weekly_starting_equity', current_equity)
+            pnl_pct = ((current_equity - starting_equity) / starting_equity * 100) if starting_equity > 0 else 0.0
+
+            summary_data = {
+                'week_start': week_start_str,
+                'week_end': week_end_str,
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'total_pnl': total_pnl,
+                'total_pnl_pct': pnl_pct,
+                'best_day': best_day,
+                'worst_day': worst_day,
+                'avg_daily_pnl': avg_daily_pnl,
+                'starting_equity': starting_equity,
+                'ending_equity': current_equity,
+                'max_drawdown_pct': max_drawdown_pct,
+                'daily_breakdown': daily_breakdown,
+            }
+
+            if self.telegram_bot:
+                msg = self.telegram_bot.format_weekly_summary(summary_data)
+            else:
+                # Fallback simple format
+                msg = f"📊 Weekly Summary ({week_start_str} ~ {week_end_str})\n"
+                msg += f"Trades: {total_trades} (W: {winning_trades}, L: {losing_trades})\n"
+                msg += f"PnL: ${total_pnl:+,.2f} ({pnl_pct:+.2f}%)\n"
+                msg += f"Equity: ${current_equity:,.2f}"
+
+            return {
+                'success': True,
+                'message': msg
+            }
+        except Exception as e:
+            self.log.error(f"Error in _cmd_weekly_summary: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _check_scheduled_summaries(self):
+        """
+        Check if daily/weekly summaries need to be sent (v3.13).
+
+        Called from on_timer. Checks current UTC time against configured schedule.
+        Uses date tracking to avoid duplicate sends.
+        """
+        if not self.telegram_bot or not self.enable_telegram:
+            return
+
+        try:
+            from datetime import datetime
+
+            now = datetime.utcnow()
+            current_hour = now.hour
+            current_weekday = now.weekday()  # 0=Monday, 6=Sunday
+            today_str = now.strftime('%Y-%m-%d')
+            week_str = now.strftime('%Y-W%W')  # Year-Week format
+
+            # Check daily summary
+            if getattr(self, 'telegram_auto_daily', False):
+                daily_hour = getattr(self, 'telegram_daily_hour_utc', 0)
+
+                # Send at the configured hour, once per day
+                if current_hour == daily_hour:
+                    last_daily = getattr(self, '_last_daily_summary_date', None)
+                    if last_daily != today_str:
+                        self.log.info(f"📊 Sending scheduled daily summary...")
+                        result = self._cmd_daily_summary()
+                        if result.get('success') and result.get('message'):
+                            self.telegram_bot.send_message_sync(result['message'])
+                            self._last_daily_summary_date = today_str
+                            self.log.info("✅ Daily summary sent")
+                        else:
+                            self.log.warning(f"Failed to generate daily summary: {result.get('error')}")
+
+            # Check weekly summary
+            if getattr(self, 'telegram_auto_weekly', False):
+                weekly_day = getattr(self, 'telegram_weekly_day', 0)  # 0=Monday
+                daily_hour = getattr(self, 'telegram_daily_hour_utc', 0)
+
+                # Send on the configured day at the configured hour
+                if current_weekday == weekly_day and current_hour == daily_hour:
+                    last_weekly = getattr(self, '_last_weekly_summary_date', None)
+                    if last_weekly != week_str:
+                        self.log.info(f"📊 Sending scheduled weekly summary...")
+                        result = self._cmd_weekly_summary()
+                        if result.get('success') and result.get('message'):
+                            self.telegram_bot.send_message_sync(result['message'])
+                            self._last_weekly_summary_date = week_str
+                            self.log.info("✅ Weekly summary sent")
+                        else:
+                            self.log.warning(f"Failed to generate weekly summary: {result.get('error')}")
+
+        except Exception as e:
+            self.log.warning(f"Error checking scheduled summaries: {e}")

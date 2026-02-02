@@ -225,6 +225,65 @@ class BinanceAccountFetcher:
             'has_position': len(positions) > 0,
         }
 
+    def get_trades(self, symbol: str, limit: int = 10) -> list:
+        """
+        获取最近的交易记录。
+
+        Parameters
+        ----------
+        symbol : str
+            交易对 (e.g., 'BTCUSDT')
+        limit : int, optional
+            返回记录数量, 默认 10
+
+        Returns
+        -------
+        list
+            交易记录列表
+        """
+        # 清理 symbol 格式
+        clean_symbol = symbol.replace('-PERP', '').replace('.BINANCE', '').upper()
+
+        params = {
+            'symbol': clean_symbol,
+            'limit': limit,
+        }
+
+        data = self._make_request("/fapi/v1/userTrades", params)
+
+        if data is None:
+            return []
+
+        return data
+
+    def get_income_history(self, income_type: Optional[str] = None, limit: int = 20) -> list:
+        """
+        获取收益历史 (包含资金费率、盈亏等)。
+
+        Parameters
+        ----------
+        income_type : str, optional
+            收益类型: REALIZED_PNL, FUNDING_FEE, COMMISSION, etc.
+        limit : int, optional
+            返回记录数量, 默认 20
+
+        Returns
+        -------
+        list
+            收益记录列表
+        """
+        params = {'limit': limit}
+
+        if income_type:
+            params['incomeType'] = income_type
+
+        data = self._make_request("/fapi/v1/income", params)
+
+        if data is None:
+            return []
+
+        return data
+
 
 # Singleton instance for convenience
 _fetcher_instance: Optional[BinanceAccountFetcher] = None

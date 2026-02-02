@@ -394,7 +394,216 @@ class TelegramBot:
 
 🎯 策略正在监控市场...
 """
-    
+
+    def format_shutdown_message(self, shutdown_data: Dict[str, Any]) -> str:
+        """
+        Format strategy shutdown notification (v3.13).
+
+        Parameters
+        ----------
+        shutdown_data : dict
+            Shutdown information containing:
+            - instrument_id: str
+            - reason: str (e.g., "user_stop", "error", "maintenance")
+            - uptime: str (e.g., "2h 30m")
+            - total_trades: int (optional)
+            - total_pnl: float (optional)
+            - final_equity: float (optional)
+        """
+        instrument_id = shutdown_data.get('instrument_id', 'N/A')
+        safe_instrument = self.escape_markdown(str(instrument_id))
+
+        reason = shutdown_data.get('reason', 'normal')
+        reason_map = {
+            'normal': '正常停止',
+            'user_stop': '用户停止',
+            'error': '错误停止',
+            'maintenance': '维护停止',
+            'signal': '收到终止信号',
+        }
+        reason_cn = reason_map.get(reason, reason)
+
+        uptime = shutdown_data.get('uptime', 'N/A')
+
+        # Build message
+        msg = f"""
+🛑 *策略已停止*
+
+📊 *交易对*: {safe_instrument}
+📝 *原因*: {reason_cn}
+⏱️ *运行时长*: {uptime}
+🕐 *时间*: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
+"""
+
+        # Add optional stats if available
+        total_trades = shutdown_data.get('total_trades')
+        total_pnl = shutdown_data.get('total_pnl')
+        final_equity = shutdown_data.get('final_equity')
+
+        if total_trades is not None or total_pnl is not None or final_equity is not None:
+            msg += "\n📈 *本次运行统计*:\n"
+            if total_trades is not None:
+                msg += f"  • 交易次数: {total_trades}\n"
+            if total_pnl is not None:
+                pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+                msg += f"  • 总盈亏: {pnl_emoji} ${total_pnl:,.2f}\n"
+            if final_equity is not None:
+                msg += f"  • 最终余额: ${final_equity:,.2f}\n"
+
+        msg += "\n💤 策略已安全停止。"
+
+        return msg
+
+    def format_daily_summary(self, summary_data: Dict[str, Any]) -> str:
+        """
+        Format daily performance summary (v3.13).
+
+        Parameters
+        ----------
+        summary_data : dict
+            Daily summary data containing:
+            - date: str (YYYY-MM-DD)
+            - total_trades: int
+            - winning_trades: int
+            - losing_trades: int
+            - total_pnl: float (USDT)
+            - total_pnl_pct: float (%)
+            - largest_win: float
+            - largest_loss: float
+            - starting_equity: float
+            - ending_equity: float
+            - signals_generated: int
+            - signals_executed: int
+        """
+        date = summary_data.get('date', datetime.utcnow().strftime('%Y-%m-%d'))
+        total_trades = summary_data.get('total_trades', 0)
+        winning_trades = summary_data.get('winning_trades', 0)
+        losing_trades = summary_data.get('losing_trades', 0)
+        total_pnl = summary_data.get('total_pnl', 0.0)
+        total_pnl_pct = summary_data.get('total_pnl_pct', 0.0)
+        largest_win = summary_data.get('largest_win', 0.0)
+        largest_loss = summary_data.get('largest_loss', 0.0)
+        starting_equity = summary_data.get('starting_equity', 0.0)
+        ending_equity = summary_data.get('ending_equity', 0.0)
+        signals_generated = summary_data.get('signals_generated', 0)
+        signals_executed = summary_data.get('signals_executed', 0)
+
+        # Calculate win rate
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+
+        # PnL emoji
+        pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+        trend_emoji = "📈" if total_pnl >= 0 else "📉"
+
+        msg = f"""
+📊 *每日绩效总结*
+━━━━━━━━━━━━━━━━
+📅 *日期*: {date}
+
+💰 *收益情况*:
+  {pnl_emoji} 总盈亏: ${total_pnl:+,.2f} ({total_pnl_pct:+.2f}%)
+  📈 最大盈利: ${largest_win:,.2f}
+  📉 最大亏损: ${largest_loss:,.2f}
+
+📈 *交易统计*:
+  • 总交易: {total_trades} 笔
+  • 盈利: {winning_trades} 笔
+  • 亏损: {losing_trades} 笔
+  • 胜率: {win_rate:.1f}%
+
+🎯 *信号统计*:
+  • 生成信号: {signals_generated}
+  • 执行信号: {signals_executed}
+
+💵 *资金变化*:
+  • 起始: ${starting_equity:,.2f}
+  • 结束: ${ending_equity:,.2f}
+  • {trend_emoji} 变化: ${ending_equity - starting_equity:+,.2f}
+"""
+        return msg
+
+    def format_weekly_summary(self, summary_data: Dict[str, Any]) -> str:
+        """
+        Format weekly performance summary (v3.13).
+
+        Parameters
+        ----------
+        summary_data : dict
+            Weekly summary data containing:
+            - week_start: str (YYYY-MM-DD)
+            - week_end: str (YYYY-MM-DD)
+            - total_trades: int
+            - winning_trades: int
+            - losing_trades: int
+            - total_pnl: float (USDT)
+            - total_pnl_pct: float (%)
+            - best_day: dict (date, pnl)
+            - worst_day: dict (date, pnl)
+            - avg_daily_pnl: float
+            - starting_equity: float
+            - ending_equity: float
+            - max_drawdown_pct: float
+            - daily_breakdown: list of dict
+        """
+        week_start = summary_data.get('week_start', 'N/A')
+        week_end = summary_data.get('week_end', 'N/A')
+        total_trades = summary_data.get('total_trades', 0)
+        winning_trades = summary_data.get('winning_trades', 0)
+        losing_trades = summary_data.get('losing_trades', 0)
+        total_pnl = summary_data.get('total_pnl', 0.0)
+        total_pnl_pct = summary_data.get('total_pnl_pct', 0.0)
+        best_day = summary_data.get('best_day', {})
+        worst_day = summary_data.get('worst_day', {})
+        avg_daily_pnl = summary_data.get('avg_daily_pnl', 0.0)
+        starting_equity = summary_data.get('starting_equity', 0.0)
+        ending_equity = summary_data.get('ending_equity', 0.0)
+        max_drawdown_pct = summary_data.get('max_drawdown_pct', 0.0)
+        daily_breakdown = summary_data.get('daily_breakdown', [])
+
+        # Calculate win rate
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+
+        # PnL emoji
+        pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+        trend_emoji = "📈" if total_pnl >= 0 else "📉"
+
+        msg = f"""
+📊 *每周绩效总结*
+━━━━━━━━━━━━━━━━
+📅 *周期*: {week_start} ~ {week_end}
+
+💰 *收益情况*:
+  {pnl_emoji} 总盈亏: ${total_pnl:+,.2f} ({total_pnl_pct:+.2f}%)
+  📊 日均盈亏: ${avg_daily_pnl:+,.2f}
+  📉 最大回撤: {max_drawdown_pct:.2f}%
+
+📈 *交易统计*:
+  • 总交易: {total_trades} 笔
+  • 盈利: {winning_trades} 笔
+  • 亏损: {losing_trades} 笔
+  • 胜率: {win_rate:.1f}%
+
+🏆 *最佳/最差日*:
+  • 最佳: {best_day.get('date', 'N/A')} (${best_day.get('pnl', 0):+,.2f})
+  • 最差: {worst_day.get('date', 'N/A')} (${worst_day.get('pnl', 0):+,.2f})
+
+💵 *资金变化*:
+  • 起始: ${starting_equity:,.2f}
+  • 结束: ${ending_equity:,.2f}
+  • {trend_emoji} 变化: ${ending_equity - starting_equity:+,.2f}
+"""
+
+        # Add daily breakdown if available (max 7 days)
+        if daily_breakdown:
+            msg += "\n📋 *每日明细*:\n"
+            for day in daily_breakdown[:7]:
+                day_date = day.get('date', 'N/A')[-5:]  # MM-DD
+                day_pnl = day.get('pnl', 0)
+                day_emoji = "🟢" if day_pnl >= 0 else "🔴"
+                msg += f"  {day_emoji} {day_date}: ${day_pnl:+,.2f}\n"
+
+        return msg
+
     def format_trade_signal(self, signal_data: Dict[str, Any]) -> str:
         """Format trading signal notification (v3.12 - Extended signal types)."""
         signal = signal_data.get('signal', 'UNKNOWN')
@@ -650,32 +859,33 @@ class TelegramBot:
             if macd is not None:
                 msg += f"  • MACD: {macd:.4f}\n"
 
-        # Add risk management
-        if sl_price or tp_price:
-            msg += "\n🛡️ *风险管理*:\n"
+        # v4.3: Combined "关键价位" section (SL/TP + S/R Zone)
+        sr_zone = execution_data.get('sr_zone') or {}
+        nearest_support = sr_zone.get('nearest_support')
+        nearest_resistance = sr_zone.get('nearest_resistance')
+
+        has_key_levels = (sl_price or tp_price or
+                         nearest_support is not None or nearest_resistance is not None)
+        if has_key_levels:
+            msg += "\n📍 *关键价位*:\n"
+            # SL/TP first (risk management)
             if sl_price:
                 sl_pct = ((sl_price / entry_price) - 1) * 100 if entry_price > 0 else 0
                 if side == "SHORT":
                     sl_pct = -sl_pct  # SHORT position: SL above entry is positive distance
-                msg += f"  • 止损: ${sl_price:,.2f} ({abs(sl_pct):.2f}%)\n"
+                msg += f"  🛑 止损: ${sl_price:,.2f} ({abs(sl_pct):.2f}%)\n"
             if tp_price:
                 tp_pct = ((tp_price / entry_price) - 1) * 100 if entry_price > 0 else 0
                 if side == "SHORT":
                     tp_pct = -tp_pct  # SHORT position: TP below entry is positive profit
-                msg += f"  • 止盈: ${tp_price:,.2f} (+{abs(tp_pct):.2f}%)\n"
-
-        # v4.2: Add S/R Zone data if available
-        sr_zone = execution_data.get('sr_zone') or {}
-        nearest_support = sr_zone.get('nearest_support')
-        nearest_resistance = sr_zone.get('nearest_resistance')
-        if nearest_support is not None or nearest_resistance is not None:
-            msg += "\n🎯 *支撑/阻力*:\n"
+                msg += f"  🎯 止盈: ${tp_price:,.2f} (+{abs(tp_pct):.2f}%)\n"
+            # S/R Zone
             if nearest_support is not None:
                 sup_dist = ((entry_price - nearest_support) / entry_price * 100) if entry_price > 0 else 0
-                msg += f"  • 支撑: ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
+                msg += f"  📉 支撑: ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
             if nearest_resistance is not None:
                 res_dist = ((nearest_resistance - entry_price) / entry_price * 100) if entry_price > 0 else 0
-                msg += f"  • 阻力: ${nearest_resistance:,.2f} (+{res_dist:.2f}%)\n"
+                msg += f"  📈 阻力: ${nearest_resistance:,.2f} (+{res_dist:.2f}%)\n"
 
         # Add AI analysis if available
         if winning_side or reasoning:
@@ -878,24 +1088,34 @@ class TelegramBot:
 
             msg += f"📋 状态: {status_emoji} {status_text}\n"
 
-        # v3.8 S/R Zone Hard Control (if available)
-        if nearest_support is not None or nearest_resistance is not None:
+        # v4.3: Combined "关键价位" section (SL/TP + S/R Zone)
+        has_key_levels = (sl_price is not None or tp_price is not None or
+                         nearest_support is not None or nearest_resistance is not None)
+        if has_key_levels:
             msg += f"━━━━━━━━━━━━━━━━\n"
-            msg += f"🎯 *S/R Zone (v3.8)*\n"
+            msg += f"📍 *关键价位*\n"
+            # SL/TP first (more important for risk management)
+            if sl_price is not None:
+                sl_dist = ((sl_price - price) / price * 100) if price > 0 else 0
+                msg += f"  🛑 止损: ${sl_price:,.2f} ({sl_dist:+.2f}%)\n"
+            if tp_price is not None:
+                tp_dist = ((tp_price - price) / price * 100) if price > 0 else 0
+                msg += f"  🎯 止盈: ${tp_price:,.2f} ({tp_dist:+.2f}%)\n"
+            # S/R Zone
             if nearest_support is not None:
                 dist_sup = ((price - nearest_support) / price * 100) if price > 0 else 0
-                msg += f"  支撑: ${nearest_support:,.2f} ({dist_sup:+.2f}%)\n"
+                msg += f"  📉 支撑: ${nearest_support:,.2f} ({dist_sup:+.2f}%)\n"
             if nearest_resistance is not None:
                 dist_res = ((nearest_resistance - price) / price * 100) if price > 0 else 0
-                msg += f"  阻力: ${nearest_resistance:,.2f} (+{dist_res:.2f}%)\n"
-            # Block status
+                msg += f"  📈 阻力: ${nearest_resistance:,.2f} (+{dist_res:.2f}%)\n"
+            # Block status (hard control)
             if block_long or block_short:
                 block_str = []
                 if block_long:
                     block_str.append("🚫 LONG")
                 if block_short:
                     block_str.append("🚫 SHORT")
-                msg += f"  风控: {' | '.join(block_str)}\n"
+                msg += f"  ⚠️ 风控: {' | '.join(block_str)}\n"
 
         # v3.6 Order Flow (if available)
         if buy_ratio is not None or cvd_trend:
@@ -935,14 +1155,6 @@ class TelegramBot:
         msg += f"📍 入场: ${entry_price:,.2f}\n"
         msg += f"📦 数量: {position_size:.4f}\n"
         msg += f"💹 盈亏: {pnl_emoji} {position_pnl_pct:+.2f}%\n"
-        # v4.2: Show SL/TP if available
-        if sl_price is not None or tp_price is not None:
-            if sl_price is not None:
-                sl_dist = ((sl_price - price) / price * 100) if price > 0 else 0
-                msg += f"🛑 止损: ${sl_price:,.2f} ({sl_dist:+.2f}%)\n"
-            if tp_price is not None:
-                tp_dist = ((tp_price - price) / price * 100) if price > 0 else 0
-                msg += f"🎯 止盈: ${tp_price:,.2f} ({tp_dist:+.2f}%)\n"
         msg += f"━━━━━━━━━━━━━━━━\n"
         msg += f"🏦 余额: ${equity:,.2f}\n"
         msg += f"⏱ 运行: {uptime_str}\n"
@@ -1081,14 +1293,21 @@ class TelegramBot:
     def format_help_response(self) -> str:
         """Format help message with available commands."""
         msg = "🤖 *可用命令*\n\n"
-        msg += "*查询命令*:\n"
+        msg += "*📊 查询命令*:\n"
         msg += "• `/status` - 查看策略状态\n"
         msg += "• `/position` - 查看当前持仓\n"
-        msg += "• `/help` - 显示帮助信息\n\n"
-        msg += "*控制命令*:\n"
+        msg += "• `/orders` - 查看挂单\n"
+        msg += "• `/history` - 查看交易记录\n"
+        msg += "• `/risk` - 查看风险指标\n"
+        msg += "• `/daily` - 查看日报\n"
+        msg += "• `/weekly` - 查看周报\n\n"
+        msg += "*⚙️ 控制命令*:\n"
         msg += "• `/pause` - 暂停交易\n"
         msg += "• `/resume` - 恢复交易\n"
-        msg += "• `/close` - 平仓 (需确认)\n\n"
+        msg += "• `/close` - 平仓\n\n"
+        msg += "*📋 其他命令*:\n"
+        msg += "• `/menu` - 显示按钮菜单\n"
+        msg += "• `/help` - 显示帮助信息\n\n"
         msg += "💡 _命令不区分大小写_\n"
         return msg
 

@@ -627,6 +627,44 @@ class TelegramCommandHandler:
             self.logger.error(f"Error handling /risk: {e}")
             await self._send_response(update, f"❌ Error: {str(e)}")
 
+    async def cmd_daily(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /daily command - view daily performance summary (v3.13)."""
+        self.logger.info("Received /daily command")
+
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        try:
+            result = self.strategy_callback('daily_summary', {})
+
+            if result.get('success'):
+                await self._send_response(update, result.get('message', 'No daily data available'))
+            else:
+                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
+        except Exception as e:
+            self.logger.error(f"Error handling /daily: {e}")
+            await self._send_response(update, f"❌ Error: {str(e)}")
+
+    async def cmd_weekly(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /weekly command - view weekly performance summary (v3.13)."""
+        self.logger.info("Received /weekly command")
+
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        try:
+            result = self.strategy_callback('weekly_summary', {})
+
+            if result.get('success'):
+                await self._send_response(update, result.get('message', 'No weekly data available'))
+            else:
+                await self._send_response(update, f"❌ Error: {result.get('error', 'Unknown')}")
+        except Exception as e:
+            self.logger.error(f"Error handling /weekly: {e}")
+            await self._send_response(update, f"❌ Error: {str(e)}")
+
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
         self.logger.info("Received /help command")
@@ -636,20 +674,23 @@ class TelegramCommandHandler:
             return
 
         help_msg = (
-            "🤖 *Available Commands*\n\n"
-            "*Query Commands*:\n"
-            "• `/status` - View strategy status\n"
-            "• `/position` - View current position\n"
-            "• `/orders` - View open orders\n"
-            "• `/history` - Recent trade history\n"
-            "• `/risk` - View risk metrics\n"
-            "• `/help` - Show this help message\n"
-            "• `/menu` - Show interactive buttons\n\n"
-            "*Control Commands*:\n"
-            "• `/pause` - Pause trading (no new orders)\n"
-            "• `/resume` - Resume trading\n"
-            "• `/close` - Close current position\n\n"
-            "💡 _Commands are case-insensitive_\n"
+            "🤖 *可用命令*\n\n"
+            "*📊 查询命令*:\n"
+            "• `/status` - 查看策略状态\n"
+            "• `/position` - 查看当前持仓\n"
+            "• `/orders` - 查看挂单\n"
+            "• `/history` - 查看交易记录\n"
+            "• `/risk` - 查看风险指标\n"
+            "• `/daily` - 查看日报\n"
+            "• `/weekly` - 查看周报\n\n"
+            "*⚙️ 控制命令*:\n"
+            "• `/pause` - 暂停交易\n"
+            "• `/resume` - 恢复交易\n"
+            "• `/close` - 平仓\n\n"
+            "*📋 其他命令*:\n"
+            "• `/menu` - 显示按钮菜单\n"
+            "• `/help` - 显示帮助信息\n\n"
+            "💡 _命令不区分大小写_\n"
         )
         await self._send_response(update, help_msg)
 
@@ -674,12 +715,17 @@ class TelegramCommandHandler:
                 InlineKeyboardButton("📈 历史", callback_data='cmd_history'),
                 InlineKeyboardButton("⚠️ 风险", callback_data='cmd_risk'),
             ],
-            # Row 3: Control commands
+            # Row 3: Performance summaries (v3.13)
+            [
+                InlineKeyboardButton("📅 日报", callback_data='cmd_daily'),
+                InlineKeyboardButton("📆 周报", callback_data='cmd_weekly'),
+            ],
+            # Row 4: Control commands
             [
                 InlineKeyboardButton("⏸️ 暂停", callback_data='cmd_pause'),
                 InlineKeyboardButton("▶️ 恢复", callback_data='cmd_resume'),
             ],
-            # Row 4: Dangerous command (separate row)
+            # Row 5: Dangerous command (separate row)
             [
                 InlineKeyboardButton("🔴 平仓", callback_data='cmd_close'),
             ],
@@ -753,6 +799,8 @@ class TelegramCommandHandler:
             'cmd_orders': 'orders',
             'cmd_history': 'history',
             'cmd_risk': 'risk',
+            'cmd_daily': 'daily_summary',    # v3.13
+            'cmd_weekly': 'weekly_summary',  # v3.13
             'cmd_pause': 'pause',
             'cmd_resume': 'resume',
         }
@@ -788,7 +836,7 @@ class TelegramCommandHandler:
         or types "/" in private chat with the bot.
         """
         try:
-            from telegram import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+            from telegram import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, BotCommandScopeDefault
 
             commands = [
                 BotCommand("menu", "显示操作菜单"),
@@ -797,25 +845,34 @@ class TelegramCommandHandler:
                 BotCommand("orders", "查看挂单"),
                 BotCommand("history", "最近交易记录"),
                 BotCommand("risk", "风险指标"),
+                BotCommand("daily", "查看日报"),
+                BotCommand("weekly", "查看周报"),
                 BotCommand("pause", "暂停交易"),
                 BotCommand("resume", "恢复交易"),
                 BotCommand("close", "平仓"),
                 BotCommand("help", "帮助信息"),
             ]
 
-            # Register commands ONLY for private chats
+            # 1. Clear default/global scope first (removes old commands)
+            await self.application.bot.set_my_commands(
+                [],
+                scope=BotCommandScopeDefault()
+            )
+            self.logger.info("✅ Cleared default bot commands")
+
+            # 2. Explicitly remove commands from ALL group chats
+            await self.application.bot.set_my_commands(
+                [],
+                scope=BotCommandScopeAllGroupChats()
+            )
+            self.logger.info("✅ Bot commands removed from all group chats")
+
+            # 3. Register commands ONLY for private chats
             await self.application.bot.set_my_commands(
                 commands,
                 scope=BotCommandScopeAllPrivateChats()
             )
             self.logger.info("✅ Bot commands registered for private chats")
-
-            # Remove commands from group chats (set empty list)
-            await self.application.bot.set_my_commands(
-                [],
-                scope=BotCommandScopeAllGroupChats()
-            )
-            self.logger.info("✅ Bot commands removed from group chats")
 
             return True
 
@@ -881,6 +938,8 @@ class TelegramCommandHandler:
                 self.application.add_handler(CommandHandler("orders", self.cmd_orders))
                 self.application.add_handler(CommandHandler("history", self.cmd_history))
                 self.application.add_handler(CommandHandler("risk", self.cmd_risk))
+                self.application.add_handler(CommandHandler("daily", self.cmd_daily))    # v3.13
+                self.application.add_handler(CommandHandler("weekly", self.cmd_weekly))  # v3.13
                 self.application.add_handler(CommandHandler("pause", self.cmd_pause))
                 self.application.add_handler(CommandHandler("resume", self.cmd_resume))
                 self.application.add_handler(CommandHandler("close", self.cmd_close))
