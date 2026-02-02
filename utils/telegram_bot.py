@@ -394,7 +394,66 @@ class TelegramBot:
 
 🎯 策略正在监控市场...
 """
-    
+
+    def format_shutdown_message(self, shutdown_data: Dict[str, Any]) -> str:
+        """
+        Format strategy shutdown notification (v3.13).
+
+        Parameters
+        ----------
+        shutdown_data : dict
+            Shutdown information containing:
+            - instrument_id: str
+            - reason: str (e.g., "user_stop", "error", "maintenance")
+            - uptime: str (e.g., "2h 30m")
+            - total_trades: int (optional)
+            - total_pnl: float (optional)
+            - final_equity: float (optional)
+        """
+        instrument_id = shutdown_data.get('instrument_id', 'N/A')
+        safe_instrument = self.escape_markdown(str(instrument_id))
+
+        reason = shutdown_data.get('reason', 'normal')
+        reason_map = {
+            'normal': '正常停止',
+            'user_stop': '用户停止',
+            'error': '错误停止',
+            'maintenance': '维护停止',
+            'signal': '收到终止信号',
+        }
+        reason_cn = reason_map.get(reason, reason)
+
+        uptime = shutdown_data.get('uptime', 'N/A')
+
+        # Build message
+        msg = f"""
+🛑 *策略已停止*
+
+📊 *交易对*: {safe_instrument}
+📝 *原因*: {reason_cn}
+⏱️ *运行时长*: {uptime}
+🕐 *时间*: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
+"""
+
+        # Add optional stats if available
+        total_trades = shutdown_data.get('total_trades')
+        total_pnl = shutdown_data.get('total_pnl')
+        final_equity = shutdown_data.get('final_equity')
+
+        if total_trades is not None or total_pnl is not None or final_equity is not None:
+            msg += "\n📈 *本次运行统计*:\n"
+            if total_trades is not None:
+                msg += f"  • 交易次数: {total_trades}\n"
+            if total_pnl is not None:
+                pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+                msg += f"  • 总盈亏: {pnl_emoji} ${total_pnl:,.2f}\n"
+            if final_equity is not None:
+                msg += f"  • 最终余额: ${final_equity:,.2f}\n"
+
+        msg += "\n💤 策略已安全停止。"
+
+        return msg
+
     def format_trade_signal(self, signal_data: Dict[str, Any]) -> str:
         """Format trading signal notification (v3.12 - Extended signal types)."""
         signal = signal_data.get('signal', 'UNKNOWN')

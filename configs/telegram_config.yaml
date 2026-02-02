@@ -1,5 +1,25 @@
-# Telegram Notification Configuration
-# 
+# ============================================================================
+# DEPRECATED - 此文件已废弃 (v3.13)
+# ============================================================================
+#
+# 此配置文件不再被代码读取。
+# Telegram 配置已迁移到 configs/base.yaml 中的 telegram: 部分。
+#
+# 迁移说明:
+#   - 所有通知开关现在在 configs/base.yaml → telegram.notify.*
+#   - 消息队列配置在 configs/base.yaml → telegram.queue.*
+#   - 安全配置在 configs/base.yaml → telegram.security.*
+#   - 静音时段在 configs/base.yaml → telegram.quiet_hours.*
+#
+# 请编辑 configs/base.yaml 而不是此文件。
+# 此文件保留仅供参考，将在未来版本中删除。
+#
+# ============================================================================
+# [以下为旧配置，仅供参考]
+# ============================================================================
+#
+# Telegram Notification Configuration (DEPRECATED)
+#
 # Configure Telegram bot for real-time trading notifications
 
 telegram:

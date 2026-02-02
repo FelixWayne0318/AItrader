@@ -148,6 +148,9 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     telegram_notify_positions: bool = True
     telegram_notify_errors: bool = True
     telegram_notify_heartbeat: bool = True  # v2.1: 每次 on_timer 发送心跳状态
+    telegram_notify_trailing_stop: bool = True  # v3.13: 移动止损更新通知
+    telegram_notify_startup: bool = True  # v3.13: 策略启动通知
+    telegram_notify_shutdown: bool = True  # v3.13: 策略关闭通知
 
     # Telegram Queue (v4.0 - Non-blocking message sending)
     telegram_queue_enabled: bool = True  # 启用消息队列 (默认开启)
@@ -451,6 +454,10 @@ class DeepSeekAIStrategy(Strategy):
                     self.telegram_notify_positions = config.telegram_notify_positions
                     self.telegram_notify_errors = config.telegram_notify_errors
                     self.telegram_notify_heartbeat = config.telegram_notify_heartbeat  # v2.1
+                    # v3.13: 新增通知开关
+                    self.telegram_notify_trailing_stop = config.telegram_notify_trailing_stop
+                    self.telegram_notify_startup = config.telegram_notify_startup
+                    self.telegram_notify_shutdown = config.telegram_notify_shutdown
 
                     self.log.info("✅ Telegram Bot initialized successfully")
                     
@@ -752,7 +759,9 @@ class DeepSeekAIStrategy(Strategy):
         self._timer_count = 0
 
         # Send Telegram startup notification
-        if self.telegram_bot and self.enable_telegram:
+        # v3.13: Added notify_startup switch
+        if (self.telegram_bot and self.enable_telegram and
+            getattr(self, 'telegram_notify_startup', True)):
             try:
                 # v4.0: Extract timeframe from bar_type for display
                 bar_type_str = str(self.bar_type)
@@ -793,6 +802,36 @@ class DeepSeekAIStrategy(Strategy):
     def on_stop(self):
         """Actions to be performed on strategy stop."""
         self.log.info("Stopping DeepSeek AI Strategy...")
+
+        # v3.13: Send shutdown notification
+        if (self.telegram_bot and self.enable_telegram and
+            getattr(self, 'telegram_notify_shutdown', True)):
+            try:
+                # Calculate uptime
+                uptime_str = "N/A"
+                if self.strategy_start_time:
+                    uptime_delta = datetime.utcnow() - self.strategy_start_time
+                    hours = int(uptime_delta.total_seconds() // 3600)
+                    minutes = int((uptime_delta.total_seconds() % 3600) // 60)
+                    uptime_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+
+                shutdown_msg = self.telegram_bot.format_shutdown_message({
+                    'instrument_id': str(self.instrument_id),
+                    'reason': 'normal',
+                    'uptime': uptime_str,
+                })
+                # Use direct send (not queue) to ensure message is sent before shutdown
+                self.telegram_bot.send_message_sync(shutdown_msg, use_queue=False)
+                self.log.info("📱 Sent shutdown notification to Telegram")
+            except Exception as e:
+                self.log.warning(f"Failed to send shutdown notification: {e}")
+
+        # Stop Telegram message queue if running
+        if self.telegram_bot:
+            try:
+                self.telegram_bot.stop_queue()
+            except Exception as e:
+                self.log.warning(f"Error stopping Telegram queue: {e}")
 
         # Cancel any pending orders
         self.cancel_all_orders(self.instrument_id)
@@ -3474,7 +3513,9 @@ class DeepSeekAIStrategy(Strategy):
             self.log.info(f"✅ New trailing SL order submitted @ ${new_sl_price:,.2f}")
 
             # Send Telegram notification for trailing stop update (with throttle)
-            if self.telegram_bot and self.enable_telegram and old_sl_price:
+            # v3.13: Added notify_trailing_stop switch
+            if (self.telegram_bot and self.enable_telegram and old_sl_price and
+                getattr(self, 'telegram_notify_trailing_stop', True)):
                 import time
                 current_time = time.time()
                 time_since_last = current_time - self._last_trailing_stop_notify_time
