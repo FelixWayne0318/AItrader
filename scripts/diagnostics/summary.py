@@ -164,19 +164,44 @@ class DataFlowSummary(DiagnosticStep):
     def _print_position_data(self) -> None:
         """Print current position data."""
         print()
-        print_box("当前持仓")
+        print_box("当前持仓 & v4.8 仓位状态")
         print()
+
+        # v4.8: Display leverage and max_usdt
+        leverage = self.ctx.binance_leverage
+        ctx = self.ctx.account_context
+        equity = ctx.get('equity', 0)
+        max_usdt = ctx.get('max_usdt', 0)
+
+        print(f"  v4.8 仓位参数:")
+        print(f"    杠杆 (Binance): {leverage}x")
+        print(f"    资金 (equity):  ${equity:,.2f}")
+        print(f"    max_usdt:       ${max_usdt:,.2f}")
 
         if self.ctx.current_position:
             pos = self.ctx.current_position
+            position_value = pos.get('position_value_usdt', 0)
+            remaining = ctx.get('remaining_capacity', max_usdt - position_value)
+
+            print()
             print(f"  持仓状态: 有持仓")
             print(f"    方向:     {pos.get('side', 'N/A').upper()}")
             print(f"    数量:     {pos.get('quantity', 0)} BTC")
+            print(f"    持仓价值: ${position_value:,.2f}")
             print(f"    入场价:   ${pos.get('entry_price', 0):,.2f}")
             print(f"    未实现PnL: ${pos.get('unrealized_pnl', 0):,.2f}")
             print(f"    盈亏比例: {pos.get('pnl_pct', 0):+.2f}%")
+            print()
+            print(f"  v4.8 累加模式:")
+            capacity_pct = (position_value / max_usdt * 100) if max_usdt > 0 else 0
+            print(f"    已用容量: {capacity_pct:.1f}%")
+            print(f"    剩余可加仓: ${remaining:,.2f}")
+            if remaining <= 0:
+                print(f"    ⚠️ 已达上限，无法加仓")
         else:
+            print()
             print(f"  持仓状态: 无持仓 (FLAT)")
+            print(f"  v4.8 累加模式: 可开首仓")
 
     def _print_ai_decision(self) -> None:
         """Print AI decision results."""
