@@ -836,7 +836,7 @@ class TelegramCommandHandler:
         or types "/" in private chat with the bot.
         """
         try:
-            from telegram import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, BotCommandScopeDefault
+            from telegram import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, BotCommandScopeDefault, BotCommandScopeChat
 
             commands = [
                 BotCommand("menu", "显示操作菜单"),
@@ -860,19 +860,29 @@ class TelegramCommandHandler:
             )
             self.logger.info("✅ Cleared default bot commands")
 
-            # 2. Register commands ONLY for private chats
+            # 2. Explicitly remove commands from ALL group chats
+            await self.application.bot.set_my_commands(
+                [],
+                scope=BotCommandScopeAllGroupChats()
+            )
+            self.logger.info("✅ Bot commands removed from all group chats")
+
+            # 3. Clear commands for specific group (@AlgVex)
+            try:
+                await self.application.bot.set_my_commands(
+                    [],
+                    scope=BotCommandScopeChat(chat_id=-1003142003085)
+                )
+                self.logger.info("✅ Bot commands removed from @AlgVex group")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Could not clear @AlgVex commands: {e}")
+
+            # 4. Register commands ONLY for private chats
             await self.application.bot.set_my_commands(
                 commands,
                 scope=BotCommandScopeAllPrivateChats()
             )
             self.logger.info("✅ Bot commands registered for private chats")
-
-            # 3. Explicitly remove commands from group chats
-            await self.application.bot.set_my_commands(
-                [],
-                scope=BotCommandScopeAllGroupChats()
-            )
-            self.logger.info("✅ Bot commands removed from group chats")
 
             return True
 
