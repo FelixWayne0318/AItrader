@@ -36,14 +36,23 @@ from strategy.trading_logic import (
 
 
 # =============================================================================
-# TradingAgents v3.12: Indicator Definitions for AI
+# TradingAgents v3.15: Market Order Reality Check
+#
+# v3.15 Changes:
+# - Updated Bull/Bear/Risk prompts to reflect market order entry behavior
+# - AI now explicitly told: entry at CURRENT PRICE, not at S/R levels
+# - LONG only recommended if price ALREADY near support (within 1-2%)
+# - SHORT only recommended if price ALREADY near resistance (within 1-2%)
+# - If price is in middle of S/R range, recommend HOLD (wait for better entry)
+#
+# v3.12: Indicator Definitions for AI
 # Borrowed from: TradingAgents/agents/analysts/market_analyst.py
 #
 # Philosophy: "Teach AI WHAT indicators mean, not HOW to use them"
 # - Provide calculation methods and mathematical definitions
 # - Explain what values represent, not trading rules
 # - Let AI form its own interpretation based on raw data
-# - Aligned with TradingAgents "授人以渔" (授人以渔) principle
+# - Aligned with TradingAgents "授人以渔" (teach fishing, not give fish) principle
 # =============================================================================
 INDICATOR_DEFINITIONS = """
 TECHNICAL INDICATOR REFERENCE (Calculation and Meaning):
@@ -626,12 +635,15 @@ TASK:
 1. Identify BULLISH signals with specific numbers from the data
 2. Present 2-3 compelling reasons for going LONG
 3. If bear made arguments, counter them with evidence
-4. CRITICAL - S/R ZONE RULES FOR LONG ENTRIES:
-   - IDEAL LONG: Price at or near SUPPORT zone = prime entry point (expect bounce)
-   - AVOID LONG: Price at or near RESISTANCE zone = high rejection risk (bad entry)
-   - LONG R/R CHECK: Only recommend LONG if R/R ratio >= 1.5:1
+4. CRITICAL - S/R ZONE ENTRY RULES (v3.15 - Market Order Reality):
+   ⚠️ IMPORTANT: System will enter at CURRENT MARKET PRICE, not at S/R levels.
+   - ONLY argue for LONG if current price is ALREADY near SUPPORT (within 1-2%)
+   - DO NOT argue for LONG if price is in the middle of S/R range (wait for pullback)
+   - DO NOT argue for LONG if price is near RESISTANCE (bad entry, high rejection risk)
+   - If price is far from support, recommend HOLD and wait for better entry
+   - LONG R/R CHECK: Only recommend LONG if R/R ratio >= 1.5:1 at CURRENT price
    - If S/R report shows "LONG entry NOT recommended" - DO NOT argue for LONG
-5. If price is far from both S/R zones, focus on momentum and trend signals
+5. If price is far from both S/R zones, recommend HOLD (not a good entry point)
 
 Deliver your argument (2-3 paragraphs):"""
 
@@ -699,12 +711,15 @@ TASK:
 1. Identify BEARISH signals or risks with specific numbers from the data
 2. Present 2-3 compelling reasons AGAINST going LONG (or for going SHORT)
 3. Counter the bull's arguments with evidence
-4. CRITICAL - S/R ZONE RULES FOR SHORT ENTRIES:
-   - IDEAL SHORT: Price at or near RESISTANCE zone = prime entry point (expect rejection)
-   - AVOID SHORT: Price at or near SUPPORT zone = high bounce risk (will stop you out)
-   - SHORT R/R CHECK: Only recommend SHORT if R/R ratio >= 1.5:1
+4. CRITICAL - S/R ZONE ENTRY RULES (v3.15 - Market Order Reality):
+   ⚠️ IMPORTANT: System will enter at CURRENT MARKET PRICE, not at S/R levels.
+   - ONLY argue for SHORT if current price is ALREADY near RESISTANCE (within 1-2%)
+   - DO NOT argue for SHORT if price is in the middle of S/R range (wait for rally)
+   - DO NOT argue for SHORT if price is near SUPPORT (bad entry, high bounce risk)
+   - If price is far from resistance, recommend HOLD and wait for better entry
+   - SHORT R/R CHECK: Only recommend SHORT if R/R ratio >= 1.5:1 at CURRENT price
    - If S/R report shows "SHORT entry NOT recommended" - DO NOT argue for SHORT
-5. If price is far from both S/R zones, focus on trend breakdown signals
+5. If price is far from both S/R zones, recommend HOLD (not a good entry point)
 
 Deliver your argument (2-3 paragraphs):"""
 
@@ -894,28 +909,38 @@ ACCOUNT CONTEXT:
 CURRENT PRICE: ${current_price:,.2f}
 
 YOUR TASK:
-1. Evaluate if the proposed trade makes sense given the market data
+⚠️ CRITICAL: Entry will be at CURRENT MARKET PRICE (${current_price:,.2f}), not at S/R levels.
+
+1. FIRST - Validate if CURRENT PRICE is at a good entry point:
+   - For LONG: Current price must be ALREADY near SUPPORT (within 1-2%) to approve
+   - For SHORT: Current price must be ALREADY near RESISTANCE (within 1-2%) to approve
+   - If price is in the MIDDLE of S/R range: Change to HOLD (bad R/R at current price)
+   - If price is far from ideal entry zone: Change to HOLD (wait for better price)
+
 2. Determine stop loss using S/R zones as reference:
    - For LONG: Place SL below nearest SUPPORT zone (preferably with ORDER_FLOW or HIGH strength)
    - For SHORT: Place SL above nearest RESISTANCE zone (preferably with ORDER_FLOW or HIGH strength)
    - Consider market volatility: in high volatility, use wider SL to avoid noise-triggered stops
    - Aim for SL distance of at least 0.5-1% to account for normal price fluctuation
+
 3. Determine take profit using S/R zones as reference:
    - For LONG: Target nearest RESISTANCE zone as TP (consider zone Level: MAJOR > INTERMEDIATE > MINOR)
    - For SHORT: Target nearest SUPPORT zone as TP
-4. Evaluate Risk/Reward ratio (CRITICAL):
+
+4. Evaluate Risk/Reward ratio at CURRENT PRICE (CRITICAL):
+   - Calculate: SL distance = |current_price - stop_loss|, TP distance = |take_profit - current_price|
    - MINIMUM acceptable R/R is 1.5:1 (TP distance >= 1.5x SL distance)
-   - For HIGH confidence trades, aim for R/R of 2:1 or better
-   - IMPORTANT: If R/R is below 1.5:1, you MUST either:
-     a) Adjust SL/TP to achieve 1.5:1 ratio, OR
-     b) Change signal to HOLD (do not execute unfavorable trades)
-   - Never set TP equal to or less than SL distance
-5. VALIDATE TRADE AGAINST S/R ZONES (CRITICAL):
-   - REJECT LONG if price is AT or VERY CLOSE to resistance (high rejection risk)
-   - REJECT SHORT if price is AT or VERY CLOSE to support (high bounce risk)
-   - APPROVE LONG if price is near support and R/R >= 1.5:1 (ideal entry)
-   - APPROVE SHORT if price is near resistance and R/R >= 1.5:1 (ideal entry)
-   - If S/R report shows "NOT recommended" for the proposed direction, change to HOLD
+   - IMPORTANT: If R/R at current price is below 1.5:1, you MUST change signal to HOLD
+   - DO NOT adjust SL/TP to artificially inflate R/R - if the entry is bad, signal HOLD
+
+5. FINAL VALIDATION (v3.15 - Market Order Reality Check):
+   - Entry happens at CURRENT PRICE, not at S/R zones
+   - REJECT LONG if current price is far from support (> 2% away) - bad entry timing
+   - REJECT SHORT if current price is far from resistance (> 2% away) - bad entry timing
+   - APPROVE LONG only if current price is already near support AND R/R >= 1.5:1
+   - APPROVE SHORT only if current price is already near resistance AND R/R >= 1.5:1
+   - When in doubt, choose HOLD - waiting for better entry is better than bad entry
+
 6. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
 
 SIGNAL TYPES (v3.12 - choose the most appropriate):
