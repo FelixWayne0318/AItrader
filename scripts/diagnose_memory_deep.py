@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-记忆系统深度诊断脚本 v1.0
+记忆系统深度诊断脚本 v2.0
 
 深入诊断以下问题：
-1. multi_agent 为什么未初始化
+1. multi_agent 为什么未初始化 (导致 PnL=0%)
 2. 记忆文件内容分析
-3. record_outcome 调用链追踪
-4. DeepSeek API key 验证
+3. Coinalyze API key 加载问题
+4. Order Book adaptive OBI 历史基线问题
+5. 环境变量加载流程追踪
 
 使用方法 (在服务器上运行):
     cd /home/linuxuser/nautilus_AItrader
@@ -384,8 +385,252 @@ def check_config_files():
             print(f"     ❌ 解析失败: {e}")
 
 
+def check_coinalyze_api():
+    """检查 Coinalyze API key 加载问题"""
+    print_section("8. Coinalyze API 深度检查")
+
+    # 1. 检查环境变量
+    coinalyze_key = os.environ.get('COINALYZE_API_KEY')
+    print(f"  📋 环境变量检查:")
+    print(f"     os.environ.get('COINALYZE_API_KEY'): {'✅ 已设置' if coinalyze_key else '❌ 未设置'}")
+    if coinalyze_key:
+        print(f"     值: {coinalyze_key[:4]}...{coinalyze_key[-4:]}")
+
+    # 2. 检查配置文件中的配置
+    print()
+    print(f"  📋 配置文件检查:")
+    try:
+        import yaml
+        config_file = PROJECT_ROOT / "configs" / "base.yaml"
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+
+        coinalyze_config = config.get('coinalyze', {})
+        print(f"     coinalyze.enabled: {coinalyze_config.get('enabled', 'N/A')}")
+        print(f"     coinalyze.api_key 配置: {coinalyze_config.get('api_key', 'N/A')}")
+        print(f"     coinalyze.fallback_enabled: {coinalyze_config.get('fallback_enabled', 'N/A')}")
+    except Exception as e:
+        print(f"     ❌ 配置读取失败: {e}")
+
+    # 3. 检查诊断脚本中如何检测 Coinalyze
+    print()
+    print(f"  📋 诊断逻辑检查:")
+    diag_files = list((PROJECT_ROOT / "scripts" / "diagnostics").glob("*.py"))
+    for f in diag_files:
+        try:
+            content = f.read_text()
+            if 'coinalyze' in content.lower() or 'COINALYZE' in content:
+                # 查找相关代码
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    if 'coinalyze' in line.lower() and ('key' in line.lower() or 'api' in line.lower()):
+                        print(f"     {f.name}:{i+1}: {line.strip()[:60]}")
+        except:
+            pass
+
+    # 4. 尝试实际调用 CoinalyzeClient
+    print()
+    print(f"  📋 CoinalyzeClient 实例化测试:")
+    try:
+        from utils.coinalyze_client import CoinalyzeClient
+
+        # 测试不同方式获取 API key
+        test_sources = [
+            ('os.environ', os.environ.get('COINALYZE_API_KEY')),
+        ]
+
+        # 尝试从 ConfigManager 获取
+        try:
+            from utils.config_manager import ConfigManager
+            cm = ConfigManager(env='production')
+            cm.load()
+            cm_key = cm.get('coinalyze', 'api_key', default=None)
+            if not cm_key:
+                # 尝试从环境变量获取
+                cm_key = os.environ.get('COINALYZE_API_KEY')
+            test_sources.append(('ConfigManager', cm_key))
+        except Exception as e:
+            print(f"     ConfigManager 加载失败: {e}")
+
+        for source, key in test_sources:
+            if key:
+                print(f"     {source}: ✅ {key[:4]}...{key[-4:]}")
+            else:
+                print(f"     {source}: ❌ None")
+
+    except ImportError as e:
+        print(f"     ❌ CoinalyzeClient 导入失败: {e}")
+    except Exception as e:
+        print(f"     ❌ 测试失败: {e}")
+
+    return coinalyze_key is not None
+
+
+def check_order_book_obi():
+    """检查 Order Book OBI 历史基线问题"""
+    print_section("9. Order Book OBI 历史基线检查")
+
+    # 1. 检查配置
+    print(f"  📋 Order Book 配置:")
+    try:
+        import yaml
+        config_file = PROJECT_ROOT / "configs" / "base.yaml"
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+
+        ob_config = config.get('order_book', {})
+        print(f"     order_book.enabled: {ob_config.get('enabled', 'N/A')}")
+
+        processing = ob_config.get('processing', {})
+        history = processing.get('history', {})
+        print(f"     history.size: {history.get('size', 'N/A')}")
+
+        weighted_obi = processing.get('weighted_obi', {})
+        print(f"     weighted_obi.adaptive: {weighted_obi.get('adaptive', 'N/A')}")
+        print(f"     weighted_obi.base_decay: {weighted_obi.get('base_decay', 'N/A')}")
+    except Exception as e:
+        print(f"     ❌ 配置读取失败: {e}")
+
+    # 2. 检查 OrderBookProcessor 代码
+    print()
+    print(f"  📋 OrderBookProcessor 历史基线逻辑:")
+    try:
+        ob_file = PROJECT_ROOT / "utils" / "order_book_processor.py"
+        if ob_file.exists():
+            content = ob_file.read_text()
+
+            # 查找历史相关代码
+            patterns = [
+                ('history', '历史数据存储'),
+                ('baseline', '基线计算'),
+                ('NO_DATA', 'NO_DATA 状态'),
+                ('adaptive', '自适应 OBI'),
+            ]
+
+            for pattern, desc in patterns:
+                if pattern in content:
+                    # 找到相关行
+                    lines = content.split('\n')
+                    found_lines = [(i+1, line.strip()[:60]) for i, line in enumerate(lines)
+                                   if pattern in line and not line.strip().startswith('#')]
+                    if found_lines:
+                        print(f"     ✅ {desc}:")
+                        for ln, text in found_lines[:2]:
+                            print(f"        Line {ln}: {text}")
+                else:
+                    print(f"     ⚠️ 未找到: {desc}")
+        else:
+            print(f"     ❌ 文件不存在: {ob_file}")
+    except Exception as e:
+        print(f"     ❌ 检查失败: {e}")
+
+    # 3. 检查诊断脚本中的 OBI 检测逻辑
+    print()
+    print(f"  📋 诊断脚本 OBI 检测逻辑:")
+    try:
+        ai_decision_file = PROJECT_ROOT / "scripts" / "diagnostics" / "ai_decision.py"
+        if ai_decision_file.exists():
+            content = ai_decision_file.read_text()
+
+            # 查找 adaptive OBI 相关代码
+            if 'adaptive' in content.lower() and 'obi' in content.lower():
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    if 'adaptive' in line.lower() and ('obi' in line.lower() or 'baseline' in line.lower() or 'history' in line.lower()):
+                        print(f"     ai_decision.py:{i+1}: {line.strip()[:70]}")
+
+            # 查找警告消息
+            if '无历史基线' in content or 'no baseline' in content.lower():
+                print(f"     ✅ 找到 '无历史基线' 警告消息")
+    except Exception as e:
+        print(f"     ❌ 检查失败: {e}")
+
+    # 4. 尝试实例化 OrderBookProcessor 检查历史
+    print()
+    print(f"  📋 OrderBookProcessor 实例化测试:")
+    try:
+        from utils.order_book_processor import OrderBookProcessor
+
+        # 创建测试实例
+        processor = OrderBookProcessor(
+            weighted_obi_config={
+                'base_decay': 0.8,
+                'adaptive': True,
+                'volatility_factor': 0.1,
+                'min_decay': 0.5,
+                'max_decay': 0.95,
+            },
+            history_size=10
+        )
+
+        print(f"     ✅ 实例创建成功")
+
+        # 检查历史属性
+        if hasattr(processor, 'history'):
+            print(f"     history 属性存在: {type(processor.history)}")
+            if hasattr(processor.history, '__len__'):
+                print(f"     history 长度: {len(processor.history)}")
+        else:
+            print(f"     ⚠️ 没有 history 属性")
+
+        if hasattr(processor, 'obi_history'):
+            print(f"     obi_history 属性存在: {type(processor.obi_history)}")
+
+    except ImportError as e:
+        print(f"     ❌ 导入失败: {e}")
+    except Exception as e:
+        print(f"     ❌ 实例化失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def check_diagnose_realtime_logic():
+    """检查 diagnose_realtime.py 中的检测逻辑"""
+    print_section("10. 诊断脚本检测逻辑检查")
+
+    # 检查 position_check.py 中的 MemorySystemChecker
+    print(f"  📋 MemorySystemChecker 逻辑:")
+    try:
+        pos_check_file = PROJECT_ROOT / "scripts" / "diagnostics" / "position_check.py"
+        if pos_check_file.exists():
+            content = pos_check_file.read_text()
+
+            # 查找 multi_agent 检测逻辑
+            if 'multi_agent' in content:
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    if 'multi_agent' in line and ('未初始化' in line or 'None' in line or 'not' in line.lower()):
+                        print(f"     position_check.py:{i+1}: {line.strip()[:70]}")
+
+            # 查找 Coinalyze 检测逻辑
+            if 'coinalyze' in content.lower():
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    if 'coinalyze' in line.lower():
+                        print(f"     position_check.py:{i+1}: {line.strip()[:70]}")
+    except Exception as e:
+        print(f"     ❌ 检查失败: {e}")
+
+    # 检查 ai_decision.py 中的检测逻辑
+    print()
+    print(f"  📋 ai_decision.py Coinalyze/OBI 检测逻辑:")
+    try:
+        ai_file = PROJECT_ROOT / "scripts" / "diagnostics" / "ai_decision.py"
+        if ai_file.exists():
+            content = ai_file.read_text()
+
+            # 查找 Coinalyze API key 检测
+            lines = content.split('\n')
+            for i, line in enumerate(lines):
+                if ('coinalyze' in line.lower() and 'key' in line.lower()) or \
+                   ('未配置' in line and 'key' in line.lower()):
+                    print(f"     ai_decision.py:{i+1}: {line.strip()[:70]}")
+    except Exception as e:
+        print(f"     ❌ 检查失败: {e}")
+
+
 def main():
-    print_header("记忆系统深度诊断 v1.0")
+    print_header("记忆系统深度诊断 v2.0")
     print(f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  项目: {PROJECT_ROOT}")
 
@@ -412,6 +657,15 @@ def main():
     # 7. 检查配置文件
     check_config_files()
 
+    # 8. 检查 Coinalyze API (新增)
+    results['coinalyze'] = check_coinalyze_api()
+
+    # 9. 检查 Order Book OBI (新增)
+    check_order_book_obi()
+
+    # 10. 检查诊断脚本逻辑 (新增)
+    check_diagnose_realtime_logic()
+
     # 汇总
     print_header("诊断结果汇总")
 
@@ -437,11 +691,24 @@ def main():
             print("     → 这是上述问题的直接结果")
             print()
 
+    if not results.get('coinalyze'):
+        print("  ⚠️ 问题 4: Coinalyze API key 在环境变量中未找到")
+        print("     → 可能是诊断脚本检测逻辑有问题")
+        print("     → 或者环境变量未正确加载")
+        print()
+
+    print("  📋 Order Book OBI 历史基线问题:")
+    print("     → 如果系统运行很久仍显示 '无历史基线'")
+    print("     → 可能是 OrderBookProcessor 每次诊断都重新创建")
+    print("     → 历史数据没有持久化，每次都是空的")
+    print()
+
     print("  📝 建议操作:")
-    print("     1. 检查 ~/.env.aitrader 是否包含 DEEPSEEK_API_KEY")
+    print("     1. 检查 ~/.env.aitrader 是否包含所有 API keys")
     print("     2. 检查 .env 软链接是否正确指向 ~/.env.aitrader")
-    print("     3. 重启服务: sudo systemctl restart nautilus-trader")
-    print("     4. 查看启动日志: sudo journalctl -u nautilus-trader -f")
+    print("     3. 检查诊断脚本是否正确读取环境变量")
+    print("     4. 重启服务: sudo systemctl restart nautilus-trader")
+    print("     5. 查看启动日志: sudo journalctl -u nautilus-trader -f")
     print()
 
     return 0
