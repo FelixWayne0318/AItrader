@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
-记忆系统深度诊断脚本 v2.0
+记忆系统深度诊断脚本 v2.1
 
 深入诊断以下问题：
-1. multi_agent 为什么未初始化 (导致 PnL=0%)
-2. 记忆文件内容分析
+1. 记忆文件内容分析 (PnL 分布)
+2. MultiAgentAnalyzer 初始化检查
 3. Coinalyze API key 加载问题
 4. Order Book adaptive OBI 历史基线问题
 5. 环境变量加载流程追踪
+
+v2.1 更新:
+- 更新 PnL=0 警告信息，反映 v3.15/v3.16 修复
+- v3.15 修复了变量名问题 (multi_agent_analyzer → multi_agent)
+- v3.16 使用官方 realized_return 替代手动计算
 
 使用方法 (在服务器上运行):
     cd /home/linuxuser/nautilus_AItrader
@@ -140,9 +145,10 @@ def check_memory_file():
                 print()
                 print(f"  ⚠️ 警告: 所有记录的 pnl 都是 0!")
                 print(f"     可能原因:")
-                print(f"     1. multi_agent 未初始化 (最可能)")
-                print(f"     2. on_position_closed 中 pnl 提取失败")
-                print(f"     3. 这些是旧数据，新代码还未生效")
+                print(f"     1. 这些是 v3.16 之前的旧数据 (最可能)")
+                print(f"     2. NautilusTrader realized_return 返回 0 (真实盈亏为零)")
+                print(f"     📝 v3.15 修复了变量名问题 (multi_agent_analyzer → multi_agent)")
+                print(f"     📝 v3.16 使用官方 realized_return 替代手动计算")
 
             # 显示最近记录的完整结构
             print()
