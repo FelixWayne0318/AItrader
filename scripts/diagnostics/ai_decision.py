@@ -21,12 +21,17 @@ class AIInputDataValidator(DiagnosticStep):
 
     Based on v11.16: AI 输入数据验证 (传给 MultiAgent)
 
+    v2.5.0 更新:
+    - 新增: [10] historical_context 验证 (EVALUATION_FRAMEWORK v3.0.1)
+    - 新增: 20-bar 趋势数据显示 (price, RSI, MACD, volume)
+    - 新增: trend_direction 和 momentum_shift 分析
+
     v2.4.2 更新:
     - 先获取 order_flow, derivatives, order_book 数据，再打印
     - 确保显示的数据与实际传给 AI 的数据一致
     """
 
-    name = "AI 输入数据验证 (传给 MultiAgent)"
+    name = "AI 输入数据验证 (传给 MultiAgent, 10 类数据)"
 
     def run(self) -> bool:
         print("-" * 70)
@@ -68,9 +73,12 @@ class AIInputDataValidator(DiagnosticStep):
         # [9] Account context (v4.7)
         self._print_account_context()
 
+        # [10] Historical context (v2.5.0 / EVALUATION_FRAMEWORK v3.0.1)
+        self._print_historical_context()
+
         print()
         print("  ────────────────────────────────────────────────────────────────")
-        print("  ✅ AI 输入数据验证完成")
+        print("  ✅ AI 输入数据验证完成 (10 类数据)")
         return True
 
     def _fetch_mtf_data(self) -> None:
@@ -187,6 +195,24 @@ class AIInputDataValidator(DiagnosticStep):
             # Also store binance_derivatives if available
             if assembled_data.get('binance_derivatives'):
                 self.ctx.binance_derivatives_data = assembled_data.get('binance_derivatives')
+
+            # v2.5.0: Get historical_context from indicator_manager (EVALUATION_FRAMEWORK v3.0.1)
+            # AI needs 20-value trends, not isolated single indicator values
+            if hasattr(self.ctx, 'indicator_manager') and self.ctx.indicator_manager:
+                try:
+                    historical_context = self.ctx.indicator_manager.get_historical_context(count=20)
+                    if historical_context and historical_context.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR']:
+                        self.ctx.historical_context = historical_context
+                        # Also add to technical_data for AI analysis consistency
+                        if self.ctx.technical_data:
+                            self.ctx.technical_data['historical_context'] = historical_context
+                    else:
+                        self.ctx.historical_context = None
+                except Exception as hc_err:
+                    print(f"  ⚠️ Historical context 获取失败: {hc_err}")
+                    self.ctx.historical_context = None
+            else:
+                self.ctx.historical_context = None
 
         except Exception as e:
             print(f"  ⚠️ MTF 数据获取失败: {e}, 将显示空数据")
@@ -443,6 +469,63 @@ class AIInputDataValidator(DiagnosticStep):
             print(f"      can_add_safely:     {safety_emoji} {can_safely}")
         else:
             print("  [9] account_context: None (未获取)")
+        print()
+
+    def _print_historical_context(self) -> None:
+        """
+        Print historical context data (v2.5.0 / EVALUATION_FRAMEWORK v3.0.1).
+
+        AI needs 20-value trends for proper trend analysis, not isolated values.
+        """
+        hc = getattr(self.ctx, 'historical_context', None)
+
+        if hc and hc.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR', None]:
+            print("  [10] historical_context (20-bar 趋势数据 v3.0.1):")
+            print(f"      trend_direction:    {hc.get('trend_direction', 'N/A')}")
+            print(f"      momentum_shift:     {hc.get('momentum_shift', 'N/A')}")
+            print(f"      data_points:        {hc.get('data_points', 0)}")
+
+            # Format trend arrays (show last 5 values)
+            def format_recent(values, fmt=".2f"):
+                if not values or not isinstance(values, list):
+                    return "N/A"
+                recent = values[-5:] if len(values) >= 5 else values
+                return " → ".join([f"{v:{fmt}}" for v in recent])
+
+            price_trend = hc.get('price_trend', [])
+            rsi_trend = hc.get('rsi_trend', [])
+            macd_trend = hc.get('macd_trend', [])
+            volume_trend = hc.get('volume_trend', [])
+
+            print()
+            print("      📈 趋势数据 (最近 5 值):")
+            print(f"      price_trend:        {format_recent(price_trend)}")
+            print(f"      rsi_trend:          {format_recent(rsi_trend)}")
+            print(f"      macd_trend:         {format_recent(macd_trend, '.4f')}")
+            print(f"      volume_trend:       {format_recent(volume_trend, '.0f')}")
+
+            # Statistics
+            if price_trend and len(price_trend) >= 2:
+                price_change = ((price_trend[-1] / price_trend[0]) - 1) * 100 if price_trend[0] > 0 else 0
+                trend_emoji = "📈" if price_change > 0 else "📉" if price_change < 0 else "➡️"
+                print()
+                print(f"      {trend_emoji} 20-bar 价格变化: {price_change:+.2f}%")
+
+            if rsi_trend:
+                avg_rsi = sum(rsi_trend) / len(rsi_trend)
+                rsi_emoji = "🔴" if avg_rsi > 70 else "🟢" if avg_rsi < 30 else "🟡"
+                print(f"      {rsi_emoji} 平均 RSI: {avg_rsi:.1f}")
+
+            print()
+            print("      ℹ️ 数据来源: indicator_manager.get_historical_context()")
+            print("      ℹ️ 参考: EVALUATION_FRAMEWORK.md Section 2.1 数据完整性")
+        else:
+            if hasattr(self.ctx, 'indicator_manager') and self.ctx.indicator_manager:
+                print("  [10] historical_context: 数据不足 (需要至少 20 根 K线)")
+                print("      ℹ️ 诊断脚本刚启动，历史数据可能不足")
+                print("      ℹ️ 实盘服务运行后会自动累积数据")
+            else:
+                print("  [10] historical_context: indicator_manager 未初始化")
 
     def should_skip(self) -> bool:
         return self.ctx.summary_mode

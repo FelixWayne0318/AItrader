@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.4.9 (Coinalyze API 端点修复)
+实盘信号诊断脚本 v2.5.0 (EVALUATION_FRAMEWORK v3.0.1 完整验证)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.5.0 更新:
+- 新增: [10] historical_context 验证 (EVALUATION_FRAMEWORK v3.0.1)
+- 新增: 20-bar 趋势数据显示 (price_trend, rsi_trend, macd_trend, volume_trend)
+- 新增: trend_direction 和 momentum_shift 分析
+- 优化: AI 输入数据验证扩展为 10 类数据 (原 9 类)
 
 v2.4.9 更新:
 - 修复: Coinalyze API 测试使用 /open-interest 替代不存在的 /ping 端点
@@ -37,7 +43,7 @@ v2.4.1 更新:
 - 修正: account_context 字段名称与生产代码一致
 
 v2.4 更新 (v11.16 功能恢复):
-- 新增: AI 输入数据验证 (完整显示传给 AI 的所有 9 类数据)
+- 新增: AI 输入数据验证 (完整显示传给 AI 的所有数据)
 - 新增: AI Prompt 结构验证 (System/User Prompt + INDICATOR_DEFINITIONS + 记忆系统)
 - 新增: Bull/Bear 辩论记录显示
 - 新增: Post-Trade 生命周期测试 (OCO 清理 + Trailing Stop)
@@ -68,7 +74,7 @@ v2.1 更新 (v4.8 适配):
 - 获取实时市场数据 (K线、情绪)
 - 初始化并测试技术指标
 - 检查 Binance 真实持仓和杠杆
-- AI 输入数据验证 (9 类完整数据)
+- AI 输入数据验证 (10 类完整数据, 含 historical_context)
 - 运行 AI 决策流程 (Bull/Bear/Judge)
 - AI Prompt 结构验证 (记忆系统)
 - 测试 MTF 组件 (OrderFlow, Coinalyze, OrderBook)
@@ -163,7 +169,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.4.9 (Coinalyze API 端点修复)',
+        description='实盘信号诊断工具 v2.5.0 (EVALUATION_FRAMEWORK v3.0.1 完整验证)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
