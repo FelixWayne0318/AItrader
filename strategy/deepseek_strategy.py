@@ -3553,8 +3553,31 @@ class DeepSeekAIStrategy(Strategy):
 
         # Get confidence and technical data
         confidence = self.latest_signal_data.get('confidence', 'MEDIUM')
-        support = self.latest_technical_data.get('support', 0.0)
-        resistance = self.latest_technical_data.get('resistance', 0.0)
+
+        # v3.14: Use S/R Zone data (more sophisticated) instead of basic technical_data support/resistance
+        # S/R Zone Calculator aggregates: BB, SMA_50, SMA_200, Order Walls, Pivot Points
+        # Falls back to basic technical_data if S/R Zones not available
+        support = 0.0
+        resistance = 0.0
+        sr_source = "none"
+
+        if hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
+            nearest_support = self.latest_sr_zones_data.get('nearest_support')
+            nearest_resistance = self.latest_sr_zones_data.get('nearest_resistance')
+            if nearest_support and hasattr(nearest_support, 'price_center'):
+                support = nearest_support.price_center
+                sr_source = f"S/R Zone ({nearest_support.strength}, {nearest_support.level})"
+            if nearest_resistance and hasattr(nearest_resistance, 'price_center'):
+                resistance = nearest_resistance.price_center
+                sr_source = f"S/R Zone ({nearest_resistance.strength}, {nearest_resistance.level})"
+            self.log.info(f"📊 Using {sr_source}: Support=${support:,.0f}, Resistance=${resistance:,.0f}")
+        else:
+            # Fallback to basic technical data (simple high/low of recent bars)
+            support = self.latest_technical_data.get('support', 0.0)
+            resistance = self.latest_technical_data.get('resistance', 0.0)
+            if support > 0 or resistance > 0:
+                sr_source = "technical_data (basic)"
+                self.log.info(f"📊 Using {sr_source}: Support=${support:,.0f}, Resistance=${resistance:,.0f}")
 
         # Check for MultiAgent SL/TP (from Judge decision)
         # Note: MultiAgent returns 'stop_loss' and 'take_profit' fields directly
@@ -3575,9 +3598,9 @@ class DeepSeekAIStrategy(Strategy):
             tp_price = validated_tp
             self.log.info(f"🎯 Using MultiAgent SL/TP: {validation_reason}")
         else:
-            # Fall back to technical analysis using shared function
+            # Fall back to technical analysis using shared function (v3.14: now uses S/R Zones for TP)
             if multi_sl or multi_tp:
-                self.log.warning(f"⚠️ MultiAgent SL/TP invalid: {validation_reason}, falling back to technical analysis")
+                self.log.warning(f"⚠️ MultiAgent SL/TP invalid: {validation_reason}, falling back to S/R-based technical analysis")
 
             stop_loss_price, tp_price, calc_method = calculate_technical_sltp(
                 side=side.name,  # Convert OrderSide.BUY → 'BUY'
@@ -3588,7 +3611,7 @@ class DeepSeekAIStrategy(Strategy):
                 use_support_resistance=self.sl_use_support_resistance,
                 sl_buffer_pct=self.sl_buffer_pct,
             )
-            self.log.info(f"📍 Using technical analysis: {calc_method}")
+            self.log.info(f"📍 {calc_method}")
 
         # Log SL/TP summary
         self.log.info(
