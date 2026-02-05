@@ -11,6 +11,46 @@
 > - 新增 Sortino/Calmar Ratio、VaR/CVaR
 > - 新增交易成本建模、Walk-Forward 验证、策略衰减检测
 > - 样本量要求从 50 次提升到 200+ 次
+> - **v3.0.1**: 所有指标计算改用官方库，避免自己实现出错
+
+---
+
+## 〇、依赖库 (v3.0.1 新增)
+
+> **核心原则**: 尽量使用官方库，避免自己实现容易出错的计算
+
+### 必需依赖
+
+```bash
+pip install empyrical scipy statsmodels pandas numpy
+```
+
+| 库 | 版本 | 用途 | 文档 |
+|---|------|------|------|
+| **empyrical** | ≥0.5.5 | Sharpe/Sortino/Calmar/MDD/VaR | [empyrical.ml4trading.io](https://empyrical.ml4trading.io/) |
+| **scipy** | ≥1.9.0 | Bootstrap、统计检验 | [docs.scipy.org](https://docs.scipy.org/doc/scipy/reference/stats.html) |
+| **statsmodels** | ≥0.14.0 | 多重假设检验校正 | [statsmodels.org](https://www.statsmodels.org/) |
+| **pandas** | ≥2.0.0 | 时间序列处理 | [pandas.pydata.org](https://pandas.pydata.org/) |
+| **numpy** | ≥1.24.0 | 数值计算 | [numpy.org](https://numpy.org/) |
+
+### 可选依赖
+
+```bash
+pip install quantstats  # 更全面的策略分析报告
+```
+
+| 库 | 用途 | 说明 |
+|---|------|------|
+| **quantstats** | 一键生成 HTML 报告 | `qs.reports.html(returns, output='report.html')` |
+
+### 为什么不自己实现？
+
+| 自己实现 | 官方库 |
+|---------|-------|
+| ❌ 容易出错 (年化、标准差公式等) | ✅ 经过广泛测试和验证 |
+| ❌ 维护成本高 | ✅ 社区持续维护 |
+| ❌ 边界情况处理不全 | ✅ 处理 NaN、空数组等边界情况 |
+| ❌ 可能有性能问题 | ✅ 优化过的实现 |
 
 ---
 
@@ -456,9 +496,18 @@ def analyze_risk_reward_distribution(trades: List[Trade]) -> Dict:
 ```
 
 ```python
+# ============================================================
+# 推荐使用官方库: empyrical (Quantopian 开发)
+# 安装: pip install empyrical
+# 文档: https://empyrical.ml4trading.io/
+# ============================================================
+
+import empyrical as ep
+import pandas as pd
 import numpy as np
 from typing import List, Dict
 from dataclasses import dataclass
+from datetime import datetime
 
 @dataclass
 class Trade:
@@ -478,12 +527,11 @@ def calculate_trading_metrics(
     trading_days_per_year: int = 365,  # 加密货币 24/7
 ) -> Dict:
     """
-    计算交易绩效指标 (世界顶级量化标准)
+    计算交易绩效指标 - 使用 empyrical 官方库
 
     参考:
-    - Sharpe (1994): The Sharpe Ratio
-    - Sortino & Price (1994): Performance Measurement in a Downside Risk Framework
-    - Young (1991): Calmar Ratio
+    - empyrical 文档: https://empyrical.ml4trading.io/
+    - Quantopian GitHub: https://github.com/quantopian/empyrical
 
     Args:
         trades: 交易记录列表
@@ -499,99 +547,69 @@ def calculate_trading_metrics(
     losses = [t for t in trades if t.pnl < 0]
 
     # ============================================================
-    # 1. 基础统计
+    # 1. 基础统计 (自己计算，因为 empyrical 不提供)
     # ============================================================
     win_rate = len(wins) / n
     avg_win = sum(t.pnl for t in wins) / len(wins) if wins else 0
     avg_loss = abs(sum(t.pnl for t in losses) / len(losses)) if losses else 1
     risk_reward = avg_win / avg_loss if avg_loss > 0 else 0
 
-    # Profit Factor
     total_profit = sum(t.pnl for t in wins)
     total_loss = abs(sum(t.pnl for t in losses))
     profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
 
     # ============================================================
-    # 2. 净值曲线 (Equity Curve) - 用于回撤计算
+    # 2. 构建 pandas Series (empyrical 需要的格式)
     # ============================================================
-    equity_curve = [initial_capital]
-    for t in trades:
-        equity_curve.append(equity_curve[-1] + t.pnl)
-
-    # ============================================================
-    # 3. Maximum Drawdown (正确计算)
-    # ============================================================
-    running_max = equity_curve[0]
-    max_drawdown = 0
-    max_drawdown_duration = 0
-    current_drawdown_start = 0
-
-    for i, value in enumerate(equity_curve):
-        if value > running_max:
-            running_max = value
-            current_drawdown_start = i
-
-        if running_max > 0:
-            dd = (running_max - value) / running_max
-            if dd > max_drawdown:
-                max_drawdown = dd
-                max_drawdown_duration = i - current_drawdown_start
+    returns = pd.Series(
+        [t.pnl_pct / 100 for t in trades],  # 转换为小数
+        index=[t.exit_time for t in trades]
+    )
 
     # ============================================================
-    # 4. 收益率序列 (用于风险调整指标)
+    # 3. 使用 empyrical 官方函数 (经过验证，减少出错风险)
     # ============================================================
-    returns = np.array([t.pnl_pct / 100 for t in trades])  # 转换为小数
 
-    # 计算交易频率 (用于年化)
-    total_days = (trades[-1].exit_time - trades[0].entry_time).days or 1
-    trades_per_day = n / total_days
-    annualization_factor = np.sqrt(trades_per_day * trading_days_per_year)
+    # Sharpe Ratio (年化)
+    # empyrical.sharpe_ratio(returns, risk_free=0, period='daily', annualization=None)
+    sharpe_ratio = ep.sharpe_ratio(
+        returns,
+        risk_free=risk_free_rate / trading_days_per_year,  # 日化无风险利率
+        annualization=trading_days_per_year
+    )
 
-    # 日化无风险利率
-    rf_per_trade = risk_free_rate / (trades_per_day * trading_days_per_year)
+    # Sortino Ratio (年化)
+    # empyrical.sortino_ratio(returns, required_return=0, period='daily', annualization=None)
+    sortino_ratio = ep.sortino_ratio(
+        returns,
+        required_return=risk_free_rate / trading_days_per_year,
+        annualization=trading_days_per_year
+    )
 
-    # ============================================================
-    # 5. Sharpe Ratio (正确计算 - 年化)
-    #
-    # 公式: SR = (E[R] - Rf) / σ(R) * √(trades_per_year)
-    # 使用样本标准差 (n-1)
-    # ============================================================
-    excess_returns = returns - rf_per_trade
-    avg_excess_return = np.mean(excess_returns)
-    std_excess_return = np.std(excess_returns, ddof=1)  # 样本标准差 (n-1)
+    # Calmar Ratio
+    # empyrical.calmar_ratio(returns, period='daily', annualization=None)
+    calmar_ratio = ep.calmar_ratio(
+        returns,
+        annualization=trading_days_per_year
+    )
 
-    sharpe_ratio = 0
-    if std_excess_return > 0:
-        sharpe_ratio = (avg_excess_return / std_excess_return) * annualization_factor
+    # Maximum Drawdown
+    # empyrical.max_drawdown(returns)
+    max_drawdown = ep.max_drawdown(returns)
 
-    # ============================================================
-    # 6. Sortino Ratio (只惩罚下行波动)
-    #
-    # 公式: Sortino = (E[R] - Rf) / σ_downside * √(trades_per_year)
-    # σ_downside = sqrt(E[min(R-Rf, 0)²])
-    # ============================================================
-    downside_returns = np.minimum(excess_returns, 0)
-    downside_std = np.sqrt(np.mean(downside_returns ** 2))
+    # 年化收益率
+    # empyrical.annual_return(returns, period='daily', annualization=None)
+    annualized_return = ep.annual_return(
+        returns,
+        annualization=trading_days_per_year
+    )
 
-    sortino_ratio = 0
-    if downside_std > 0:
-        sortino_ratio = (avg_excess_return / downside_std) * annualization_factor
-
-    # ============================================================
-    # 7. Calmar Ratio (收益/最大回撤)
-    #
-    # 公式: Calmar = 年化收益率 / 最大回撤
-    # ============================================================
-    total_return = (equity_curve[-1] - initial_capital) / initial_capital
-    years = total_days / trading_days_per_year
-    annualized_return = (1 + total_return) ** (1 / years) - 1 if years > 0 else 0
-
-    calmar_ratio = 0
-    if max_drawdown > 0:
-        calmar_ratio = annualized_return / max_drawdown
+    # 总收益率
+    # empyrical.cum_returns_final(returns, starting_value=0)
+    total_return = ep.cum_returns_final(returns)
 
     # ============================================================
-    # 8. 汇总结果
+    # 4. 汇总结果
     # ============================================================
     return {
         # 基础统计
@@ -602,23 +620,32 @@ def calculate_trading_metrics(
         'avg_win': avg_win,
         'avg_loss': avg_loss,
 
-        # 风险调整收益 (年化)
-        'sharpe_ratio': sharpe_ratio,
-        'sortino_ratio': sortino_ratio,
-        'calmar_ratio': calmar_ratio,
+        # 风险调整收益 (年化) - 使用 empyrical 官方实现
+        'sharpe_ratio': sharpe_ratio if not np.isnan(sharpe_ratio) else 0,
+        'sortino_ratio': sortino_ratio if not np.isnan(sortino_ratio) else 0,
+        'calmar_ratio': calmar_ratio if not np.isnan(calmar_ratio) else 0,
 
-        # 风险指标
-        'max_drawdown': max_drawdown,
-        'max_drawdown_duration_trades': max_drawdown_duration,
+        # 风险指标 - 使用 empyrical 官方实现
+        'max_drawdown': abs(max_drawdown),  # empyrical 返回负数
 
-        # 收益指标
+        # 收益指标 - 使用 empyrical 官方实现
         'total_return': total_return,
         'annualized_return': annualized_return,
 
         # 元数据
-        'annualization_factor': annualization_factor,
         'risk_free_rate_used': risk_free_rate,
+        'library_used': 'empyrical',
     }
+
+
+# ============================================================
+# 替代方案: quantstats (更全面的分析)
+# 安装: pip install quantstats
+# 文档: https://github.com/ranaroussi/quantstats
+# ============================================================
+
+# import quantstats as qs
+# qs.reports.html(returns, benchmark_returns, output='report.html')
 ```
 
 ### 4.7 样本量要求 (v3.0 更新)
@@ -944,31 +971,30 @@ AI 自主判断:
 > **世界顶级量化标准必备**: 监管机构 (Basel III/IV) 要求的风险指标
 
 ```python
+# ============================================================
+# 推荐使用官方库: empyrical 或 scipy.stats
+# empyrical 提供 value_at_risk 函数
+# scipy.stats 提供统计分布函数
+# ============================================================
+
+import empyrical as ep
 import numpy as np
+from scipy import stats
 from typing import List, Dict
 
 def calculate_var_cvar(
     returns: List[float],
     confidence_levels: List[float] = [0.95, 0.99],
-    method: str = 'historical'  # 'historical', 'parametric', 'cornish_fisher'
 ) -> Dict:
     """
     计算 VaR (Value at Risk) 和 CVaR (Conditional VaR / Expected Shortfall)
 
-    VaR: 在给定置信水平下，最大可能损失
-    CVaR: 当损失超过 VaR 时的平均损失 (更保守的指标)
+    使用 empyrical 和 scipy 官方库实现
 
     参考:
+    - empyrical: https://empyrical.ml4trading.io/
+    - scipy.stats: https://docs.scipy.org/doc/scipy/reference/stats.html
     - Artzner et al. (1999): Coherent Measures of Risk
-    - Basel III/IV 监管框架
-
-    Args:
-        returns: 收益率序列
-        confidence_levels: 置信水平列表
-        method: 计算方法
-            - 'historical': 历史模拟法 (非参数)
-            - 'parametric': 参数法 (假设正态分布)
-            - 'cornish_fisher': Cornish-Fisher 展开 (考虑偏度和峰度)
     """
     returns = np.array(returns)
     n = len(returns)
@@ -981,40 +1007,18 @@ def calculate_var_cvar(
     for conf in confidence_levels:
         alpha = 1 - conf  # 如 95% 置信度 → alpha = 0.05
 
-        if method == 'historical':
-            # 历史模拟法: 直接使用分位数
-            var = -np.percentile(returns, alpha * 100)
-            # CVaR: 低于 VaR 的所有收益的平均值
-            cvar = -np.mean(returns[returns <= -var])
+        # ============================================================
+        # VaR: 使用 empyrical.value_at_risk 官方函数
+        # ============================================================
+        var = ep.value_at_risk(returns, cutoff=alpha)
+        results[f'var_{int(conf*100)}'] = abs(var)
 
-        elif method == 'parametric':
-            # 参数法: 假设正态分布
-            from scipy import stats
-            mu = np.mean(returns)
-            sigma = np.std(returns, ddof=1)
-            z = stats.norm.ppf(alpha)
-            var = -(mu + z * sigma)
-            # CVaR (正态): E[X | X < VaR] = μ - σ * φ(z) / α
-            cvar = -(mu - sigma * stats.norm.pdf(z) / alpha)
-
-        elif method == 'cornish_fisher':
-            # Cornish-Fisher 展开: 考虑偏度和峰度
-            from scipy import stats
-            mu = np.mean(returns)
-            sigma = np.std(returns, ddof=1)
-            skew = stats.skew(returns)
-            kurt = stats.kurtosis(returns)  # excess kurtosis
-
-            z = stats.norm.ppf(alpha)
-            # Cornish-Fisher 调整
-            z_cf = (z + (z**2 - 1) * skew / 6
-                    + (z**3 - 3*z) * (kurt - 3) / 24
-                    - (2*z**3 - 5*z) * skew**2 / 36)
-            var = -(mu + z_cf * sigma)
-            # CVaR 近似
-            cvar = var * 1.2  # 简化近似，实际需要数值积分
-
-        results[f'var_{int(conf*100)}'] = var
+        # ============================================================
+        # CVaR (Expected Shortfall): 使用 numpy 分位数
+        # CVaR = 低于 VaR 的所有收益的平均值
+        # ============================================================
+        threshold = np.percentile(returns, alpha * 100)
+        cvar = -np.mean(returns[returns <= threshold])
         results[f'cvar_{int(conf*100)}'] = cvar
 
     # 风险评级
@@ -1027,8 +1031,8 @@ def calculate_var_cvar(
         risk_level = 'HIGH'
 
     results['risk_level'] = risk_level
-    results['method_used'] = method
     results['sample_size'] = n
+    results['library_used'] = 'empyrical + scipy'
 
     return results
 
@@ -1358,109 +1362,114 @@ def _get_decay_recommendation(severity: str) -> str:
 > **统计鲁棒性**: 当样本量有限时，Bootstrap 比参数方法更可靠
 
 ```python
+# ============================================================
+# 推荐使用官方库: scipy.stats.bootstrap (Python 3.9+)
+# 文档: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html
+# ============================================================
+
+from scipy import stats
 import numpy as np
 from typing import List, Dict, Callable
+import empyrical as ep
 
 def bootstrap_confidence_interval(
-    data: List[float],
+    data: np.ndarray,
     statistic_func: Callable,
-    n_bootstrap: int = 10000,
     confidence_level: float = 0.95,
-    random_seed: int = 42
+    n_resamples: int = 9999,
+    method: str = 'BCa',  # 'percentile', 'basic', 'BCa'
+    random_state: int = 42
 ) -> Dict:
     """
-    使用 Bootstrap 方法计算统计量的置信区间
+    使用 scipy.stats.bootstrap 官方实现计算置信区间
 
     参考:
+    - scipy.stats.bootstrap 文档
     - Efron & Tibshirani (1993): An Introduction to the Bootstrap
-    - Davison & Hinkley (1997): Bootstrap Methods and Their Application
-
-    优势:
-    - 不假设数据分布
-    - 适用于小样本
-    - 可用于复杂统计量 (Sharpe, MDD 等)
 
     Args:
-        data: 原始数据
-        statistic_func: 计算统计量的函数
-        n_bootstrap: Bootstrap 重采样次数
+        data: 原始数据 (numpy array)
+        statistic_func: 计算统计量的函数，接受 (data, axis) 参数
         confidence_level: 置信水平
+        n_resamples: Bootstrap 重采样次数
+        method: 'percentile', 'basic', 'BCa' (推荐 BCa，偏差校正加速)
     """
-    np.random.seed(random_seed)
-    n = len(data)
-    data = np.array(data)
+    # scipy.stats.bootstrap 需要数据在 tuple 中
+    data_tuple = (data,)
 
-    # 原始统计量
-    original_stat = statistic_func(data)
+    # 使用 scipy 官方 bootstrap 函数
+    result = stats.bootstrap(
+        data_tuple,
+        statistic=statistic_func,
+        n_resamples=n_resamples,
+        confidence_level=confidence_level,
+        method=method.lower(),
+        random_state=random_state
+    )
 
-    # Bootstrap 重采样
-    bootstrap_stats = []
-    for _ in range(n_bootstrap):
-        # 有放回抽样
-        sample = np.random.choice(data, size=n, replace=True)
-        bootstrap_stats.append(statistic_func(sample))
-
-    bootstrap_stats = np.array(bootstrap_stats)
-
-    # 计算置信区间 (百分位数法)
-    alpha = 1 - confidence_level
-    lower = np.percentile(bootstrap_stats, alpha / 2 * 100)
-    upper = np.percentile(bootstrap_stats, (1 - alpha / 2) * 100)
-
-    # 计算标准误差
-    se = np.std(bootstrap_stats)
-
-    # 偏差校正 (BCa 方法简化版)
-    bias = np.mean(bootstrap_stats) - original_stat
+    # 计算点估计
+    point_estimate = statistic_func(data, axis=None)
 
     return {
-        'point_estimate': original_stat,
-        'ci_lower': lower,
-        'ci_upper': upper,
+        'point_estimate': point_estimate,
+        'ci_lower': result.confidence_interval.low,
+        'ci_upper': result.confidence_interval.high,
         'confidence_level': confidence_level,
-        'standard_error': se,
-        'bias': bias,
-        'n_bootstrap': n_bootstrap,
-        'interpretation': f'{confidence_level*100:.0f}% CI: [{lower:.4f}, {upper:.4f}]'
+        'standard_error': result.standard_error,
+        'method': method,
+        'n_resamples': n_resamples,
+        'library_used': 'scipy.stats.bootstrap',
+        'interpretation': f'{confidence_level*100:.0f}% CI: [{result.confidence_interval.low:.4f}, {result.confidence_interval.high:.4f}]'
     }
 
 
-def bootstrap_sharpe_ratio(trades: List[Trade], **kwargs) -> Dict:
-    """专门用于 Sharpe Ratio 的 Bootstrap 分析"""
-    returns = [t.pnl_pct / 100 for t in trades]
+def bootstrap_sharpe_ratio(returns: np.ndarray, confidence_level: float = 0.95) -> Dict:
+    """
+    专门用于 Sharpe Ratio 的 Bootstrap 分析
 
-    def sharpe_func(r):
-        if len(r) < 2 or np.std(r) == 0:
-            return 0
-        return np.mean(r) / np.std(r) * np.sqrt(252)  # 年化
+    使用 empyrical.sharpe_ratio 作为统计量
+    """
+    def sharpe_statistic(x, axis):
+        # 处理 axis 参数 (scipy.bootstrap 需要)
+        if axis is None:
+            return ep.sharpe_ratio(x, annualization=252)
+        # 对于多维情况
+        return np.apply_along_axis(
+            lambda arr: ep.sharpe_ratio(arr, annualization=252),
+            axis, x
+        )
 
-    return bootstrap_confidence_interval(returns, sharpe_func, **kwargs)
+    return bootstrap_confidence_interval(
+        returns,
+        sharpe_statistic,
+        confidence_level=confidence_level
+    )
 
 
-def bootstrap_max_drawdown(trades: List[Trade], initial_capital: float = 10000, **kwargs) -> Dict:
-    """专门用于 Maximum Drawdown 的 Bootstrap 分析"""
+def bootstrap_max_drawdown(returns: np.ndarray, confidence_level: float = 0.95) -> Dict:
+    """
+    专门用于 Maximum Drawdown 的 Bootstrap 分析
 
-    def mdd_func(trade_indices):
-        # 根据索引重构净值曲线
-        equity = [initial_capital]
-        for i in trade_indices:
-            if 0 <= int(i) < len(trades):
-                equity.append(equity[-1] + trades[int(i)].pnl)
+    使用 empyrical.max_drawdown 作为统计量
+    """
+    def mdd_statistic(x, axis):
+        if axis is None:
+            return abs(ep.max_drawdown(x))
+        return np.apply_along_axis(
+            lambda arr: abs(ep.max_drawdown(arr)),
+            axis, x
+        )
 
-        running_max = equity[0]
-        max_dd = 0
-        for v in equity:
-            running_max = max(running_max, v)
-            if running_max > 0:
-                max_dd = max(max_dd, (running_max - v) / running_max)
-        return max_dd
-
-    indices = list(range(len(trades)))
-    return bootstrap_confidence_interval(indices, mdd_func, **kwargs)
+    return bootstrap_confidence_interval(
+        returns,
+        mdd_statistic,
+        confidence_level=confidence_level
+    )
 
 
 # 使用示例:
-# sharpe_ci = bootstrap_sharpe_ratio(trades, confidence_level=0.95)
+# returns = np.array([t.pnl_pct / 100 for t in trades])
+# sharpe_ci = bootstrap_sharpe_ratio(returns, confidence_level=0.95)
 # print(f"Sharpe Ratio: {sharpe_ci['point_estimate']:.2f}")
 # print(f"95% CI: [{sharpe_ci['ci_lower']:.2f}, {sharpe_ci['ci_upper']:.2f}]")
 
@@ -1474,61 +1483,66 @@ def bootstrap_max_drawdown(trades: List[Trade], initial_capital: float = 10000, 
 > **避免 p-hacking**: 当同时检验多个指标时，需要校正
 
 ```python
+# ============================================================
+# 推荐使用官方库: statsmodels.stats.multitest
+# 文档: https://www.statsmodels.org/stable/generated/statsmodels.stats.multitest.multipletests.html
+# ============================================================
+
+from statsmodels.stats.multitest import multipletests
+import numpy as np
 from typing import List, Dict
 
-def bonferroni_correction(
+def multiple_testing_correction(
     p_values: List[float],
-    alpha: float = 0.05
+    alpha: float = 0.05,
+    method: str = 'fdr_bh'  # 'bonferroni', 'fdr_bh', 'holm', 'fdr_by'
 ) -> Dict:
     """
-    Bonferroni 校正 (最保守)
+    多重假设检验校正 - 使用 statsmodels 官方实现
 
-    校正后的 α = α / n
+    可用方法:
+    - 'bonferroni': Bonferroni 校正 (最保守)
+    - 'fdr_bh': Benjamini-Hochberg FDR 校正 (推荐)
+    - 'holm': Holm-Bonferroni 校正 (阶梯式)
+    - 'fdr_by': Benjamini-Yekutieli FDR 校正 (更保守的 FDR)
+
+    参考:
+    - statsmodels 文档
+    - Benjamini & Hochberg (1995)
     """
-    n = len(p_values)
-    corrected_alpha = alpha / n
-    significant = [p < corrected_alpha for p in p_values]
+    p_array = np.array(p_values)
+
+    # 使用 statsmodels 官方函数
+    reject, pvals_corrected, alphacSidak, alphacBonf = multipletests(
+        p_array,
+        alpha=alpha,
+        method=method,
+        returnsorted=False
+    )
 
     return {
-        'method': 'bonferroni',
+        'method': method,
         'original_alpha': alpha,
-        'corrected_alpha': corrected_alpha,
-        'n_tests': n,
-        'significant': significant,
-        'n_significant': sum(significant)
+        'original_p_values': p_values,
+        'corrected_p_values': pvals_corrected.tolist(),
+        'reject_null': reject.tolist(),  # True = 显著
+        'n_significant': sum(reject),
+        'n_tests': len(p_values),
+        'sidak_alpha': alphacSidak,
+        'bonferroni_alpha': alphacBonf,
+        'library_used': 'statsmodels.stats.multitest',
     }
 
 
-def benjamini_hochberg_correction(
-    p_values: List[float],
-    alpha: float = 0.05
-) -> Dict:
-    """
-    Benjamini-Hochberg 校正 (控制 False Discovery Rate)
-
-    参考: Benjamini & Hochberg (1995)
-    """
-    n = len(p_values)
-    sorted_pairs = sorted(enumerate(p_values), key=lambda x: x[1])
-    significant = [False] * n
-
-    for rank, (original_idx, p) in enumerate(sorted_pairs, 1):
-        threshold = (rank / n) * alpha
-        if p <= threshold:
-            significant[original_idx] = True
-
-    return {
-        'method': 'benjamini_hochberg',
-        'original_alpha': alpha,
-        'n_tests': n,
-        'significant': significant,
-        'n_significant': sum(significant),
-        'fdr_controlled': True
-    }
+# 使用示例:
+# p_values = [0.01, 0.04, 0.03, 0.15, 0.008]
+# result = multiple_testing_correction(p_values, alpha=0.05, method='fdr_bh')
+# print(f"显著结果数量: {result['n_significant']}")
+# print(f"校正后 p 值: {result['corrected_p_values']}")
 
 # 应用场景:
 # 当同时检验多个指标 (胜率、Sharpe、MDD 等) 的显著性时
-# 使用 BH 校正避免假阳性
+# 使用 'fdr_bh' 控制假阳性率
 ```
 
 ---
