@@ -310,7 +310,8 @@ class AIInputDataValidator(DiagnosticStep):
                     print(f"      Trend:           {dynamics.get('trend', 'N/A')}")
                 else:
                     print("      Dynamics:        首次运行，无历史数据")
-                    print("      ⚠️ 注意: adaptive OBI 无历史基线，数值可靠性降低")
+                    print("      ℹ️ 注: 诊断脚本每次新建实例，无历史数据正常")
+                    print("         实盘服务中 OrderBookProcessor 会累积历史")
 
                 bid_near_5 = gradient.get('bid_near_5', 0) * 100
                 ask_near_5 = gradient.get('ask_near_5', 0) * 100
