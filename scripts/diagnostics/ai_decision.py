@@ -129,11 +129,13 @@ class AIInputDataValidator(DiagnosticStep):
                     anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
                     slippage_amounts = ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0])
 
-                    # v2.4.3: 使用正确的参数格式 (weighted_obi_config 是字典)
+                    # v2.4.5: 添加缺失的 min_decay 和 max_decay 字段
                     weighted_obi_config = {
                         "base_decay": weighted_obi_cfg.get('base_decay', 0.8),
                         "adaptive": weighted_obi_cfg.get('adaptive', True),
                         "volatility_factor": weighted_obi_cfg.get('volatility_factor', 0.1),
+                        "min_decay": weighted_obi_cfg.get('min_decay', 0.5),
+                        "max_decay": weighted_obi_cfg.get('max_decay', 0.95),
                     }
                     orderbook_processor = OrderBookProcessor(
                         base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
