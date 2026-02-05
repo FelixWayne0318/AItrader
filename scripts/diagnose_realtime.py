@@ -1,8 +1,53 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.4.1 (v11.16 功能完整恢复版)
+实盘信号诊断脚本 v2.6.0 (S/R Zone SL/TP 改进)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.6.0 更新:
+- 新增: S/R Zone Calculator 集成 (聚合 BB, SMA, Order Wall, Pivot)
+- 新增: SL/TP 回退计算现在使用 S/R Zone 数据 (与 deepseek_strategy v3.14 一致)
+- 新增: TP 基于阻力/支撑位计算，而非固定百分比
+- 新增: R/R 比率自动调整确保 >= 1.5:1
+- 新增: S/R Zone 数据显示 (级别、强度、来源类型)
+- 优化: AI Prompt 改进后的 S/R 入场规则验证
+
+v2.5.1 更新:
+- 修复: historical_context count 从 20 增加到 35，确保 MACD 历史计算有足够数据
+- 修复: momentum_shift 现在可以正常计算 (不再返回 INSUFFICIENT_DATA)
+- 优化: Risk Manager R/R 最低要求从 1:1 提升到 1.5:1
+
+v2.5.0 更新:
+- 新增: [10] historical_context 验证 (EVALUATION_FRAMEWORK v3.0.1)
+- 新增: 35-bar 趋势数据显示 (price_trend, rsi_trend, macd_trend, volume_trend)
+- 新增: trend_direction 和 momentum_shift 分析
+- 优化: AI 输入数据验证扩展为 10 类数据 (原 9 类)
+
+v2.4.9 更新:
+- 修复: Coinalyze API 测试使用 /open-interest 替代不存在的 /ping 端点
+- 修复: HTTP 404 错误 (Coinalyze 没有 /ping 端点)
+
+v2.4.8 更新:
+- 修复: dotenv 在 DiagnosticRunner.__init__() 中早期加载
+- 修复: APIHealthCheck 现在能正确读取 COINALYZE_API_KEY
+- 修复: 消除 "Coinalyze API: 未配置 key" 的误报
+
+v2.4.7 更新:
+- 新增: [A] 服务运行状态检查 (systemd, memory, logs)
+- 新增: [B] API 健康检查 (响应时间)
+- 新增: [C] 交易暂停状态检查
+- 新增: [D] 历史信号追踪
+- 优化: 完整覆盖实盘运行流程，问题可立即定位
+
+v2.4.6 更新:
+- 移除: "触发交易所需条件" 分析 (误导性的硬编码规则显示)
+- 原因: 与 TradingAgents v3.x AI 自主决策架构冲突
+
+v2.4.2 更新:
+- 修复: AI 输入数据验证 [11/24] 现在先获取数据再打印
+- 修复: order_flow, derivatives, order_book 数据在打印前获取
+- 优化: MultiAgentAnalyzer 复用已获取的数据，避免重复 API 调用
+- 保证: [11/24] 显示的数据与 [12/24] 传给 AI 的数据完全一致
 
 v2.4.1 更新:
 - 新增: TradingAgents v3.3 架构验证 (已移除规则, AI接收数据, MTF状态估算)
@@ -11,7 +56,7 @@ v2.4.1 更新:
 - 修正: account_context 字段名称与生产代码一致
 
 v2.4 更新 (v11.16 功能恢复):
-- 新增: AI 输入数据验证 (完整显示传给 AI 的所有 9 类数据)
+- 新增: AI 输入数据验证 (完整显示传给 AI 的所有数据)
 - 新增: AI Prompt 结构验证 (System/User Prompt + INDICATOR_DEFINITIONS + 记忆系统)
 - 新增: Bull/Bear 辩论记录显示
 - 新增: Post-Trade 生命周期测试 (OCO 清理 + Trailing Stop)
@@ -42,7 +87,8 @@ v2.1 更新 (v4.8 适配):
 - 获取实时市场数据 (K线、情绪)
 - 初始化并测试技术指标
 - 检查 Binance 真实持仓和杠杆
-- AI 输入数据验证 (9 类完整数据)
+- AI 输入数据验证 (11 类完整数据, 含 historical_context 和 S/R Zones)
+- S/R Zone 计算和显示 (BB, SMA, Order Walls 聚合)
 - 运行 AI 决策流程 (Bull/Bear/Judge)
 - AI Prompt 结构验证 (记忆系统)
 - 测试 MTF 组件 (OrderFlow, Coinalyze, OrderBook)
@@ -125,13 +171,19 @@ from scripts.diagnostics.summary import (
     DataFlowSummary,
     DeepAnalysis,
 )
+from scripts.diagnostics.service_health import (
+    ServiceHealthCheck,
+    APIHealthCheck,
+    TradingStateCheck,
+    SignalHistoryCheck,
+)
 
 
 def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.4.1 (v11.16 功能完整恢复版)',
+        description='实盘信号诊断工具 v2.5.1 (macd_trend 数据修复)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -177,7 +229,13 @@ Examples:
 
     # Add diagnostic steps in order
     # =========================================================================
-    # Phase 0: Configuration Validation
+    # Phase 0: Service Health (v2.4.7 新增)
+    # =========================================================================
+    runner.add_step(ServiceHealthCheck)      # [A] systemd/memory/logs 检查
+    runner.add_step(APIHealthCheck)          # [B] API 响应时间检查
+
+    # =========================================================================
+    # Phase 0.5: Configuration Validation
     # =========================================================================
     runner.add_step(CriticalConfigChecker)   # 检查关键配置
     runner.add_step(MTFConfigChecker)        # 检查 MTF 配置
@@ -201,6 +259,7 @@ Examples:
     # =========================================================================
     runner.add_step(PositionChecker)         # 检查 Binance 持仓
     runner.add_step(MemorySystemChecker)     # 记忆系统检查 (v3.12)
+    runner.add_step(TradingStateCheck)       # [C] 交易暂停状态检查 (v2.4.7)
 
     # =========================================================================
     # Phase 4: AI Input Data Validation (v2.4 新增)
@@ -243,6 +302,7 @@ Examples:
     # =========================================================================
     runner.add_step(DataFlowSummary)         # 数据流汇总
     runner.add_step(DeepAnalysis)            # 深入分析 (非 summary 模式)
+    runner.add_step(SignalHistoryCheck)      # [D] 历史信号追踪 (v2.4.7)
 
     # Run all diagnostic steps
     success = runner.run_all()

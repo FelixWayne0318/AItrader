@@ -770,10 +770,10 @@ class SRZoneCalculator:
         if nearest_resistance:
             lines.append(f"Nearest Resistance: ${nearest_resistance.price_center:,.0f} "
                         f"({nearest_resistance.distance_pct:.1f}% away)")
-            lines.append(f"  → LONG entries face {nearest_resistance.strength} resistance here")
+            lines.append(f"  → {nearest_resistance.strength} resistance zone - natural LONG take-profit level")
+            lines.append(f"  → CAUTION: Entering LONG here risks rejection from this level")
             if nearest_resistance.source_type == SRSourceType.ORDER_FLOW:
                 lines.append(f"  → Order flow data: {nearest_resistance.wall_size_btc:.2f} BTC wall (real-time)")
-            lines.append(f"  → Consider this level for LONG take-profit")
         else:
             lines.append("Nearest Resistance: Not detected (upside open)")
 
@@ -782,10 +782,10 @@ class SRZoneCalculator:
         if nearest_support:
             lines.append(f"Nearest Support: ${nearest_support.price_center:,.0f} "
                         f"({nearest_support.distance_pct:.1f}% away)")
-            lines.append(f"  → SHORT entries face {nearest_support.strength} support here")
+            lines.append(f"  → {nearest_support.strength} support zone - IDEAL LONG entry point (bounce expected)")
+            lines.append(f"  → CAUTION: Avoid SHORT here - high bounce risk will stop you out")
             if nearest_support.source_type == SRSourceType.ORDER_FLOW:
                 lines.append(f"  → Order flow data: {nearest_support.wall_size_btc:.2f} BTC wall (real-time)")
-            lines.append(f"  → Consider this level for SHORT take-profit")
         else:
             lines.append("Nearest Support: Not detected (downside open)")
 
@@ -804,13 +804,19 @@ class SRZoneCalculator:
             lines.append(f"  • Upside Potential: ${current_to_resistance:,.0f} ({nearest_resistance.distance_pct:.1f}%)")
             lines.append(f"  • Downside Risk: ${current_to_support:,.0f} ({nearest_support.distance_pct:.1f}%)")
 
-            # Risk/reward ratio
+            # Risk/reward ratio with guidance
             if current_to_support > 0:
                 rr_ratio = current_to_resistance / current_to_support
-                lines.append(f"  • LONG R/R Ratio: {rr_ratio:.2f}")
+                rr_status = "✅ FAVORABLE" if rr_ratio >= 1.5 else "⚠️ UNFAVORABLE"
+                lines.append(f"  • LONG R/R Ratio: {rr_ratio:.2f}:1 {rr_status}")
+                if rr_ratio < 1.5:
+                    lines.append(f"    → LONG entry NOT recommended here (R/R < 1.5:1)")
             if current_to_resistance > 0:
                 rr_ratio_short = current_to_support / current_to_resistance
-                lines.append(f"  • SHORT R/R Ratio: {rr_ratio_short:.2f}")
+                rr_status = "✅ FAVORABLE" if rr_ratio_short >= 1.5 else "⚠️ UNFAVORABLE"
+                lines.append(f"  • SHORT R/R Ratio: {rr_ratio_short:.2f}:1 {rr_status}")
+                if rr_ratio_short < 1.5:
+                    lines.append(f"    → SHORT entry NOT recommended here (R/R < 1.5:1)")
 
         lines.append("")
         lines.append("=" * 70)

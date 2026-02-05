@@ -306,6 +306,7 @@ class DiagnosticContext:
     derivatives_report: Optional[Dict] = None
     orderbook_report: Optional[Dict] = None  # v3.7: Order book depth data
     binance_funding_rate: Optional[Dict] = None  # v4.8: Binance 8h funding rate (主要数据源)
+    sr_zones_data: Optional[Dict] = None  # v2.6.0: S/R Zone Calculator data
 
     # AI decision data
     multi_agent: Any = None
@@ -318,7 +319,7 @@ class DiagnosticContext:
 
     # Step tracking
     current_step: int = 0
-    total_steps: int = 24  # v2.4.1: 22 + 2 (架构验证, 诊断总结box)
+    total_steps: int = 28  # v2.4.8: 24 + 4 (服务健康检查)
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
@@ -418,6 +419,26 @@ class DiagnosticRunner:
         )
         self.steps: List[DiagnosticStep] = []
 
+        # v2.4.8: Load dotenv early to ensure environment variables are available
+        # for all diagnostic steps (including APIHealthCheck which runs first)
+        self._load_environment()
+
+    def _load_environment(self) -> None:
+        """Load environment variables from .env files early."""
+        try:
+            from dotenv import load_dotenv
+            env_permanent = Path.home() / ".env.aitrader"
+            env_local = self.ctx.project_root / ".env"
+
+            if env_permanent.exists():
+                load_dotenv(env_permanent)
+            elif env_local.exists():
+                load_dotenv(env_local)
+            else:
+                load_dotenv()
+        except ImportError:
+            pass  # dotenv not installed, continue without it
+
     def add_step(self, step_class: type) -> None:
         """Add a diagnostic step."""
         self.steps.append(step_class(self.ctx))
@@ -444,7 +465,7 @@ class DiagnosticRunner:
             self.setup_output_capture()
 
             print("=" * 70)
-            print("  实盘信号诊断工具 v2.4.1 (v11.16 功能完整恢复版)")
+            print("  实盘信号诊断工具 v2.4.8 (dotenv 早期加载修复)")
             print("  基于 TradingAgents v3.12 架构")
             print("=" * 70)
             print()

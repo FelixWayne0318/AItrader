@@ -450,6 +450,25 @@ class MemorySystemChecker(DiagnosticStep):
         print()
         print("  🧠 MultiAgentAnalyzer 记忆系统状态:")
 
+        # v2.4.8: Initialize multi_agent if needed (just for memory check, no API call)
+        if self.ctx.multi_agent is None:
+            try:
+                from agents.multi_agent_analyzer import MultiAgentAnalyzer as MAAnalyzer
+                import os
+
+                api_key = os.getenv('DEEPSEEK_API_KEY')
+                if api_key:
+                    # Create instance just for memory check (won't make API calls)
+                    self.ctx.multi_agent = MAAnalyzer(
+                        api_key=api_key,
+                        model="deepseek-chat",
+                        temperature=0.3,
+                        debate_rounds=2,
+                        memory_file="data/trading_memory.json",
+                    )
+            except Exception as e:
+                print(f"     ⚠️ multi_agent 初始化失败: {e}")
+
         if self.ctx.multi_agent is not None:
             mem_count = len(getattr(self.ctx.multi_agent, 'decision_memory', []))
             mem_file = getattr(self.ctx.multi_agent, 'memory_file', 'N/A')
@@ -465,7 +484,7 @@ class MemorySystemChecker(DiagnosticStep):
                 else:
                     print(f"     → 传给 AI 的记忆摘要: (空 - 无历史交易)")
         else:
-            print(f"     ⚠️ multi_agent 未初始化")
+            print(f"     ⚠️ multi_agent 未初始化 (缺少 DEEPSEEK_API_KEY?)")
 
     def should_skip(self) -> bool:
         return self.ctx.summary_mode

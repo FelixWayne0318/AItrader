@@ -40,7 +40,7 @@ from .base import (
     print_box,
 )
 
-__version__ = "2.4.1"  # v2.4.1: Added TradingAgents architecture verify, diagnostic summary box, trigger conditions analysis
+__version__ = "2.4.7"  # v2.4.7: Added service health checks (systemd, API latency, trading state, signal history)
 __all__ = [
     "DiagnosticContext",
     "DiagnosticStep",

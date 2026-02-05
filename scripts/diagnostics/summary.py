@@ -384,7 +384,7 @@ class DeepAnalysis(DiagnosticStep):
         self._analyze_trend()
         self._analyze_sentiment()
         self._analyze_judge_decision()
-        self._analyze_trigger_conditions()
+        # v2.4.6: 移除 _analyze_trigger_conditions() - 误导性内容，暗示存在硬编码规则
         self._provide_recommendations()
 
         return True
@@ -547,78 +547,14 @@ class DeepAnalysis(DiagnosticStep):
             print("  🗣️ 辩论摘要:")
             print_wrapped(debate_summary[:200] + "..." if len(debate_summary) > 200 else debate_summary)
 
-    def _analyze_trigger_conditions(self) -> None:
-        """
-        Analyze conditions to trigger BUY/SELL signals.
-
-        Based on v11.16: [分析5] 触发交易所需条件
-        """
-        print()
-        print("[分析5] 触发交易所需条件 (最新提示词)")
-        print("-" * 50)
-
-        td = self.ctx.technical_data
-        price = self.ctx.current_price
-        sma_5 = td.get('sma_5', 0)
-        sma_20 = td.get('sma_20', 0)
-        rsi = td.get('rsi', 50)
-        macd = td.get('macd', 0)
-        macd_signal = td.get('macd_signal', 0)
-        macd_histogram = td.get('macd_histogram', 0)
-        bb_upper = td.get('bb_upper', 0)
-        bb_lower = td.get('bb_lower', 0)
-        support = td.get('support', 0)
-        resistance = td.get('resistance', 0)
-
-        # Calculate BB position
-        bb_position = 50.0
-        if bb_upper and bb_lower and bb_upper > bb_lower:
-            bb_width = bb_upper - bb_lower
-            bb_position = ((price - bb_lower) / bb_width) * 100
-
-        # BUY conditions
-        print("  要触发 BUY 信号 (ANY 2 of these is sufficient):")
-
-        cond1_buy = price > sma_5 and price > sma_20
-        print(f"    • 价格在 SMA5/SMA20 上方 (当前: {'✅' if cond1_buy else '❌'})")
-
-        cond2_buy = rsi < 60 and rsi < 70
-        print(f"    • RSI < 60 且不超买 (当前: {rsi:.1f}, {'✅' if cond2_buy else '❌'})")
-
-        cond3_buy = macd > macd_signal or macd_histogram > 0
-        print(f"    • MACD 金叉或柱状图为正 (当前: {'✅' if cond3_buy else '❌'})")
-
-        cond4_buy = bb_position < 30 or (support > 0 and price < support * 1.02)
-        print(f"    • 价格接近支撑或 BB 下轨 (当前位置: {bb_position:.1f}%)")
-
-        print()
-
-        # SELL conditions
-        print("  要触发 SELL 信号 (ANY 2 of these is sufficient):")
-
-        cond1_sell = price < sma_5 and price < sma_20
-        print(f"    • 价格在 SMA5/SMA20 下方 (当前: {'✅' if cond1_sell else '❌'})")
-
-        cond2_sell = rsi > 40 and rsi < 70  # Not overbought
-        print(f"    • RSI > 40 且显示弱势 (当前: {rsi:.1f}, {'✅' if cond2_sell else '❌'})")
-
-        cond3_sell = macd < macd_signal or macd_histogram < 0
-        print(f"    • MACD 死叉或柱状图为负 (当前: {'✅' if cond3_sell else '❌'})")
-
-        cond4_sell = bb_position > 70 or (resistance > 0 and price > resistance * 0.98)
-        print(f"    • 价格接近阻力或 BB 上轨 (当前位置: {bb_position:.1f}%)")
-
-        print()
-        print("  📌 提示词更新后，HOLD 仅在信号真正冲突时使用")
-
-        cfg = self.ctx.strategy_config
-        min_conf = getattr(cfg, 'min_confidence_to_trade', 'MEDIUM')
-        print(f"     当前 min_confidence_to_trade: {min_conf}")
+    # v2.4.6: 移除 _analyze_trigger_conditions() 方法
+    # 原因: 显示 "ANY 2 of these is sufficient" 等硬编码规则，与 TradingAgents v3.x
+    # 的 AI 自主决策架构冲突，容易造成误解。实际交易由 MultiAgent 自主决策。
 
     def _provide_recommendations(self) -> None:
         """Provide recommendations based on analysis."""
         print()
-        print("[分析6] 诊断建议")
+        print("[分析5] 诊断建议")
         print("-" * 50)
 
         td = self.ctx.technical_data

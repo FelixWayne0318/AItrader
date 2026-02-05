@@ -20,15 +20,34 @@ class AIInputDataValidator(DiagnosticStep):
     Shows exactly what data the AI receives for decision-making.
 
     Based on v11.16: AI 输入数据验证 (传给 MultiAgent)
+
+    v2.6.0 更新:
+    - 新增: [11] S/R Zones 验证 (支撑/阻力区计算)
+    - 新增: S/R Zone 数据用于 SL/TP 回退计算
+    - 新增: 硬风控状态显示
+    - 新增: R/R 比率分析
+
+    v2.5.0 更新:
+    - 新增: [10] historical_context 验证 (EVALUATION_FRAMEWORK v3.0.1)
+    - 新增: 35-bar 趋势数据显示 (price, RSI, MACD, volume)
+    - 新增: trend_direction 和 momentum_shift 分析
+
+    v2.4.2 更新:
+    - 先获取 order_flow, derivatives, order_book 数据，再打印
+    - 确保显示的数据与实际传给 AI 的数据一致
     """
 
-    name = "AI 输入数据验证 (传给 MultiAgent)"
+    name = "AI 输入数据验证 (传给 MultiAgent, 11 类数据)"
 
     def run(self) -> bool:
         print("-" * 70)
         print()
         print_box("AI 输入数据验证 (传给 MultiAgent)", 65)
         print()
+
+        # v2.4.2: 先获取 order_flow, derivatives, order_book 数据
+        # 确保显示的数据与实际传给 AI 的数据一致
+        self._fetch_mtf_data()
 
         # [1] Technical data
         self._print_technical_data()
@@ -60,10 +79,193 @@ class AIInputDataValidator(DiagnosticStep):
         # [9] Account context (v4.7)
         self._print_account_context()
 
+        # [10] Historical context (v2.5.0 / EVALUATION_FRAMEWORK v3.0.1)
+        self._print_historical_context()
+
+        # [11] S/R Zones (v2.6.0)
+        self._print_sr_zones_data()
+
         print()
         print("  ────────────────────────────────────────────────────────────────")
-        print("  ✅ AI 输入数据验证完成")
+        print("  ✅ AI 输入数据验证完成 (11 类数据)")
         return True
+
+    def _fetch_mtf_data(self) -> None:
+        """
+        Fetch order flow, derivatives, and order book data before printing.
+
+        v2.4.2: 确保 AI 输入验证显示的数据与实际传给 AI 的一致。
+        """
+        import os
+
+        try:
+            from utils.binance_kline_client import BinanceKlineClient
+            from utils.order_flow_processor import OrderFlowProcessor
+            from utils.coinalyze_client import CoinalyzeClient
+            from utils.ai_data_assembler import AIDataAssembler
+            from utils.sentiment_client import SentimentDataFetcher
+
+            kline_client = BinanceKlineClient(timeout=10)
+            processor = OrderFlowProcessor(logger=None)
+
+            # Get Coinalyze config
+            coinalyze_cfg = self.ctx.base_config.get('order_flow', {}).get('coinalyze', {})
+            coinalyze_api_key = coinalyze_cfg.get('api_key') or os.getenv('COINALYZE_API_KEY')
+
+            coinalyze_client = CoinalyzeClient(
+                api_key=coinalyze_api_key,
+                timeout=coinalyze_cfg.get('timeout', 10),
+                max_retries=coinalyze_cfg.get('max_retries', 2),
+                logger=None
+            )
+
+            sentiment_client = SentimentDataFetcher()
+
+            # Check if order book is enabled
+            order_book_cfg = self.ctx.base_config.get('order_book', {})
+            order_book_enabled = order_book_cfg.get('enabled', False)
+
+            binance_orderbook = None
+            orderbook_processor = None
+
+            if order_book_enabled:
+                try:
+                    from utils.binance_orderbook_client import BinanceOrderBookClient
+                    from utils.orderbook_processor import OrderBookProcessor
+
+                    ob_api_cfg = order_book_cfg.get('api', {})
+                    ob_proc_cfg = order_book_cfg.get('processing', {})
+
+                    binance_orderbook = BinanceOrderBookClient(
+                        timeout=ob_api_cfg.get('timeout', 10),
+                        max_retries=ob_api_cfg.get('max_retries', 2),
+                        logger=None
+                    )
+
+                    weighted_obi_cfg = ob_proc_cfg.get('weighted_obi', {})
+                    anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
+                    slippage_amounts = ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0])
+
+                    # v2.4.5: 添加缺失的 min_decay 和 max_decay 字段
+                    weighted_obi_config = {
+                        "base_decay": weighted_obi_cfg.get('base_decay', 0.8),
+                        "adaptive": weighted_obi_cfg.get('adaptive', True),
+                        "volatility_factor": weighted_obi_cfg.get('volatility_factor', 0.1),
+                        "min_decay": weighted_obi_cfg.get('min_decay', 0.5),
+                        "max_decay": weighted_obi_cfg.get('max_decay', 0.95),
+                    }
+                    orderbook_processor = OrderBookProcessor(
+                        base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
+                        slippage_amounts=slippage_amounts,
+                        weighted_obi_config=weighted_obi_config,
+                        history_size=ob_proc_cfg.get('history', {}).get('size', 10),
+                        logger=None
+                    )
+                except ImportError as e:
+                    print(f"  ⚠️ Order book modules not available: {e}")
+
+            assembler = AIDataAssembler(
+                binance_kline_client=kline_client,
+                order_flow_processor=processor,
+                coinalyze_client=coinalyze_client,
+                sentiment_client=sentiment_client,
+                binance_orderbook_client=binance_orderbook,
+                orderbook_processor=orderbook_processor,
+                logger=None
+            )
+
+            assembled_data = assembler.assemble(
+                technical_data=self.ctx.technical_data,
+                position_data=self.ctx.current_position,
+                symbol=self.ctx.symbol,
+                interval=self.ctx.interval
+            )
+
+            # Store in context for printing and later use by MultiAgentAnalyzer
+            self.ctx.order_flow_report = assembled_data.get('order_flow')
+            self.ctx.derivatives_report = assembled_data.get('derivatives')
+            self.ctx.orderbook_report = assembled_data.get('order_book')
+
+            # v2.4.4: Debug logging for order book status
+            ob_data = assembled_data.get('order_book')
+            if ob_data:
+                ob_status = ob_data.get('_status', {})
+                ob_code = ob_status.get('code', 'UNKNOWN')
+                if ob_code != 'OK':
+                    ob_msg = ob_status.get('message', 'No message')
+                    print(f"  ℹ️ Order book status: {ob_code} - {ob_msg}")
+            else:
+                # Check metadata to understand why
+                metadata = assembled_data.get('_metadata', {})
+                ob_enabled = metadata.get('orderbook_enabled', False)
+                ob_status = metadata.get('orderbook_status', 'UNKNOWN')
+                print(f"  ℹ️ Order book data is None (enabled={ob_enabled}, status={ob_status})")
+
+            # Also store binance_derivatives if available
+            if assembled_data.get('binance_derivatives'):
+                self.ctx.binance_derivatives_data = assembled_data.get('binance_derivatives')
+
+            # v2.5.0: Get historical_context from indicator_manager (EVALUATION_FRAMEWORK v3.0.1)
+            # AI needs trend data, not isolated single indicator values
+            # count=35 ensures MACD history has enough data (slow_period=26 + 5 + buffer)
+            if hasattr(self.ctx, 'indicator_manager') and self.ctx.indicator_manager:
+                try:
+                    historical_context = self.ctx.indicator_manager.get_historical_context(count=35)
+                    if historical_context and historical_context.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR']:
+                        self.ctx.historical_context = historical_context
+                        # Also add to technical_data for AI analysis consistency
+                        if self.ctx.technical_data:
+                            self.ctx.technical_data['historical_context'] = historical_context
+                    else:
+                        self.ctx.historical_context = None
+                except Exception as hc_err:
+                    print(f"  ⚠️ Historical context 获取失败: {hc_err}")
+                    self.ctx.historical_context = None
+            else:
+                self.ctx.historical_context = None
+
+            # v2.6.0: Calculate S/R Zones (for SL/TP calculation)
+            # Uses SRZoneCalculator to aggregate BB, SMA, Order Walls
+            try:
+                from utils.sr_zone_calculator import SRZoneCalculator
+
+                td = self.ctx.technical_data
+                sr_calculator = SRZoneCalculator()
+
+                # Prepare data for S/R calculation
+                bb_data = {
+                    'upper': td.get('bb_upper', 0),
+                    'lower': td.get('bb_lower', 0),
+                    'middle': td.get('sma_20', 0),
+                }
+                sma_data = {
+                    'sma_50': td.get('sma_50', 0),
+                    'sma_200': td.get('sma_200', 0),
+                }
+
+                # Get order book anomalies if available
+                orderbook_anomalies = None
+                if self.ctx.orderbook_report and self.ctx.orderbook_report.get('_status', {}).get('code') == 'OK':
+                    orderbook_anomalies = self.ctx.orderbook_report.get('anomalies', {})
+
+                sr_result = sr_calculator.calculate_with_detailed_report(
+                    current_price=self.ctx.current_price,
+                    bb_data=bb_data,
+                    sma_data=sma_data,
+                    orderbook_anomalies=orderbook_anomalies,
+                )
+
+                self.ctx.sr_zones_data = sr_result
+                print(f"  ℹ️ S/R Zones 计算完成: {len(sr_result.get('support_zones', []))} 支撑, {len(sr_result.get('resistance_zones', []))} 阻力")
+
+            except Exception as sr_err:
+                print(f"  ⚠️ S/R Zones 计算失败: {sr_err}")
+                self.ctx.sr_zones_data = None
+
+        except Exception as e:
+            print(f"  ⚠️ MTF 数据获取失败: {e}, 将显示空数据")
+            import traceback
+            traceback.print_exc()
 
     def _print_technical_data(self) -> None:
         """Print technical indicator data."""
@@ -182,7 +384,8 @@ class AIInputDataValidator(DiagnosticStep):
                     print(f"      Trend:           {dynamics.get('trend', 'N/A')}")
                 else:
                     print("      Dynamics:        首次运行，无历史数据")
-                    print("      ⚠️ 注意: adaptive OBI 无历史基线，数值可靠性降低")
+                    print("      ℹ️ 注: 诊断脚本每次新建实例，无历史数据正常")
+                    print("         实盘服务中 OrderBookProcessor 会累积历史")
 
                 bid_near_5 = gradient.get('bid_near_5', 0) * 100
                 ask_near_5 = gradient.get('ask_near_5', 0) * 100
@@ -190,7 +393,8 @@ class AIInputDataValidator(DiagnosticStep):
                 print(f"      Ask pressure:    near_5={ask_near_5:.1f}%")
                 print(f"      Spread:          {liquidity.get('spread_pct', 0):.4f}%")
             else:
-                print(f"      reason:          {status.get('reason', 'Unknown')}")
+                # v2.4.4: 修复 reason → message (数据结构使用 message 字段)
+                print(f"      reason:          {status.get('message', 'Unknown')}")
         else:
             if ob_cfg.get('enabled', False):
                 print("  [5.5] order_book_data: 获取失败")
@@ -313,6 +517,140 @@ class AIInputDataValidator(DiagnosticStep):
             print(f"      can_add_safely:     {safety_emoji} {can_safely}")
         else:
             print("  [9] account_context: None (未获取)")
+        print()
+
+    def _print_historical_context(self) -> None:
+        """
+        Print historical context data (v2.5.0 / EVALUATION_FRAMEWORK v3.0.1).
+
+        AI needs trend data for proper trend analysis, not isolated values.
+        Uses count=35 to ensure MACD history has enough data (slow_period=26).
+        """
+        hc = getattr(self.ctx, 'historical_context', None)
+
+        if hc and hc.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR', None]:
+            print("  [10] historical_context (35-bar 趋势数据 v3.0.1):")
+            print(f"      trend_direction:    {hc.get('trend_direction', 'N/A')}")
+            print(f"      momentum_shift:     {hc.get('momentum_shift', 'N/A')}")
+            print(f"      data_points:        {hc.get('data_points', 0)}")
+
+            # Format trend arrays (show last 5 values)
+            def format_recent(values, fmt=".2f"):
+                if not values or not isinstance(values, list):
+                    return "N/A"
+                recent = values[-5:] if len(values) >= 5 else values
+                return " → ".join([f"{v:{fmt}}" for v in recent])
+
+            price_trend = hc.get('price_trend', [])
+            rsi_trend = hc.get('rsi_trend', [])
+            macd_trend = hc.get('macd_trend', [])
+            volume_trend = hc.get('volume_trend', [])
+
+            print()
+            print("      📈 趋势数据 (最近 5 值):")
+            print(f"      price_trend:        {format_recent(price_trend)}")
+            print(f"      rsi_trend:          {format_recent(rsi_trend)}")
+            print(f"      macd_trend:         {format_recent(macd_trend, '.4f')}")
+            print(f"      volume_trend:       {format_recent(volume_trend, '.0f')}")
+
+            # Statistics
+            if price_trend and len(price_trend) >= 2:
+                price_change = ((price_trend[-1] / price_trend[0]) - 1) * 100 if price_trend[0] > 0 else 0
+                trend_emoji = "📈" if price_change > 0 else "📉" if price_change < 0 else "➡️"
+                print()
+                print(f"      {trend_emoji} 35-bar 价格变化: {price_change:+.2f}%")
+
+            if rsi_trend:
+                avg_rsi = sum(rsi_trend) / len(rsi_trend)
+                rsi_emoji = "🔴" if avg_rsi > 70 else "🟢" if avg_rsi < 30 else "🟡"
+                print(f"      {rsi_emoji} 平均 RSI: {avg_rsi:.1f}")
+
+            print()
+            print("      ℹ️ 数据来源: indicator_manager.get_historical_context()")
+            print("      ℹ️ 参考: EVALUATION_FRAMEWORK.md Section 2.1 数据完整性")
+        else:
+            if hasattr(self.ctx, 'indicator_manager') and self.ctx.indicator_manager:
+                print("  [10] historical_context: 数据不足 (需要至少 35 根 K线)")
+                print("      ℹ️ 诊断脚本刚启动，历史数据可能不足")
+                print("      ℹ️ 实盘服务运行后会自动累积数据")
+            else:
+                print("  [10] historical_context: indicator_manager 未初始化")
+
+    def _print_sr_zones_data(self) -> None:
+        """
+        Print S/R Zone data (v2.6.0).
+
+        Shows support/resistance zones calculated from BB, SMA, Order Walls.
+        This data is used for SL/TP calculation when AI doesn't provide valid values.
+        """
+        sr_data = getattr(self.ctx, 'sr_zones_data', None)
+
+        if sr_data:
+            print("  [11] S/R Zones (支撑/阻力区 v2.6.0):")
+
+            # Nearest support
+            nearest_sup = sr_data.get('nearest_support')
+            if nearest_sup and hasattr(nearest_sup, 'price_center'):
+                wall_info = f" [Order Wall: {nearest_sup.wall_size_btc:.1f} BTC]" if nearest_sup.has_order_wall else ""
+                print(f"      最近支撑: ${nearest_sup.price_center:,.0f} ({nearest_sup.distance_pct:.1f}% away)")
+                print(f"        强度: {nearest_sup.strength} | 级别: {nearest_sup.level}{wall_info}")
+                print(f"        来源: {', '.join(nearest_sup.sources)}")
+            else:
+                print("      最近支撑: N/A")
+
+            print()
+
+            # Nearest resistance
+            nearest_res = sr_data.get('nearest_resistance')
+            if nearest_res and hasattr(nearest_res, 'price_center'):
+                wall_info = f" [Order Wall: {nearest_res.wall_size_btc:.1f} BTC]" if nearest_res.has_order_wall else ""
+                print(f"      最近阻力: ${nearest_res.price_center:,.0f} ({nearest_res.distance_pct:.1f}% away)")
+                print(f"        强度: {nearest_res.strength} | 级别: {nearest_res.level}{wall_info}")
+                print(f"        来源: {', '.join(nearest_res.sources)}")
+            else:
+                print("      最近阻力: N/A")
+
+            print()
+
+            # Hard control status
+            hard_control = sr_data.get('hard_control', {})
+            if hard_control.get('block_long') or hard_control.get('block_short'):
+                print("      ⚠️ 硬风控:")
+                if hard_control.get('block_long'):
+                    print("        🚫 LONG 被阻止 (太靠近阻力位)")
+                if hard_control.get('block_short'):
+                    print("        🚫 SHORT 被阻止 (太靠近支撑位)")
+                if hard_control.get('reason'):
+                    print(f"        原因: {hard_control['reason']}")
+            else:
+                print("      ✅ 硬风控: 无限制")
+
+            print()
+
+            # R/R Analysis (if both S/R available)
+            if nearest_sup and nearest_res and hasattr(nearest_sup, 'price_center') and hasattr(nearest_res, 'price_center'):
+                price = self.ctx.current_price
+                support = nearest_sup.price_center
+                resistance = nearest_res.price_center
+
+                upside = resistance - price
+                downside = price - support
+
+                if downside > 0:
+                    long_rr = upside / downside
+                    rr_status = "✅ FAVORABLE" if long_rr >= 1.5 else "⚠️ UNFAVORABLE"
+                    print(f"      LONG R/R: {long_rr:.2f}:1 {rr_status}")
+                if upside > 0:
+                    short_rr = downside / upside
+                    rr_status = "✅ FAVORABLE" if short_rr >= 1.5 else "⚠️ UNFAVORABLE"
+                    print(f"      SHORT R/R: {short_rr:.2f}:1 {rr_status}")
+
+            print()
+            print("      ℹ️ 数据来源: SRZoneCalculator (BB + SMA + Order Walls)")
+        else:
+            print("  [11] S/R Zones: 未计算 (可能缺少技术数据)")
+
+        print()
 
     def should_skip(self) -> bool:
         return self.ctx.summary_mode
@@ -389,7 +727,16 @@ class MultiAgentAnalyzer(DiagnosticStep):
             return False
 
     def _get_mtf_data(self) -> tuple:
-        """Get order flow and derivatives data if available."""
+        """Get order flow and derivatives data if available.
+
+        v2.4.2: 优先使用 AIInputDataValidator 已获取的数据，避免重复 API 调用。
+        """
+        # v2.4.2: 检查是否已经在 AIInputDataValidator 中获取了数据
+        if self.ctx.order_flow_report is not None or self.ctx.derivatives_report is not None:
+            # 数据已经在 AIInputDataValidator 中获取，直接使用
+            return self.ctx.order_flow_report, self.ctx.derivatives_report
+
+        # 如果没有预先获取的数据，才重新获取（向后兼容）
         order_flow_report = None
         derivatives_report = None
 
@@ -732,8 +1079,36 @@ class OrderSimulator(DiagnosticStep):
         print(f"     AI Judge TP: ${multi_tp:,.2f}" if multi_tp else "     AI Judge TP: None")
         print()
 
-        support = self.ctx.technical_data.get('support', 0.0)
-        resistance = self.ctx.technical_data.get('resistance', 0.0)
+        # v2.6.0: Use S/R Zone data (more sophisticated) instead of basic technical_data
+        # S/R Zone Calculator aggregates: BB, SMA_50, SMA_200, Order Walls
+        # Falls back to basic technical_data if S/R Zones not available
+        support = 0.0
+        resistance = 0.0
+        sr_source = "none"
+
+        if self.ctx.sr_zones_data:
+            nearest_support = self.ctx.sr_zones_data.get('nearest_support')
+            nearest_resistance = self.ctx.sr_zones_data.get('nearest_resistance')
+            if nearest_support and hasattr(nearest_support, 'price_center'):
+                support = nearest_support.price_center
+                sr_source = f"S/R Zone ({nearest_support.strength}, {nearest_support.level})"
+            if nearest_resistance and hasattr(nearest_resistance, 'price_center'):
+                resistance = nearest_resistance.price_center
+                sr_source = f"S/R Zone ({nearest_resistance.strength}, {nearest_resistance.level})"
+            print(f"     使用 {sr_source}:")
+            print(f"       Support: ${support:,.0f}" if support > 0 else "       Support: N/A")
+            print(f"       Resistance: ${resistance:,.0f}" if resistance > 0 else "       Resistance: N/A")
+        else:
+            # Fallback to basic technical data
+            support = self.ctx.technical_data.get('support', 0.0)
+            resistance = self.ctx.technical_data.get('resistance', 0.0)
+            if support > 0 or resistance > 0:
+                sr_source = "technical_data (basic)"
+                print(f"     使用 {sr_source}:")
+                print(f"       Support: ${support:,.0f}" if support > 0 else "       Support: N/A")
+                print(f"       Resistance: ${resistance:,.0f}" if resistance > 0 else "       Resistance: N/A")
+
+        print()
         use_sr = getattr(cfg, 'sl_use_support_resistance', True)
         sl_buffer = getattr(cfg, 'sl_buffer_pct', 0.001)
 
@@ -747,7 +1122,7 @@ class OrderSimulator(DiagnosticStep):
             print(f"     验证结果: {'✅ 通过' if is_valid else '❌ 失败'} - {reason}")
 
             if not is_valid:
-                print("     ⚠️ AI SL/TP 验证失败，回退到技术分析")
+                print("     ⚠️ AI SL/TP 验证失败，回退到 S/R Zone 技术分析")
                 final_sl, final_tp, calc_method = calculate_technical_sltp(
                     side=signal,
                     entry_price=self.ctx.current_price,
@@ -757,8 +1132,9 @@ class OrderSimulator(DiagnosticStep):
                     use_support_resistance=use_sr,
                     sl_buffer_pct=sl_buffer,
                 )
+                print(f"     {calc_method}")
         else:
-            print("     ⚠️ AI 未提供 SL/TP，使用技术分析计算")
+            print("     ⚠️ AI 未提供 SL/TP，使用 S/R Zone 技术分析计算")
             final_sl, final_tp, calc_method = calculate_technical_sltp(
                 side=signal,
                 entry_price=self.ctx.current_price,
@@ -768,6 +1144,7 @@ class OrderSimulator(DiagnosticStep):
                 use_support_resistance=use_sr,
                 sl_buffer_pct=sl_buffer,
             )
+            print(f"     {calc_method}")
 
         final_sl = safe_float(final_sl) or 0.0
         final_tp = safe_float(final_tp) or 0.0

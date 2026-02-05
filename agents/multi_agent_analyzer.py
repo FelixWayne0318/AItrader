@@ -36,14 +36,23 @@ from strategy.trading_logic import (
 
 
 # =============================================================================
-# TradingAgents v3.12: Indicator Definitions for AI
+# TradingAgents v3.15: Market Order Reality Check
+#
+# v3.15 Changes:
+# - Updated Bull/Bear/Risk prompts to reflect market order entry behavior
+# - AI now explicitly told: entry at CURRENT PRICE, not at S/R levels
+# - LONG only recommended if price ALREADY near support (within 1-2%)
+# - SHORT only recommended if price ALREADY near resistance (within 1-2%)
+# - If price is in middle of S/R range, recommend HOLD (wait for better entry)
+#
+# v3.12: Indicator Definitions for AI
 # Borrowed from: TradingAgents/agents/analysts/market_analyst.py
 #
 # Philosophy: "Teach AI WHAT indicators mean, not HOW to use them"
 # - Provide calculation methods and mathematical definitions
 # - Explain what values represent, not trading rules
 # - Let AI form its own interpretation based on raw data
-# - Aligned with TradingAgents "授人以渔" (授人以渔) principle
+# - Aligned with TradingAgents "授人以渔" (teach fishing, not give fish) principle
 # =============================================================================
 INDICATOR_DEFINITIONS = """
 TECHNICAL INDICATOR REFERENCE (Calculation and Meaning):
@@ -193,6 +202,26 @@ SUPPORT/RESISTANCE ZONES (v2.0):
   * Zones with ORDER_FLOW type are real orders that can be eaten through
   * MAJOR level zones are more significant for longer-term trades
   * Multiple overlapping sources increase confidence in the zone
+
+HISTORICAL CONTEXT (v3.0.1 - 20-bar trend data):
+- Purpose: Shows indicator trends over last 20 bars instead of isolated single values
+- Data provided:
+  * price_trend: Last 20 closing prices
+  * rsi_trend: Last 20 RSI values
+  * macd_trend: Last 20 MACD values
+- Trend Direction: Calculated from price movement
+  * BULLISH: Clear upward trend (higher highs, higher lows)
+  * BEARISH: Clear downward trend (lower highs, lower lows)
+  * NEUTRAL: No clear direction (consolidation)
+- Momentum Shift: Rate of change in trend strength
+  * INCREASING: Trend is accelerating
+  * DECREASING: Trend is weakening
+  * STABLE: Trend strength unchanged
+- Usage:
+  * Compare current values to recent history
+  * Identify divergences between price and indicators
+  * Assess if current move is continuation or reversal
+  * Last 5 values shown for quick pattern recognition
 """
 
 
@@ -606,10 +635,15 @@ TASK:
 1. Identify BULLISH signals with specific numbers from the data
 2. Present 2-3 compelling reasons for going LONG
 3. If bear made arguments, counter them with evidence
-4. Consider S/R ZONES for entry timing:
-   - If price is near MAJOR/HIGH resistance: acknowledge the risk of rejection
-   - If price just broke above resistance: this becomes new support (bullish)
-   - Ideal LONG entry: bouncing off support or breaking resistance with volume
+4. CRITICAL - S/R ZONE ENTRY RULES (v3.15 - Market Order Reality):
+   ⚠️ IMPORTANT: System will enter at CURRENT MARKET PRICE, not at S/R levels.
+   - ONLY argue for LONG if current price is ALREADY near SUPPORT (within 1-2%)
+   - DO NOT argue for LONG if price is in the middle of S/R range (wait for pullback)
+   - DO NOT argue for LONG if price is near RESISTANCE (bad entry, high rejection risk)
+   - If price is far from support, recommend HOLD and wait for better entry
+   - LONG R/R CHECK: Only recommend LONG if R/R ratio >= 1.5:1 at CURRENT price
+   - If S/R report shows "LONG entry NOT recommended" - DO NOT argue for LONG
+5. If price is far from both S/R zones, recommend HOLD (not a good entry point)
 
 Deliver your argument (2-3 paragraphs):"""
 
@@ -675,12 +709,17 @@ Last Bull Argument:
 
 TASK:
 1. Identify BEARISH signals or risks with specific numbers from the data
-2. Present 2-3 compelling reasons AGAINST going LONG
+2. Present 2-3 compelling reasons AGAINST going LONG (or for going SHORT)
 3. Counter the bull's arguments with evidence
-4. Consider S/R ZONES for entry timing risks:
-   - If price is near MAJOR/HIGH support: warn about bounce risk for SHORT
-   - If price is at resistance without volume: high rejection probability
-   - Highlight if price is overextended from key support/resistance levels
+4. CRITICAL - S/R ZONE ENTRY RULES (v3.15 - Market Order Reality):
+   ⚠️ IMPORTANT: System will enter at CURRENT MARKET PRICE, not at S/R levels.
+   - ONLY argue for SHORT if current price is ALREADY near RESISTANCE (within 1-2%)
+   - DO NOT argue for SHORT if price is in the middle of S/R range (wait for rally)
+   - DO NOT argue for SHORT if price is near SUPPORT (bad entry, high bounce risk)
+   - If price is far from resistance, recommend HOLD and wait for better entry
+   - SHORT R/R CHECK: Only recommend SHORT if R/R ratio >= 1.5:1 at CURRENT price
+   - If S/R report shows "SHORT entry NOT recommended" - DO NOT argue for SHORT
+5. If price is far from both S/R zones, recommend HOLD (not a good entry point)
 
 Deliver your argument (2-3 paragraphs):"""
 
@@ -870,20 +909,39 @@ ACCOUNT CONTEXT:
 CURRENT PRICE: ${current_price:,.2f}
 
 YOUR TASK:
-1. Evaluate if the proposed trade makes sense given the market data
+⚠️ CRITICAL: Entry will be at CURRENT MARKET PRICE (${current_price:,.2f}), not at S/R levels.
+
+1. FIRST - Validate if CURRENT PRICE is at a good entry point:
+   - For LONG: Current price must be ALREADY near SUPPORT (within 1-2%) to approve
+   - For SHORT: Current price must be ALREADY near RESISTANCE (within 1-2%) to approve
+   - If price is in the MIDDLE of S/R range: Change to HOLD (bad R/R at current price)
+   - If price is far from ideal entry zone: Change to HOLD (wait for better price)
+
 2. Determine stop loss using S/R zones as reference:
    - For LONG: Place SL below nearest SUPPORT zone (preferably with ORDER_FLOW or HIGH strength)
    - For SHORT: Place SL above nearest RESISTANCE zone (preferably with ORDER_FLOW or HIGH strength)
    - Consider market volatility: in high volatility, use wider SL to avoid noise-triggered stops
    - Aim for SL distance of at least 0.5-1% to account for normal price fluctuation
+
 3. Determine take profit using S/R zones as reference:
    - For LONG: Target nearest RESISTANCE zone as TP (consider zone Level: MAJOR > INTERMEDIATE > MINOR)
    - For SHORT: Target nearest SUPPORT zone as TP
-4. Evaluate Risk/Reward ratio:
-   - Minimum acceptable R/R is 1:1 (TP distance >= SL distance)
-   - Prefer R/R of 1.5:1 or better for HIGH confidence trades
-   - If R/R is unfavorable, consider HOLD instead
-5. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
+
+4. Evaluate Risk/Reward ratio at CURRENT PRICE (CRITICAL):
+   - Calculate: SL distance = |current_price - stop_loss|, TP distance = |take_profit - current_price|
+   - MINIMUM acceptable R/R is 1.5:1 (TP distance >= 1.5x SL distance)
+   - IMPORTANT: If R/R at current price is below 1.5:1, you MUST change signal to HOLD
+   - DO NOT adjust SL/TP to artificially inflate R/R - if the entry is bad, signal HOLD
+
+5. FINAL VALIDATION (v3.15 - Market Order Reality Check):
+   - Entry happens at CURRENT PRICE, not at S/R zones
+   - REJECT LONG if current price is far from support (> 2% away) - bad entry timing
+   - REJECT SHORT if current price is far from resistance (> 2% away) - bad entry timing
+   - APPROVE LONG only if current price is already near support AND R/R >= 1.5:1
+   - APPROVE SHORT only if current price is already near resistance AND R/R >= 1.5:1
+   - When in doubt, choose HOLD - waiting for better entry is better than bad entry
+
+6. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
 
 SIGNAL TYPES (v3.12 - choose the most appropriate):
 - LONG: Open new long or add to existing long position
@@ -1164,6 +1222,41 @@ TREND INDICATORS (1D):
 - Price vs SMA_200: {'+' if data.get('price', 0) > trend_safe_get('sma_200') else ''}{((data.get('price', 0) / trend_safe_get('sma_200') - 1) * 100) if trend_safe_get('sma_200') > 0 else 0:.2f}%
 - MACD: {trend_safe_get('macd'):.4f}
 - MACD Signal: {trend_safe_get('macd_signal'):.4f}
+"""
+
+        # Add historical context if available (EVALUATION_FRAMEWORK v3.0.1)
+        # This shows AI the 20-value trends instead of isolated single values
+        historical = data.get('historical_context')
+        if historical and historical.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR', None]:
+            trend_dir = historical.get('trend_direction', 'N/A')
+            momentum = historical.get('momentum_shift', 'N/A')
+
+            # Format recent values (last 5 of 20 for brevity)
+            def format_recent(values, fmt=".1f"):
+                if not values or not isinstance(values, list):
+                    return "N/A"
+                recent = values[-5:] if len(values) >= 5 else values
+                return " → ".join([f"{v:{fmt}}" for v in recent])
+
+            price_trend = historical.get('price_trend', [])
+            rsi_trend = historical.get('rsi_trend', [])
+            macd_trend = historical.get('macd_trend', [])
+
+            report += f"""
+=== HISTORICAL CONTEXT (Last 20 bars) ===
+
+TREND ANALYSIS:
+- Overall Direction: {trend_dir}
+- Momentum Shift: {momentum}
+
+RECENT PRICE MOVEMENT (last 5 of 20):
+- Prices: ${format_recent(price_trend, ",.0f")}
+
+RECENT RSI MOVEMENT (last 5 of 20):
+- RSI: {format_recent(rsi_trend)}
+
+RECENT MACD MOVEMENT (last 5 of 20):
+- MACD: {format_recent(macd_trend, ".4f")}
 """
 
         return report

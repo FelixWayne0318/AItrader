@@ -753,6 +753,16 @@ class DeepSeekAIStrategy(Strategy):
         self.subscribe_bars(self.bar_type)
         self.log.info(f"Subscribed to {self.bar_type}")
 
+        # v3.16: Subscribe to trade ticks for OrderEmulator
+        # This is CRITICAL for emulated SL/TP orders to trigger properly.
+        # Without real-time price data, the emulator only sees bar close prices (every 15 min).
+        # With trade ticks, the emulator can detect SL/TP triggers in real-time.
+        try:
+            self.subscribe_trade_ticks(self.instrument_id)
+            self.log.info(f"Subscribed to trade ticks for {self.instrument_id} (OrderEmulator support)")
+        except Exception as e:
+            self.log.warning(f"Failed to subscribe to trade ticks: {e} - SL/TP emulation may be delayed")
+
         # Multi-Timeframe subscriptions (v3.2.9)
         if self.mtf_enabled and self.mtf_manager:
             try:
@@ -875,6 +885,12 @@ class DeepSeekAIStrategy(Strategy):
 
         # Unsubscribe from data
         self.unsubscribe_bars(self.bar_type)
+
+        # v3.16: Unsubscribe from trade ticks
+        try:
+            self.unsubscribe_trade_ticks(self.instrument_id)
+        except Exception:
+            pass  # Ignore if not subscribed
 
         self.log.info("Strategy stopped")
 
@@ -1548,6 +1564,23 @@ class DeepSeekAIStrategy(Strategy):
                             self.log.info(f"[MTF] AI 分析使用 1D 趋势层数据: SMA_200=${ai_technical_data['mtf_trend_layer']['sma_200']:,.2f}")
                     except Exception as e:
                         self.log.warning(f"[MTF] 获取趋势层数据失败: {e}")
+
+                # ========== 获取历史上下文 (EVALUATION_FRAMEWORK v3.0.1) ==========
+                # AI 需要看到趋势数据，而非孤立的单一指标值
+                # count=35 确保 MACD 历史计算有足够数据 (slow_period=26 + 5 + buffer)
+                # 参考: docs/research/EVALUATION_FRAMEWORK.md Section 2.1
+                try:
+                    historical_context = self.indicator_manager.get_historical_context(count=35)
+                    if historical_context and historical_context.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR']:
+                        ai_technical_data['historical_context'] = historical_context
+                        self.log.info(
+                            f"[历史上下文] trend={historical_context.get('trend_direction')}, "
+                            f"momentum={historical_context.get('momentum_shift')}"
+                        )
+                    else:
+                        self.log.debug("[历史上下文] 数据不足，跳过")
+                except Exception as e:
+                    self.log.warning(f"[历史上下文] 获取失败: {e}")
 
                 # ========== 获取订单流数据 (MTF v2.1) ==========
                 order_flow_data = None
@@ -3536,8 +3569,31 @@ class DeepSeekAIStrategy(Strategy):
 
         # Get confidence and technical data
         confidence = self.latest_signal_data.get('confidence', 'MEDIUM')
-        support = self.latest_technical_data.get('support', 0.0)
-        resistance = self.latest_technical_data.get('resistance', 0.0)
+
+        # v3.14: Use S/R Zone data (more sophisticated) instead of basic technical_data support/resistance
+        # S/R Zone Calculator aggregates: BB, SMA_50, SMA_200, Order Walls, Pivot Points
+        # Falls back to basic technical_data if S/R Zones not available
+        support = 0.0
+        resistance = 0.0
+        sr_source = "none"
+
+        if hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
+            nearest_support = self.latest_sr_zones_data.get('nearest_support')
+            nearest_resistance = self.latest_sr_zones_data.get('nearest_resistance')
+            if nearest_support and hasattr(nearest_support, 'price_center'):
+                support = nearest_support.price_center
+                sr_source = f"S/R Zone ({nearest_support.strength}, {nearest_support.level})"
+            if nearest_resistance and hasattr(nearest_resistance, 'price_center'):
+                resistance = nearest_resistance.price_center
+                sr_source = f"S/R Zone ({nearest_resistance.strength}, {nearest_resistance.level})"
+            self.log.info(f"📊 Using {sr_source}: Support=${support:,.0f}, Resistance=${resistance:,.0f}")
+        else:
+            # Fallback to basic technical data (simple high/low of recent bars)
+            support = self.latest_technical_data.get('support', 0.0)
+            resistance = self.latest_technical_data.get('resistance', 0.0)
+            if support > 0 or resistance > 0:
+                sr_source = "technical_data (basic)"
+                self.log.info(f"📊 Using {sr_source}: Support=${support:,.0f}, Resistance=${resistance:,.0f}")
 
         # Check for MultiAgent SL/TP (from Judge decision)
         # Note: MultiAgent returns 'stop_loss' and 'take_profit' fields directly
@@ -3558,9 +3614,9 @@ class DeepSeekAIStrategy(Strategy):
             tp_price = validated_tp
             self.log.info(f"🎯 Using MultiAgent SL/TP: {validation_reason}")
         else:
-            # Fall back to technical analysis using shared function
+            # Fall back to technical analysis using shared function (v3.14: now uses S/R Zones for TP)
             if multi_sl or multi_tp:
-                self.log.warning(f"⚠️ MultiAgent SL/TP invalid: {validation_reason}, falling back to technical analysis")
+                self.log.warning(f"⚠️ MultiAgent SL/TP invalid: {validation_reason}, falling back to S/R-based technical analysis")
 
             stop_loss_price, tp_price, calc_method = calculate_technical_sltp(
                 side=side.name,  # Convert OrderSide.BUY → 'BUY'
@@ -3571,7 +3627,7 @@ class DeepSeekAIStrategy(Strategy):
                 use_support_resistance=self.sl_use_support_resistance,
                 sl_buffer_pct=self.sl_buffer_pct,
             )
-            self.log.info(f"📍 Using technical analysis: {calc_method}")
+            self.log.info(f"📍 {calc_method}")
 
         # Log SL/TP summary
         self.log.info(
@@ -3826,25 +3882,66 @@ class DeepSeekAIStrategy(Strategy):
             pnl = 0.0
             self.log.warning(f"Failed to extract realized_pnl from event: {type(event.realized_pnl)}")
 
+        # v3.14: Fix quantity extraction - try multiple attribute names
+        # NautilusTrader PositionClosed may use 'quantity', 'signed_qty', or other names
+        quantity = 0.0
+        qty_source = "none"
         try:
-            # Quantity type has .as_double() method
-            if hasattr(event, 'quantity'):
-                quantity = event.quantity.as_double() if hasattr(event.quantity, 'as_double') else float(event.quantity)
-            else:
-                quantity = 0.0
-        except (AttributeError, TypeError, ValueError):
+            # Try different attribute names that NautilusTrader might use
+            if hasattr(event, 'quantity') and event.quantity is not None:
+                qty_obj = event.quantity
+                quantity = qty_obj.as_double() if hasattr(qty_obj, 'as_double') else float(qty_obj)
+                qty_source = "quantity"
+            elif hasattr(event, 'signed_qty') and event.signed_qty is not None:
+                qty_obj = event.signed_qty
+                quantity = abs(qty_obj.as_double() if hasattr(qty_obj, 'as_double') else float(qty_obj))
+                qty_source = "signed_qty"
+            elif hasattr(event, 'last_qty') and event.last_qty is not None:
+                qty_obj = event.last_qty
+                quantity = qty_obj.as_double() if hasattr(qty_obj, 'as_double') else float(qty_obj)
+                qty_source = "last_qty"
+        except (AttributeError, TypeError, ValueError) as e:
+            self.log.warning(f"Failed to extract quantity from event: {e}, attrs: {dir(event)[:10]}")
             quantity = 0.0
 
         # avg_px_open and avg_px_close are plain doubles in PositionClosed event
         entry_price = float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0
         exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
         position_value = entry_price * quantity
-        pnl_pct = (pnl / position_value * 100) if position_value > 0 else 0.0
 
-        # v3.13: Debug logging to diagnose memory system issues
-        self.log.debug(
-            f"📊 P&L calculation: pnl={pnl:.4f}, qty={quantity:.4f}, "
-            f"entry={entry_price:.2f}, exit={exit_price:.2f}, pnl_pct={pnl_pct:.2f}%"
+        # v3.16: Use official realized_return attribute (ROOT CAUSE FIX)
+        # NautilusTrader PositionClosed event has realized_return (decimal, e.g., 0.0123 = 1.23%)
+        # This is the authoritative source, avoiding manual calculation issues
+        pnl_pct = 0.0
+        pnl_source = "none"
+
+        # Priority 1: Use official realized_return from NautilusTrader
+        if hasattr(event, 'realized_return'):
+            try:
+                # realized_return is a decimal (0.01 = 1%), convert to percentage
+                pnl_pct = float(event.realized_return) * 100
+                pnl_source = "realized_return"
+            except (TypeError, ValueError) as e:
+                self.log.warning(f"Failed to extract realized_return: {e}")
+
+        # Priority 2: Calculate from pnl/position_value
+        if pnl_pct == 0.0 and position_value > 0:
+            pnl_pct = (pnl / position_value * 100)
+            pnl_source = "pnl/position_value"
+
+        # Priority 3: Calculate from price difference
+        if pnl_pct == 0.0 and pnl != 0 and entry_price > 0 and exit_price > 0:
+            side = event.side.name if hasattr(event, 'side') else 'UNKNOWN'
+            if side == 'LONG':
+                pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+            elif side == 'SHORT':
+                pnl_pct = ((entry_price - exit_price) / entry_price) * 100
+            pnl_source = "price_difference"
+
+        # v3.16: Enhanced debug logging with source tracking
+        self.log.info(
+            f"📊 P&L calculation: pnl={pnl:.4f} USDT, qty={quantity:.4f} (from {qty_source}), "
+            f"entry={entry_price:.2f}, exit={exit_price:.2f}, pnl_pct={pnl_pct:.2f}% (from {pnl_source})"
         )
 
         # Send Telegram position closed notification
@@ -4912,8 +5009,9 @@ class DeepSeekAIStrategy(Strategy):
             largest_win = 0.0
             largest_loss = 0.0
 
-            if hasattr(self, 'multi_agent_analyzer') and self.multi_agent_analyzer:
-                memories = self.multi_agent_analyzer.decision_memory
+            # v3.15: Fix variable name - was 'multi_agent_analyzer', should be 'multi_agent'
+            if hasattr(self, 'multi_agent') and self.multi_agent:
+                memories = self.multi_agent.decision_memory
                 today_memories = [m for m in memories if m.get('timestamp', '').startswith(today)]
 
                 for m in today_memories:
@@ -4995,8 +5093,9 @@ class DeepSeekAIStrategy(Strategy):
             daily_pnls = {}
             max_drawdown_pct = 0.0
 
-            if hasattr(self, 'multi_agent_analyzer') and self.multi_agent_analyzer:
-                memories = self.multi_agent_analyzer.decision_memory
+            # v3.15: Fix variable name - was 'multi_agent_analyzer', should be 'multi_agent'
+            if hasattr(self, 'multi_agent') and self.multi_agent:
+                memories = self.multi_agent.decision_memory
 
                 # Filter memories for this week
                 for m in memories:

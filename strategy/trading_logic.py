@@ -822,13 +822,22 @@ def calculate_technical_sltp(
     confidence: str,
     use_support_resistance: bool = True,
     sl_buffer_pct: float = 0.001,
+    tp_buffer_pct: float = 0.001,
+    min_rr_ratio: float = 1.5,
 ) -> Tuple[float, float, str]:
     """
-    Calculate SL/TP based on technical analysis.
+    Calculate SL/TP based on technical analysis (v3.14 - S/R based TP).
 
     This function calculates stop loss and take profit prices using:
-    - Support/resistance levels (if available and valid)
-    - Default percentage-based fallback
+    - Support/resistance levels for BOTH SL and TP (if available and valid)
+    - Default percentage-based fallback only when S/R is not available
+    - Ensures minimum R/R ratio of 1.5:1
+
+    v3.14 Changes:
+    - TP now uses S/R zones instead of fixed percentage
+    - LONG: TP targets resistance level (with buffer before it)
+    - SHORT: TP targets support level (with buffer before it)
+    - R/R validation: if R/R < min_rr_ratio, adjusts TP to meet requirement
 
     Parameters
     ----------
@@ -837,15 +846,19 @@ def calculate_technical_sltp(
     entry_price : float
         Entry price
     support : float
-        Support level price
+        Support level price (nearest support zone center)
     resistance : float
-        Resistance level price
+        Resistance level price (nearest resistance zone center)
     confidence : str
         Signal confidence ('HIGH', 'MEDIUM', 'LOW')
     use_support_resistance : bool
         Whether to use support/resistance levels
     sl_buffer_pct : float
-        Buffer percentage to add to support/resistance
+        Buffer percentage beyond S/R for SL (default 0.1%)
+    tp_buffer_pct : float
+        Buffer percentage before S/R for TP (default 0.1%)
+    min_rr_ratio : float
+        Minimum required Risk/Reward ratio (default 1.5)
 
     Returns
     -------
@@ -857,46 +870,111 @@ def calculate_technical_sltp(
     # v3.12: Support both legacy (BUY/SELL) and new (LONG/SHORT) formats
     is_long = side.upper() in ('BUY', 'LONG')
 
+    # Get default TP percentage for fallback
+    tp_pct = get_tp_pct_by_confidence(confidence)
+    default_sl_pct = get_default_sl_pct()
+
+    method_parts = []
+
     if is_long:
-        # BUY: Stop loss below entry
-        default_sl = entry_price * 0.98  # Default 2% below
+        # =====================================================
+        # LONG: SL below support, TP at resistance
+        # =====================================================
+
+        # --- Stop Loss ---
+        default_sl = entry_price * (1 - default_sl_pct)
 
         if use_support_resistance and support > 0:
             potential_sl = support * (1 - sl_buffer_pct)
             if potential_sl < entry_price - PRICE_EPSILON:
                 stop_loss_price = potential_sl
-                method = f"Support-based SL (${support:,.2f} - buffer)"
+                method_parts.append(f"SL: Support-based (${support:,.0f} - {sl_buffer_pct*100:.1f}% buffer)")
             else:
                 stop_loss_price = default_sl
-                method = f"Default 2% SL (support ${support:,.2f} >= entry)"
+                method_parts.append(f"SL: Default {default_sl_pct*100:.0f}% (support too close)")
         else:
             stop_loss_price = default_sl
-            method = "Default 2% SL"
+            method_parts.append(f"SL: Default {default_sl_pct*100:.0f}%")
 
-        # TP
-        tp_pct = get_tp_pct_by_confidence(confidence)
-        take_profit_price = entry_price * (1 + tp_pct)
+        # --- Take Profit ---
+        default_tp = entry_price * (1 + tp_pct)
 
-    else:  # SELL
-        # SELL: Stop loss above entry
-        default_sl = entry_price * 1.02  # Default 2% above
+        if use_support_resistance and resistance > 0:
+            # TP at resistance minus buffer (take profit slightly before resistance)
+            potential_tp = resistance * (1 - tp_buffer_pct)
+            if potential_tp > entry_price + PRICE_EPSILON:
+                take_profit_price = potential_tp
+                method_parts.append(f"TP: Resistance-based (${resistance:,.0f} - {tp_buffer_pct*100:.1f}% buffer)")
+            else:
+                take_profit_price = default_tp
+                method_parts.append(f"TP: Default {tp_pct*100:.0f}% (resistance too close)")
+        else:
+            take_profit_price = default_tp
+            method_parts.append(f"TP: Default {tp_pct*100:.0f}%")
+
+        # --- R/R Validation ---
+        sl_distance = entry_price - stop_loss_price
+        tp_distance = take_profit_price - entry_price
+
+        if sl_distance > 0:
+            rr_ratio = tp_distance / sl_distance
+            if rr_ratio < min_rr_ratio:
+                # Adjust TP to meet minimum R/R ratio
+                adjusted_tp = entry_price + (sl_distance * min_rr_ratio)
+                if adjusted_tp > take_profit_price:
+                    take_profit_price = adjusted_tp
+                    method_parts.append(f"TP adjusted for R/R >= {min_rr_ratio}:1")
+
+    else:
+        # =====================================================
+        # SHORT: SL above resistance, TP at support
+        # =====================================================
+
+        # --- Stop Loss ---
+        default_sl = entry_price * (1 + default_sl_pct)
 
         if use_support_resistance and resistance > 0:
             potential_sl = resistance * (1 + sl_buffer_pct)
             if potential_sl > entry_price + PRICE_EPSILON:
                 stop_loss_price = potential_sl
-                method = f"Resistance-based SL (${resistance:,.2f} + buffer)"
+                method_parts.append(f"SL: Resistance-based (${resistance:,.0f} + {sl_buffer_pct*100:.1f}% buffer)")
             else:
                 stop_loss_price = default_sl
-                method = f"Default 2% SL (resistance ${resistance:,.2f} <= entry)"
+                method_parts.append(f"SL: Default {default_sl_pct*100:.0f}% (resistance too close)")
         else:
             stop_loss_price = default_sl
-            method = "Default 2% SL"
+            method_parts.append(f"SL: Default {default_sl_pct*100:.0f}%")
 
-        # TP
-        tp_pct = get_tp_pct_by_confidence(confidence)
-        take_profit_price = entry_price * (1 - tp_pct)
+        # --- Take Profit ---
+        default_tp = entry_price * (1 - tp_pct)
 
+        if use_support_resistance and support > 0:
+            # TP at support plus buffer (take profit slightly before support)
+            potential_tp = support * (1 + tp_buffer_pct)
+            if potential_tp < entry_price - PRICE_EPSILON:
+                take_profit_price = potential_tp
+                method_parts.append(f"TP: Support-based (${support:,.0f} + {tp_buffer_pct*100:.1f}% buffer)")
+            else:
+                take_profit_price = default_tp
+                method_parts.append(f"TP: Default {tp_pct*100:.0f}% (support too close)")
+        else:
+            take_profit_price = default_tp
+            method_parts.append(f"TP: Default {tp_pct*100:.0f}%")
+
+        # --- R/R Validation ---
+        sl_distance = stop_loss_price - entry_price
+        tp_distance = entry_price - take_profit_price
+
+        if sl_distance > 0:
+            rr_ratio = tp_distance / sl_distance
+            if rr_ratio < min_rr_ratio:
+                # Adjust TP to meet minimum R/R ratio
+                adjusted_tp = entry_price - (sl_distance * min_rr_ratio)
+                if adjusted_tp < take_profit_price:
+                    take_profit_price = adjusted_tp
+                    method_parts.append(f"TP adjusted for R/R >= {min_rr_ratio}:1")
+
+    method = " | ".join(method_parts)
     return stop_loss_price, take_profit_price, method
 
 
