@@ -3826,24 +3826,49 @@ class DeepSeekAIStrategy(Strategy):
             pnl = 0.0
             self.log.warning(f"Failed to extract realized_pnl from event: {type(event.realized_pnl)}")
 
+        # v3.14: Fix quantity extraction - try multiple attribute names
+        # NautilusTrader PositionClosed may use 'quantity', 'signed_qty', or other names
+        quantity = 0.0
+        qty_source = "none"
         try:
-            # Quantity type has .as_double() method
-            if hasattr(event, 'quantity'):
-                quantity = event.quantity.as_double() if hasattr(event.quantity, 'as_double') else float(event.quantity)
-            else:
-                quantity = 0.0
-        except (AttributeError, TypeError, ValueError):
+            # Try different attribute names that NautilusTrader might use
+            if hasattr(event, 'quantity') and event.quantity is not None:
+                qty_obj = event.quantity
+                quantity = qty_obj.as_double() if hasattr(qty_obj, 'as_double') else float(qty_obj)
+                qty_source = "quantity"
+            elif hasattr(event, 'signed_qty') and event.signed_qty is not None:
+                qty_obj = event.signed_qty
+                quantity = abs(qty_obj.as_double() if hasattr(qty_obj, 'as_double') else float(qty_obj))
+                qty_source = "signed_qty"
+            elif hasattr(event, 'last_qty') and event.last_qty is not None:
+                qty_obj = event.last_qty
+                quantity = qty_obj.as_double() if hasattr(qty_obj, 'as_double') else float(qty_obj)
+                qty_source = "last_qty"
+        except (AttributeError, TypeError, ValueError) as e:
+            self.log.warning(f"Failed to extract quantity from event: {e}, attrs: {dir(event)[:10]}")
             quantity = 0.0
 
         # avg_px_open and avg_px_close are plain doubles in PositionClosed event
         entry_price = float(event.avg_px_open) if hasattr(event, 'avg_px_open') else 0.0
         exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
         position_value = entry_price * quantity
-        pnl_pct = (pnl / position_value * 100) if position_value > 0 else 0.0
 
-        # v3.13: Debug logging to diagnose memory system issues
-        self.log.debug(
-            f"📊 P&L calculation: pnl={pnl:.4f}, qty={quantity:.4f}, "
+        # v3.14: Improved pnl_pct calculation with fallback
+        pnl_pct = 0.0
+        if position_value > 0:
+            pnl_pct = (pnl / position_value * 100)
+        elif pnl != 0 and entry_price > 0 and exit_price > 0:
+            # Fallback: calculate from price difference if quantity extraction failed
+            side = event.side.name if hasattr(event, 'side') else 'UNKNOWN'
+            if side == 'LONG':
+                pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+            elif side == 'SHORT':
+                pnl_pct = ((entry_price - exit_price) / entry_price) * 100
+            self.log.info(f"📊 Used price fallback for pnl_pct: {pnl_pct:.2f}%")
+
+        # v3.14: Enhanced debug logging with attribute info
+        self.log.info(
+            f"📊 P&L calculation: pnl={pnl:.4f} USDT, qty={quantity:.4f} (from {qty_source}), "
             f"entry={entry_price:.2f}, exit={exit_price:.2f}, pnl_pct={pnl_pct:.2f}%"
         )
 
