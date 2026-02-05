@@ -401,7 +401,9 @@ cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && g
 | 显示提交 | `git log --oneline -5` | 核对 commit hash 确认版本 |
 | 实时诊断 | `scripts/diagnose_realtime.py` | 调用真实 API，验证完整数据流 |
 
-### 实时诊断工具 (diagnose_realtime.py)
+### 实时诊断工具 (diagnose_realtime.py v2.7.0)
+
+**v2.7.0 更新**: 新增 v3.18 订单流程完整模拟 (7 种场景)
 
 ```bash
 cd /home/linuxuser/nautilus_AItrader
@@ -426,6 +428,17 @@ python3 scripts/diagnose_realtime.py --export --push
 | `--summary` | 仅显示关键结果，跳过中间分析 |
 | `--export` | 保存到 `logs/diagnosis_YYYYMMDD_HHMMSS.txt` |
 | `--push` | 配合 `--export` 推送到 GitHub 仓库 |
+
+**v3.18 订单流程模拟场景**:
+| 场景 | 描述 | 验证重点 |
+|------|------|----------|
+| 1 | 新开仓 (无持仓 → 开仓) | Bracket 订单完整性 |
+| 2 | 同向加仓 | `_update_sltp_quantity` |
+| 3 | 部分平仓 | 订单数量正确性 |
+| 4 | 完全平仓 | 状态清理 |
+| 5 | 反转交易 | 两阶段提交 |
+| 6 | Bracket 失败 | 无保护回退禁止 |
+| 7 | SL/TP modify 失败 | WARNING 告警 |
 
 **GitHub 推送前提条件**：
 - 服务器已配置 SSH Key 用于 GitHub 推送
@@ -576,6 +589,24 @@ Environment=AUTO_CONFIRM=true
       - 配置优先级：先检查 `production.yaml`，回退到 `base.yaml`
     - 文件：`scripts/health_check.sh`
 
+17. **v3.18 订单流程安全修复** (Order Flow Safety) - **关键修复**
+    - **问题 1**: 反转交易竞态条件 (Race Condition)
+      - 问题：平仓和开仓之间可能有新信号干扰
+      - 修复：添加 `_pending_reversal` 状态变量，在 `on_position_closed` 中使用两阶段提交
+      - 流程：Phase 1 (存储状态 + 平仓) → on_position_closed → Phase 2 (检测状态 + 开仓)
+    - **问题 2**: Bracket 订单失败导致无保护仓位
+      - 问题：entry 成功但 SL/TP 订单失败，仓位处于无保护状态
+      - 修复：移除自动回退到无保护 MARKET 单的逻辑，改为发送 CRITICAL 告警并保持 HOLD
+      - 原则：宁可错过交易，不可无保护入场
+    - **问题 3**: 加仓后 SL/TP 数量未更新
+      - 问题：同向加仓后，SL/TP 订单数量仍是旧数量
+      - 修复：添加 `_update_sltp_quantity()` 方法，使用 `modify_order()` 更新订单数量
+    - **问题 4**: SL/TP modify 失败无回退
+      - 问题：`modify_order` 失败时无处理
+      - 修复：失败时发送 WARNING 告警，提醒仓位可能未完全保护
+    - 文件：`strategy/deepseek_strategy.py:3200-3500`
+    - 诊断：`scripts/diagnose_realtime.py` v2.7.0 新增 7 种场景模拟
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
@@ -599,6 +630,9 @@ Environment=AUTO_CONFIRM=true
 - ❌ **仪器加载超时配置不足** → ✅ **production.yaml 中设置 max_retries: 180** (`load_all=true` 需要 1-3 分钟)
 - ❌ **YAML 配置文件缺少必需配置段** → ✅ **确保 production.yaml 包含 network 配置段**
 - ❌ **使用 bash grep/awk 解析 YAML** → ✅ **使用 Python yaml.safe_load() 解析嵌套配置**
+- ❌ **Bracket 订单失败时回退到无保护 MARKET 单** → ✅ **发送 CRITICAL 告警，保持 HOLD** (v3.18)
+- ❌ **反转交易直接平仓后开仓** → ✅ **使用 `_pending_reversal` 两阶段提交** (v3.18)
+- ❌ **加仓后不更新 SL/TP 数量** → ✅ **调用 `_update_sltp_quantity()` 更新订单** (v3.18)
 
 ## 文件结构
 
@@ -661,10 +695,13 @@ Environment=AUTO_CONFIRM=true
 ├── scripts/                  # 脚本工具
 │   ├── # === 诊断工具 ===
 │   ├── diagnose.py           # 全面诊断工具 v2.0
-│   ├── diagnose_realtime.py  # 实时 API 诊断
+│   ├── diagnose_realtime.py  # 实时 API 诊断 v2.7.0 (含 v3.18 订单流程模拟)
 │   ├── diagnose_telegram.py  # Telegram 诊断
 │   ├── diagnose_no_signal.py # 无信号诊断
 │   ├── comprehensive_diagnosis.py # 全面诊断
+│   ├── diagnostics/          # 诊断模块 (v2.7.0)
+│   │   ├── order_flow_simulation.py  # v3.18 订单流程模拟 (7 场景)
+│   │   └── ...               # 其他诊断步骤模块
 │   │
 │   ├── # === 提交分析工具 (GitHub Actions 自动运行) ===
 │   ├── smart_commit_analyzer.py  # 智能回归检测 (规则自动从 git 生成)
