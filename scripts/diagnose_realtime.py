@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.4.7 (服务健康检查增强)
+实盘信号诊断脚本 v2.4.8 (dotenv 早期加载修复)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.4.8 更新:
+- 修复: dotenv 在 DiagnosticRunner.__init__() 中早期加载
+- 修复: APIHealthCheck 现在能正确读取 COINALYZE_API_KEY
+- 修复: 消除 "Coinalyze API: 未配置 key" 的误报
 
 v2.4.7 更新:
 - 新增: [A] 服务运行状态检查 (systemd, memory, logs)
@@ -154,7 +159,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.4.7 (服务健康检查增强)',
+        description='实盘信号诊断工具 v2.4.8 (dotenv 早期加载修复)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

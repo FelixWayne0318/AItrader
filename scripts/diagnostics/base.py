@@ -318,7 +318,7 @@ class DiagnosticContext:
 
     # Step tracking
     current_step: int = 0
-    total_steps: int = 28  # v2.4.7: 24 + 4 (服务健康检查)
+    total_steps: int = 28  # v2.4.8: 24 + 4 (服务健康检查)
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
@@ -418,6 +418,26 @@ class DiagnosticRunner:
         )
         self.steps: List[DiagnosticStep] = []
 
+        # v2.4.8: Load dotenv early to ensure environment variables are available
+        # for all diagnostic steps (including APIHealthCheck which runs first)
+        self._load_environment()
+
+    def _load_environment(self) -> None:
+        """Load environment variables from .env files early."""
+        try:
+            from dotenv import load_dotenv
+            env_permanent = Path.home() / ".env.aitrader"
+            env_local = self.ctx.project_root / ".env"
+
+            if env_permanent.exists():
+                load_dotenv(env_permanent)
+            elif env_local.exists():
+                load_dotenv(env_local)
+            else:
+                load_dotenv()
+        except ImportError:
+            pass  # dotenv not installed, continue without it
+
     def add_step(self, step_class: type) -> None:
         """Add a diagnostic step."""
         self.steps.append(step_class(self.ctx))
@@ -444,7 +464,7 @@ class DiagnosticRunner:
             self.setup_output_capture()
 
             print("=" * 70)
-            print("  实盘信号诊断工具 v2.4.7 (服务健康检查增强)")
+            print("  实盘信号诊断工具 v2.4.8 (dotenv 早期加载修复)")
             print("  基于 TradingAgents v3.12 架构")
             print("=" * 70)
             print()
