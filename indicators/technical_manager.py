@@ -331,3 +331,218 @@ class TechnicalIndicatorManager:
             })
 
         return kline_data
+
+    def get_historical_context(self, count: int = 20) -> Dict[str, Any]:
+        """
+        Get AI-friendly historical data context for enhanced decision making.
+
+        This method provides trending data (last N values) for each indicator,
+        allowing AI to see the trajectory of indicators rather than isolated snapshots.
+
+        Implementation Plan Section 4.2.1:
+        - price_trend: Last 20 closing prices
+        - volume_trend: Last 20 volumes
+        - rsi_trend: Last 20 RSI values
+        - macd_trend: Last 20 MACD values
+        - trend_direction: BULLISH/BEARISH/NEUTRAL
+        - momentum_shift: INCREASING/DECREASING/STABLE
+
+        Parameters
+        ----------
+        count : int
+            Number of historical values to return (default 20)
+
+        Returns
+        -------
+        Dict[str, Any]
+            Historical context data for AI analysis
+        """
+        if len(self.recent_bars) < count:
+            # Not enough data yet
+            return {
+                "price_trend": [],
+                "volume_trend": [],
+                "rsi_trend": [],
+                "macd_trend": [],
+                "trend_direction": "INSUFFICIENT_DATA",
+                "momentum_shift": "INSUFFICIENT_DATA",
+                "data_points": len(self.recent_bars),
+                "required_points": count,
+            }
+
+        recent = self.recent_bars[-count:]
+
+        # Extract price trend (closing prices)
+        price_trend = [float(bar.close) for bar in recent]
+
+        # Extract volume trend
+        volume_trend = [float(bar.volume) for bar in recent]
+
+        # Calculate RSI trend from stored bars
+        # Note: We recalculate RSI for each bar to get the trend
+        rsi_trend = self._calculate_indicator_history('rsi', count)
+
+        # Calculate MACD trend
+        macd_trend = self._calculate_indicator_history('macd', count)
+
+        # Determine trend direction
+        trend_direction = self._determine_trend_direction(price_trend)
+
+        # Determine momentum shift
+        momentum_shift = self._determine_momentum_shift(rsi_trend, macd_trend)
+
+        # Additional context metrics
+        price_change_pct = ((price_trend[-1] - price_trend[0]) / price_trend[0] * 100) if price_trend[0] > 0 else 0
+        avg_volume = sum(volume_trend) / len(volume_trend) if volume_trend else 0
+        current_volume_ratio = volume_trend[-1] / avg_volume if avg_volume > 0 else 1.0
+
+        return {
+            # Core trend data
+            "price_trend": price_trend,
+            "volume_trend": volume_trend,
+            "rsi_trend": rsi_trend,
+            "macd_trend": macd_trend,
+            # Trend analysis
+            "trend_direction": trend_direction,
+            "momentum_shift": momentum_shift,
+            # Summary metrics
+            "price_change_pct": round(price_change_pct, 2),
+            "current_volume_ratio": round(current_volume_ratio, 2),
+            "data_points": count,
+            # Visual indicators for AI
+            "price_arrow": "↑" if price_change_pct > 1 else ("↓" if price_change_pct < -1 else "→"),
+            "rsi_current": rsi_trend[-1] if rsi_trend else 0,
+            "macd_current": macd_trend[-1] if macd_trend else 0,
+        }
+
+    def _calculate_indicator_history(self, indicator_name: str, count: int) -> List[float]:
+        """
+        Calculate historical values for an indicator.
+
+        Note: This is an approximation since we only store recent bars.
+        For accurate historical RSI/MACD, we would need to recalculate from scratch.
+        Here we use a simplified approach based on recent closes.
+        """
+        if len(self.recent_bars) < count:
+            return []
+
+        recent = self.recent_bars[-count:]
+        closes = [float(bar.close) for bar in recent]
+
+        if indicator_name == 'rsi':
+            # Simplified RSI calculation for history
+            # For true historical RSI, we'd need to recalculate with full lookback
+            rsi_values = []
+            period = min(self.rsi_period, len(closes) - 1)
+
+            for i in range(period, len(closes)):
+                window = closes[i - period:i + 1]
+                changes = [window[j + 1] - window[j] for j in range(len(window) - 1)]
+                gains = [c for c in changes if c > 0]
+                losses = [-c for c in changes if c < 0]
+
+                avg_gain = sum(gains) / period if gains else 0
+                avg_loss = sum(losses) / period if losses else 0.0001
+
+                rs = avg_gain / avg_loss if avg_loss > 0 else 100
+                rsi = 100 - (100 / (1 + rs))
+                rsi_values.append(round(rsi, 2))
+
+            return rsi_values
+
+        elif indicator_name == 'macd':
+            # Simplified MACD calculation for history
+            macd_values = []
+            fast_period = self.macd_fast_period
+            slow_period = self.macd_slow_period
+
+            if len(closes) < slow_period:
+                return []
+
+            for i in range(slow_period, len(closes) + 1):
+                window = closes[:i]
+                fast_ema = self._simple_ema(window, fast_period)
+                slow_ema = self._simple_ema(window, slow_period)
+                macd = fast_ema - slow_ema
+                macd_values.append(round(macd, 4))
+
+            return macd_values
+
+        return []
+
+    def _simple_ema(self, values: List[float], period: int) -> float:
+        """Calculate a simple EMA for historical data."""
+        if len(values) < period:
+            return values[-1] if values else 0
+
+        multiplier = 2 / (period + 1)
+        ema = sum(values[:period]) / period  # Start with SMA
+
+        for value in values[period:]:
+            ema = (value - ema) * multiplier + ema
+
+        return ema
+
+    def _determine_trend_direction(self, price_trend: List[float]) -> str:
+        """
+        Determine overall trend direction from price trend.
+
+        Uses linear regression slope approach.
+        """
+        if len(price_trend) < 5:
+            return "INSUFFICIENT_DATA"
+
+        # Simple linear regression slope
+        n = len(price_trend)
+        x_mean = (n - 1) / 2
+        y_mean = sum(price_trend) / n
+
+        numerator = sum((i - x_mean) * (price_trend[i] - y_mean) for i in range(n))
+        denominator = sum((i - x_mean) ** 2 for i in range(n))
+
+        if denominator == 0:
+            return "NEUTRAL"
+
+        slope = numerator / denominator
+        slope_pct = (slope / y_mean * 100) if y_mean > 0 else 0
+
+        # Classify based on slope percentage
+        if slope_pct > 0.5:  # >0.5% slope per bar
+            return "BULLISH"
+        elif slope_pct < -0.5:
+            return "BEARISH"
+        else:
+            return "NEUTRAL"
+
+    def _determine_momentum_shift(
+        self,
+        rsi_trend: List[float],
+        macd_trend: List[float]
+    ) -> str:
+        """
+        Determine if momentum is increasing, decreasing, or stable.
+
+        Analyzes the trajectory of RSI and MACD.
+        """
+        if len(rsi_trend) < 5 or len(macd_trend) < 5:
+            return "INSUFFICIENT_DATA"
+
+        # Check RSI momentum (last 5 values)
+        rsi_recent = rsi_trend[-5:]
+        rsi_slope = (rsi_recent[-1] - rsi_recent[0]) / 5
+
+        # Check MACD momentum (last 5 values)
+        macd_recent = macd_trend[-5:]
+        macd_slope = (macd_recent[-1] - macd_recent[0]) / 5
+
+        # Normalize slopes for comparison
+        rsi_momentum = "up" if rsi_slope > 2 else ("down" if rsi_slope < -2 else "stable")
+        macd_momentum = "up" if macd_slope > 0 else ("down" if macd_slope < 0 else "stable")
+
+        # Combine signals
+        if rsi_momentum == "up" and macd_momentum == "up":
+            return "INCREASING"
+        elif rsi_momentum == "down" and macd_momentum == "down":
+            return "DECREASING"
+        else:
+            return "STABLE"

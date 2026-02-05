@@ -22,6 +22,10 @@ class AIDataAssembler:
     - 整合 BinanceDerivativesClient (大户数据、Taker 比等)
     - 整合 Coinalyze 历史数据 (OI/Funding/多空比趋势)
     - 添加 format_complete_report() 供 AI 使用
+
+    v3.0.1 更新 (IMPLEMENTATION_PLAN Section 4.2.1):
+    - 添加 historical_context 支持 (20 值趋势数据)
+    - AI 可以看到指标趋势，而非孤立的单一值
     """
 
     def __init__(
@@ -77,6 +81,7 @@ class AIDataAssembler:
         position_data: Optional[Dict[str, Any]] = None,
         symbol: str = "BTCUSDT",
         interval: str = "15m",
+        indicator_manager=None,
     ) -> Dict[str, Any]:
         """
         组装完整的 AI 输入数据 (同步方法)
@@ -91,6 +96,8 @@ class AIDataAssembler:
             交易对
         interval : str
             K线周期
+        indicator_manager : TechnicalIndicatorManager, optional
+            技术指标管理器 (用于获取 historical_context) - v3.0.1 新增
 
         Returns
         -------
@@ -165,13 +172,31 @@ class AIDataAssembler:
                 self.logger.warning(f"⚠️ Order book fetch error: {e}")
                 orderbook_data = self._no_data_orderbook(str(e))
 
-        # Step 8: 组装最终数据
+        # Step 8: 获取历史上下文 (v3.0.1 - IMPLEMENTATION_PLAN Section 4.2.1)
+        historical_context = None
+        if indicator_manager is not None:
+            try:
+                historical_context = indicator_manager.get_historical_context(count=20)
+                self.logger.debug(
+                    f"Historical context: trend={historical_context.get('trend_direction')}, "
+                    f"momentum={historical_context.get('momentum_shift')}"
+                )
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to get historical context: {e}")
+                historical_context = {
+                    "error": str(e),
+                    "trend_direction": "ERROR",
+                    "momentum_shift": "ERROR",
+                }
+
+        # Step 9: 组装最终数据
         return {
             "price": {
                 "current": current_price,
                 "change_pct": self._calc_change(raw_klines) if raw_klines else 0,
             },
             "technical": technical_data,
+            "historical_context": historical_context,  # v3.0.1 新增
             "order_flow": order_flow_data,
             "derivatives": derivatives,
             "sentiment": sentiment_data,
@@ -184,6 +209,7 @@ class AIDataAssembler:
                 "binance_derivatives_enabled": self.binance_derivatives is not None,
                 "orderbook_enabled": self.binance_orderbook is not None,
                 "orderbook_status": orderbook_data.get("_status", {}).get("code") if orderbook_data else "DISABLED",
+                "historical_context_enabled": historical_context is not None,  # v3.0.1 新增
             },
         }
 
@@ -603,6 +629,29 @@ class AIDataAssembler:
                                 f"  Slippage (Buy 1 BTC): {s['estimated']:.3f}% "
                                 f"[conf={s['confidence']:.0%}, range={s['range'][0]:.3f}%-{s['range'][1]:.3f}%]"
                             )
+
+        # =========================================================================
+        # 8. 历史上下文 (v3.0.1 新增 - IMPLEMENTATION_PLAN Section 4.2.1)
+        # =========================================================================
+        historical = data.get("historical_context")
+        if historical and historical.get("trend_direction") not in ["INSUFFICIENT_DATA", "ERROR"]:
+            parts.append("\nHISTORICAL CONTEXT (Last 20 bars):")
+            parts.append(
+                f"  - Trend Direction: {historical.get('trend_direction', 'N/A')} "
+                f"{historical.get('price_arrow', '')}"
+            )
+            parts.append(f"  - Momentum Shift: {historical.get('momentum_shift', 'N/A')}")
+            parts.append(f"  - Price Change: {historical.get('price_change_pct', 0):+.2f}%")
+            parts.append(f"  - Volume Ratio: {historical.get('current_volume_ratio', 1):.2f}x")
+            parts.append(f"  - RSI Current: {historical.get('rsi_current', 0):.1f}")
+            parts.append(f"  - MACD Current: {historical.get('macd_current', 0):.4f}")
+
+            # 可视化趋势 (简化版)
+            price_trend = historical.get('price_trend', [])
+            if len(price_trend) >= 5:
+                # 取最近5个点展示趋势
+                trend_str = " → ".join([f"${p:,.0f}" for p in price_trend[-5:]])
+                parts.append(f"  - Price Trend: {trend_str}")
 
         parts.append("\n" + "=" * 50)
 
