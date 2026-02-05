@@ -192,18 +192,24 @@ class APIHealthCheck(DiagnosticStep):
             print(f"     🟡 DeepSeek API: {str(e)[:40]}")
 
         # Test Coinalyze (if API key exists)
+        # v2.4.9: Fix - Coinalyze has no /ping endpoint, use /open-interest instead
         coinalyze_key = os.getenv('COINALYZE_API_KEY')
         if coinalyze_key:
             try:
                 start = time.time()
                 resp = requests.get(
-                    "https://api.coinalyze.net/v1/ping",
+                    "https://api.coinalyze.net/v1/open-interest",
                     timeout=3,
+                    params={"symbols": "BTCUSDT_PERP.A"},
                     headers={"api_key": coinalyze_key}
                 )
                 elapsed = (time.time() - start) * 1000
                 if resp.status_code == 200:
                     print(f"     ✅ Coinalyze API: {elapsed:.0f}ms")
+                elif resp.status_code == 401:
+                    print(f"     🔴 Coinalyze API: Invalid API key (401)")
+                elif resp.status_code == 429:
+                    print(f"     🟡 Coinalyze API: Rate limited (429)")
                 else:
                     print(f"     🟡 Coinalyze API: HTTP {resp.status_code}")
             except Exception as e:

@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.4.8 (dotenv 早期加载修复)
+实盘信号诊断脚本 v2.4.9 (Coinalyze API 端点修复)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.4.9 更新:
+- 修复: Coinalyze API 测试使用 /open-interest 替代不存在的 /ping 端点
+- 修复: HTTP 404 错误 (Coinalyze 没有 /ping 端点)
 
 v2.4.8 更新:
 - 修复: dotenv 在 DiagnosticRunner.__init__() 中早期加载
@@ -159,7 +163,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.4.8 (dotenv 早期加载修复)',
+        description='实盘信号诊断工具 v2.4.9 (Coinalyze API 端点修复)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
