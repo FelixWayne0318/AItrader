@@ -193,6 +193,26 @@ SUPPORT/RESISTANCE ZONES (v2.0):
   * Zones with ORDER_FLOW type are real orders that can be eaten through
   * MAJOR level zones are more significant for longer-term trades
   * Multiple overlapping sources increase confidence in the zone
+
+HISTORICAL CONTEXT (v3.0.1 - 20-bar trend data):
+- Purpose: Shows indicator trends over last 20 bars instead of isolated single values
+- Data provided:
+  * price_trend: Last 20 closing prices
+  * rsi_trend: Last 20 RSI values
+  * macd_trend: Last 20 MACD values
+- Trend Direction: Calculated from price movement
+  * BULLISH: Clear upward trend (higher highs, higher lows)
+  * BEARISH: Clear downward trend (lower highs, lower lows)
+  * NEUTRAL: No clear direction (consolidation)
+- Momentum Shift: Rate of change in trend strength
+  * INCREASING: Trend is accelerating
+  * DECREASING: Trend is weakening
+  * STABLE: Trend strength unchanged
+- Usage:
+  * Compare current values to recent history
+  * Identify divergences between price and indicators
+  * Assess if current move is continuation or reversal
+  * Last 5 values shown for quick pattern recognition
 """
 
 
@@ -1164,6 +1184,41 @@ TREND INDICATORS (1D):
 - Price vs SMA_200: {'+' if data.get('price', 0) > trend_safe_get('sma_200') else ''}{((data.get('price', 0) / trend_safe_get('sma_200') - 1) * 100) if trend_safe_get('sma_200') > 0 else 0:.2f}%
 - MACD: {trend_safe_get('macd'):.4f}
 - MACD Signal: {trend_safe_get('macd_signal'):.4f}
+"""
+
+        # Add historical context if available (EVALUATION_FRAMEWORK v3.0.1)
+        # This shows AI the 20-value trends instead of isolated single values
+        historical = data.get('historical_context')
+        if historical and historical.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR', None]:
+            trend_dir = historical.get('trend_direction', 'N/A')
+            momentum = historical.get('momentum_shift', 'N/A')
+
+            # Format recent values (last 5 of 20 for brevity)
+            def format_recent(values, fmt=".1f"):
+                if not values or not isinstance(values, list):
+                    return "N/A"
+                recent = values[-5:] if len(values) >= 5 else values
+                return " → ".join([f"{v:{fmt}}" for v in recent])
+
+            price_trend = historical.get('price_trend', [])
+            rsi_trend = historical.get('rsi_trend', [])
+            macd_trend = historical.get('macd_trend', [])
+
+            report += f"""
+=== HISTORICAL CONTEXT (Last 20 bars) ===
+
+TREND ANALYSIS:
+- Overall Direction: {trend_dir}
+- Momentum Shift: {momentum}
+
+RECENT PRICE MOVEMENT (last 5 of 20):
+- Prices: ${format_recent(price_trend, ",.0f")}
+
+RECENT RSI MOVEMENT (last 5 of 20):
+- RSI: {format_recent(rsi_trend)}
+
+RECENT MACD MOVEMENT (last 5 of 20):
+- MACD: {format_recent(macd_trend, ".4f")}
 """
 
         return report

@@ -1549,6 +1549,22 @@ class DeepSeekAIStrategy(Strategy):
                     except Exception as e:
                         self.log.warning(f"[MTF] 获取趋势层数据失败: {e}")
 
+                # ========== 获取历史上下文 (EVALUATION_FRAMEWORK v3.0.1) ==========
+                # AI 需要看到 20 值趋势，而非孤立的单一指标值
+                # 参考: docs/research/EVALUATION_FRAMEWORK.md Section 2.1
+                try:
+                    historical_context = self.indicator_manager.get_historical_context(count=20)
+                    if historical_context and historical_context.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR']:
+                        ai_technical_data['historical_context'] = historical_context
+                        self.log.info(
+                            f"[历史上下文] trend={historical_context.get('trend_direction')}, "
+                            f"momentum={historical_context.get('momentum_shift')}"
+                        )
+                    else:
+                        self.log.debug("[历史上下文] 数据不足，跳过")
+                except Exception as e:
+                    self.log.warning(f"[历史上下文] 获取失败: {e}")
+
                 # ========== 获取订单流数据 (MTF v2.1) ==========
                 order_flow_data = None
                 if self.binance_kline_client and self.order_flow_processor:
