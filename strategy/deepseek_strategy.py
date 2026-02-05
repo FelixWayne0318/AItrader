@@ -3853,23 +3853,39 @@ class DeepSeekAIStrategy(Strategy):
         exit_price = float(event.avg_px_close) if hasattr(event, 'avg_px_close') else 0.0
         position_value = entry_price * quantity
 
-        # v3.14: Improved pnl_pct calculation with fallback
+        # v3.16: Use official realized_return attribute (ROOT CAUSE FIX)
+        # NautilusTrader PositionClosed event has realized_return (decimal, e.g., 0.0123 = 1.23%)
+        # This is the authoritative source, avoiding manual calculation issues
         pnl_pct = 0.0
-        if position_value > 0:
+        pnl_source = "none"
+
+        # Priority 1: Use official realized_return from NautilusTrader
+        if hasattr(event, 'realized_return'):
+            try:
+                # realized_return is a decimal (0.01 = 1%), convert to percentage
+                pnl_pct = float(event.realized_return) * 100
+                pnl_source = "realized_return"
+            except (TypeError, ValueError) as e:
+                self.log.warning(f"Failed to extract realized_return: {e}")
+
+        # Priority 2: Calculate from pnl/position_value
+        if pnl_pct == 0.0 and position_value > 0:
             pnl_pct = (pnl / position_value * 100)
-        elif pnl != 0 and entry_price > 0 and exit_price > 0:
-            # Fallback: calculate from price difference if quantity extraction failed
+            pnl_source = "pnl/position_value"
+
+        # Priority 3: Calculate from price difference
+        if pnl_pct == 0.0 and pnl != 0 and entry_price > 0 and exit_price > 0:
             side = event.side.name if hasattr(event, 'side') else 'UNKNOWN'
             if side == 'LONG':
                 pnl_pct = ((exit_price - entry_price) / entry_price) * 100
             elif side == 'SHORT':
                 pnl_pct = ((entry_price - exit_price) / entry_price) * 100
-            self.log.info(f"📊 Used price fallback for pnl_pct: {pnl_pct:.2f}%")
+            pnl_source = "price_difference"
 
-        # v3.14: Enhanced debug logging with attribute info
+        # v3.16: Enhanced debug logging with source tracking
         self.log.info(
             f"📊 P&L calculation: pnl={pnl:.4f} USDT, qty={quantity:.4f} (from {qty_source}), "
-            f"entry={entry_price:.2f}, exit={exit_price:.2f}, pnl_pct={pnl_pct:.2f}%"
+            f"entry={entry_price:.2f}, exit={exit_price:.2f}, pnl_pct={pnl_pct:.2f}% (from {pnl_source})"
         )
 
         # Send Telegram position closed notification
