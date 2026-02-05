@@ -444,7 +444,7 @@ class DiagnosticRunner:
             self.setup_output_capture()
 
             print("=" * 70)
-            print("  实盘信号诊断工具 v2.4.5 (OrderBook weighted_obi_config 完整修复)")
+            print("  实盘信号诊断工具 v2.4.6 (移除误导性触发条件显示)")
             print("  基于 TradingAgents v3.12 架构")
             print("=" * 70)
             print()
