@@ -173,10 +173,11 @@ class AIDataAssembler:
                 orderbook_data = self._no_data_orderbook(str(e))
 
         # Step 8: 获取历史上下文 (v3.0.1 - IMPLEMENTATION_PLAN Section 4.2.1)
+        # count=35 确保 MACD 历史计算有足够数据 (slow_period=26 + 5 + buffer)
         historical_context = None
         if indicator_manager is not None:
             try:
-                historical_context = indicator_manager.get_historical_context(count=20)
+                historical_context = indicator_manager.get_historical_context(count=35)
                 self.logger.debug(
                     f"Historical context: trend={historical_context.get('trend_direction')}, "
                     f"momentum={historical_context.get('momentum_shift')}"

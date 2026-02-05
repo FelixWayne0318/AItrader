@@ -899,10 +899,13 @@ YOUR TASK:
 3. Determine take profit using S/R zones as reference:
    - For LONG: Target nearest RESISTANCE zone as TP (consider zone Level: MAJOR > INTERMEDIATE > MINOR)
    - For SHORT: Target nearest SUPPORT zone as TP
-4. Evaluate Risk/Reward ratio:
-   - Minimum acceptable R/R is 1:1 (TP distance >= SL distance)
-   - Prefer R/R of 1.5:1 or better for HIGH confidence trades
-   - If R/R is unfavorable, consider HOLD instead
+4. Evaluate Risk/Reward ratio (CRITICAL):
+   - MINIMUM acceptable R/R is 1.5:1 (TP distance >= 1.5x SL distance)
+   - For HIGH confidence trades, aim for R/R of 2:1 or better
+   - IMPORTANT: If R/R is below 1.5:1, you MUST either:
+     a) Adjust SL/TP to achieve 1.5:1 ratio, OR
+     b) Change signal to HOLD (do not execute unfavorable trades)
+   - Never set TP equal to or less than SL distance
 5. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
 
 SIGNAL TYPES (v3.12 - choose the most appropriate):

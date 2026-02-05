@@ -197,10 +197,11 @@ class AIInputDataValidator(DiagnosticStep):
                 self.ctx.binance_derivatives_data = assembled_data.get('binance_derivatives')
 
             # v2.5.0: Get historical_context from indicator_manager (EVALUATION_FRAMEWORK v3.0.1)
-            # AI needs 20-value trends, not isolated single indicator values
+            # AI needs trend data, not isolated single indicator values
+            # count=35 ensures MACD history has enough data (slow_period=26 + 5 + buffer)
             if hasattr(self.ctx, 'indicator_manager') and self.ctx.indicator_manager:
                 try:
-                    historical_context = self.ctx.indicator_manager.get_historical_context(count=20)
+                    historical_context = self.ctx.indicator_manager.get_historical_context(count=35)
                     if historical_context and historical_context.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR']:
                         self.ctx.historical_context = historical_context
                         # Also add to technical_data for AI analysis consistency
@@ -475,12 +476,13 @@ class AIInputDataValidator(DiagnosticStep):
         """
         Print historical context data (v2.5.0 / EVALUATION_FRAMEWORK v3.0.1).
 
-        AI needs 20-value trends for proper trend analysis, not isolated values.
+        AI needs trend data for proper trend analysis, not isolated values.
+        Uses count=35 to ensure MACD history has enough data (slow_period=26).
         """
         hc = getattr(self.ctx, 'historical_context', None)
 
         if hc and hc.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR', None]:
-            print("  [10] historical_context (20-bar 趋势数据 v3.0.1):")
+            print("  [10] historical_context (35-bar 趋势数据 v3.0.1):")
             print(f"      trend_direction:    {hc.get('trend_direction', 'N/A')}")
             print(f"      momentum_shift:     {hc.get('momentum_shift', 'N/A')}")
             print(f"      data_points:        {hc.get('data_points', 0)}")
@@ -509,7 +511,7 @@ class AIInputDataValidator(DiagnosticStep):
                 price_change = ((price_trend[-1] / price_trend[0]) - 1) * 100 if price_trend[0] > 0 else 0
                 trend_emoji = "📈" if price_change > 0 else "📉" if price_change < 0 else "➡️"
                 print()
-                print(f"      {trend_emoji} 20-bar 价格变化: {price_change:+.2f}%")
+                print(f"      {trend_emoji} 35-bar 价格变化: {price_change:+.2f}%")
 
             if rsi_trend:
                 avg_rsi = sum(rsi_trend) / len(rsi_trend)
@@ -521,7 +523,7 @@ class AIInputDataValidator(DiagnosticStep):
             print("      ℹ️ 参考: EVALUATION_FRAMEWORK.md Section 2.1 数据完整性")
         else:
             if hasattr(self.ctx, 'indicator_manager') and self.ctx.indicator_manager:
-                print("  [10] historical_context: 数据不足 (需要至少 20 根 K线)")
+                print("  [10] historical_context: 数据不足 (需要至少 35 根 K线)")
                 print("      ℹ️ 诊断脚本刚启动，历史数据可能不足")
                 print("      ℹ️ 实盘服务运行后会自动累积数据")
             else:

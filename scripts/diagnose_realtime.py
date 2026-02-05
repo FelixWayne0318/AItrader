@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.5.0 (EVALUATION_FRAMEWORK v3.0.1 完整验证)
+实盘信号诊断脚本 v2.5.1 (macd_trend 数据修复)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
 
+v2.5.1 更新:
+- 修复: historical_context count 从 20 增加到 35，确保 MACD 历史计算有足够数据
+- 修复: momentum_shift 现在可以正常计算 (不再返回 INSUFFICIENT_DATA)
+- 优化: Risk Manager R/R 最低要求从 1:1 提升到 1.5:1
+
 v2.5.0 更新:
 - 新增: [10] historical_context 验证 (EVALUATION_FRAMEWORK v3.0.1)
-- 新增: 20-bar 趋势数据显示 (price_trend, rsi_trend, macd_trend, volume_trend)
+- 新增: 35-bar 趋势数据显示 (price_trend, rsi_trend, macd_trend, volume_trend)
 - 新增: trend_direction 和 momentum_shift 分析
 - 优化: AI 输入数据验证扩展为 10 类数据 (原 9 类)
 
@@ -169,7 +174,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.5.0 (EVALUATION_FRAMEWORK v3.0.1 完整验证)',
+        description='实盘信号诊断工具 v2.5.1 (macd_trend 数据修复)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

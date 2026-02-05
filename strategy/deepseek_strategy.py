@@ -1550,10 +1550,11 @@ class DeepSeekAIStrategy(Strategy):
                         self.log.warning(f"[MTF] 获取趋势层数据失败: {e}")
 
                 # ========== 获取历史上下文 (EVALUATION_FRAMEWORK v3.0.1) ==========
-                # AI 需要看到 20 值趋势，而非孤立的单一指标值
+                # AI 需要看到趋势数据，而非孤立的单一指标值
+                # count=35 确保 MACD 历史计算有足够数据 (slow_period=26 + 5 + buffer)
                 # 参考: docs/research/EVALUATION_FRAMEWORK.md Section 2.1
                 try:
-                    historical_context = self.indicator_manager.get_historical_context(count=20)
+                    historical_context = self.indicator_manager.get_historical_context(count=35)
                     if historical_context and historical_context.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR']:
                         ai_technical_data['historical_context'] = historical_context
                         self.log.info(
