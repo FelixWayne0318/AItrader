@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.5.1 (macd_trend 数据修复)
+实盘信号诊断脚本 v2.6.0 (S/R Zone SL/TP 改进)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.6.0 更新:
+- 新增: S/R Zone Calculator 集成 (聚合 BB, SMA, Order Wall, Pivot)
+- 新增: SL/TP 回退计算现在使用 S/R Zone 数据 (与 deepseek_strategy v3.14 一致)
+- 新增: TP 基于阻力/支撑位计算，而非固定百分比
+- 新增: R/R 比率自动调整确保 >= 1.5:1
+- 新增: S/R Zone 数据显示 (级别、强度、来源类型)
+- 优化: AI Prompt 改进后的 S/R 入场规则验证
 
 v2.5.1 更新:
 - 修复: historical_context count 从 20 增加到 35，确保 MACD 历史计算有足够数据
@@ -79,7 +87,8 @@ v2.1 更新 (v4.8 适配):
 - 获取实时市场数据 (K线、情绪)
 - 初始化并测试技术指标
 - 检查 Binance 真实持仓和杠杆
-- AI 输入数据验证 (10 类完整数据, 含 historical_context)
+- AI 输入数据验证 (11 类完整数据, 含 historical_context 和 S/R Zones)
+- S/R Zone 计算和显示 (BB, SMA, Order Walls 聚合)
 - 运行 AI 决策流程 (Bull/Bear/Judge)
 - AI Prompt 结构验证 (记忆系统)
 - 测试 MTF 组件 (OrderFlow, Coinalyze, OrderBook)

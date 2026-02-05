@@ -306,6 +306,7 @@ class DiagnosticContext:
     derivatives_report: Optional[Dict] = None
     orderbook_report: Optional[Dict] = None  # v3.7: Order book depth data
     binance_funding_rate: Optional[Dict] = None  # v4.8: Binance 8h funding rate (主要数据源)
+    sr_zones_data: Optional[Dict] = None  # v2.6.0: S/R Zone Calculator data
 
     # AI decision data
     multi_agent: Any = None

@@ -21,9 +21,15 @@ class AIInputDataValidator(DiagnosticStep):
 
     Based on v11.16: AI 输入数据验证 (传给 MultiAgent)
 
+    v2.6.0 更新:
+    - 新增: [11] S/R Zones 验证 (支撑/阻力区计算)
+    - 新增: S/R Zone 数据用于 SL/TP 回退计算
+    - 新增: 硬风控状态显示
+    - 新增: R/R 比率分析
+
     v2.5.0 更新:
     - 新增: [10] historical_context 验证 (EVALUATION_FRAMEWORK v3.0.1)
-    - 新增: 20-bar 趋势数据显示 (price, RSI, MACD, volume)
+    - 新增: 35-bar 趋势数据显示 (price, RSI, MACD, volume)
     - 新增: trend_direction 和 momentum_shift 分析
 
     v2.4.2 更新:
@@ -31,7 +37,7 @@ class AIInputDataValidator(DiagnosticStep):
     - 确保显示的数据与实际传给 AI 的数据一致
     """
 
-    name = "AI 输入数据验证 (传给 MultiAgent, 10 类数据)"
+    name = "AI 输入数据验证 (传给 MultiAgent, 11 类数据)"
 
     def run(self) -> bool:
         print("-" * 70)
@@ -76,9 +82,12 @@ class AIInputDataValidator(DiagnosticStep):
         # [10] Historical context (v2.5.0 / EVALUATION_FRAMEWORK v3.0.1)
         self._print_historical_context()
 
+        # [11] S/R Zones (v2.6.0)
+        self._print_sr_zones_data()
+
         print()
         print("  ────────────────────────────────────────────────────────────────")
-        print("  ✅ AI 输入数据验证完成 (10 类数据)")
+        print("  ✅ AI 输入数据验证完成 (11 类数据)")
         return True
 
     def _fetch_mtf_data(self) -> None:
@@ -214,6 +223,44 @@ class AIInputDataValidator(DiagnosticStep):
                     self.ctx.historical_context = None
             else:
                 self.ctx.historical_context = None
+
+            # v2.6.0: Calculate S/R Zones (for SL/TP calculation)
+            # Uses SRZoneCalculator to aggregate BB, SMA, Order Walls
+            try:
+                from utils.sr_zone_calculator import SRZoneCalculator
+
+                td = self.ctx.technical_data
+                sr_calculator = SRZoneCalculator()
+
+                # Prepare data for S/R calculation
+                bb_data = {
+                    'upper': td.get('bb_upper', 0),
+                    'lower': td.get('bb_lower', 0),
+                    'middle': td.get('sma_20', 0),
+                }
+                sma_data = {
+                    'sma_50': td.get('sma_50', 0),
+                    'sma_200': td.get('sma_200', 0),
+                }
+
+                # Get order book anomalies if available
+                orderbook_anomalies = None
+                if self.ctx.orderbook_report and self.ctx.orderbook_report.get('_status', {}).get('code') == 'OK':
+                    orderbook_anomalies = self.ctx.orderbook_report.get('anomalies', {})
+
+                sr_result = sr_calculator.calculate_with_detailed_report(
+                    current_price=self.ctx.current_price,
+                    bb_data=bb_data,
+                    sma_data=sma_data,
+                    orderbook_anomalies=orderbook_anomalies,
+                )
+
+                self.ctx.sr_zones_data = sr_result
+                print(f"  ℹ️ S/R Zones 计算完成: {len(sr_result.get('support_zones', []))} 支撑, {len(sr_result.get('resistance_zones', []))} 阻力")
+
+            except Exception as sr_err:
+                print(f"  ⚠️ S/R Zones 计算失败: {sr_err}")
+                self.ctx.sr_zones_data = None
 
         except Exception as e:
             print(f"  ⚠️ MTF 数据获取失败: {e}, 将显示空数据")
@@ -528,6 +575,82 @@ class AIInputDataValidator(DiagnosticStep):
                 print("      ℹ️ 实盘服务运行后会自动累积数据")
             else:
                 print("  [10] historical_context: indicator_manager 未初始化")
+
+    def _print_sr_zones_data(self) -> None:
+        """
+        Print S/R Zone data (v2.6.0).
+
+        Shows support/resistance zones calculated from BB, SMA, Order Walls.
+        This data is used for SL/TP calculation when AI doesn't provide valid values.
+        """
+        sr_data = getattr(self.ctx, 'sr_zones_data', None)
+
+        if sr_data:
+            print("  [11] S/R Zones (支撑/阻力区 v2.6.0):")
+
+            # Nearest support
+            nearest_sup = sr_data.get('nearest_support')
+            if nearest_sup and hasattr(nearest_sup, 'price_center'):
+                wall_info = f" [Order Wall: {nearest_sup.wall_size_btc:.1f} BTC]" if nearest_sup.has_order_wall else ""
+                print(f"      最近支撑: ${nearest_sup.price_center:,.0f} ({nearest_sup.distance_pct:.1f}% away)")
+                print(f"        强度: {nearest_sup.strength} | 级别: {nearest_sup.level}{wall_info}")
+                print(f"        来源: {', '.join(nearest_sup.sources)}")
+            else:
+                print("      最近支撑: N/A")
+
+            print()
+
+            # Nearest resistance
+            nearest_res = sr_data.get('nearest_resistance')
+            if nearest_res and hasattr(nearest_res, 'price_center'):
+                wall_info = f" [Order Wall: {nearest_res.wall_size_btc:.1f} BTC]" if nearest_res.has_order_wall else ""
+                print(f"      最近阻力: ${nearest_res.price_center:,.0f} ({nearest_res.distance_pct:.1f}% away)")
+                print(f"        强度: {nearest_res.strength} | 级别: {nearest_res.level}{wall_info}")
+                print(f"        来源: {', '.join(nearest_res.sources)}")
+            else:
+                print("      最近阻力: N/A")
+
+            print()
+
+            # Hard control status
+            hard_control = sr_data.get('hard_control', {})
+            if hard_control.get('block_long') or hard_control.get('block_short'):
+                print("      ⚠️ 硬风控:")
+                if hard_control.get('block_long'):
+                    print("        🚫 LONG 被阻止 (太靠近阻力位)")
+                if hard_control.get('block_short'):
+                    print("        🚫 SHORT 被阻止 (太靠近支撑位)")
+                if hard_control.get('reason'):
+                    print(f"        原因: {hard_control['reason']}")
+            else:
+                print("      ✅ 硬风控: 无限制")
+
+            print()
+
+            # R/R Analysis (if both S/R available)
+            if nearest_sup and nearest_res and hasattr(nearest_sup, 'price_center') and hasattr(nearest_res, 'price_center'):
+                price = self.ctx.current_price
+                support = nearest_sup.price_center
+                resistance = nearest_res.price_center
+
+                upside = resistance - price
+                downside = price - support
+
+                if downside > 0:
+                    long_rr = upside / downside
+                    rr_status = "✅ FAVORABLE" if long_rr >= 1.5 else "⚠️ UNFAVORABLE"
+                    print(f"      LONG R/R: {long_rr:.2f}:1 {rr_status}")
+                if upside > 0:
+                    short_rr = downside / upside
+                    rr_status = "✅ FAVORABLE" if short_rr >= 1.5 else "⚠️ UNFAVORABLE"
+                    print(f"      SHORT R/R: {short_rr:.2f}:1 {rr_status}")
+
+            print()
+            print("      ℹ️ 数据来源: SRZoneCalculator (BB + SMA + Order Walls)")
+        else:
+            print("  [11] S/R Zones: 未计算 (可能缺少技术数据)")
+
+        print()
 
     def should_skip(self) -> bool:
         return self.ctx.summary_mode
@@ -956,8 +1079,36 @@ class OrderSimulator(DiagnosticStep):
         print(f"     AI Judge TP: ${multi_tp:,.2f}" if multi_tp else "     AI Judge TP: None")
         print()
 
-        support = self.ctx.technical_data.get('support', 0.0)
-        resistance = self.ctx.technical_data.get('resistance', 0.0)
+        # v2.6.0: Use S/R Zone data (more sophisticated) instead of basic technical_data
+        # S/R Zone Calculator aggregates: BB, SMA_50, SMA_200, Order Walls
+        # Falls back to basic technical_data if S/R Zones not available
+        support = 0.0
+        resistance = 0.0
+        sr_source = "none"
+
+        if self.ctx.sr_zones_data:
+            nearest_support = self.ctx.sr_zones_data.get('nearest_support')
+            nearest_resistance = self.ctx.sr_zones_data.get('nearest_resistance')
+            if nearest_support and hasattr(nearest_support, 'price_center'):
+                support = nearest_support.price_center
+                sr_source = f"S/R Zone ({nearest_support.strength}, {nearest_support.level})"
+            if nearest_resistance and hasattr(nearest_resistance, 'price_center'):
+                resistance = nearest_resistance.price_center
+                sr_source = f"S/R Zone ({nearest_resistance.strength}, {nearest_resistance.level})"
+            print(f"     使用 {sr_source}:")
+            print(f"       Support: ${support:,.0f}" if support > 0 else "       Support: N/A")
+            print(f"       Resistance: ${resistance:,.0f}" if resistance > 0 else "       Resistance: N/A")
+        else:
+            # Fallback to basic technical data
+            support = self.ctx.technical_data.get('support', 0.0)
+            resistance = self.ctx.technical_data.get('resistance', 0.0)
+            if support > 0 or resistance > 0:
+                sr_source = "technical_data (basic)"
+                print(f"     使用 {sr_source}:")
+                print(f"       Support: ${support:,.0f}" if support > 0 else "       Support: N/A")
+                print(f"       Resistance: ${resistance:,.0f}" if resistance > 0 else "       Resistance: N/A")
+
+        print()
         use_sr = getattr(cfg, 'sl_use_support_resistance', True)
         sl_buffer = getattr(cfg, 'sl_buffer_pct', 0.001)
 
@@ -971,7 +1122,7 @@ class OrderSimulator(DiagnosticStep):
             print(f"     验证结果: {'✅ 通过' if is_valid else '❌ 失败'} - {reason}")
 
             if not is_valid:
-                print("     ⚠️ AI SL/TP 验证失败，回退到技术分析")
+                print("     ⚠️ AI SL/TP 验证失败，回退到 S/R Zone 技术分析")
                 final_sl, final_tp, calc_method = calculate_technical_sltp(
                     side=signal,
                     entry_price=self.ctx.current_price,
@@ -981,8 +1132,9 @@ class OrderSimulator(DiagnosticStep):
                     use_support_resistance=use_sr,
                     sl_buffer_pct=sl_buffer,
                 )
+                print(f"     {calc_method}")
         else:
-            print("     ⚠️ AI 未提供 SL/TP，使用技术分析计算")
+            print("     ⚠️ AI 未提供 SL/TP，使用 S/R Zone 技术分析计算")
             final_sl, final_tp, calc_method = calculate_technical_sltp(
                 side=signal,
                 entry_price=self.ctx.current_price,
@@ -992,6 +1144,7 @@ class OrderSimulator(DiagnosticStep):
                 use_support_resistance=use_sr,
                 sl_buffer_pct=sl_buffer,
             )
+            print(f"     {calc_method}")
 
         final_sl = safe_float(final_sl) or 0.0
         final_tp = safe_float(final_tp) or 0.0
