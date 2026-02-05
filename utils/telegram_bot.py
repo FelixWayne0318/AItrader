@@ -699,7 +699,7 @@ class TelegramBot:
 """
     
     def format_position_update(self, position_data: Dict[str, Any]) -> str:
-        """Format position update notification (v2.0 - with SL/TP info)."""
+        """Format position update notification (v3.17 - with close reason and entry quality)."""
         action = position_data.get('action', 'UPDATE')  # OPENED, CLOSED, UPDATE
         side = position_data.get('side', 'UNKNOWN')
         quantity = position_data.get('quantity', 0.0)
@@ -712,6 +712,14 @@ class TelegramBot:
         sl_price = position_data.get('sl_price')
         tp_price = position_data.get('tp_price')
 
+        # v3.17: Close reason
+        close_reason = position_data.get('close_reason', 'MANUAL')
+        close_reason_detail = position_data.get('close_reason_detail', '')
+
+        # v3.17: Entry quality and R/R ratio
+        entry_quality = position_data.get('entry_quality')  # e.g., "优秀 (距支撑 0.5%)"
+        rr_ratio = position_data.get('rr_ratio')  # e.g., 2.5
+
         # 中文映射
         side_cn = "多" if side == "LONG" else "空" if side == "SHORT" else side
 
@@ -719,8 +727,16 @@ class TelegramBot:
             emoji = "📈" if side == "LONG" else "📉"
             title = "开仓成功"
         elif action == "CLOSED":
-            emoji = "✅" if pnl >= 0 else "❌"
-            title = "平仓完成"
+            # v3.17: Use close reason to determine emoji
+            if close_reason == 'TAKE_PROFIT':
+                emoji = "🎯"
+                title = "止盈平仓"
+            elif close_reason == 'STOP_LOSS':
+                emoji = "🛑"
+                title = "止损平仓"
+            else:
+                emoji = "✅" if pnl >= 0 else "❌"
+                title = "平仓完成"
         else:
             emoji = "📊"
             title = "持仓更新"
@@ -736,7 +752,7 @@ class TelegramBot:
 *当前价*: ${current_price:,.2f}
 """
 
-        # Add SL/TP for OPENED positions (v2.0)
+        # Add SL/TP and R/R for OPENED positions (v3.17)
         if action == "OPENED":
             if sl_price:
                 sl_pct = ((sl_price / entry_price) - 1) * 100 if entry_price > 0 else 0
@@ -745,7 +761,33 @@ class TelegramBot:
                 tp_pct = ((tp_price / entry_price) - 1) * 100 if entry_price > 0 else 0
                 message += f"🎯 *止盈*: ${tp_price:,.2f} ({tp_pct:+.2f}%)\n"
 
-        if action == "CLOSED" or action == "UPDATE":
+            # v3.17: R/R ratio
+            if sl_price and tp_price and entry_price > 0:
+                if side == "LONG":
+                    sl_dist = entry_price - sl_price
+                    tp_dist = tp_price - entry_price
+                else:  # SHORT
+                    sl_dist = sl_price - entry_price
+                    tp_dist = entry_price - tp_price
+
+                if sl_dist > 0:
+                    calc_rr = tp_dist / sl_dist
+                    rr_quality = "✅ 优" if calc_rr >= 2.0 else "✓ 良" if calc_rr >= 1.5 else "⚠️ 一般"
+                    message += f"📊 *R/R比率*: {calc_rr:.2f}:1 {rr_quality}\n"
+
+            # v3.17: Entry quality
+            if entry_quality:
+                message += f"📍 *入场质量*: {entry_quality}\n"
+
+        # v3.17: Close reason detail for CLOSED positions
+        if action == "CLOSED":
+            if close_reason_detail:
+                message += f"\n*平仓原因*: {close_reason_detail}\n"
+
+            message += f"""
+{pnl_emoji} *盈亏*: ${pnl:,.2f} ({pnl_pct:+.2f}%)
+"""
+        elif action == "UPDATE":
             message += f"""
 {pnl_emoji} *盈亏*: ${pnl:,.2f} ({pnl_pct:+.2f}%)
 """
@@ -770,7 +812,7 @@ class TelegramBot:
 
     def format_trade_execution(self, execution_data: Dict[str, Any]) -> str:
         """
-        Format unified trade execution notification (v4.0).
+        Format unified trade execution notification (v4.0, v3.17 improvements).
 
         Combines signal, fill, and position info into a single comprehensive message.
         Replaces separate signal/fill/position notifications to reduce message spam.
@@ -791,6 +833,7 @@ class TelegramBot:
             - winning_side: str (Bull/Bear, optional)
             - reasoning: str (optional)
             - action_taken: str (optional, v3.11) - specific action like 开多/反转/加仓
+            - entry_quality: str (optional, v3.17) - entry quality evaluation
         """
         signal = execution_data.get('signal', 'UNKNOWN')
         confidence = execution_data.get('confidence', 'UNKNOWN')
@@ -897,6 +940,25 @@ class TelegramBot:
             if reasoning:
                 safe_reasoning = self.escape_markdown(reasoning[:100])
                 msg += f"  {safe_reasoning}{'...' if len(reasoning) > 100 else ''}\n"
+
+        # v3.17: Entry quality evaluation and R/R ratio
+        entry_quality = execution_data.get('entry_quality')
+        if entry_quality:
+            msg += f"\n📍 *入场质量*: {entry_quality}\n"
+
+        # v3.17: R/R ratio calculation
+        if sl_price and tp_price and entry_price > 0:
+            if side == "LONG":
+                sl_dist = entry_price - sl_price
+                tp_dist = tp_price - entry_price
+            else:  # SHORT
+                sl_dist = sl_price - entry_price
+                tp_dist = entry_price - tp_price
+
+            if sl_dist > 0:
+                rr_ratio = tp_dist / sl_dist
+                rr_quality = "✅ 优" if rr_ratio >= 2.0 else "✓ 良" if rr_ratio >= 1.5 else "⚠️ 一般"
+                msg += f"📊 *R/R比率*: {rr_ratio:.2f}:1 {rr_quality}\n"
 
         msg += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
 

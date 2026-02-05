@@ -351,6 +351,16 @@ class DeepSeekAIStrategy(Strategy):
             'reason': '',            # Reason if not executed
             'action_taken': '',      # What action was taken (if any)
         }
+
+        # v3.18: Pending reversal state for event-driven two-phase commit
+        # This prevents race condition when reversing positions (close then open)
+        # Format: {
+        #   'target_side': 'long' or 'short',
+        #   'target_quantity': float,
+        #   'old_side': 'long' or 'short',
+        #   'submitted_at': datetime,
+        # }
+        self._pending_reversal: Optional[Dict[str, Any]] = None
         # Format: {
         #   "instrument_id": {
         #       "entry_price": float,
@@ -3112,6 +3122,14 @@ class DeepSeekAIStrategy(Strategy):
                     f"📈 Adding to {target_side} position: {abs(size_diff):.3f} BTC "
                     f"({current_qty:.3f} → {target_quantity:.3f})"
                 )
+
+                # v3.18: Update SL/TP orders to match new total position size
+                # This is critical - without this, SL/TP only covers the old position size
+                self._update_sltp_quantity(
+                    new_total_quantity=target_quantity,
+                    position_side=target_side,
+                )
+
                 # v4.1: Update signal status - adding to position
                 self._last_signal_status = {
                     'executed': True,
@@ -3222,31 +3240,42 @@ class DeepSeekAIStrategy(Strategy):
                 }
                 return
 
-            # Close current position
+            # v3.18: Event-driven two-phase commit for reversal
+            # Phase 1: Store pending reversal state and submit close order
+            # Phase 2: on_position_closed will detect pending reversal and open new position
+            # This prevents race condition where new position opens before old one closes
+            old_side_cn = '多' if current_side == 'long' else '空'
+            new_side_cn = '多' if target_side == 'long' else '空'
+
+            self._pending_reversal = {
+                'target_side': target_side,
+                'target_quantity': target_quantity,
+                'old_side': current_side,
+                'submitted_at': datetime.utcnow(),
+            }
+            self.log.info(
+                f"📋 Reversal Phase 1: Stored pending reversal state "
+                f"({old_side_cn}→{new_side_cn}, qty={target_quantity:.4f})"
+            )
+
+            # Close current position (Phase 1)
             self._submit_order(
                 side=OrderSide.SELL if current_side == 'long' else OrderSide.BUY,
                 quantity=current_qty,
                 reduce_only=True,
             )
 
-            # Open opposite position with bracket order (entry + SL + TP)
-            # This ensures the new position has proper risk protection from the start
-            new_order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
-            self._submit_bracket_order(
-                side=new_order_side,
-                quantity=target_quantity,
-            )
-            self.log.info(
-                f"🔄 Opened new {target_side} position: {target_quantity:.3f} BTC (with bracket SL/TP)"
-            )
-            # v4.1: Update signal status - reversal executed
-            old_side_cn = '多' if current_side == 'long' else '空'
-            new_side_cn = '多' if target_side == 'long' else '空'
+            # v3.18: Do NOT open new position here - wait for on_position_closed
+            # Update signal status to indicate reversal in progress
             self._last_signal_status = {
                 'executed': True,
                 'reason': '',
-                'action_taken': f'反转: {old_side_cn}→{new_side_cn}',
+                'action_taken': f'反转中: {old_side_cn}→{new_side_cn} (等待平仓)',
             }
+            self.log.info(
+                f"⏳ Reversal Phase 1 complete: Close order submitted, "
+                f"waiting for on_position_closed to open new {target_side} position"
+            )
 
         else:
             self.log.warning(
@@ -3290,6 +3319,163 @@ class DeepSeekAIStrategy(Strategy):
             'reason': '',
             'action_taken': f'开{side_cn}仓 {quantity:.4f} BTC',
         }
+
+    def _update_sltp_quantity(self, new_total_quantity: float, position_side: str):
+        """
+        v3.18: Update SL/TP order quantities after adding to position.
+
+        When adding to an existing position, the SL/TP orders still have the old quantity.
+        This method updates them to match the new total position size.
+
+        Strategy:
+        1. Try to modify existing orders using NautilusTrader's modify_order
+        2. If modify fails (not supported), cancel and recreate SL/TP
+
+        Parameters
+        ----------
+        new_total_quantity : float
+            New total position quantity after adding
+        position_side : str
+            Position side ('long' or 'short')
+        """
+        try:
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
+
+            if not reduce_only_orders:
+                self.log.warning(
+                    f"⚠️ No SL/TP orders found to update after adding to position. "
+                    f"Position may not be fully protected."
+                )
+                return
+
+            self.log.info(
+                f"📝 Updating {len(reduce_only_orders)} SL/TP orders to new quantity: "
+                f"{new_total_quantity:.4f} BTC"
+            )
+
+            new_qty = self.instrument.make_qty(new_total_quantity)
+            updated_count = 0
+            failed_orders = []
+
+            for order in reduce_only_orders:
+                try:
+                    # Try to modify the order quantity
+                    self.modify_order(order, new_qty)
+                    updated_count += 1
+                    self.log.debug(
+                        f"✅ Modified order {str(order.client_order_id)[:8]}... "
+                        f"to quantity {new_total_quantity:.4f}"
+                    )
+                except Exception as modify_error:
+                    self.log.warning(
+                        f"⚠️ Failed to modify order {str(order.client_order_id)[:8]}...: {modify_error}"
+                    )
+                    failed_orders.append(order)
+
+            # Handle failed modifications by cancel and recreate
+            if failed_orders:
+                self.log.info(
+                    f"🔄 {len(failed_orders)} orders couldn't be modified, will cancel and recreate"
+                )
+
+                # Collect order details before cancelling
+                sl_orders_to_recreate = []
+                tp_orders_to_recreate = []
+
+                for order in failed_orders:
+                    try:
+                        # Determine if this is SL or TP based on order type
+                        if order.order_type == OrderType.STOP_MARKET:
+                            trigger_price = float(order.trigger_price) if hasattr(order, 'trigger_price') else None
+                            if trigger_price:
+                                sl_orders_to_recreate.append({
+                                    'trigger_price': trigger_price,
+                                    'side': order.side,
+                                })
+                        elif order.order_type == OrderType.LIMIT:
+                            limit_price = float(order.price) if hasattr(order, 'price') else None
+                            if limit_price:
+                                tp_orders_to_recreate.append({
+                                    'price': limit_price,
+                                    'side': order.side,
+                                })
+
+                        # Cancel the old order
+                        self.cancel_order(order)
+                        self.log.debug(f"🗑️ Cancelled old order {str(order.client_order_id)[:8]}...")
+                    except Exception as cancel_error:
+                        self.log.error(f"❌ Failed to cancel order: {cancel_error}")
+
+                # Recreate SL orders with new quantity
+                for sl_info in sl_orders_to_recreate:
+                    try:
+                        new_sl_order = self.order_factory.stop_market(
+                            instrument_id=self.instrument_id,
+                            order_side=sl_info['side'],
+                            quantity=new_qty,
+                            trigger_price=self.instrument.make_price(sl_info['trigger_price']),
+                            trigger_type=TriggerType.LAST_PRICE,
+                            reduce_only=True,
+                        )
+                        self.submit_order(new_sl_order)
+                        updated_count += 1
+                        self.log.info(
+                            f"✅ Recreated SL order @ ${sl_info['trigger_price']:,.2f} "
+                            f"with qty {new_total_quantity:.4f}"
+                        )
+
+                        # Update trailing stop state if needed
+                        instrument_key = str(self.instrument_id)
+                        if instrument_key in self.trailing_stop_state:
+                            self.trailing_stop_state[instrument_key]["sl_order_id"] = str(new_sl_order.client_order_id)
+                            self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
+                    except Exception as recreate_error:
+                        self.log.error(f"❌ Failed to recreate SL order: {recreate_error}")
+
+                # Recreate TP orders with new quantity
+                for tp_info in tp_orders_to_recreate:
+                    try:
+                        new_tp_order = self.order_factory.limit(
+                            instrument_id=self.instrument_id,
+                            order_side=tp_info['side'],
+                            quantity=new_qty,
+                            price=self.instrument.make_price(tp_info['price']),
+                            time_in_force=TimeInForce.GTC,
+                            reduce_only=True,
+                        )
+                        self.submit_order(new_tp_order)
+                        updated_count += 1
+                        self.log.info(
+                            f"✅ Recreated TP order @ ${tp_info['price']:,.2f} "
+                            f"with qty {new_total_quantity:.4f}"
+                        )
+                    except Exception as recreate_error:
+                        self.log.error(f"❌ Failed to recreate TP order: {recreate_error}")
+
+            if updated_count > 0:
+                self.log.info(
+                    f"✅ Updated {updated_count} SL/TP orders to match new position size"
+                )
+
+                # Update trailing stop state quantity
+                instrument_key = str(self.instrument_id)
+                if instrument_key in self.trailing_stop_state:
+                    self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
+
+        except Exception as e:
+            self.log.error(f"❌ Failed to update SL/TP quantities: {e}")
+            # Send warning - position may be partially protected
+            if self.telegram_bot and self.enable_telegram:
+                try:
+                    alert_msg = self.telegram_bot.format_error_alert({
+                        'level': 'WARNING',
+                        'message': f"加仓后更新SL/TP失败，仓位可能未完全保护",
+                        'context': f"新仓位: {new_total_quantity:.4f} BTC, 错误: {str(e)[:50]}",
+                    })
+                    self.telegram_bot.send_message_sync(alert_msg)
+                except Exception:
+                    pass
 
     def _close_position_only(self, current_position: Dict[str, Any]):
         """
@@ -3460,6 +3646,28 @@ class DeepSeekAIStrategy(Strategy):
                 f"{self.position_config['min_trade_amount']:.3f}, skipping"
             )
             return
+
+        # v3.17: Final verification for reduce_only orders to prevent -2022 error
+        # Race condition: Position might be closed by SL/TP between verification and submission
+        if reduce_only:
+            current_position = self._get_current_position_data()
+            if not current_position:
+                self.log.warning(
+                    f"⚠️ Skipping reduce_only order - no position exists "
+                    f"(likely closed by SL/TP between verification and submission)"
+                )
+                return
+            # Verify quantity doesn't exceed position size
+            position_qty = current_position.get('quantity', 0)
+            if quantity > position_qty:
+                self.log.warning(
+                    f"⚠️ Adjusting reduce_only quantity from {quantity:.3f} to {position_qty:.3f} "
+                    f"(can't reduce more than position size)"
+                )
+                quantity = position_qty
+                if quantity <= 0:
+                    self.log.warning("⚠️ Position quantity is 0, skipping reduce_only order")
+                    return
 
         # v4.9: Validate minimum notional for non-reduce orders
         # Binance requires notional >= 100 USDT for futures orders
@@ -3690,23 +3898,41 @@ class DeepSeekAIStrategy(Strategy):
                     )
 
         except Exception as e:
+            # v3.18: Do NOT fallback to unprotected order - this is too dangerous
+            # Opening a position without SL/TP exposes the account to unlimited risk
             self.log.error(f"❌ Failed to submit bracket order: {e}")
-            self.log.warning("⚠️ Falling back to simple market order without SL/TP")
+            self.log.error(
+                "🚫 NOT opening position without SL/TP protection - "
+                "this would expose account to unlimited risk"
+            )
 
-            # Send Telegram alert for critical bracket order failure
-            if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
+            # Update signal status to indicate failure
+            self._last_signal_status = {
+                'executed': False,
+                'reason': f'Bracket订单失败，取消开仓',
+                'action_taken': '',
+            }
+
+            # Send CRITICAL Telegram alert
+            if self.telegram_bot and self.enable_telegram:
                 try:
                     error_msg = self.telegram_bot.format_error_alert({
-                        'type': 'BRACKET_ORDER_FAILURE',
-                        'message': f"Bracket order failed, opening position WITHOUT SL/TP protection",
-                        'details': f"Error: {str(e)}",
-                        'action': f"Opening {side.name} {quantity:.3f} BTC with simple order"
+                        'level': 'CRITICAL',
+                        'message': (
+                            f"🚫 Bracket订单失败，已取消开仓\n"
+                            f"原因: 无法设置止损保护\n"
+                            f"信号: {side.name} {quantity:.3f} BTC\n"
+                            f"处理: 等待下一个信号"
+                        ),
+                        'context': f"错误: {str(e)[:100]}",
                     })
                     self.telegram_bot.send_message_sync(error_msg)
                 except Exception as notify_error:
                     self.log.error(f"Failed to send Telegram alert: {notify_error}")
 
-            self._submit_order(side=side, quantity=quantity, reduce_only=False)
+            # v3.18: Do NOT submit unprotected order
+            # Old dangerous code removed:
+            # self._submit_order(side=side, quantity=quantity, reduce_only=False)
 
     def on_order_filled(self, event):
         """
@@ -3816,22 +4042,55 @@ class DeepSeekAIStrategy(Strategy):
 
                 # v4.2: Retrieve S/R Zone data (v3.8 fix: extract price_center)
                 sr_zone_data = None
+                nearest_sup_price = None
+                nearest_res_price = None
                 if self.latest_sr_zones_data:
                     nearest_sup = self.latest_sr_zones_data.get('nearest_support')
                     nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
+                    nearest_sup_price = nearest_sup.price_center if nearest_sup else None
+                    nearest_res_price = nearest_res.price_center if nearest_res else None
                     sr_zone_data = {
-                        'nearest_support': nearest_sup.price_center if nearest_sup else None,
-                        'nearest_resistance': nearest_res.price_center if nearest_res else None,
+                        'nearest_support': nearest_sup_price,
+                        'nearest_resistance': nearest_res_price,
                     }
+
+                # v3.17: Calculate entry quality based on distance from S/R Zone
+                entry_quality = None
+                entry_price = float(event.avg_px_open)
+                side_name = event.side.name
+
+                if side_name == 'LONG' and nearest_sup_price and entry_price > 0:
+                    # For LONG: closer to support = better entry
+                    dist_pct = ((entry_price - nearest_sup_price) / entry_price) * 100
+                    if dist_pct <= 0.5:
+                        entry_quality = f"✅ 优秀 (距支撑 {dist_pct:.1f}%)"
+                    elif dist_pct <= 1.0:
+                        entry_quality = f"✓ 良好 (距支撑 {dist_pct:.1f}%)"
+                    elif dist_pct <= 2.0:
+                        entry_quality = f"⚠️ 一般 (距支撑 {dist_pct:.1f}%)"
+                    else:
+                        entry_quality = f"❌ 偏高 (距支撑 {dist_pct:.1f}%)"
+                elif side_name == 'SHORT' and nearest_res_price and entry_price > 0:
+                    # For SHORT: closer to resistance = better entry
+                    dist_pct = ((nearest_res_price - entry_price) / entry_price) * 100
+                    if dist_pct <= 0.5:
+                        entry_quality = f"✅ 优秀 (距阻力 {dist_pct:.1f}%)"
+                    elif dist_pct <= 1.0:
+                        entry_quality = f"✓ 良好 (距阻力 {dist_pct:.1f}%)"
+                    elif dist_pct <= 2.0:
+                        entry_quality = f"⚠️ 一般 (距阻力 {dist_pct:.1f}%)"
+                    else:
+                        entry_quality = f"❌ 偏低 (距阻力 {dist_pct:.1f}%)"
 
                 # Build unified execution data from pending data + event data
                 execution_data = {
                     'side': event.side.name,
                     'quantity': float(event.quantity),
-                    'entry_price': float(event.avg_px_open),
+                    'entry_price': entry_price,
                     'sl_price': sl_price,
                     'tp_price': tp_price,
                     'sr_zone': sr_zone_data,  # v4.2: Add S/R Zone
+                    'entry_quality': entry_quality,  # v3.17: Entry quality evaluation
                 }
 
                 # Merge with pending execution data (signal info, technical indicators, AI analysis)
@@ -3871,6 +4130,105 @@ class DeepSeekAIStrategy(Strategy):
         if instrument_key in self.trailing_stop_state:
             del self.trailing_stop_state[instrument_key]
             self.log.debug(f"🗑️ Cleared trailing stop state for {instrument_key}")
+
+        # v3.18: Check for pending reversal (Phase 2 of two-phase commit)
+        # If we have a pending reversal, open the new position now that old one is closed
+        if hasattr(self, '_pending_reversal') and self._pending_reversal:
+            pending = self._pending_reversal
+            self._pending_reversal = None  # Clear state immediately to prevent double execution
+
+            target_side = pending['target_side']
+            target_quantity = pending['target_quantity']
+            old_side = pending['old_side']
+            submitted_at = pending.get('submitted_at', datetime.utcnow())
+
+            # Calculate time elapsed since reversal was initiated
+            elapsed = (datetime.utcnow() - submitted_at).total_seconds()
+
+            old_side_cn = '多' if old_side == 'long' else '空'
+            new_side_cn = '多' if target_side == 'long' else '空'
+
+            self.log.info(
+                f"🔄 Reversal Phase 2: Old position closed, opening new {target_side} position "
+                f"(elapsed: {elapsed:.1f}s)"
+            )
+
+            # Verify no position exists before opening new one (safety check)
+            current_pos = self._get_current_position_data()
+            if current_pos:
+                self.log.error(
+                    f"❌ Reversal Phase 2 aborted: Position still exists after close event! "
+                    f"Side: {current_pos['side']}, Qty: {current_pos['quantity']:.4f}"
+                )
+                # Send alert
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        alert_msg = self.telegram_bot.format_error_alert({
+                            'level': 'CRITICAL',
+                            'message': f"反转失败：平仓后仍有持仓",
+                            'context': f"预期: 无持仓, 实际: {current_pos['side']} {current_pos['quantity']:.4f}",
+                        })
+                        self.telegram_bot.send_message_sync(alert_msg)
+                    except Exception:
+                        pass
+                return
+
+            # Open new position with bracket order
+            new_order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
+            try:
+                self._submit_bracket_order(
+                    side=new_order_side,
+                    quantity=target_quantity,
+                )
+                self.log.info(
+                    f"✅ Reversal Phase 2 complete: Opened {target_side} {target_quantity:.4f} BTC "
+                    f"(with bracket SL/TP)"
+                )
+
+                # Update signal status
+                self._last_signal_status = {
+                    'executed': True,
+                    'reason': '',
+                    'action_taken': f'反转完成: {old_side_cn}→{new_side_cn}',
+                }
+
+                # Send Telegram notification for successful reversal
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        reversal_msg = (
+                            f"🔄 *反转成功*\n\n"
+                            f"*方向*: {old_side_cn} → {new_side_cn}\n"
+                            f"*数量*: {target_quantity:.4f} BTC\n"
+                            f"*耗时*: {elapsed:.1f}秒\n\n"
+                            f"⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                        )
+                        self.telegram_bot.send_message_sync(reversal_msg)
+                    except Exception as e:
+                        self.log.warning(f"Failed to send reversal notification: {e}")
+
+            except Exception as e:
+                self.log.error(f"❌ Reversal Phase 2 failed: {e}")
+                self._last_signal_status = {
+                    'executed': False,
+                    'reason': f'反转开仓失败: {str(e)[:30]}',
+                    'action_taken': '',
+                }
+
+                # Send critical alert
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        alert_msg = self.telegram_bot.format_error_alert({
+                            'level': 'CRITICAL',
+                            'message': f"反转Phase 2失败：无法开新仓",
+                            'context': f"目标: {target_side} {target_quantity:.4f}, 错误: {str(e)[:50]}",
+                        })
+                        self.telegram_bot.send_message_sync(alert_msg)
+                    except Exception:
+                        pass
+
+            # Return early - don't send normal close notification for reversal
+            # The reversal notification above is more informative
+            return
 
         # v3.12: Calculate P&L percentage upfront (needed for both Telegram and memory system)
         # v3.13: Fix - NautilusTrader uses Money/Quantity types, need .as_double()
@@ -3957,6 +4315,42 @@ class DeepSeekAIStrategy(Strategy):
                         'nearest_resistance': nearest_res.price_center if nearest_res else None,
                     }
 
+                # v3.17: Determine close reason (SL/TP/Manual)
+                close_reason = 'MANUAL'  # Default
+                close_reason_detail = '手动平仓'
+
+                # Get SL/TP from trailing_stop_state (stored before clearing)
+                # We need to check before the state was cleared
+                sl_price = None
+                tp_price = None
+
+                # Try to get from latest_signal_data
+                if hasattr(self, 'latest_signal_data') and self.latest_signal_data:
+                    sl_price = self.latest_signal_data.get('stop_loss')
+                    tp_price = self.latest_signal_data.get('take_profit')
+
+                if sl_price and tp_price and exit_price > 0:
+                    side = event.side.name if hasattr(event, 'side') else 'UNKNOWN'
+                    sl_tolerance = entry_price * 0.002  # 0.2% tolerance
+                    tp_tolerance = entry_price * 0.002
+
+                    if side == 'LONG':
+                        if exit_price <= sl_price + sl_tolerance:
+                            close_reason = 'STOP_LOSS'
+                            close_reason_detail = f'🛑 止损触发 (SL: ${sl_price:,.2f})'
+                        elif exit_price >= tp_price - tp_tolerance:
+                            close_reason = 'TAKE_PROFIT'
+                            close_reason_detail = f'🎯 止盈触发 (TP: ${tp_price:,.2f})'
+                    elif side == 'SHORT':
+                        if exit_price >= sl_price - sl_tolerance:
+                            close_reason = 'STOP_LOSS'
+                            close_reason_detail = f'🛑 止损触发 (SL: ${sl_price:,.2f})'
+                        elif exit_price <= tp_price + tp_tolerance:
+                            close_reason = 'TAKE_PROFIT'
+                            close_reason_detail = f'🎯 止盈触发 (TP: ${tp_price:,.2f})'
+
+                self.log.info(f"📊 Close reason: {close_reason} - {close_reason_detail}")
+
                 position_msg = self.telegram_bot.format_position_update({
                     'action': 'CLOSED',
                     'side': event.side.name,
@@ -3966,6 +4360,8 @@ class DeepSeekAIStrategy(Strategy):
                     'pnl': pnl,
                     'pnl_pct': pnl_pct,
                     'sr_zone': sr_zone_data,  # v4.2: Add S/R Zone
+                    'close_reason': close_reason,  # v3.17: SL/TP/MANUAL
+                    'close_reason_detail': close_reason_detail,  # v3.17: Human-readable
                 })
                 self.telegram_bot.send_message_sync(position_msg)
             except Exception as e:
