@@ -3461,6 +3461,28 @@ class DeepSeekAIStrategy(Strategy):
             )
             return
 
+        # v3.17: Final verification for reduce_only orders to prevent -2022 error
+        # Race condition: Position might be closed by SL/TP between verification and submission
+        if reduce_only:
+            current_position = self._get_current_position_data()
+            if not current_position:
+                self.log.warning(
+                    f"⚠️ Skipping reduce_only order - no position exists "
+                    f"(likely closed by SL/TP between verification and submission)"
+                )
+                return
+            # Verify quantity doesn't exceed position size
+            position_qty = current_position.get('quantity', 0)
+            if quantity > position_qty:
+                self.log.warning(
+                    f"⚠️ Adjusting reduce_only quantity from {quantity:.3f} to {position_qty:.3f} "
+                    f"(can't reduce more than position size)"
+                )
+                quantity = position_qty
+                if quantity <= 0:
+                    self.log.warning("⚠️ Position quantity is 0, skipping reduce_only order")
+                    return
+
         # v4.9: Validate minimum notional for non-reduce orders
         # Binance requires notional >= 100 USDT for futures orders
         if not reduce_only:
@@ -3816,22 +3838,55 @@ class DeepSeekAIStrategy(Strategy):
 
                 # v4.2: Retrieve S/R Zone data (v3.8 fix: extract price_center)
                 sr_zone_data = None
+                nearest_sup_price = None
+                nearest_res_price = None
                 if self.latest_sr_zones_data:
                     nearest_sup = self.latest_sr_zones_data.get('nearest_support')
                     nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
+                    nearest_sup_price = nearest_sup.price_center if nearest_sup else None
+                    nearest_res_price = nearest_res.price_center if nearest_res else None
                     sr_zone_data = {
-                        'nearest_support': nearest_sup.price_center if nearest_sup else None,
-                        'nearest_resistance': nearest_res.price_center if nearest_res else None,
+                        'nearest_support': nearest_sup_price,
+                        'nearest_resistance': nearest_res_price,
                     }
+
+                # v3.17: Calculate entry quality based on distance from S/R Zone
+                entry_quality = None
+                entry_price = float(event.avg_px_open)
+                side_name = event.side.name
+
+                if side_name == 'LONG' and nearest_sup_price and entry_price > 0:
+                    # For LONG: closer to support = better entry
+                    dist_pct = ((entry_price - nearest_sup_price) / entry_price) * 100
+                    if dist_pct <= 0.5:
+                        entry_quality = f"✅ 优秀 (距支撑 {dist_pct:.1f}%)"
+                    elif dist_pct <= 1.0:
+                        entry_quality = f"✓ 良好 (距支撑 {dist_pct:.1f}%)"
+                    elif dist_pct <= 2.0:
+                        entry_quality = f"⚠️ 一般 (距支撑 {dist_pct:.1f}%)"
+                    else:
+                        entry_quality = f"❌ 偏高 (距支撑 {dist_pct:.1f}%)"
+                elif side_name == 'SHORT' and nearest_res_price and entry_price > 0:
+                    # For SHORT: closer to resistance = better entry
+                    dist_pct = ((nearest_res_price - entry_price) / entry_price) * 100
+                    if dist_pct <= 0.5:
+                        entry_quality = f"✅ 优秀 (距阻力 {dist_pct:.1f}%)"
+                    elif dist_pct <= 1.0:
+                        entry_quality = f"✓ 良好 (距阻力 {dist_pct:.1f}%)"
+                    elif dist_pct <= 2.0:
+                        entry_quality = f"⚠️ 一般 (距阻力 {dist_pct:.1f}%)"
+                    else:
+                        entry_quality = f"❌ 偏低 (距阻力 {dist_pct:.1f}%)"
 
                 # Build unified execution data from pending data + event data
                 execution_data = {
                     'side': event.side.name,
                     'quantity': float(event.quantity),
-                    'entry_price': float(event.avg_px_open),
+                    'entry_price': entry_price,
                     'sl_price': sl_price,
                     'tp_price': tp_price,
                     'sr_zone': sr_zone_data,  # v4.2: Add S/R Zone
+                    'entry_quality': entry_quality,  # v3.17: Entry quality evaluation
                 }
 
                 # Merge with pending execution data (signal info, technical indicators, AI analysis)
@@ -3957,6 +4012,42 @@ class DeepSeekAIStrategy(Strategy):
                         'nearest_resistance': nearest_res.price_center if nearest_res else None,
                     }
 
+                # v3.17: Determine close reason (SL/TP/Manual)
+                close_reason = 'MANUAL'  # Default
+                close_reason_detail = '手动平仓'
+
+                # Get SL/TP from trailing_stop_state (stored before clearing)
+                # We need to check before the state was cleared
+                sl_price = None
+                tp_price = None
+
+                # Try to get from latest_signal_data
+                if hasattr(self, 'latest_signal_data') and self.latest_signal_data:
+                    sl_price = self.latest_signal_data.get('stop_loss')
+                    tp_price = self.latest_signal_data.get('take_profit')
+
+                if sl_price and tp_price and exit_price > 0:
+                    side = event.side.name if hasattr(event, 'side') else 'UNKNOWN'
+                    sl_tolerance = entry_price * 0.002  # 0.2% tolerance
+                    tp_tolerance = entry_price * 0.002
+
+                    if side == 'LONG':
+                        if exit_price <= sl_price + sl_tolerance:
+                            close_reason = 'STOP_LOSS'
+                            close_reason_detail = f'🛑 止损触发 (SL: ${sl_price:,.2f})'
+                        elif exit_price >= tp_price - tp_tolerance:
+                            close_reason = 'TAKE_PROFIT'
+                            close_reason_detail = f'🎯 止盈触发 (TP: ${tp_price:,.2f})'
+                    elif side == 'SHORT':
+                        if exit_price >= sl_price - sl_tolerance:
+                            close_reason = 'STOP_LOSS'
+                            close_reason_detail = f'🛑 止损触发 (SL: ${sl_price:,.2f})'
+                        elif exit_price <= tp_price + tp_tolerance:
+                            close_reason = 'TAKE_PROFIT'
+                            close_reason_detail = f'🎯 止盈触发 (TP: ${tp_price:,.2f})'
+
+                self.log.info(f"📊 Close reason: {close_reason} - {close_reason_detail}")
+
                 position_msg = self.telegram_bot.format_position_update({
                     'action': 'CLOSED',
                     'side': event.side.name,
@@ -3966,6 +4057,8 @@ class DeepSeekAIStrategy(Strategy):
                     'pnl': pnl,
                     'pnl_pct': pnl_pct,
                     'sr_zone': sr_zone_data,  # v4.2: Add S/R Zone
+                    'close_reason': close_reason,  # v3.17: SL/TP/MANUAL
+                    'close_reason_detail': close_reason_detail,  # v3.17: Human-readable
                 })
                 self.telegram_bot.send_message_sync(position_msg)
             except Exception as e:
