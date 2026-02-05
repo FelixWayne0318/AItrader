@@ -20,6 +20,10 @@ class AIInputDataValidator(DiagnosticStep):
     Shows exactly what data the AI receives for decision-making.
 
     Based on v11.16: AI 输入数据验证 (传给 MultiAgent)
+
+    v2.4.2 更新:
+    - 先获取 order_flow, derivatives, order_book 数据，再打印
+    - 确保显示的数据与实际传给 AI 的数据一致
     """
 
     name = "AI 输入数据验证 (传给 MultiAgent)"
@@ -29,6 +33,10 @@ class AIInputDataValidator(DiagnosticStep):
         print()
         print_box("AI 输入数据验证 (传给 MultiAgent)", 65)
         print()
+
+        # v2.4.2: 先获取 order_flow, derivatives, order_book 数据
+        # 确保显示的数据与实际传给 AI 的数据一致
+        self._fetch_mtf_data()
 
         # [1] Technical data
         self._print_technical_data()
@@ -64,6 +72,106 @@ class AIInputDataValidator(DiagnosticStep):
         print("  ────────────────────────────────────────────────────────────────")
         print("  ✅ AI 输入数据验证完成")
         return True
+
+    def _fetch_mtf_data(self) -> None:
+        """
+        Fetch order flow, derivatives, and order book data before printing.
+
+        v2.4.2: 确保 AI 输入验证显示的数据与实际传给 AI 的一致。
+        """
+        import os
+
+        try:
+            from utils.binance_kline_client import BinanceKlineClient
+            from utils.order_flow_processor import OrderFlowProcessor
+            from utils.coinalyze_client import CoinalyzeClient
+            from utils.ai_data_assembler import AIDataAssembler
+            from utils.sentiment_client import SentimentDataFetcher
+
+            kline_client = BinanceKlineClient(timeout=10)
+            processor = OrderFlowProcessor(logger=None)
+
+            # Get Coinalyze config
+            coinalyze_cfg = self.ctx.base_config.get('order_flow', {}).get('coinalyze', {})
+            coinalyze_api_key = coinalyze_cfg.get('api_key') or os.getenv('COINALYZE_API_KEY')
+
+            coinalyze_client = CoinalyzeClient(
+                api_key=coinalyze_api_key,
+                timeout=coinalyze_cfg.get('timeout', 10),
+                max_retries=coinalyze_cfg.get('max_retries', 2),
+                logger=None
+            )
+
+            sentiment_client = SentimentDataFetcher()
+
+            # Check if order book is enabled
+            order_book_cfg = self.ctx.base_config.get('order_book', {})
+            order_book_enabled = order_book_cfg.get('enabled', False)
+
+            binance_orderbook = None
+            orderbook_processor = None
+
+            if order_book_enabled:
+                try:
+                    from utils.binance_orderbook_client import BinanceOrderBookClient
+                    from utils.orderbook_processor import OrderBookProcessor
+
+                    ob_api_cfg = order_book_cfg.get('api', {})
+                    ob_proc_cfg = order_book_cfg.get('processing', {})
+
+                    binance_orderbook = BinanceOrderBookClient(
+                        timeout=ob_api_cfg.get('timeout', 10),
+                        max_retries=ob_api_cfg.get('max_retries', 2),
+                        logger=None
+                    )
+
+                    weighted_obi_cfg = ob_proc_cfg.get('weighted_obi', {})
+                    anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
+                    slippage_amounts = ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0])
+
+                    orderbook_processor = OrderBookProcessor(
+                        base_decay=weighted_obi_cfg.get('base_decay', 0.8),
+                        adaptive_decay=weighted_obi_cfg.get('adaptive', True),
+                        volatility_factor=weighted_obi_cfg.get('volatility_factor', 0.1),
+                        anomaly_base_threshold=anomaly_cfg.get('base_threshold', 3.0),
+                        dynamic_anomaly=anomaly_cfg.get('dynamic', True),
+                        slippage_amounts=slippage_amounts,
+                        history_size=ob_proc_cfg.get('history', {}).get('size', 10),
+                        logger=None
+                    )
+                except ImportError as e:
+                    print(f"  ⚠️ Order book modules not available: {e}")
+
+            assembler = AIDataAssembler(
+                binance_kline_client=kline_client,
+                order_flow_processor=processor,
+                coinalyze_client=coinalyze_client,
+                sentiment_client=sentiment_client,
+                binance_orderbook_client=binance_orderbook,
+                orderbook_processor=orderbook_processor,
+                logger=None
+            )
+
+            assembled_data = assembler.assemble(
+                technical_data=self.ctx.technical_data,
+                position_data=self.ctx.current_position,
+                symbol=self.ctx.symbol,
+                interval=self.ctx.interval
+            )
+
+            # Store in context for printing and later use by MultiAgentAnalyzer
+            self.ctx.order_flow_report = assembled_data.get('order_flow')
+            self.ctx.derivatives_report = assembled_data.get('derivatives')
+            self.ctx.orderbook_report = assembled_data.get('order_book')
+
+            # Also store binance_derivatives if available
+            if assembled_data.get('binance_derivatives'):
+                self.ctx.binance_derivatives_data = assembled_data.get('binance_derivatives')
+
+        except Exception as e:
+            print(f"  ⚠️ MTF 数据获取失败: {e}, 将显示空数据")
+            import traceback
+            traceback.print_exc()
 
     def _print_technical_data(self) -> None:
         """Print technical indicator data."""
@@ -389,7 +497,16 @@ class MultiAgentAnalyzer(DiagnosticStep):
             return False
 
     def _get_mtf_data(self) -> tuple:
-        """Get order flow and derivatives data if available."""
+        """Get order flow and derivatives data if available.
+
+        v2.4.2: 优先使用 AIInputDataValidator 已获取的数据，避免重复 API 调用。
+        """
+        # v2.4.2: 检查是否已经在 AIInputDataValidator 中获取了数据
+        if self.ctx.order_flow_report is not None or self.ctx.derivatives_report is not None:
+            # 数据已经在 AIInputDataValidator 中获取，直接使用
+            return self.ctx.order_flow_report, self.ctx.derivatives_report
+
+        # 如果没有预先获取的数据，才重新获取（向后兼容）
         order_flow_report = None
         derivatives_report = None
 

@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.4.1 (v11.16 功能完整恢复版)
+实盘信号诊断脚本 v2.4.2 (AI 输入数据真实性修复)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.4.2 更新:
+- 修复: AI 输入数据验证 [11/24] 现在先获取数据再打印
+- 修复: order_flow, derivatives, order_book 数据在打印前获取
+- 优化: MultiAgentAnalyzer 复用已获取的数据，避免重复 API 调用
+- 保证: [11/24] 显示的数据与 [12/24] 传给 AI 的数据完全一致
 
 v2.4.1 更新:
 - 新增: TradingAgents v3.3 架构验证 (已移除规则, AI接收数据, MTF状态估算)
@@ -131,7 +137,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.4.1 (v11.16 功能完整恢复版)',
+        description='实盘信号诊断工具 v2.4.2 (AI 输入数据真实性修复)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
