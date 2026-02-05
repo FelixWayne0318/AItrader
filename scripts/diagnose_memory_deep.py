@@ -495,7 +495,7 @@ def check_order_book_obi():
     print()
     print(f"  📋 OrderBookProcessor 历史基线逻辑:")
     try:
-        ob_file = PROJECT_ROOT / "utils" / "order_book_processor.py"
+        ob_file = PROJECT_ROOT / "utils" / "orderbook_processor.py"
         if ob_file.exists():
             content = ob_file.read_text()
 
@@ -549,7 +549,7 @@ def check_order_book_obi():
     print()
     print(f"  📋 OrderBookProcessor 实例化测试:")
     try:
-        from utils.order_book_processor import OrderBookProcessor
+        from utils.orderbook_processor import OrderBookProcessor
 
         # 创建测试实例
         processor = OrderBookProcessor(
