@@ -745,7 +745,7 @@ reject, pvals_corrected, _, _ = multipletests(
 
 ---
 
-**文档版本**: v3.0
+**文档版本**: v3.0.1
 **创建日期**: 2026-02-02
 **最后更新**: 2026-02-05
 **负责人**: AI Trading Team
