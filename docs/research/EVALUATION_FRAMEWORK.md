@@ -2,7 +2,7 @@
 
 **日期**: 2026-02-02
 **状态**: 评估标准定义 (实施前)
-**版本**: v3.0 (世界顶级量化标准)
+**版本**: v3.0.1 (世界顶级量化标准)
 **关联文档**: [SR_STRENGTH_RESEARCH.md](./SR_STRENGTH_RESEARCH.md)
 
 > **v3.0 重大更新**: 按 Renaissance/Two Sigma/Citadel 级别标准重构
