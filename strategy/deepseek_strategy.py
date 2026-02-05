@@ -4937,8 +4937,9 @@ class DeepSeekAIStrategy(Strategy):
             largest_win = 0.0
             largest_loss = 0.0
 
-            if hasattr(self, 'multi_agent_analyzer') and self.multi_agent_analyzer:
-                memories = self.multi_agent_analyzer.decision_memory
+            # v3.15: Fix variable name - was 'multi_agent_analyzer', should be 'multi_agent'
+            if hasattr(self, 'multi_agent') and self.multi_agent:
+                memories = self.multi_agent.decision_memory
                 today_memories = [m for m in memories if m.get('timestamp', '').startswith(today)]
 
                 for m in today_memories:
@@ -5020,8 +5021,9 @@ class DeepSeekAIStrategy(Strategy):
             daily_pnls = {}
             max_drawdown_pct = 0.0
 
-            if hasattr(self, 'multi_agent_analyzer') and self.multi_agent_analyzer:
-                memories = self.multi_agent_analyzer.decision_memory
+            # v3.15: Fix variable name - was 'multi_agent_analyzer', should be 'multi_agent'
+            if hasattr(self, 'multi_agent') and self.multi_agent:
+                memories = self.multi_agent.decision_memory
 
                 # Filter memories for this week
                 for m in memories:
