@@ -129,13 +129,16 @@ class AIInputDataValidator(DiagnosticStep):
                     anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
                     slippage_amounts = ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0])
 
+                    # v2.4.3: 使用正确的参数格式 (weighted_obi_config 是字典)
+                    weighted_obi_config = {
+                        "base_decay": weighted_obi_cfg.get('base_decay', 0.8),
+                        "adaptive": weighted_obi_cfg.get('adaptive', True),
+                        "volatility_factor": weighted_obi_cfg.get('volatility_factor', 0.1),
+                    }
                     orderbook_processor = OrderBookProcessor(
-                        base_decay=weighted_obi_cfg.get('base_decay', 0.8),
-                        adaptive_decay=weighted_obi_cfg.get('adaptive', True),
-                        volatility_factor=weighted_obi_cfg.get('volatility_factor', 0.1),
-                        anomaly_base_threshold=anomaly_cfg.get('base_threshold', 3.0),
-                        dynamic_anomaly=anomaly_cfg.get('dynamic', True),
+                        base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
                         slippage_amounts=slippage_amounts,
+                        weighted_obi_config=weighted_obi_config,
                         history_size=ob_proc_cfg.get('history', {}).get('size', 10),
                         logger=None
                     )
