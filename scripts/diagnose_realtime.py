@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.4.2 (AI 输入数据真实性修复)
+实盘信号诊断脚本 v2.4.7 (服务健康检查增强)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.4.7 更新:
+- 新增: [A] 服务运行状态检查 (systemd, memory, logs)
+- 新增: [B] API 健康检查 (响应时间)
+- 新增: [C] 交易暂停状态检查
+- 新增: [D] 历史信号追踪
+- 优化: 完整覆盖实盘运行流程，问题可立即定位
+
+v2.4.6 更新:
+- 移除: "触发交易所需条件" 分析 (误导性的硬编码规则显示)
+- 原因: 与 TradingAgents v3.x AI 自主决策架构冲突
 
 v2.4.2 更新:
 - 修复: AI 输入数据验证 [11/24] 现在先获取数据再打印
@@ -131,13 +142,19 @@ from scripts.diagnostics.summary import (
     DataFlowSummary,
     DeepAnalysis,
 )
+from scripts.diagnostics.service_health import (
+    ServiceHealthCheck,
+    APIHealthCheck,
+    TradingStateCheck,
+    SignalHistoryCheck,
+)
 
 
 def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.4.2 (AI 输入数据真实性修复)',
+        description='实盘信号诊断工具 v2.4.7 (服务健康检查增强)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -183,7 +200,13 @@ Examples:
 
     # Add diagnostic steps in order
     # =========================================================================
-    # Phase 0: Configuration Validation
+    # Phase 0: Service Health (v2.4.7 新增)
+    # =========================================================================
+    runner.add_step(ServiceHealthCheck)      # [A] systemd/memory/logs 检查
+    runner.add_step(APIHealthCheck)          # [B] API 响应时间检查
+
+    # =========================================================================
+    # Phase 0.5: Configuration Validation
     # =========================================================================
     runner.add_step(CriticalConfigChecker)   # 检查关键配置
     runner.add_step(MTFConfigChecker)        # 检查 MTF 配置
@@ -207,6 +230,7 @@ Examples:
     # =========================================================================
     runner.add_step(PositionChecker)         # 检查 Binance 持仓
     runner.add_step(MemorySystemChecker)     # 记忆系统检查 (v3.12)
+    runner.add_step(TradingStateCheck)       # [C] 交易暂停状态检查 (v2.4.7)
 
     # =========================================================================
     # Phase 4: AI Input Data Validation (v2.4 新增)
@@ -249,6 +273,7 @@ Examples:
     # =========================================================================
     runner.add_step(DataFlowSummary)         # 数据流汇总
     runner.add_step(DeepAnalysis)            # 深入分析 (非 summary 模式)
+    runner.add_step(SignalHistoryCheck)      # [D] 历史信号追踪 (v2.4.7)
 
     # Run all diagnostic steps
     success = runner.run_all()

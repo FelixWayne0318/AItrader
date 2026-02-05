@@ -318,7 +318,7 @@ class DiagnosticContext:
 
     # Step tracking
     current_step: int = 0
-    total_steps: int = 24  # v2.4.1: 22 + 2 (架构验证, 诊断总结box)
+    total_steps: int = 28  # v2.4.7: 24 + 4 (服务健康检查)
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
@@ -444,7 +444,7 @@ class DiagnosticRunner:
             self.setup_output_capture()
 
             print("=" * 70)
-            print("  实盘信号诊断工具 v2.4.6 (移除误导性触发条件显示)")
+            print("  实盘信号诊断工具 v2.4.7 (服务健康检查增强)")
             print("  基于 TradingAgents v3.12 架构")
             print("=" * 70)
             print()
