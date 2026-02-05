@@ -444,7 +444,7 @@ class DiagnosticRunner:
             self.setup_output_capture()
 
             print("=" * 70)
-            print("  实盘信号诊断工具 v2.4.1 (v11.16 功能完整恢复版)")
+            print("  实盘信号诊断工具 v2.4.2 (AI输入数据显示修复版)")
             print("  基于 TradingAgents v3.12 架构")
             print("=" * 70)
             print()
