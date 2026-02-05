@@ -128,15 +128,24 @@ def test_orderbook_processor(orderbook, current_price, volatility=0.02):
 
     except Exception as e:
         print(f"⚠️ 配置加载失败: {e}，使用默认配置")
-        weighted_obi_config = None
+        weighted_obi_config = {}
         anomaly_config = {}
         slippage_amounts = [0.1, 0.5, 1.0]
+
+    # Ensure all required keys are present (avoid KeyError)
+    complete_weighted_obi_config = {
+        "base_decay": weighted_obi_config.get('base_decay', 0.8),
+        "adaptive": weighted_obi_config.get('adaptive', True),
+        "volatility_factor": weighted_obi_config.get('volatility_factor', 0.1),
+        "min_decay": weighted_obi_config.get('min_decay', 0.5),
+        "max_decay": weighted_obi_config.get('max_decay', 0.95),
+    }
 
     processor = OrderBookProcessor(
         price_band_pct=0.5,
         base_anomaly_threshold=anomaly_config.get('base_threshold', 3.0),
         slippage_amounts=slippage_amounts,
-        weighted_obi_config=weighted_obi_config,
+        weighted_obi_config=complete_weighted_obi_config,
         history_size=10,
         logger=logger,
     )
@@ -275,10 +284,19 @@ def main():
         # 使用相同的 processor 实例 (保留历史)
         logger = logging.getLogger("test_orderbook_processor")
         processor_config = ConfigManager(env='development').get('order_book', 'processing', default={})
+        weighted_obi_raw = processor_config.get('weighted_obi', {})
+        # Ensure all required keys are present (avoid KeyError)
+        weighted_obi_complete = {
+            "base_decay": weighted_obi_raw.get('base_decay', 0.8),
+            "adaptive": weighted_obi_raw.get('adaptive', True),
+            "volatility_factor": weighted_obi_raw.get('volatility_factor', 0.1),
+            "min_decay": weighted_obi_raw.get('min_decay', 0.5),
+            "max_decay": weighted_obi_raw.get('max_decay', 0.95),
+        }
         processor = OrderBookProcessor(
             price_band_pct=0.5,
             base_anomaly_threshold=3.0,
-            weighted_obi_config=processor_config.get('weighted_obi'),
+            weighted_obi_config=weighted_obi_complete,
             logger=logger,
         )
 

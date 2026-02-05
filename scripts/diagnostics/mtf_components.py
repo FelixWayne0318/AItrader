@@ -236,11 +236,20 @@ class MTFComponentTester(DiagnosticStep):
             weighted_obi_cfg = ob_proc_cfg.get('weighted_obi', {})
             anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
 
+            # Ensure all required keys are present (avoid KeyError)
+            weighted_obi_config = {
+                "base_decay": weighted_obi_cfg.get('base_decay', 0.8),
+                "adaptive": weighted_obi_cfg.get('adaptive', True),
+                "volatility_factor": weighted_obi_cfg.get('volatility_factor', 0.1),
+                "min_decay": weighted_obi_cfg.get('min_decay', 0.5),
+                "max_decay": weighted_obi_cfg.get('max_decay', 0.95),
+            }
+
             ob_processor = OrderBookProcessor(
                 price_band_pct=ob_proc_cfg.get('price_band_pct', 0.5),
                 base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
                 slippage_amounts=ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0]),
-                weighted_obi_config=weighted_obi_cfg if weighted_obi_cfg else None,
+                weighted_obi_config=weighted_obi_config,
                 history_size=ob_proc_cfg.get('history', {}).get('size', 10),
                 logger=None
             )
