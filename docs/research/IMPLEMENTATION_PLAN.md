@@ -2,8 +2,9 @@
 
 **日期**: 2026-02-02
 **状态**: 实施规划 (已对齐评估框架 v3.0.1)
+**版本**: v3.0.1
 **关联文档**: [EVALUATION_FRAMEWORK.md](./EVALUATION_FRAMEWORK.md)
-**符合度**: 100% (v3.0 更新后)
+**符合度**: 100% (v3.0.1 更新后)
 
 > **v3.0 重大更新**: 按 EVALUATION_FRAMEWORK.md v3.0.1 世界顶级量化标准重构
 > - 样本量要求从 50 次提升到 200+ 次
@@ -34,6 +35,64 @@
 |-----|---------|---------|
 | **历史数据上下文** | 部分实现 | 无自动 20 值上下文提取 |
 | **AI 报告格式** | 已实现 | 可增强趋势可视化 |
+
+### 1.2.1 需升级到官方库的现有文件 ⚠️ (v3.0.1 新增)
+
+> **原则**: 评估指标计算应使用官方库 (empyrical/scipy/statsmodels)，避免自实现出错
+
+| 文件 | 当前状态 | 问题 | 目标 |
+|-----|---------|------|------|
+| `web/backend/services/performance_service.py` | 自实现 Sharpe/MDD | 未年化、无风险调整 | 改用 empyrical |
+
+#### 当前问题代码
+
+**文件**: `web/backend/services/performance_service.py:314-321`
+
+```python
+# ❌ 当前: 简化的自实现 (有问题)
+import statistics
+avg_return = statistics.mean(pnl_values)
+std_return = statistics.stdev(pnl_values)
+sharpe_ratio = (avg_return / std_return) * (252 ** 0.5)  # 问题: 252是股票交易日，加密货币应用365
+```
+
+**问题清单**:
+- ❌ 年化因子错误: 使用 252 (股票) 而非 365 (加密货币 24/7)
+- ❌ 未扣除无风险利率
+- ❌ 未实现 Sortino/Calmar Ratio
+- ❌ 未实现 VaR/CVaR
+- ❌ Maximum Drawdown 基于 PnL 而非净值曲线
+
+#### 目标代码
+
+```python
+# ✅ 使用 empyrical 官方库 (符合 EVALUATION_FRAMEWORK.md v3.0.1)
+import empyrical as ep
+import pandas as pd
+
+# 将 PnL 转换为收益率序列
+returns = pd.Series(pnl_values) / initial_equity
+
+# 核心绩效指标
+sharpe = ep.sharpe_ratio(returns, annualization=365)
+sortino = ep.sortino_ratio(returns, annualization=365)
+calmar = ep.calmar_ratio(returns, annualization=365)
+max_dd = ep.max_drawdown(returns)
+
+# 尾部风险指标
+var_95 = ep.value_at_risk(returns, cutoff=0.05)
+```
+
+#### 升级优先级
+
+| 优先级 | 文件 | 原因 |
+|-------|------|------|
+| **P0** | `performance_service.py` | Web Dashboard 显示的核心指标 |
+| P1 | 未来评估模块 | 新代码直接使用官方库 |
+
+#### 升级时间
+
+建议在 **Week 3-4 (Phase 1 快速验证)** 期间完成，确保评估数据准确。
 
 ### 1.3 架构验证
 
@@ -692,6 +751,7 @@ reject, pvals_corrected, _, _ = multipletests(
 **负责人**: AI Trading Team
 
 **更新历史**:
+- v3.0.1: 新增 Section 1.2.1 - 明确列出需升级到官方库的现有文件 (performance_service.py)
 - v3.0: **重大更新** - 对齐 EVALUATION_FRAMEWORK.md v3.0.1 世界顶级量化标准
   - 样本量要求从 50 次提升到 200+ 次 (基于统计功效分析)
   - 新增依赖库要求 (empyrical, scipy, statsmodels)
