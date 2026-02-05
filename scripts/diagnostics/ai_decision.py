@@ -167,6 +167,21 @@ class AIInputDataValidator(DiagnosticStep):
             self.ctx.derivatives_report = assembled_data.get('derivatives')
             self.ctx.orderbook_report = assembled_data.get('order_book')
 
+            # v2.4.4: Debug logging for order book status
+            ob_data = assembled_data.get('order_book')
+            if ob_data:
+                ob_status = ob_data.get('_status', {})
+                ob_code = ob_status.get('code', 'UNKNOWN')
+                if ob_code != 'OK':
+                    ob_msg = ob_status.get('message', 'No message')
+                    print(f"  ℹ️ Order book status: {ob_code} - {ob_msg}")
+            else:
+                # Check metadata to understand why
+                metadata = assembled_data.get('_metadata', {})
+                ob_enabled = metadata.get('orderbook_enabled', False)
+                ob_status = metadata.get('orderbook_status', 'UNKNOWN')
+                print(f"  ℹ️ Order book data is None (enabled={ob_enabled}, status={ob_status})")
+
             # Also store binance_derivatives if available
             if assembled_data.get('binance_derivatives'):
                 self.ctx.binance_derivatives_data = assembled_data.get('binance_derivatives')
@@ -301,7 +316,8 @@ class AIInputDataValidator(DiagnosticStep):
                 print(f"      Ask pressure:    near_5={ask_near_5:.1f}%")
                 print(f"      Spread:          {liquidity.get('spread_pct', 0):.4f}%")
             else:
-                print(f"      reason:          {status.get('reason', 'Unknown')}")
+                # v2.4.4: 修复 reason → message (数据结构使用 message 字段)
+                print(f"      reason:          {status.get('message', 'Unknown')}")
         else:
             if ob_cfg.get('enabled', False):
                 print("  [5.5] order_book_data: 获取失败")
