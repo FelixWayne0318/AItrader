@@ -246,7 +246,10 @@ class TestEmpyricalMetrics:
 
             # Check for empyrical usage
             assert 'empyrical' in content, "performance_service should import empyrical"
-            assert 'annualization=365' in content, "Should use 365 for crypto annualization"
+            # Check for 365 annualization (crypto 24/7 trading)
+            # Code may use either direct value or variable assignment
+            assert 'annualization = 365' in content or 'annualization=365' in content, \
+                "Should use 365 for crypto annualization"
         else:
             pytest.skip("performance_service.py not found")
 
