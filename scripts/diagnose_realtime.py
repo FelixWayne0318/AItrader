@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.6.0 (S/R Zone SL/TP 改进)
+实盘信号诊断脚本 v2.7.0 (v3.18 订单流程模拟)
 
 基于 TradingAgents v3.12 架构的完整诊断工具。
+
+v2.7.0 更新:
+- 新增: v3.18 订单流程完整模拟 (7 种场景)
+- 新增: 反转两阶段提交验证 (Two-Phase Commit)
+- 新增: Bracket 订单失败处理验证 (No unprotected fallback)
+- 新增: SL/TP 数量更新验证 (_update_sltp_quantity)
+- 新增: 反转状态机详细模拟
+- 新增: Bracket 订单流程详细模拟
 
 v2.6.0 更新:
 - 新增: S/R Zone Calculator 集成 (聚合 BB, SMA, Order Wall, Pivot)
@@ -109,6 +117,15 @@ v2.1 更新 (v4.8 适配):
 - Phase 2: Judge 决策 (1 AI call)
 - Phase 3: Risk 评估 (1 AI call)
 - 本地风控: S/R Zone v2.0 Block
+
+v3.18 订单流程模拟 (7 种场景):
+- 场景 1: 新开仓 (无持仓 → 开仓)
+- 场景 2: 同向加仓 (SL/TP 数量更新)
+- 场景 3: 部分平仓
+- 场景 4: 完全平仓
+- 场景 5: 反转交易 (两阶段提交)
+- 场景 6: Bracket 订单失败
+- 场景 7: SL/TP modify 失败回退
 """
 
 import argparse
@@ -177,13 +194,18 @@ from scripts.diagnostics.service_health import (
     TradingStateCheck,
     SignalHistoryCheck,
 )
+from scripts.diagnostics.order_flow_simulation import (
+    OrderFlowSimulator,
+    ReversalStateSimulator,
+    BracketOrderFlowSimulator,
+)
 
 
 def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v2.5.1 (macd_trend 数据修复)',
+        description='实盘信号诊断工具 v2.7.0 (v3.18 订单流程模拟)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -296,6 +318,13 @@ Examples:
     # =========================================================================
     runner.add_step(OrderSimulator)          # 模拟订单提交
     runner.add_step(PositionCalculator)      # 仓位计算测试
+
+    # =========================================================================
+    # Phase 8.5: v3.18 Order Flow Simulation (NEW)
+    # =========================================================================
+    runner.add_step(OrderFlowSimulator)      # v3.18 订单流程完整模拟 (7 种场景)
+    runner.add_step(ReversalStateSimulator)  # v3.18 反转状态机详细模拟
+    runner.add_step(BracketOrderFlowSimulator)  # Bracket 订单流程详细模拟
 
     # =========================================================================
     # Phase 9: Summary and Analysis

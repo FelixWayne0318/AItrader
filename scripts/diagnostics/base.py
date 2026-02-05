@@ -319,7 +319,7 @@ class DiagnosticContext:
 
     # Step tracking
     current_step: int = 0
-    total_steps: int = 28  # v2.4.8: 24 + 4 (服务健康检查)
+    total_steps: int = 31  # v2.7.0: 28 + 3 (v3.18 order flow simulation)
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
@@ -465,7 +465,7 @@ class DiagnosticRunner:
             self.setup_output_capture()
 
             print("=" * 70)
-            print("  实盘信号诊断工具 v2.4.8 (dotenv 早期加载修复)")
+            print("  实盘信号诊断工具 v2.7.0 (v3.18 订单流程模拟)")
             print("  基于 TradingAgents v3.12 架构")
             print("=" * 70)
             print()

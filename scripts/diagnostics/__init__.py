@@ -15,6 +15,7 @@ Module Structure:
 - ai_decision.py: AI decision analysis (MultiAgent)
 - mtf_components.py: Multi-timeframe component testing
 - lifecycle_test.py: Post-trade lifecycle and MTF routing tests
+- order_flow_simulation.py: v3.18 order flow simulation (7 scenarios)
 - summary.py: Results summary and export
 
 Usage:
@@ -22,7 +23,7 @@ Usage:
     runner = DiagnosticRunner(env='production')
     runner.run_all()
 
-Version: 2.4.0 - Restored v11.16 missing features
+Version: 2.7.0 - Added v3.18 order flow simulation (7 scenarios)
 """
 
 from .base import (
@@ -40,7 +41,7 @@ from .base import (
     print_box,
 )
 
-__version__ = "2.4.7"  # v2.4.7: Added service health checks (systemd, API latency, trading state, signal history)
+__version__ = "2.7.0"  # v2.7.0: Added v3.18 order flow simulation (7 scenarios)
 __all__ = [
     "DiagnosticContext",
     "DiagnosticStep",
