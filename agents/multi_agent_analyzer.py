@@ -626,10 +626,12 @@ TASK:
 1. Identify BULLISH signals with specific numbers from the data
 2. Present 2-3 compelling reasons for going LONG
 3. If bear made arguments, counter them with evidence
-4. Consider S/R ZONES for entry timing:
-   - If price is near MAJOR/HIGH resistance: acknowledge the risk of rejection
-   - If price just broke above resistance: this becomes new support (bullish)
-   - Ideal LONG entry: bouncing off support or breaking resistance with volume
+4. CRITICAL - S/R ZONE RULES FOR LONG ENTRIES:
+   - IDEAL LONG: Price at or near SUPPORT zone = prime entry point (expect bounce)
+   - AVOID LONG: Price at or near RESISTANCE zone = high rejection risk (bad entry)
+   - LONG R/R CHECK: Only recommend LONG if R/R ratio >= 1.5:1
+   - If S/R report shows "LONG entry NOT recommended" - DO NOT argue for LONG
+5. If price is far from both S/R zones, focus on momentum and trend signals
 
 Deliver your argument (2-3 paragraphs):"""
 
@@ -695,12 +697,14 @@ Last Bull Argument:
 
 TASK:
 1. Identify BEARISH signals or risks with specific numbers from the data
-2. Present 2-3 compelling reasons AGAINST going LONG
+2. Present 2-3 compelling reasons AGAINST going LONG (or for going SHORT)
 3. Counter the bull's arguments with evidence
-4. Consider S/R ZONES for entry timing risks:
-   - If price is near MAJOR/HIGH support: warn about bounce risk for SHORT
-   - If price is at resistance without volume: high rejection probability
-   - Highlight if price is overextended from key support/resistance levels
+4. CRITICAL - S/R ZONE RULES FOR SHORT ENTRIES:
+   - IDEAL SHORT: Price at or near RESISTANCE zone = prime entry point (expect rejection)
+   - AVOID SHORT: Price at or near SUPPORT zone = high bounce risk (will stop you out)
+   - SHORT R/R CHECK: Only recommend SHORT if R/R ratio >= 1.5:1
+   - If S/R report shows "SHORT entry NOT recommended" - DO NOT argue for SHORT
+5. If price is far from both S/R zones, focus on trend breakdown signals
 
 Deliver your argument (2-3 paragraphs):"""
 
@@ -906,7 +910,13 @@ YOUR TASK:
      a) Adjust SL/TP to achieve 1.5:1 ratio, OR
      b) Change signal to HOLD (do not execute unfavorable trades)
    - Never set TP equal to or less than SL distance
-5. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
+5. VALIDATE TRADE AGAINST S/R ZONES (CRITICAL):
+   - REJECT LONG if price is AT or VERY CLOSE to resistance (high rejection risk)
+   - REJECT SHORT if price is AT or VERY CLOSE to support (high bounce risk)
+   - APPROVE LONG if price is near support and R/R >= 1.5:1 (ideal entry)
+   - APPROVE SHORT if price is near resistance and R/R >= 1.5:1 (ideal entry)
+   - If S/R report shows "NOT recommended" for the proposed direction, change to HOLD
+6. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
 
 SIGNAL TYPES (v3.12 - choose the most appropriate):
 - LONG: Open new long or add to existing long position
