@@ -753,6 +753,16 @@ class DeepSeekAIStrategy(Strategy):
         self.subscribe_bars(self.bar_type)
         self.log.info(f"Subscribed to {self.bar_type}")
 
+        # v3.16: Subscribe to trade ticks for OrderEmulator
+        # This is CRITICAL for emulated SL/TP orders to trigger properly.
+        # Without real-time price data, the emulator only sees bar close prices (every 15 min).
+        # With trade ticks, the emulator can detect SL/TP triggers in real-time.
+        try:
+            self.subscribe_trade_ticks(self.instrument_id)
+            self.log.info(f"Subscribed to trade ticks for {self.instrument_id} (OrderEmulator support)")
+        except Exception as e:
+            self.log.warning(f"Failed to subscribe to trade ticks: {e} - SL/TP emulation may be delayed")
+
         # Multi-Timeframe subscriptions (v3.2.9)
         if self.mtf_enabled and self.mtf_manager:
             try:
@@ -875,6 +885,12 @@ class DeepSeekAIStrategy(Strategy):
 
         # Unsubscribe from data
         self.unsubscribe_bars(self.bar_type)
+
+        # v3.16: Unsubscribe from trade ticks
+        try:
+            self.unsubscribe_trade_ticks(self.instrument_id)
+        except Exception:
+            pass  # Ignore if not subscribed
 
         self.log.info("Strategy stopped")
 
