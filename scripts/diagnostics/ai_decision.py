@@ -21,6 +21,11 @@ class AIInputDataValidator(DiagnosticStep):
 
     Based on v11.16: AI 输入数据验证 (传给 MultiAgent)
 
+    v2.7.3 更新 (v3.17 R/R 驱动入场):
+    - 更新: 入场验证规则改为 R/R 驱动 (移除 "1-2% within S/R" 硬性规则)
+    - 更新: R/R >= 1.5:1 是唯一入场标准
+    - 新增: R/R 与仓位大小关联说明
+
     v2.6.0 更新:
     - 新增: [11] S/R Zones 验证 (支撑/阻力区计算)
     - 新增: S/R Zone 数据用于 SL/TP 回退计算
@@ -1113,8 +1118,9 @@ class OrderSimulator(DiagnosticStep):
         use_sr = getattr(cfg, 'sl_use_support_resistance', True)
         sl_buffer = getattr(cfg, 'sl_buffer_pct', 0.005)  # v3.15.1: 0.5% buffer for real S/R breakout
 
-        print("  📋 v3.15 SL/TP 验证规则:")
-        print("     - 最小止损距离: 1% (否则拒绝 AI 的 SL)")
+        print("  📋 v3.17 入场验证规则 (R/R 驱动):")
+        print("     - R/R >= 1.5:1 是唯一入场标准 (移除距离硬性规则)")
+        print("     - 最小止损距离: 1% (技术要求，非入场标准)")
         print(f"     - S/R 突破缓冲: {sl_buffer*100:.1f}% (确认真正突破)")
         print()
 
@@ -1175,10 +1181,22 @@ class OrderSimulator(DiagnosticStep):
             rr_ratio = tp_pct / sl_pct if sl_pct > 0 else 0
 
             print()
-            print("  📊 风险/收益分析:")
+            print("  📊 风险/收益分析 (v3.17 R/R 驱动):")
             print(f"     止损距离: {sl_pct:.2f}%")
             print(f"     止盈距离: {tp_pct:.2f}%")
-            print(f"     风险/收益比: 1:{rr_ratio:.2f}")
+            print(f"     R/R 比率: {rr_ratio:.2f}:1")
+
+            # v3.17: R/R-based position sizing guidance
+            if rr_ratio >= 2.5:
+                rr_status = "✅ 优秀 (建议 80-100% 仓位)"
+            elif rr_ratio >= 2.0:
+                rr_status = "✅ 良好 (建议 50-80% 仓位)"
+            elif rr_ratio >= 1.5:
+                rr_status = "⚠️ 可接受 (建议 30-50% 仓位)"
+            else:
+                rr_status = "❌ 不达标 (建议 HOLD)"
+            print(f"     v3.17 评估: {rr_status}")
+
             print(f"     最大亏损: ${quantity * self.ctx.current_price * sl_pct / 100:,.2f}")
             print(f"     最大盈利: ${quantity * self.ctx.current_price * tp_pct / 100:,.2f}")
 

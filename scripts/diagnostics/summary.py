@@ -351,8 +351,9 @@ class DataFlowSummary(DiagnosticStep):
         print_box("MTF 过滤状态")
         print()
 
-        print(f"  架构: TradingAgents v3.16 - AI 完全自主决策")
-        print(f"  S/R Zone 硬风控: 由 Risk Manager (AI) 自主判断 (非本地覆盖)")
+        print(f"  架构: TradingAgents v3.17 - R/R 驱动入场")
+        print(f"  入场标准: R/R >= 1.5:1 (唯一入场标准，移除距离硬性规则)")
+        print(f"  仓位大小: 由 R/R 质量决定 (R/R 越高 → 仓位越大)")
         print()
 
         sd = self.ctx.signal_data
