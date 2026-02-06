@@ -125,7 +125,11 @@ FUNDING RATE (Perpetual Futures):
   * Negative rate = shorts pay longs (indicating more short positions)
   * Magnitude shows degree of position imbalance
 - Note: Binance 8h funding rate is the actual rate traders pay/receive
-- Predicted Funding Rate: Real-time estimate of next settlement rate based on current Mark-Index price spread
+- Premium Index: (Mark Price - Index Price) / Index Price — real-time measure of futures vs spot premium
+  * Positive premium = futures trading above spot = long-heavy market
+  * Negative premium = futures trading below spot = short-heavy market
+  * Premium directly drives the next funding rate
+- Predicted Funding Rate: Real-time estimate of next settlement rate based on Premium Index
   * If predicted rate diverges significantly from last settled rate, expect rate change at next settlement
   * Rising predicted rate = increasing long leverage / bullish crowding
   * Falling predicted rate = increasing short leverage / bearish crowding
@@ -593,9 +597,15 @@ class MultiAgentAnalyzer:
 
             # Phase 2: Judge makes decision (1 AI call)
             self.logger.info("Phase 2: Judge evaluating debate...")
+            # v3.23: Build key metrics for Judge's independent sanity check
+            key_metrics = self._build_key_metrics(
+                technical_report, derivatives_report,
+                order_flow_report, current_price,
+            )
             judge_decision = self._get_judge_decision(
                 debate_history=debate_history,
                 past_memories=self._get_past_memories(),
+                key_metrics=key_metrics,
             )
 
             self.logger.info(
@@ -614,6 +624,8 @@ class MultiAgentAnalyzer:
                 technical_data=technical_report,  # v3.7: Pass dict for BB checks
                 account_context=account_context,  # v4.6: Account info for add/reduce
                 derivatives_report=derivatives_summary,  # v3.22: Funding rate for cost analysis
+                order_flow_report=order_flow_summary,  # v3.23: Liquidity for position sizing
+                orderbook_report=orderbook_summary,  # v3.23: Slippage for position sizing
             )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
@@ -781,6 +793,7 @@ Focus on risks and bearish signals in the data."""
         self,
         debate_history: str,
         past_memories: str,
+        key_metrics: str = "",
     ) -> Dict[str, Any]:
         """
         Judge evaluates the debate and makes decision.
@@ -789,11 +802,15 @@ Focus on risks and bearish signals in the data."""
         Simplified v3.0: Let AI autonomously evaluate without hardcoded rules
         v3.9: Removed duplicate S/R check from prompt (handled by _evaluate_risk)
         v3.10: Aligned with TradingAgents original design (rationale + strategic_actions)
+        v3.23: Added key_metrics for independent sanity checking
         """
         prompt = f"""As the portfolio manager and debate facilitator, your role is to critically evaluate this round of debate and make a definitive decision: align with the bear analyst, the bull analyst, or choose HOLD only if it is strongly justified based on the arguments presented.
 
 DEBATE TRANSCRIPT:
 {debate_history}
+
+KEY MARKET METRICS (for independent verification — check if analysts missed anything):
+{key_metrics if key_metrics else "N/A"}
 
 PAST REFLECTIONS ON MISTAKES:
 {past_memories if past_memories else "No past data - this is a fresh start."}
@@ -848,6 +865,63 @@ OUTPUT FORMAT (JSON only, no other text):
             "acknowledged_risks": ["Parse failure"]
         }
 
+    def _build_key_metrics(
+        self,
+        technical_data: Optional[Dict] = None,
+        derivatives_data: Optional[Dict] = None,
+        order_flow_data: Optional[Dict] = None,
+        current_price: float = 0.0,
+    ) -> str:
+        """
+        Build concise key metrics for Judge's independent sanity check (v3.23).
+
+        Only includes raw numbers — no interpretation — so Judge can verify
+        whether Bull/Bear analysts correctly used the data.
+        """
+        lines = []
+        try:
+            if current_price > 0:
+                lines.append(f"Price: ${current_price:,.2f}")
+
+            if technical_data and isinstance(technical_data, dict):
+                rsi = technical_data.get('rsi')
+                if rsi is not None:
+                    lines.append(f"RSI: {rsi:.1f}")
+                adx = technical_data.get('adx')
+                if adx is not None:
+                    lines.append(f"ADX: {adx:.1f}")
+                macd = technical_data.get('macd')
+                macd_signal = technical_data.get('macd_signal')
+                if macd is not None and macd_signal is not None:
+                    lines.append(f"MACD: {macd:.2f} (signal: {macd_signal:.2f})")
+
+            if derivatives_data and isinstance(derivatives_data, dict):
+                fr = derivatives_data.get('funding_rate', {})
+                if isinstance(fr, dict):
+                    fr_pct = fr.get('current_pct')
+                    if fr_pct is not None:
+                        predicted = fr.get('predicted_rate_pct')
+                        fr_str = f"Funding Rate: {fr_pct:.4f}%"
+                        if predicted is not None:
+                            fr_str += f" (predicted: {predicted:.4f}%)"
+                        lines.append(fr_str)
+                liq = derivatives_data.get('liquidations', {})
+                if isinstance(liq, dict) and liq.get('total_usd', 0) > 0:
+                    lines.append(f"Liquidations (1h): ${liq['total_usd']:,.0f}")
+
+            if order_flow_data and isinstance(order_flow_data, dict):
+                buy_ratio = order_flow_data.get('buy_ratio')
+                if buy_ratio is not None:
+                    lines.append(f"Buy Ratio: {buy_ratio:.1%}")
+                cvd = order_flow_data.get('cvd_trend')
+                if cvd:
+                    lines.append(f"CVD Trend: {cvd}")
+
+        except Exception:
+            pass
+
+        return "\n".join(lines) if lines else "N/A"
+
     def _evaluate_risk(
         self,
         proposed_action: Dict[str, Any],
@@ -858,6 +932,8 @@ OUTPUT FORMAT (JSON only, no other text):
         technical_data: Optional[Dict[str, Any]] = None,
         account_context: Optional[Dict[str, Any]] = None,
         derivatives_report: str = "",
+        order_flow_report: str = "",
+        orderbook_report: str = "",
     ) -> Dict[str, Any]:
         """
         Final risk evaluation and position sizing.
@@ -869,6 +945,7 @@ OUTPUT FORMAT (JSON only, no other text):
         v3.11: Removed preset rules from prompt, let AI decide autonomously
         v4.6: Added account_context for position sizing decisions
         v3.22: Added derivatives_report for funding rate cost analysis
+        v3.23: Added order_flow_report + orderbook_report for liquidity/slippage
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
@@ -967,6 +1044,11 @@ MARKET DATA:
 DERIVATIVES & FUNDING RATE:
 {derivatives_report if derivatives_report else "N/A"}
 
+ORDER FLOW & LIQUIDITY:
+{order_flow_report if order_flow_report else "N/A"}
+
+{orderbook_report if orderbook_report else ""}
+
 CURRENT POSITION:
 {self._format_position(current_position)}
 
@@ -1034,6 +1116,13 @@ YOUR TASK:
    - If daily funding cost > 0.3% (rate > 0.1%), consider HOLD unless R/R > 3:1.
    - Predicted rate diverging from current rate signals changing market sentiment.
    - Settlement countdown < 30min with extreme rate: expect short-term volatility.
+
+   LIQUIDITY & SLIPPAGE ADJUSTMENT (v3.23):
+   Check ORDER FLOW and ORDER BOOK data above for execution risk.
+   - If order book spread > 0.05%, expect higher slippage — reduce position size.
+   - If order book shows significant anomalies (large walls), SL/TP may not fill at expected price.
+   - If buy_ratio is extreme (>0.65 or <0.35), the crowd is one-sided — contrarian signal.
+   - Low liquidity (high slippage for 1 BTC) means large orders will move price — use smaller size.
 
 4. Final validation:
    - Entry happens at CURRENT MARKET PRICE
@@ -1927,7 +2016,16 @@ ORDER FLOW (Binance Taker Data):
                 rate_pct = rate * 100
                 parts.append(f"- Funding Rate (last settled): {rate_pct:.4f}%")
 
-                # 预期费率 (从 Mark-Index 价差实时计算)
+                # 溢价指数 + 预期费率 (从 Mark-Index 价差实时计算)
+                premium_index = funding.get('premium_index')
+                if premium_index is not None:
+                    pi_pct = premium_index * 100
+                    mark = funding.get('mark_price', 0)
+                    index = funding.get('index_price', 0)
+                    parts.append(
+                        f"- Premium Index: {pi_pct:+.4f}% "
+                        f"(Mark: ${mark:,.2f}, Index: ${index:,.2f})"
+                    )
                 predicted_pct = funding.get('predicted_rate_pct')
                 if predicted_pct is not None:
                     parts.append(f"- Predicted Next Funding Rate: {predicted_pct:.4f}%")

@@ -483,7 +483,16 @@ class AIDataAssembler:
                     f"  - Funding Rate (last settled): {fr.get('current_pct', 0):.4f}% "
                     f"({fr.get('interpretation', 'N/A')}) [Trend: {fr_trend}]"
                 )
-                # 预期费率
+                # 溢价指数 + 预期费率
+                premium_index = fr.get('premium_index')
+                if premium_index is not None:
+                    pi_pct = premium_index * 100
+                    mark = fr.get('mark_price', 0)
+                    index = fr.get('index_price', 0)
+                    parts.append(
+                        f"  - Premium Index: {pi_pct:+.4f}% "
+                        f"(Mark: ${mark:,.2f}, Index: ${index:,.2f})"
+                    )
                 predicted_pct = fr.get('predicted_rate_pct')
                 if predicted_pct is not None:
                     parts.append(
