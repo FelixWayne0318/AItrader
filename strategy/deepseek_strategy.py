@@ -1993,10 +1993,21 @@ class DeepSeekAIStrategy(Strategy):
             return
 
         try:
-            # 1. 获取价格
+            # 1. 获取价格 - prefer real-time API price over cached bar close
             cached_price = getattr(self, '_cached_current_price', None)
             if cached_price is None and self.indicator_manager.recent_bars:
                 cached_price = float(self.indicator_manager.recent_bars[-1].close)
+
+            # Try real-time price from Binance API for more accurate display
+            realtime_price = None
+            try:
+                if hasattr(self, 'binance_account') and self.binance_account:
+                    realtime_price = self.binance_account.get_realtime_price(
+                        str(self.instrument_id)
+                    )
+            except Exception:
+                pass
+            display_price = realtime_price or cached_price
 
             # 2. Get technical indicators (enhanced for v3.0 heartbeat)
             rsi = 0
@@ -2040,7 +2051,7 @@ class DeepSeekAIStrategy(Strategy):
             sl_price = None
             tp_price = None
             try:
-                pos_data = self._get_current_position_data(current_price=cached_price, from_telegram=True)
+                pos_data = self._get_current_position_data(current_price=display_price, from_telegram=True)
                 # Fix: _get_current_position_data returns 'quantity' not 'size', 'avg_px' not 'entry_price'
                 if pos_data and pos_data.get('quantity', 0) != 0:
                     # Fix: side is lowercase ('long'/'short'), convert to uppercase for display
@@ -2048,11 +2059,11 @@ class DeepSeekAIStrategy(Strategy):
                     position_side = raw_side.upper() if raw_side else None
                     entry_price = pos_data.get('avg_px') or 0
                     position_size = abs(pos_data.get('quantity') or 0)
-                    if entry_price > 0 and cached_price:
+                    if entry_price > 0 and display_price:
                         if position_side == 'LONG':
-                            position_pnl_pct = ((cached_price - entry_price) / entry_price) * 100
+                            position_pnl_pct = ((display_price - entry_price) / entry_price) * 100
                         else:
-                            position_pnl_pct = ((entry_price - cached_price) / entry_price) * 100
+                            position_pnl_pct = ((entry_price - display_price) / entry_price) * 100
 
                     # v4.2: Get SL/TP from trailing_stop_state
                     instrument_key = str(self.instrument_id)
@@ -2140,7 +2151,7 @@ class DeepSeekAIStrategy(Strategy):
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
-                'price': cached_price or 0,
+                'price': display_price or 0,
                 'rsi': rsi,
                 'position_side': position_side,
                 'position_pnl_pct': position_pnl_pct,

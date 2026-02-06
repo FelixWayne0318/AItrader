@@ -349,9 +349,14 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
     )
 
 
-def get_binance_config() -> tuple:
+def get_binance_config(config_manager: ConfigManager | None = None) -> tuple:
     """
     Build Binance data and execution client configs.
+
+    Parameters
+    ----------
+    config_manager : ConfigManager, optional
+        Configuration manager for reading recv_window_ms etc.
 
     Returns
     -------
@@ -364,6 +369,11 @@ def get_binance_config() -> tuple:
 
     if not api_key or not api_secret:
         raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET required in .env")
+
+    # Read recv_window from config (fixes -1021 timestamp errors)
+    recv_window_ms = 5000
+    if config_manager:
+        recv_window_ms = config_manager.get('network', 'binance', 'recv_window', default=5000)
 
     # CRITICAL: Use load_all=True for proper instrument initialization
     # NautilusTrader 1.221.0 has fixed non-ASCII symbol issues
@@ -386,6 +396,7 @@ def get_binance_config() -> tuple:
         api_secret=api_secret,
         account_type=BinanceAccountType.USDT_FUTURES,
         testnet=False,
+        recv_window_ms=recv_window_ms,
         instrument_provider=InstrumentProviderConfig(
             load_all=True,  # Load all instruments for proper execution
         ),
@@ -410,7 +421,7 @@ def setup_trading_node(config_manager: ConfigManager) -> TradingNodeConfig:
     """
     # Get configurations
     strategy_config = get_strategy_config(config_manager)
-    data_config, exec_config = get_binance_config()
+    data_config, exec_config = get_binance_config(config_manager)
 
     # Wrap strategy config in ImportableStrategyConfig
     importable_config = ImportableStrategyConfig(
