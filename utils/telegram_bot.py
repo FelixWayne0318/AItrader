@@ -4,11 +4,12 @@ Telegram Bot for Trading Notifications
 Provides real-time notifications for trading signals, order fills,
 position updates, and system status via Telegram.
 
-v2.0 Improvements (2026-02):
-- Async message queue (non-blocking)
-- Message persistence with SQLite
-- Alert convergence (deduplication)
-- Reduced timeout for faster failure detection
+v3.0 Redesign (2026-02):
+- Context-aware heartbeat (different layout for position vs no position)
+- Visual progress bars for RSI, buy ratio, BB position
+- Information hierarchy (most important data first)
+- Clean formatting without version labels
+- Consolidated message types
 """
 
 import asyncio
@@ -212,7 +213,7 @@ class TelegramBot:
         except Exception as e:
             self.logger.error(f"❌ Failed to send Telegram message: {e}")
             return False
-    
+
     def send_message_sync(
         self,
         message: str,
@@ -335,145 +336,654 @@ class TelegramBot:
         if self.message_queue:
             self.message_queue.stop()
             self.logger.info("🛑 Telegram message queue stopped")
-    
-    # Message Formatters
-    
+
+    # ==================== Visual Helpers ====================
+
+    @staticmethod
+    def _bar(value: float, max_val: float = 100, width: int = 10) -> str:
+        """Create Unicode progress bar: ▓▓▓▓▓░░░░░"""
+        if max_val <= 0 or value != value:  # handle NaN
+            return '░' * width
+        ratio = max(0.0, min(1.0, value / max_val))
+        filled = int(round(ratio * width))
+        return '▓' * filled + '░' * (width - filled)
+
+    @staticmethod
+    def _pnl_icon(value: float) -> str:
+        """PnL directional emoji."""
+        return '📈' if value > 0 else '📉' if value < 0 else '➖'
+
+    @staticmethod
+    def _signal_icon(signal: str) -> str:
+        """Signal emoji mapping."""
+        return {
+            'LONG': '🟢', 'BUY': '🟢',
+            'SHORT': '🔴', 'SELL': '🔴',
+            'CLOSE': '🔵', 'REDUCE': '🟡',
+            'HOLD': '⚪', 'PENDING': '⏳',
+        }.get(signal, '❓')
+
+    @staticmethod
+    def _trend_icon(direction: str) -> str:
+        """Trend direction emoji."""
+        return {
+            'BULLISH': '🟢', 'BEARISH': '🔴', 'NEUTRAL': '⚪',
+        }.get(direction, '⚪')
+
+    @staticmethod
+    def _funding_display(raw_rate: float) -> float:
+        """Convert raw funding rate to display percentage.
+
+        Coinalyze: 0.0001 = 0.01%. If |rate| > 0.01, assume already percentage.
+        """
+        if abs(raw_rate) > 0.01:
+            return raw_rate  # Already in percentage form
+        return raw_rate * 100
+
+    # ==================== Message Formatters ====================
+
+    def format_heartbeat_message(self, heartbeat_data: Dict[str, Any], compact: bool = False) -> str:
+        """
+        Format heartbeat message — context-aware market pulse.
+
+        Two display modes based on position state:
+        - NO POSITION: Full market overview with progress bars and detailed technicals
+        - HAS POSITION: Position P&L focus + compact market data
+
+        Parameters
+        ----------
+        heartbeat_data : dict
+            Complete market state data
+        compact : bool
+            Compact single-line mode (for mobile, not commonly used)
+        """
+        # === Extract core data ===
+        price = heartbeat_data.get('price') or 0
+        rsi = heartbeat_data.get('rsi') or 0
+        signal = heartbeat_data.get('signal') or 'PENDING'
+        confidence = heartbeat_data.get('confidence') or 'N/A'
+        timer_count = heartbeat_data.get('timer_count') or 0
+        equity = heartbeat_data.get('equity') or 0
+        uptime_str = heartbeat_data.get('uptime_str') or 'N/A'
+
+        # Position data
+        position_side = heartbeat_data.get('position_side')
+        entry_price = heartbeat_data.get('entry_price') or 0
+        position_size = heartbeat_data.get('position_size') or 0
+        position_pnl_pct = heartbeat_data.get('position_pnl_pct') or 0
+        sl_price = heartbeat_data.get('sl_price')
+        tp_price = heartbeat_data.get('tp_price')
+        has_position = position_side in ('LONG', 'SHORT') if position_side else False
+
+        # Enhanced technical data (new in v3.0 redesign)
+        tech = heartbeat_data.get('technical') or {}
+        adx = tech.get('adx')
+        adx_regime = tech.get('adx_regime', '')
+        trend_direction = tech.get('trend_direction', '')
+        volume_ratio = tech.get('volume_ratio')
+        bb_position = tech.get('bb_position')
+        macd_histogram = tech.get('macd_histogram')
+
+        # Order flow
+        order_flow = heartbeat_data.get('order_flow') or {}
+        buy_ratio = order_flow.get('buy_ratio')
+        cvd_trend = order_flow.get('cvd_trend')
+
+        # Derivatives
+        derivatives = heartbeat_data.get('derivatives') or {}
+        funding_rate = derivatives.get('funding_rate')
+        oi_change_pct = derivatives.get('oi_change_pct')
+
+        # Order book
+        order_book = heartbeat_data.get('order_book') or {}
+        weighted_obi = order_book.get('weighted_obi')
+
+        # S/R zones
+        sr_zone = heartbeat_data.get('sr_zone') or {}
+        nearest_support = sr_zone.get('nearest_support')
+        nearest_resistance = sr_zone.get('nearest_resistance')
+        block_long = sr_zone.get('block_long', False)
+        block_short = sr_zone.get('block_short', False)
+
+        # Signal status
+        signal_status = heartbeat_data.get('signal_status') or {}
+
+        now_str = datetime.utcnow().strftime('%H:%M')
+
+        # === Compact mode (single line) ===
+        if compact:
+            sig_icon = self._signal_icon(signal)
+            msg = f"📡 #{timer_count} | ${price:,.0f} | {sig_icon}{signal}"
+            if has_position:
+                pnl_icon = self._pnl_icon(position_pnl_pct)
+                msg += f" | {pnl_icon}{position_pnl_pct:+.1f}%"
+            msg += f" | ${equity:,.0f}"
+            return msg
+
+        # === Full mode ===
+        msg = f"📡 *#{timer_count}* | BTC ${price:,.2f}\n"
+        msg += "━━━━━━━━━━━━━━━━━━\n"
+
+        # ======= POSITION SECTION (only when holding) =======
+        if has_position:
+            pos_emoji = '🟢' if position_side == 'LONG' else '🔴'
+            msg += f"\n{pos_emoji} *{position_side}* {position_size:.4f} BTC\n"
+            msg += f"  入场 ${entry_price:,.2f}\n"
+
+            # P&L calculation
+            pnl_usd = position_size * entry_price * (position_pnl_pct / 100) if entry_price > 0 else 0
+            pnl_icon = self._pnl_icon(position_pnl_pct)
+            msg += f"  {pnl_icon} 盈亏 ${pnl_usd:+,.2f} ({position_pnl_pct:+.2f}%)\n"
+
+            # SL/TP
+            if sl_price is not None:
+                sl_pct = ((sl_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+                msg += f"  🛑 止损 ${sl_price:,.2f} ({sl_pct:+.2f}%)\n"
+            if tp_price is not None:
+                tp_pct = ((tp_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+                msg += f"  🎯 止盈 ${tp_price:,.2f} ({tp_pct:+.2f}%)\n"
+
+            # R/R ratio
+            if sl_price and tp_price and entry_price > 0:
+                if position_side == 'LONG':
+                    sl_dist = entry_price - sl_price
+                    tp_dist = tp_price - entry_price
+                else:
+                    sl_dist = sl_price - entry_price
+                    tp_dist = entry_price - tp_price
+                if sl_dist > 0:
+                    rr = tp_dist / sl_dist
+                    rr_icon = '✅' if rr >= 2.0 else '✓' if rr >= 1.5 else '⚠️'
+                    msg += f"  📊 R/R {rr:.1f}:1 {rr_icon}\n"
+
+        # ======= TECHNICAL SECTION =======
+        if has_position:
+            # Compact layout when position is held (focus stays on P&L)
+            msg += f"\n📊 *技术面*\n"
+            parts = []
+            parts.append(f"RSI {rsi:.0f}")
+            if trend_direction:
+                t_icon = self._trend_icon(trend_direction)
+                adx_str = f" ADX {adx:.0f}" if adx else ""
+                parts.append(f"趋势 {t_icon}{adx_str}")
+            if macd_histogram is not None:
+                m_icon = '📈' if macd_histogram > 0 else '📉'
+                parts.append(f"MACD {m_icon}")
+            if volume_ratio is not None:
+                parts.append(f"量比 {volume_ratio:.1f}x")
+            # Display 2 per line for compact view
+            for i in range(0, len(parts), 2):
+                msg += f"  {' | '.join(parts[i:i+2])}\n"
+        else:
+            # Detailed layout with progress bars when no position
+            msg += f"\n📊 *技术面*\n"
+            msg += f"  RSI   [{self._bar(rsi)}] {rsi:.1f}\n"
+            if macd_histogram is not None:
+                m_icon = '📈' if macd_histogram > 0 else '📉'
+                msg += f"  MACD  {m_icon} {macd_histogram:+.1f}\n"
+            if trend_direction:
+                trend_map = {'BULLISH': '🟢 上涨', 'BEARISH': '🔴 下跌', 'NEUTRAL': '⚪ 震荡'}
+                trend_text = trend_map.get(trend_direction, f'⚪ {trend_direction}')
+                adx_str = f" (ADX {adx:.0f})" if adx else ""
+                msg += f"  趋势  {trend_text}{adx_str}\n"
+            if bb_position is not None:
+                bb_pct = bb_position * 100
+                if bb_pct < 20:
+                    bb_label = '超卖区'
+                elif bb_pct < 40:
+                    bb_label = '下轨'
+                elif bb_pct < 60:
+                    bb_label = '中轨'
+                elif bb_pct < 80:
+                    bb_label = '上轨'
+                else:
+                    bb_label = '超买区'
+                msg += f"  BB    {bb_label} ({bb_pct:.0f}%)\n"
+            if volume_ratio is not None:
+                v_icon = '🔥' if volume_ratio > 1.5 else '📊' if volume_ratio > 0.8 else '😴'
+                msg += f"  量比  {v_icon} {volume_ratio:.1f}x\n"
+
+        # ======= FLOW & SENTIMENT SECTION =======
+        has_flow = (buy_ratio is not None or cvd_trend or
+                    funding_rate is not None or oi_change_pct is not None or
+                    weighted_obi is not None)
+
+        if has_flow:
+            if has_position:
+                # Compact flow data for position mode
+                msg += f"\n📈 *资金流*\n"
+                flow_parts = []
+                if buy_ratio is not None:
+                    br_icon = '🟢' if buy_ratio > 0.55 else '🔴' if buy_ratio < 0.45 else '⚪'
+                    flow_parts.append(f"买入 {buy_ratio*100:.0f}% {br_icon}")
+                if funding_rate is not None:
+                    fr = self._funding_display(funding_rate)
+                    flow_parts.append(f"费率 {fr:.4f}%")
+                if oi_change_pct is not None:
+                    flow_parts.append(f"OI {oi_change_pct:+.1f}%")
+                if cvd_trend:
+                    c_icon = '📈' if cvd_trend == 'RISING' else '📉' if cvd_trend == 'FALLING' else '➖'
+                    flow_parts.append(f"CVD {c_icon}")
+                for i in range(0, len(flow_parts), 2):
+                    msg += f"  {' | '.join(flow_parts[i:i+2])}\n"
+            else:
+                # Detailed flow data when no position
+                msg += f"\n📈 *资金流向*\n"
+                if buy_ratio is not None:
+                    br_icon = '🟢' if buy_ratio > 0.55 else '🔴' if buy_ratio < 0.45 else '⚪'
+                    msg += f"  买入比 [{self._bar(buy_ratio * 100)}] {buy_ratio*100:.1f}% {br_icon}\n"
+                if cvd_trend:
+                    c_icon = '📈' if cvd_trend == 'RISING' else '📉' if cvd_trend == 'FALLING' else '➖'
+                    msg += f"  CVD   {c_icon} {cvd_trend}\n"
+                if funding_rate is not None:
+                    fr = self._funding_display(funding_rate)
+                    fr_icon = '🔴' if fr > 0.01 else '🟢' if fr < -0.01 else '⚪'
+                    msg += f"  费率  {fr_icon} {fr:.4f}%\n"
+                if oi_change_pct is not None:
+                    oi_icon = '📈' if oi_change_pct > 5 else '📉' if oi_change_pct < -5 else '➖'
+                    msg += f"  OI    {oi_icon} {oi_change_pct:+.1f}%\n"
+                if weighted_obi is not None:
+                    obi_icon = '🟢' if weighted_obi > 0.1 else '🔴' if weighted_obi < -0.1 else '⚪'
+                    msg += f"  OBI   {obi_icon} {weighted_obi:+.3f}\n"
+
+        # ======= KEY LEVELS SECTION =======
+        has_levels = (nearest_support is not None or nearest_resistance is not None)
+        if has_levels:
+            if has_position:
+                # Single line for position mode
+                level_parts = []
+                if nearest_support is not None and nearest_support < price:
+                    s_pct = ((nearest_support - price) / price * 100) if price > 0 else 0
+                    level_parts.append(f"S ${nearest_support:,.0f} ({s_pct:+.1f}%)")
+                if nearest_resistance is not None and nearest_resistance > price:
+                    r_pct = ((nearest_resistance - price) / price * 100) if price > 0 else 0
+                    level_parts.append(f"R ${nearest_resistance:,.0f} ({r_pct:+.1f}%)")
+                if level_parts:
+                    msg += f"\n📍 {' | '.join(level_parts)}\n"
+            else:
+                # Detailed levels when no position
+                msg += f"\n📍 *关键价位*\n"
+                if nearest_support is not None and nearest_support < price:
+                    s_pct = ((nearest_support - price) / price * 100) if price > 0 else 0
+                    msg += f"  支撑 ${nearest_support:,.2f} ({s_pct:+.2f}%)\n"
+                if nearest_resistance is not None and nearest_resistance > price:
+                    r_pct = ((nearest_resistance - price) / price * 100) if price > 0 else 0
+                    msg += f"  阻力 ${nearest_resistance:,.2f} ({r_pct:+.2f}%)\n"
+                if block_long or block_short:
+                    blocks = []
+                    if block_long:
+                        blocks.append("🚫 LONG")
+                    if block_short:
+                        blocks.append("🚫 SHORT")
+                    msg += f"  ⚠️ {' | '.join(blocks)}\n"
+
+        # ======= SIGNAL SECTION =======
+        sig_icon = self._signal_icon(signal)
+        msg += f"\n🤖 *{sig_icon} {signal}* ({confidence})"
+
+        # Signal execution status
+        if signal_status:
+            executed = signal_status.get('executed', False)
+            reason = signal_status.get('reason', '')
+            action_taken = signal_status.get('action_taken', '')
+            if executed and action_taken:
+                msg += f"\n✅ {action_taken}"
+            elif reason:
+                msg += f"\n⏸️ {reason}"
+
+        # ======= FOOTER =======
+        pos_text = position_side if has_position else '空仓'
+        msg += f"\n\n💼 {pos_text} | 🏦 ${equity:,.2f}"
+        msg += f"\n⏱ {uptime_str} | {now_str} UTC"
+
+        return msg
+
+    def format_trade_execution(self, execution_data: Dict[str, Any]) -> str:
+        """
+        Format unified trade execution notification.
+
+        Combines signal, fill, and position info into a single message.
+
+        Parameters
+        ----------
+        execution_data : dict
+            Contains signal, confidence, side, quantity, entry_price,
+            sl_price, tp_price, rsi, macd, winning_side, reasoning,
+            action_taken, entry_quality, sr_zone
+        """
+        signal = execution_data.get('signal', 'UNKNOWN')
+        confidence = execution_data.get('confidence', 'UNKNOWN')
+        side = execution_data.get('side', 'UNKNOWN')
+        quantity = execution_data.get('quantity', 0.0)
+        entry_price = execution_data.get('entry_price', 0.0)
+        sl_price = execution_data.get('sl_price')
+        tp_price = execution_data.get('tp_price')
+        rsi = execution_data.get('rsi')
+        macd = execution_data.get('macd')
+        winning_side = execution_data.get('winning_side', '')
+        reasoning = execution_data.get('reasoning', '')
+        action_taken = execution_data.get('action_taken', '')
+        entry_quality = execution_data.get('entry_quality')
+        sr_zone = execution_data.get('sr_zone') or {}
+
+        # Emoji and text
+        side_emoji = '🟢' if side in ('LONG', 'BUY') else '🔴' if side in ('SHORT', 'SELL') else '⚪'
+        side_cn = '多' if side in ('LONG', 'BUY') else '空' if side in ('SHORT', 'SELL') else side
+        conf_cn = {'HIGH': '高', 'MEDIUM': '中', 'LOW': '低'}.get(confidence, confidence)
+        amount = quantity * entry_price
+
+        # Title
+        if action_taken:
+            title = action_taken
+        else:
+            signal_map = {
+                'LONG': '做多', 'BUY': '做多', 'SHORT': '做空', 'SELL': '做空',
+                'CLOSE': '平仓', 'REDUCE': '减仓',
+            }
+            title = signal_map.get(signal, signal)
+
+        msg = f"{side_emoji} *交易执行 — {title}*\n"
+        msg += "━━━━━━━━━━━━━━━━━━\n"
+        msg += f"📊 {quantity:.4f} BTC @ ${entry_price:,.2f} (${amount:,.2f})\n"
+        msg += f"📋 信心: {conf_cn}"
+
+        if winning_side:
+            w_icon = "🐂" if winning_side.upper() == "BULL" else "🐻" if winning_side.upper() == "BEAR" else "⚖️"
+            w_cn = "多方" if winning_side.upper() == "BULL" else "空方" if winning_side.upper() == "BEAR" else winning_side
+            msg += f" | {w_icon} {w_cn}胜出"
+        msg += "\n"
+
+        # SL/TP and R/R
+        if sl_price or tp_price:
+            msg += "\n"
+            if sl_price:
+                sl_pct = abs((sl_price / entry_price - 1) * 100) if entry_price > 0 else 0
+                msg += f"🛑 止损 ${sl_price:,.2f} (-{sl_pct:.2f}%)\n"
+            if tp_price:
+                tp_pct = abs((tp_price / entry_price - 1) * 100) if entry_price > 0 else 0
+                msg += f"🎯 止盈 ${tp_price:,.2f} (+{tp_pct:.2f}%)\n"
+
+            # R/R ratio
+            if sl_price and tp_price and entry_price > 0:
+                if side in ('LONG', 'BUY'):
+                    sl_dist = entry_price - sl_price
+                    tp_dist = tp_price - entry_price
+                else:
+                    sl_dist = sl_price - entry_price
+                    tp_dist = entry_price - tp_price
+                if sl_dist > 0:
+                    rr = tp_dist / sl_dist
+                    rr_icon = '✅' if rr >= 2.0 else '✓' if rr >= 1.5 else '⚠️'
+                    msg += f"📊 R/R {rr:.2f}:1 {rr_icon}\n"
+
+        # S/R levels
+        nearest_support = sr_zone.get('nearest_support')
+        nearest_resistance = sr_zone.get('nearest_resistance')
+        if nearest_support is not None and nearest_support < entry_price:
+            s_pct = ((nearest_support - entry_price) / entry_price * 100) if entry_price > 0 else 0
+            msg += f"📉 支撑 ${nearest_support:,.2f} ({s_pct:+.2f}%)\n"
+        if nearest_resistance is not None and nearest_resistance > entry_price:
+            r_pct = ((nearest_resistance - entry_price) / entry_price * 100) if entry_price > 0 else 0
+            msg += f"📈 阻力 ${nearest_resistance:,.2f} ({r_pct:+.2f}%)\n"
+
+        # Technical indicators
+        if rsi is not None or macd is not None:
+            parts = []
+            if rsi is not None:
+                parts.append(f"RSI {rsi:.1f}")
+            if macd is not None:
+                parts.append(f"MACD {macd:.4f}")
+            msg += f"\n📊 {' | '.join(parts)}\n"
+
+        # Entry quality
+        if entry_quality:
+            msg += f"📍 入场质量: {entry_quality}\n"
+
+        # AI reasoning (truncated)
+        if reasoning:
+            safe = self.escape_markdown(reasoning[:120])
+            msg += f"\n🤖 {safe}{'...' if len(reasoning) > 120 else ''}\n"
+
+        msg += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        return msg
+
+    def format_position_update(self, position_data: Dict[str, Any]) -> str:
+        """
+        Format position update notification.
+
+        Parameters
+        ----------
+        position_data : dict
+            Contains action (OPENED/CLOSED/UPDATE), side, quantity,
+            entry_price, current_price, pnl, pnl_pct, sl_price, tp_price,
+            close_reason, close_reason_detail, entry_quality, rr_ratio, sr_zone
+        """
+        action = position_data.get('action', 'UPDATE')
+        side = position_data.get('side', 'UNKNOWN')
+        quantity = position_data.get('quantity', 0.0)
+        entry_price = position_data.get('entry_price', 0.0)
+        current_price = position_data.get('current_price', 0.0)
+        pnl = position_data.get('pnl', 0.0)
+        pnl_pct = position_data.get('pnl_pct', 0.0)
+        sl_price = position_data.get('sl_price')
+        tp_price = position_data.get('tp_price')
+        close_reason = position_data.get('close_reason', 'MANUAL')
+        close_reason_detail = position_data.get('close_reason_detail', '')
+        entry_quality = position_data.get('entry_quality')
+        sr_zone = position_data.get('sr_zone') or {}
+
+        side_cn = '多' if side == 'LONG' else '空' if side == 'SHORT' else side
+
+        if action == 'OPENED':
+            emoji = '📈' if side == 'LONG' else '📉'
+            msg = f"{emoji} *开仓成功 — {side_cn}*\n"
+            msg += "━━━━━━━━━━━━━━━━━━\n"
+            msg += f"📊 {quantity:.4f} BTC @ ${entry_price:,.2f}\n"
+
+            # SL/TP and R/R
+            if sl_price:
+                sl_pct = ((sl_price / entry_price) - 1) * 100 if entry_price > 0 else 0
+                msg += f"🛑 止损 ${sl_price:,.2f} ({sl_pct:+.2f}%)\n"
+            if tp_price:
+                tp_pct = ((tp_price / entry_price) - 1) * 100 if entry_price > 0 else 0
+                msg += f"🎯 止盈 ${tp_price:,.2f} ({tp_pct:+.2f}%)\n"
+
+            if sl_price and tp_price and entry_price > 0:
+                if side == 'LONG':
+                    sl_d = entry_price - sl_price
+                    tp_d = tp_price - entry_price
+                else:
+                    sl_d = sl_price - entry_price
+                    tp_d = entry_price - tp_price
+                if sl_d > 0:
+                    rr = tp_d / sl_d
+                    rr_icon = '✅' if rr >= 2.0 else '✓' if rr >= 1.5 else '⚠️'
+                    msg += f"📊 R/R {rr:.2f}:1 {rr_icon}\n"
+
+            if entry_quality:
+                msg += f"📍 入场质量: {entry_quality}\n"
+
+        elif action == 'CLOSED':
+            # Determine close type
+            if close_reason == 'TAKE_PROFIT':
+                emoji = '🎯'
+                title = '止盈平仓'
+            elif close_reason == 'STOP_LOSS':
+                emoji = '🛑'
+                title = '止损平仓'
+            else:
+                emoji = '✅' if pnl >= 0 else '❌'
+                title = '平仓完成'
+
+            msg = f"{emoji} *{title} — {side_cn}*\n"
+            msg += "━━━━━━━━━━━━━━━━━━\n"
+            msg += f"📊 {quantity:.4f} BTC @ ${entry_price:,.2f} → ${current_price:,.2f}\n"
+
+            pnl_icon = self._pnl_icon(pnl)
+            msg += f"{pnl_icon} *盈亏: ${pnl:,.2f} ({pnl_pct:+.2f}%)*\n"
+
+            if close_reason_detail:
+                msg += f"📋 {close_reason_detail}\n"
+
+            # S/R zones at close time
+            nearest_support = sr_zone.get('nearest_support')
+            nearest_resistance = sr_zone.get('nearest_resistance')
+            if nearest_support is not None and nearest_support < current_price:
+                sup_dist = ((nearest_support - current_price) / current_price * 100) if current_price > 0 else 0
+                msg += f"📉 支撑 ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
+            if nearest_resistance is not None and nearest_resistance > current_price:
+                res_dist = ((nearest_resistance - current_price) / current_price * 100) if current_price > 0 else 0
+                msg += f"📈 阻力 ${nearest_resistance:,.2f} ({res_dist:+.2f}%)\n"
+
+        else:  # UPDATE
+            pnl_icon = self._pnl_icon(pnl)
+            msg = f"📊 *持仓更新 — {side_cn}*\n"
+            msg += "━━━━━━━━━━━━━━━━━━\n"
+            msg += f"📊 {quantity:.4f} BTC @ ${entry_price:,.2f}\n"
+            msg += f"💵 当前 ${current_price:,.2f}\n"
+            msg += f"{pnl_icon} 盈亏: ${pnl:,.2f} ({pnl_pct:+.2f}%)\n"
+
+        msg += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        return msg
+
     def format_startup_message(self, instrument_id: str, config: Dict[str, Any]) -> str:
         """
-        Format strategy startup notification (v4.0 - dynamic content).
+        Format strategy startup notification.
 
         Parameters
         ----------
         instrument_id : str
             Trading instrument identifier
         config : dict
-            Strategy configuration containing:
-            - timeframe: str (e.g., "15m", "1m", "4h")
-            - enable_auto_sl_tp: bool
-            - enable_trailing_stop: bool
-            - enable_bracket_orders: bool (implied by enable_oco)
-            - mtf_enabled: bool
-            - sr_hard_control_enabled: bool
+            Strategy configuration
         """
         safe_instrument = self.escape_markdown(str(instrument_id))
-
-        # Extract timeframe from config (default to 15m)
         timeframe = config.get('timeframe', '15m')
-        # Convert to Chinese display format
-        timeframe_map = {
-            '1m': '1 分钟', '5m': '5 分钟', '15m': '15 分钟', '30m': '30 分钟',
-            '1h': '1 小时', '4h': '4 小时', '1d': '1 天',
-        }
-        timeframe_cn = timeframe_map.get(timeframe, timeframe)
 
-        # Build feature list dynamically based on config
+        # Build feature flags
         features = []
         if config.get('enable_auto_sl_tp', True):
-            features.append("• 自动止损/止盈")
+            features.append("Auto SL/TP")
         if config.get('enable_oco', True):
-            features.append("• Bracket Orders (NautilusTrader)")
+            features.append("Bracket Orders")
         if config.get('enable_trailing_stop', False):
-            features.append("• 移动止损")
+            features.append("Trailing Stop")
         if config.get('mtf_enabled', False):
-            features.append("• 多时间框架分析 (MTF)")
-        if config.get('sr_hard_control_enabled', True):
-            features.append("• S/R Zone 硬风控 (v3.8)")
-        features.append("• TradingAgents AI 决策")  # Always enabled
+            features.append("MTF Analysis")
+        features.append("TradingAgents AI")
 
-        features_str = '\n'.join(features) if features else "• 基础策略"
+        features_str = " | ".join(features)
 
-        return f"""
-🚀 *策略已启动*
-
-📊 *交易对*: {safe_instrument}
-⏰ *周期*: {timeframe_cn}
-🕐 *时间*: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
-
-✅ *已启用功能*:
-{features_str}
-
-🎯 策略正在监控市场...
-"""
+        return (
+            f"🚀 *Strategy Started*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📊 {safe_instrument} | {timeframe}\n"
+            f"✅ {features_str}\n"
+            f"🎯 Monitoring market...\n"
+            f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        )
 
     def format_shutdown_message(self, shutdown_data: Dict[str, Any]) -> str:
         """
-        Format strategy shutdown notification (v3.13).
+        Format strategy shutdown notification.
 
         Parameters
         ----------
         shutdown_data : dict
-            Shutdown information containing:
-            - instrument_id: str
-            - reason: str (e.g., "user_stop", "error", "maintenance")
-            - uptime: str (e.g., "2h 30m")
-            - total_trades: int (optional)
-            - total_pnl: float (optional)
-            - final_equity: float (optional)
+            Shutdown information
         """
         instrument_id = shutdown_data.get('instrument_id', 'N/A')
         safe_instrument = self.escape_markdown(str(instrument_id))
-
         reason = shutdown_data.get('reason', 'normal')
         reason_map = {
-            'normal': '正常停止',
-            'user_stop': '用户停止',
-            'error': '错误停止',
-            'maintenance': '维护停止',
-            'signal': '收到终止信号',
+            'normal': 'Normal stop',
+            'user_stop': 'User stop',
+            'error': 'Error stop',
+            'maintenance': 'Maintenance',
+            'signal': 'Signal received',
         }
-        reason_cn = reason_map.get(reason, reason)
-
+        reason_text = reason_map.get(reason, reason)
         uptime = shutdown_data.get('uptime', 'N/A')
 
-        # Build message
-        msg = f"""
-🛑 *策略已停止*
+        msg = (
+            f"🛑 *Strategy Stopped*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📊 {safe_instrument}\n"
+            f"📋 {reason_text} | ⏱ {uptime}\n"
+        )
 
-📊 *交易对*: {safe_instrument}
-📝 *原因*: {reason_cn}
-⏱️ *运行时长*: {uptime}
-🕐 *时间*: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
-"""
-
-        # Add optional stats if available
+        # Session stats
         total_trades = shutdown_data.get('total_trades')
         total_pnl = shutdown_data.get('total_pnl')
         final_equity = shutdown_data.get('final_equity')
 
-        if total_trades is not None or total_pnl is not None or final_equity is not None:
-            msg += "\n📈 *本次运行统计*:\n"
+        if total_trades is not None or total_pnl is not None:
+            msg += "\n📈 *Session Stats*\n"
             if total_trades is not None:
-                msg += f"  • 交易次数: {total_trades}\n"
+                msg += f"  Trades: {total_trades}\n"
             if total_pnl is not None:
-                pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
-                msg += f"  • 总盈亏: {pnl_emoji} ${total_pnl:,.2f}\n"
+                pnl_icon = '🟢' if total_pnl >= 0 else '🔴'
+                msg += f"  P&L: {pnl_icon} ${total_pnl:,.2f}\n"
             if final_equity is not None:
-                msg += f"  • 最终余额: ${final_equity:,.2f}\n"
+                msg += f"  Balance: ${final_equity:,.2f}\n"
 
-        msg += "\n💤 策略已安全停止。"
-
+        msg += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
         return msg
+
+    def format_error_alert(self, error_data: Dict[str, Any]) -> str:
+        """Format error/warning notification with priority-based formatting."""
+        level = error_data.get('level', 'ERROR')
+        message = self.escape_markdown(str(error_data.get('message', 'Unknown error')))
+        context = error_data.get('context', '')
+
+        level_map = {
+            'CRITICAL': ('🚨', '严重错误'),
+            'WARNING': ('⚠️', '警告'),
+            'ERROR': ('❌', '错误'),
+        }
+        emoji, level_cn = level_map.get(level, ('❌', '错误'))
+
+        msg = f"{emoji} *{level_cn}*\n\n{message}\n"
+
+        if context:
+            msg += f"\n📋 {self.escape_markdown(str(context))}\n"
+
+        msg += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        return msg
+
+    def format_trailing_stop_update(self, ts_data: Dict[str, Any]) -> str:
+        """
+        Format trailing stop update notification.
+
+        Parameters
+        ----------
+        ts_data : dict
+            Contains old_sl_price, new_sl_price, current_price, profit_pct, side
+        """
+        old_sl = ts_data.get('old_sl_price', 0.0)
+        new_sl = ts_data.get('new_sl_price', 0.0)
+        current_price = ts_data.get('current_price', 0.0)
+        profit_pct = ts_data.get('profit_pct', 0.0)
+        side = ts_data.get('side', 'LONG')
+
+        direction = '⬇️' if side == 'SHORT' else '⬆️'
+
+        return (
+            f"🔄 *Trailing Stop {direction}*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💵 ${current_price:,.2f} | +{profit_pct*100:.1f}%\n"
+            f"🛑 ${old_sl:,.2f} → ${new_sl:,.2f} {direction}\n"
+            f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        )
 
     def format_daily_summary(self, summary_data: Dict[str, Any]) -> str:
         """
-        Format daily performance summary (v3.13).
+        Format daily performance summary.
 
         Parameters
         ----------
         summary_data : dict
-            Daily summary data containing:
-            - date: str (YYYY-MM-DD)
-            - total_trades: int
-            - winning_trades: int
-            - losing_trades: int
-            - total_pnl: float (USDT)
-            - total_pnl_pct: float (%)
-            - largest_win: float
-            - largest_loss: float
-            - starting_equity: float
-            - ending_equity: float
-            - signals_generated: int
-            - signals_executed: int
+            Daily summary data
         """
         date = summary_data.get('date', datetime.utcnow().strftime('%Y-%m-%d'))
         total_trades = summary_data.get('total_trades', 0)
@@ -488,62 +998,38 @@ class TelegramBot:
         signals_generated = summary_data.get('signals_generated', 0)
         signals_executed = summary_data.get('signals_executed', 0)
 
-        # Calculate win rate
         win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+        pnl_icon = '🟢' if total_pnl >= 0 else '🔴'
+        trend_icon = '📈' if total_pnl >= 0 else '📉'
 
-        # PnL emoji
-        pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
-        trend_emoji = "📈" if total_pnl >= 0 else "📉"
+        msg = f"📊 *Daily Report — {date}*\n"
+        msg += "━━━━━━━━━━━━━━━━━━\n"
+        msg += f"\n💰 *P&L*\n"
+        msg += f"  {pnl_icon} ${total_pnl:+,.2f} ({total_pnl_pct:+.2f}%)\n"
+        msg += f"  Best: ${largest_win:,.2f} | Worst: ${largest_loss:,.2f}\n"
+        msg += f"\n📈 *Trades*\n"
+        msg += f"  Total: {total_trades} | Win: {winning_trades} | Loss: {losing_trades}\n"
+        msg += f"  Win Rate: {win_rate:.1f}%\n"
 
-        msg = f"""
-📊 *每日绩效总结*
-━━━━━━━━━━━━━━━━
-📅 *日期*: {date}
+        if signals_generated > 0:
+            msg += f"\n🎯 *Signals*\n"
+            msg += f"  Generated: {signals_generated} | Executed: {signals_executed}\n"
 
-💰 *收益情况*:
-  {pnl_emoji} 总盈亏: ${total_pnl:+,.2f} ({total_pnl_pct:+.2f}%)
-  📈 最大盈利: ${largest_win:,.2f}
-  📉 最大亏损: ${largest_loss:,.2f}
+        msg += f"\n💵 *Balance*\n"
+        msg += f"  ${starting_equity:,.2f} → ${ending_equity:,.2f}"
+        change = ending_equity - starting_equity
+        msg += f" ({trend_icon} ${change:+,.2f})\n"
 
-📈 *交易统计*:
-  • 总交易: {total_trades} 笔
-  • 盈利: {winning_trades} 笔
-  • 亏损: {losing_trades} 笔
-  • 胜率: {win_rate:.1f}%
-
-🎯 *信号统计*:
-  • 生成信号: {signals_generated}
-  • 执行信号: {signals_executed}
-
-💵 *资金变化*:
-  • 起始: ${starting_equity:,.2f}
-  • 结束: ${ending_equity:,.2f}
-  • {trend_emoji} 变化: ${ending_equity - starting_equity:+,.2f}
-"""
         return msg
 
     def format_weekly_summary(self, summary_data: Dict[str, Any]) -> str:
         """
-        Format weekly performance summary (v3.13).
+        Format weekly performance summary.
 
         Parameters
         ----------
         summary_data : dict
-            Weekly summary data containing:
-            - week_start: str (YYYY-MM-DD)
-            - week_end: str (YYYY-MM-DD)
-            - total_trades: int
-            - winning_trades: int
-            - losing_trades: int
-            - total_pnl: float (USDT)
-            - total_pnl_pct: float (%)
-            - best_day: dict (date, pnl)
-            - worst_day: dict (date, pnl)
-            - avg_daily_pnl: float
-            - starting_equity: float
-            - ending_equity: float
-            - max_drawdown_pct: float
-            - daily_breakdown: list of dict
+            Weekly summary data
         """
         week_start = summary_data.get('week_start', 'N/A')
         week_end = summary_data.get('week_end', 'N/A')
@@ -560,681 +1046,64 @@ class TelegramBot:
         max_drawdown_pct = summary_data.get('max_drawdown_pct', 0.0)
         daily_breakdown = summary_data.get('daily_breakdown', [])
 
-        # Calculate win rate
         win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+        pnl_icon = '🟢' if total_pnl >= 0 else '🔴'
+        trend_icon = '📈' if total_pnl >= 0 else '📉'
 
-        # PnL emoji
-        pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
-        trend_emoji = "📈" if total_pnl >= 0 else "📉"
+        msg = f"📊 *Weekly Report*\n"
+        msg += f"━━━━━━━━━━━━━━━━━━\n"
+        msg += f"📅 {week_start} ~ {week_end}\n"
+        msg += f"\n💰 *P&L*\n"
+        msg += f"  {pnl_icon} ${total_pnl:+,.2f} ({total_pnl_pct:+.2f}%)\n"
+        msg += f"  Avg Daily: ${avg_daily_pnl:+,.2f}\n"
+        msg += f"  Max Drawdown: {max_drawdown_pct:.2f}%\n"
+        msg += f"\n📈 *Trades*\n"
+        msg += f"  Total: {total_trades} | Win: {winning_trades} | Loss: {losing_trades}\n"
+        msg += f"  Win Rate: {win_rate:.1f}%\n"
+        msg += f"\n🏆 *Best/Worst*\n"
+        msg += f"  Best: {best_day.get('date', 'N/A')} (${best_day.get('pnl', 0):+,.2f})\n"
+        msg += f"  Worst: {worst_day.get('date', 'N/A')} (${worst_day.get('pnl', 0):+,.2f})\n"
+        msg += f"\n💵 *Balance*\n"
+        change = ending_equity - starting_equity
+        msg += f"  ${starting_equity:,.2f} → ${ending_equity:,.2f} ({trend_icon} ${change:+,.2f})\n"
 
-        msg = f"""
-📊 *每周绩效总结*
-━━━━━━━━━━━━━━━━
-📅 *周期*: {week_start} ~ {week_end}
-
-💰 *收益情况*:
-  {pnl_emoji} 总盈亏: ${total_pnl:+,.2f} ({total_pnl_pct:+.2f}%)
-  📊 日均盈亏: ${avg_daily_pnl:+,.2f}
-  📉 最大回撤: {max_drawdown_pct:.2f}%
-
-📈 *交易统计*:
-  • 总交易: {total_trades} 笔
-  • 盈利: {winning_trades} 笔
-  • 亏损: {losing_trades} 笔
-  • 胜率: {win_rate:.1f}%
-
-🏆 *最佳/最差日*:
-  • 最佳: {best_day.get('date', 'N/A')} (${best_day.get('pnl', 0):+,.2f})
-  • 最差: {worst_day.get('date', 'N/A')} (${worst_day.get('pnl', 0):+,.2f})
-
-💵 *资金变化*:
-  • 起始: ${starting_equity:,.2f}
-  • 结束: ${ending_equity:,.2f}
-  • {trend_emoji} 变化: ${ending_equity - starting_equity:+,.2f}
-"""
-
-        # Add daily breakdown if available (max 7 days)
+        # Daily breakdown
         if daily_breakdown:
-            msg += "\n📋 *每日明细*:\n"
+            msg += f"\n📋 *Daily*\n"
             for day in daily_breakdown[:7]:
-                day_date = day.get('date', 'N/A')[-5:]  # MM-DD
-                day_pnl = day.get('pnl', 0)
-                day_emoji = "🟢" if day_pnl >= 0 else "🔴"
-                msg += f"  {day_emoji} {day_date}: ${day_pnl:+,.2f}\n"
+                d = day.get('date', 'N/A')[-5:]
+                p = day.get('pnl', 0)
+                icon = '🟢' if p >= 0 else '🔴'
+                msg += f"  {icon} {d}: ${p:+,.2f}\n"
 
         return msg
 
     def format_trade_signal(self, signal_data: Dict[str, Any]) -> str:
-        """Format trading signal notification (v3.12 - Extended signal types)."""
-        signal = signal_data.get('signal', 'UNKNOWN')
-        confidence = signal_data.get('confidence', 'UNKNOWN')
-        price = signal_data.get('price', 0.0)
-        timestamp = signal_data.get('timestamp', datetime.utcnow())
+        """Deprecated: Use format_trade_execution instead."""
+        return self.format_trade_execution(signal_data)
 
-        # Technical indicators
-        rsi = signal_data.get('rsi', 0.0)
-        macd = signal_data.get('macd', 0.0)
-        support = signal_data.get('support', 0.0)
-        resistance = signal_data.get('resistance', 0.0)
-
-        # AI reasoning
-        reasoning = signal_data.get('reasoning', 'No reasoning provided')
-
-        # TradingAgents v3.8: Judge decision and debate info
-        winning_side = signal_data.get('winning_side', '')
-        debate_summary = signal_data.get('debate_summary', '')
-
-        # v3.12: Extended signal emoji mapping
-        signal_emoji_map = {
-            'LONG': '🟢', 'BUY': '🟢',
-            'SHORT': '🔴', 'SELL': '🔴',
-            'CLOSE': '🔵', 'REDUCE': '🟡',
-            'HOLD': '⚪'
-        }
-        signal_emoji = signal_emoji_map.get(signal, '❓')
-
-        # v3.12: Extended signal Chinese mapping
-        signal_cn_map = {
-            'LONG': '做多', 'BUY': '买入',
-            'SHORT': '做空', 'SELL': '卖出',
-            'CLOSE': '平仓', 'REDUCE': '减仓',
-            'HOLD': '观望'
-        }
-        signal_cn = signal_cn_map.get(signal, signal)
-        confidence_cn = {'HIGH': '高', 'MEDIUM': '中', 'LOW': '低'}.get(confidence, confidence)
-
-        # Build message
-        msg = f"""
-{signal_emoji} *交易信号*
-
-*信号*: {signal_cn}
-*信心*: {confidence_cn}
-*价格*: ${price:,.2f}
-*时间*: {timestamp}
-
-📈 *技术指标*:
-• RSI: {rsi:.2f}
-• MACD: {macd:.4f}
-• 支撑: ${support:,.2f}
-• 阻力: ${resistance:,.2f}
-
-🤖 *AI 分析*:
-{reasoning[:200]}{'...' if len(reasoning) > 200 else ''}
-"""
-
-        # Add Judge decision if available (TradingAgents v3.8)
-        if winning_side:
-            side_emoji = "🐂" if winning_side.upper() == "BULL" else "🐻" if winning_side.upper() == "BEAR" else "⚖️"
-            side_cn = "多方" if winning_side.upper() == "BULL" else "空方" if winning_side.upper() == "BEAR" else winning_side
-            msg += f"\n{side_emoji} *Judge 决策*: {side_cn}胜出"
-
-        # Add debate summary if available
-        if debate_summary:
-            safe_summary = self.escape_markdown(debate_summary[:150])
-            msg += f"\n📊 *辩论*: {safe_summary}{'...' if len(debate_summary) > 150 else ''}"
-
-        return msg
-    
     def format_order_fill(self, order_data: Dict[str, Any]) -> str:
-        """Format order fill notification."""
+        """Format order fill notification (minimal)."""
         side = order_data.get('side', 'UNKNOWN')
         quantity = order_data.get('quantity', 0.0)
         price = order_data.get('price', 0.0)
         order_type = order_data.get('order_type', 'MARKET')
 
-        side_emoji = "🟢" if side == "BUY" else "🔴" if side == "SELL" else "⚪"
-        side_cn = "买入" if side == "BUY" else "卖出" if side == "SELL" else side
-        type_cn = "市价" if order_type == "MARKET" else "限价" if order_type == "LIMIT" else order_type
-
-        return f"""
-{side_emoji} *订单成交*
-
-*方向*: {side_cn}
-*类型*: {type_cn}
-*数量*: {quantity} BTC
-*价格*: ${price:,.2f}
-*金额*: ${quantity * price:,.2f}
-
-⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
-"""
-    
-    def format_position_update(self, position_data: Dict[str, Any]) -> str:
-        """Format position update notification (v3.17 - with close reason and entry quality)."""
-        action = position_data.get('action', 'UPDATE')  # OPENED, CLOSED, UPDATE
-        side = position_data.get('side', 'UNKNOWN')
-        quantity = position_data.get('quantity', 0.0)
-        entry_price = position_data.get('entry_price', 0.0)
-        current_price = position_data.get('current_price', 0.0)
-        pnl = position_data.get('pnl', 0.0)
-        pnl_pct = position_data.get('pnl_pct', 0.0)
-
-        # Risk management info (v2.0)
-        sl_price = position_data.get('sl_price')
-        tp_price = position_data.get('tp_price')
-
-        # v3.17: Close reason
-        close_reason = position_data.get('close_reason', 'MANUAL')
-        close_reason_detail = position_data.get('close_reason_detail', '')
-
-        # v3.17: Entry quality and R/R ratio
-        entry_quality = position_data.get('entry_quality')  # e.g., "优秀 (距支撑 0.5%)"
-        rr_ratio = position_data.get('rr_ratio')  # e.g., 2.5
-
-        # 中文映射
-        side_cn = "多" if side == "LONG" else "空" if side == "SHORT" else side
-
-        if action == "OPENED":
-            emoji = "📈" if side == "LONG" else "📉"
-            title = "开仓成功"
-        elif action == "CLOSED":
-            # v3.17: Use close reason to determine emoji
-            if close_reason == 'TAKE_PROFIT':
-                emoji = "🎯"
-                title = "止盈平仓"
-            elif close_reason == 'STOP_LOSS':
-                emoji = "🛑"
-                title = "止损平仓"
-            else:
-                emoji = "✅" if pnl >= 0 else "❌"
-                title = "平仓完成"
-        else:
-            emoji = "📊"
-            title = "持仓更新"
-
-        pnl_emoji = "🟢" if pnl >= 0 else "🔴"
-
-        message = f"""
-{emoji} *{title}*
-
-*方向*: {side_cn}
-*数量*: {quantity} BTC
-*入场价*: ${entry_price:,.2f}
-*当前价*: ${current_price:,.2f}
-"""
-
-        # Add SL/TP and R/R for OPENED positions (v3.17)
-        if action == "OPENED":
-            if sl_price:
-                sl_pct = ((sl_price / entry_price) - 1) * 100 if entry_price > 0 else 0
-                message += f"🛡️ *止损*: ${sl_price:,.2f} ({sl_pct:+.2f}%)\n"
-            if tp_price:
-                tp_pct = ((tp_price / entry_price) - 1) * 100 if entry_price > 0 else 0
-                message += f"🎯 *止盈*: ${tp_price:,.2f} ({tp_pct:+.2f}%)\n"
-
-            # v3.17: R/R ratio
-            if sl_price and tp_price and entry_price > 0:
-                if side == "LONG":
-                    sl_dist = entry_price - sl_price
-                    tp_dist = tp_price - entry_price
-                else:  # SHORT
-                    sl_dist = sl_price - entry_price
-                    tp_dist = entry_price - tp_price
-
-                if sl_dist > 0:
-                    calc_rr = tp_dist / sl_dist
-                    rr_quality = "✅ 优" if calc_rr >= 2.0 else "✓ 良" if calc_rr >= 1.5 else "⚠️ 一般"
-                    message += f"📊 *R/R比率*: {calc_rr:.2f}:1 {rr_quality}\n"
-
-            # v3.17: Entry quality
-            if entry_quality:
-                message += f"📍 *入场质量*: {entry_quality}\n"
-
-        # v3.17: Close reason detail for CLOSED positions
-        if action == "CLOSED":
-            if close_reason_detail:
-                message += f"\n*平仓原因*: {close_reason_detail}\n"
-
-            message += f"""
-{pnl_emoji} *盈亏*: ${pnl:,.2f} ({pnl_pct:+.2f}%)
-"""
-        elif action == "UPDATE":
-            message += f"""
-{pnl_emoji} *盈亏*: ${pnl:,.2f} ({pnl_pct:+.2f}%)
-"""
-
-        # v4.2: Add S/R Zone for CLOSED positions
-        if action == "CLOSED":
-            sr_zone = position_data.get('sr_zone') or {}
-            nearest_support = sr_zone.get('nearest_support')
-            nearest_resistance = sr_zone.get('nearest_resistance')
-            if nearest_support is not None or nearest_resistance is not None:
-                message += "\n🎯 *支撑/阻力 (平仓时)*:\n"
-                if nearest_support is not None and nearest_support < current_price:
-                    sup_dist = ((nearest_support - current_price) / current_price * 100) if current_price > 0 else 0
-                    message += f"  • 支撑: ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
-                if nearest_resistance is not None and nearest_resistance > current_price:
-                    res_dist = ((nearest_resistance - current_price) / current_price * 100) if current_price > 0 else 0
-                    message += f"  • 阻力: ${nearest_resistance:,.2f} ({res_dist:+.2f}%)\n"
-
-        message += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-
-        return message
-
-    def format_trade_execution(self, execution_data: Dict[str, Any]) -> str:
-        """
-        Format unified trade execution notification (v4.0, v3.17 improvements).
-
-        Combines signal, fill, and position info into a single comprehensive message.
-        Replaces separate signal/fill/position notifications to reduce message spam.
-
-        Parameters
-        ----------
-        execution_data : dict
-            Contains:
-            - signal: BUY/SELL
-            - confidence: HIGH/MEDIUM/LOW
-            - side: LONG/SHORT
-            - quantity: float (BTC)
-            - entry_price: float
-            - sl_price: float (optional)
-            - tp_price: float (optional)
-            - rsi: float (optional)
-            - macd: float (optional)
-            - winning_side: str (Bull/Bear, optional)
-            - reasoning: str (optional)
-            - action_taken: str (optional, v3.11) - specific action like 开多/反转/加仓
-            - entry_quality: str (optional, v3.17) - entry quality evaluation
-        """
-        signal = execution_data.get('signal', 'UNKNOWN')
-        confidence = execution_data.get('confidence', 'UNKNOWN')
-        side = execution_data.get('side', 'UNKNOWN')
-        quantity = execution_data.get('quantity', 0.0)
-        entry_price = execution_data.get('entry_price', 0.0)
-
-        # Risk management
-        sl_price = execution_data.get('sl_price')
-        tp_price = execution_data.get('tp_price')
-
-        # Technical (optional)
-        rsi = execution_data.get('rsi')
-        macd = execution_data.get('macd')
-
-        # AI analysis (optional)
-        winning_side = execution_data.get('winning_side', '')
-        reasoning = execution_data.get('reasoning', '')
-
-        # v3.11: Specific action taken (开多/平空/反转/加仓/减仓)
-        action_taken = execution_data.get('action_taken', '')
-
-        # v3.12: Extended signal emoji mapping
-        signal_emoji_map = {
-            'LONG': '🟢', 'BUY': '🟢',
-            'SHORT': '🔴', 'SELL': '🔴',
-            'CLOSE': '🔵', 'REDUCE': '🟡',
-            'HOLD': '⚪'
-        }
-        signal_emoji = signal_emoji_map.get(signal, '⚪')
-        side_cn = "多" if side == "LONG" else "空" if side == "SHORT" else side
-        confidence_cn = {'HIGH': '高', 'MEDIUM': '中', 'LOW': '低'}.get(confidence, confidence)
-
-        # v3.12: Extended signal Chinese mapping for action display
-        signal_cn_map = {
-            'LONG': '做多', 'BUY': '买入',
-            'SHORT': '做空', 'SELL': '卖出',
-            'CLOSE': '平仓', 'REDUCE': '减仓',
-            'HOLD': '观望'
-        }
-
-        # v3.11: Determine action display
-        # Priority: action_taken > generic signal translation
-        if action_taken:
-            # Use specific action (e.g., "开多仓 0.001 BTC", "反转: 多→空")
-            action_display = action_taken
-        else:
-            # Fallback to generic signal (v3.12 extended)
-            action_display = signal_cn_map.get(signal, signal)
-
-        # Build message
-        signal_cn = signal_cn_map.get(signal, signal)
-        msg = f"""{signal_emoji} *交易执行成功*
-
-*动作*: {action_display}
-*信号*: {signal_cn} (信心: {confidence_cn})
-*成交*: {quantity:.4f} BTC @ ${entry_price:,.2f}
-*金额*: ${quantity * entry_price:,.2f}
-"""
-
-        # Add technical indicators if available
-        if rsi is not None or macd is not None:
-            msg += "\n📊 *技术指标*:\n"
-            if rsi is not None:
-                msg += f"  • RSI: {rsi:.1f}\n"
-            if macd is not None:
-                msg += f"  • MACD: {macd:.4f}\n"
-
-        # v4.3: Combined "关键价位" section (SL/TP + S/R Zone)
-        sr_zone = execution_data.get('sr_zone') or {}
-        nearest_support = sr_zone.get('nearest_support')
-        nearest_resistance = sr_zone.get('nearest_resistance')
-
-        has_key_levels = (sl_price or tp_price or
-                         nearest_support is not None or nearest_resistance is not None)
-        if has_key_levels:
-            msg += "\n📍 *关键价位*:\n"
-            # SL/TP first (risk management)
-            if sl_price:
-                sl_pct = ((sl_price / entry_price) - 1) * 100 if entry_price > 0 else 0
-                if side == "SHORT":
-                    sl_pct = -sl_pct  # SHORT position: SL above entry is positive distance
-                msg += f"  🛑 止损: ${sl_price:,.2f} ({abs(sl_pct):.2f}%)\n"
-            if tp_price:
-                tp_pct = ((tp_price / entry_price) - 1) * 100 if entry_price > 0 else 0
-                if side == "SHORT":
-                    tp_pct = -tp_pct  # SHORT position: TP below entry is positive profit
-                msg += f"  🎯 止盈: ${tp_price:,.2f} (+{abs(tp_pct):.2f}%)\n"
-            # S/R Zone
-            if nearest_support is not None and nearest_support < entry_price:
-                sup_dist = ((nearest_support - entry_price) / entry_price * 100) if entry_price > 0 else 0
-                msg += f"  📉 支撑: ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
-            if nearest_resistance is not None and nearest_resistance > entry_price:
-                res_dist = ((nearest_resistance - entry_price) / entry_price * 100) if entry_price > 0 else 0
-                msg += f"  📈 阻力: ${nearest_resistance:,.2f} ({res_dist:+.2f}%)\n"
-
-        # Add AI analysis if available
-        if winning_side or reasoning:
-            msg += "\n🤖 *AI 分析*:\n"
-            if winning_side:
-                side_emoji_ai = "🐂" if winning_side.upper() == "BULL" else "🐻" if winning_side.upper() == "BEAR" else "⚖️"
-                side_cn_ai = "多方" if winning_side.upper() == "BULL" else "空方" if winning_side.upper() == "BEAR" else winning_side
-                msg += f"  {side_emoji_ai} {side_cn_ai}胜出\n"
-            if reasoning:
-                safe_reasoning = self.escape_markdown(reasoning[:100])
-                msg += f"  {safe_reasoning}{'...' if len(reasoning) > 100 else ''}\n"
-
-        # v3.17: Entry quality evaluation and R/R ratio
-        entry_quality = execution_data.get('entry_quality')
-        if entry_quality:
-            msg += f"\n📍 *入场质量*: {entry_quality}\n"
-
-        # v3.17: R/R ratio calculation
-        if sl_price and tp_price and entry_price > 0:
-            if side == "LONG":
-                sl_dist = entry_price - sl_price
-                tp_dist = tp_price - entry_price
-            else:  # SHORT
-                sl_dist = sl_price - entry_price
-                tp_dist = entry_price - tp_price
-
-            if sl_dist > 0:
-                rr_ratio = tp_dist / sl_dist
-                rr_quality = "✅ 优" if rr_ratio >= 2.0 else "✓ 良" if rr_ratio >= 1.5 else "⚠️ 一般"
-                msg += f"📊 *R/R比率*: {rr_ratio:.2f}:1 {rr_quality}\n"
-
-        msg += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-
-        return msg
-
-    def format_error_alert(self, error_data: Dict[str, Any]) -> str:
-        """Format error/warning notification."""
-        level = error_data.get('level', 'ERROR')  # ERROR, WARNING, CRITICAL
-        message = self.escape_markdown(str(error_data.get('message', 'Unknown error')))
-        context = error_data.get('context', '')
-
-        if level == "CRITICAL":
-            emoji = "🚨"
-            level_cn = "严重错误"
-        elif level == "WARNING":
-            emoji = "⚠️"
-            level_cn = "警告"
-        else:
-            emoji = "❌"
-            level_cn = "错误"
-
-        formatted = f"""
-{emoji} *{level_cn}*
-
-{message}
-"""
-
-        if context:
-            formatted += f"\n*上下文*: {self.escape_markdown(str(context))}\n"
-
-        formatted += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-
-        return formatted
-
-    # Note: format_partial_tp_notification was removed as enable_partial_tp is disabled
-    # and the feature is not implemented. If partial TP is implemented in the future,
-    # add a new formatter here.
-
-    def format_trailing_stop_update(self, ts_data: Dict[str, Any]) -> str:
-        """
-        Format trailing stop update notification (v4.0 - direction aware).
-
-        Parameters
-        ----------
-        ts_data : dict
-            Contains:
-            - old_sl_price: float
-            - new_sl_price: float
-            - current_price: float
-            - profit_pct: float
-            - side: str (LONG or SHORT, optional)
-        """
-        old_sl = ts_data.get('old_sl_price', 0.0)
-        new_sl = ts_data.get('new_sl_price', 0.0)
-        current_price = ts_data.get('current_price', 0.0)
-        profit_pct = ts_data.get('profit_pct', 0.0)
-        side = ts_data.get('side', 'LONG')  # Default to LONG for backward compatibility
-
-        # Direction-aware emoji and text
-        if side == 'SHORT':
-            # SHORT position: stop loss moves DOWN to lock profit
-            direction_emoji = "⬇️"
-            direction_text = "止损已下移，锁定更多利润！"
-        else:
-            # LONG position: stop loss moves UP to lock profit
-            direction_emoji = "⬆️"
-            direction_text = "止损已上移，锁定更多利润！"
-
-        return f"""
-🔄 *移动止损更新*
-
-*当前价*: ${current_price:,.2f}
-*盈利*: +{profit_pct*100:.1f}%
-
-*止损价*:
-  原: ${old_sl:,.2f}
-  新: ${new_sl:,.2f} {direction_emoji}
-
-🛡️ {direction_text}
-
-⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
-"""
-
-    def format_heartbeat_message(self, heartbeat_data: Dict[str, Any], compact: bool = False) -> str:
-        """
-        Format heartbeat status message (v3.1 - with compact mode).
-
-        Parameters
-        ----------
-        heartbeat_data : dict
-            Heartbeat data including signal, price, position, etc.
-        compact : bool
-            If True, show only key metrics (5 lines).
-            If False, show full v3.6/3.7/3.8 data.
-        """
-        # 安全获取所有值，确保不为 None
-        signal = heartbeat_data.get('signal') or 'PENDING'
-        confidence = heartbeat_data.get('confidence') or 'N/A'
-        price = heartbeat_data.get('price') or 0
-        rsi = heartbeat_data.get('rsi') or 0
-        timer_count = heartbeat_data.get('timer_count') or 0
-        equity = heartbeat_data.get('equity') or 0
-        uptime_str = heartbeat_data.get('uptime_str') or 'N/A'
-
-        # 持仓信息（统一显示，无则显示 0 或 无）
-        position_side = heartbeat_data.get('position_side') or '无'
-        entry_price = heartbeat_data.get('entry_price') or 0
-        position_size = heartbeat_data.get('position_size') or 0
-        position_pnl_pct = heartbeat_data.get('position_pnl_pct') or 0
-
-        # v4.2: SL/TP prices
-        sl_price = heartbeat_data.get('sl_price')
-        tp_price = heartbeat_data.get('tp_price')
-
-        # v3.6 MTF Order Flow (optional)
-        order_flow = heartbeat_data.get('order_flow') or {}
-        buy_ratio = order_flow.get('buy_ratio')
-        cvd_trend = order_flow.get('cvd_trend')
-
-        # v3.6 Derivatives (optional)
-        derivatives = heartbeat_data.get('derivatives') or {}
-        funding_rate = derivatives.get('funding_rate')
-        oi_change_pct = derivatives.get('oi_change_pct')
-
-        # v3.7 Order Book (optional)
-        order_book = heartbeat_data.get('order_book') or {}
-        weighted_obi = order_book.get('weighted_obi')
-        obi_trend = order_book.get('obi_trend')
-
-        # v3.8 S/R Zone (optional)
-        sr_zone = heartbeat_data.get('sr_zone') or {}
-        nearest_support = sr_zone.get('nearest_support')
-        nearest_resistance = sr_zone.get('nearest_resistance')
-        block_long = sr_zone.get('block_long', False)
-        block_short = sr_zone.get('block_short', False)
-
-        # v3.12: Extended signal emoji mapping
-        signal_emoji = {
-            'LONG': '🟢', 'BUY': '🟢',
-            'SHORT': '🔴', 'SELL': '🔴',
-            'CLOSE': '🔵', 'REDUCE': '🟡',
-            'HOLD': '⚪'
-        }.get(signal, '❓')
-
-        # Position emoji
-        if position_side == 'LONG':
-            pos_emoji = '🟢 LONG'
-        elif position_side == 'SHORT':
-            pos_emoji = '🔴 SHORT'
-        else:
-            pos_emoji = '⚪ 无'
-
-        # PnL emoji
-        pnl_emoji = '📈' if position_pnl_pct > 0 else '📉' if position_pnl_pct < 0 else '➖'
-
-        # Compact mode: minimal message for mobile
-        if compact:
-            msg = f"💓 #{timer_count} | "
-            msg += f"${price:,.0f} | "
-            msg += f"{signal_emoji}{signal} | "
-            if position_side and position_side != '无':
-                msg += f"{pos_emoji} {pnl_emoji}{position_pnl_pct:+.1f}% | "
-            msg += f"${equity:,.0f}"
-            return msg
-
-        # 构建消息 - 统一格式 (full mode)
-        msg = f"💓 *Heartbeat #{timer_count}*\n"
-        msg += f"━━━━━━━━━━━━━━━━\n"
-        msg += f"💵 价格: ${price:,.2f}\n"
-        msg += f"📈 RSI: {rsi:.1f}\n"
-        msg += f"🎯 信号: {signal_emoji} {signal} ({confidence})\n"
-
-        # v4.1 Signal Execution Status (if available)
-        signal_status = heartbeat_data.get('signal_status') or {}
-        if signal_status:
-            executed = signal_status.get('executed', False)
-            reason = signal_status.get('reason', '')
-            action_taken = signal_status.get('action_taken', '')
-
-            if executed:
-                status_emoji = '✅'
-                status_text = f'已执行 ({action_taken})' if action_taken else '已执行'
-            elif reason:
-                status_emoji = '⏸️'
-                status_text = f'未执行 ({reason})'
-            else:
-                status_emoji = '⏳'
-                status_text = '等待中'
-
-            msg += f"📋 状态: {status_emoji} {status_text}\n"
-
-        # v4.3: Combined "关键价位" section (SL/TP + S/R Zone)
-        has_key_levels = (sl_price is not None or tp_price is not None or
-                         nearest_support is not None or nearest_resistance is not None)
-        if has_key_levels:
-            msg += f"━━━━━━━━━━━━━━━━\n"
-            msg += f"📍 *关键价位*\n"
-            # SL/TP first (more important for risk management)
-            if sl_price is not None:
-                sl_dist = ((sl_price - price) / price * 100) if price > 0 else 0
-                msg += f"  🛑 止损: ${sl_price:,.2f} ({sl_dist:+.2f}%)\n"
-            if tp_price is not None:
-                tp_dist = ((tp_price - price) / price * 100) if price > 0 else 0
-                msg += f"  🎯 止盈: ${tp_price:,.2f} ({tp_dist:+.2f}%)\n"
-            # S/R Zone
-            if nearest_support is not None and nearest_support < price:
-                dist_sup = ((nearest_support - price) / price * 100) if price > 0 else 0
-                msg += f"  📉 支撑: ${nearest_support:,.2f} ({dist_sup:+.2f}%)\n"
-            if nearest_resistance is not None and nearest_resistance > price:
-                dist_res = ((nearest_resistance - price) / price * 100) if price > 0 else 0
-                msg += f"  📈 阻力: ${nearest_resistance:,.2f} ({dist_res:+.2f}%)\n"
-            # Block status (hard control)
-            if block_long or block_short:
-                block_str = []
-                if block_long:
-                    block_str.append("🚫 LONG")
-                if block_short:
-                    block_str.append("🚫 SHORT")
-                msg += f"  ⚠️ 风控: {' | '.join(block_str)}\n"
-
-        # v3.6 Order Flow (if available)
-        if buy_ratio is not None or cvd_trend:
-            msg += f"━━━━━━━━━━━━━━━━\n"
-            msg += f"📊 *订单流 (v3.6)*\n"
-            if buy_ratio is not None:
-                ratio_emoji = "🟢" if buy_ratio > 0.55 else "🔴" if buy_ratio < 0.45 else "⚪"
-                msg += f"  买入比: {ratio_emoji} {buy_ratio*100:.1f}%\n"
-            if cvd_trend:
-                trend_emoji = "📈" if cvd_trend == "RISING" else "📉" if cvd_trend == "FALLING" else "➖"
-                msg += f"  CVD: {trend_emoji} {cvd_trend}\n"
-
-        # v3.6 Derivatives (if available)
-        if funding_rate is not None or oi_change_pct is not None:
-            if buy_ratio is None and cvd_trend is None:
-                msg += f"━━━━━━━━━━━━━━━━\n"
-            msg += f"📉 *衍生品 (v3.6)*\n"
-            if funding_rate is not None:
-                # Coinalyze raw value: 0.0001 = 0.01%. Threshold: ±0.01% (±0.0001 raw)
-                # Sanity check: funding rate > 1% (0.01 raw) is likely wrong units
-                if abs(funding_rate) > 0.01:
-                    # Suspect value already in percentage form, don't multiply
-                    fr_display = funding_rate
-                else:
-                    fr_display = funding_rate * 100
-                fr_emoji = "🔴" if fr_display > 0.01 else "🟢" if fr_display < -0.01 else "⚪"
-                msg += f"  资金费: {fr_emoji} {fr_display:.4f}%\n"
-            if oi_change_pct is not None:
-                oi_emoji = "📈" if oi_change_pct > 5 else "📉" if oi_change_pct < -5 else "➖"
-                msg += f"  OI变化: {oi_emoji} {oi_change_pct:+.2f}%\n"
-
-        # v3.7 Order Book (if available)
-        if weighted_obi is not None:
-            msg += f"━━━━━━━━━━━━━━━━\n"
-            msg += f"📖 *订单簿 (v3.7)*\n"
-            obi_emoji = "🟢" if weighted_obi > 0.1 else "🔴" if weighted_obi < -0.1 else "⚪"
-            msg += f"  OBI: {obi_emoji} {weighted_obi:+.3f}\n"
-            if obi_trend:
-                trend_emoji = "📈" if obi_trend == "STRENGTHENING" else "📉" if obi_trend == "WEAKENING" else "➖"
-                msg += f"  趋势: {trend_emoji} {obi_trend}\n"
-
-        msg += f"━━━━━━━━━━━━━━━━\n"
-        msg += f"💰 持仓: {pos_emoji}\n"
-        msg += f"📍 入场: ${entry_price:,.2f}\n"
-        msg += f"📦 数量: {position_size:.4f}\n"
-        msg += f"💹 盈亏: {pnl_emoji} {position_pnl_pct:+.2f}%\n"
-        msg += f"━━━━━━━━━━━━━━━━\n"
-        msg += f"🏦 余额: ${equity:,.2f}\n"
-        msg += f"⏱ 运行: {uptime_str}\n"
-        msg += f"⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-
-        return msg
+        side_emoji = '🟢' if side == 'BUY' else '🔴' if side == 'SELL' else '⚪'
+        type_text = 'Market' if order_type == 'MARKET' else 'Limit' if order_type == 'LIMIT' else order_type
+
+        return (
+            f"{side_emoji} *Order Fill*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"{side} {quantity:.4f} BTC @ ${price:,.2f}\n"
+            f"Amount: ${quantity * price:,.2f} | {type_text}\n"
+            f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        )
 
     async def test_connection(self) -> bool:
         """
         Test Telegram bot connection.
-        
+
         Returns
         -------
         bool
@@ -1247,9 +1116,9 @@ class TelegramBot:
         except Exception as e:
             self.logger.error(f"❌ Failed to connect to Telegram: {e}")
             return False
-    
-    # ===== Remote Control Command Formatters =====
-    
+
+    # ==================== Command Response Formatters ====================
+
     def format_status_response(self, status_info: Dict[str, Any]) -> str:
         """
         Format strategy status response for /status command.
@@ -1257,85 +1126,63 @@ class TelegramBot:
         Parameters
         ----------
         status_info : dict
-            Status information containing:
-            - is_running: bool
-            - is_paused: bool
-            - instrument_id: str
-            - current_price: float
-            - equity: float
-            - unrealized_pnl: float
-            - last_signal: str
-            - last_signal_time: str
-            - uptime: str
-            - total_unrealized_pnl_usd: float (v4.7)
-            - liquidation_buffer_portfolio_min_pct: float (v4.7)
-            - total_daily_funding_cost_usd: float (v4.7)
-            - can_add_position_safely: bool (v4.7)
-            - available_margin: float (v4.6)
-            - used_margin_pct: float (v4.6)
-            - leverage: int (v4.6)
+            Status information
         """
         is_running = status_info.get('is_running', False)
         is_paused = status_info.get('is_paused', False)
 
-        # Status emoji
         if not is_running:
-            status_emoji = "🔴"
-            status_text = "已停止"
+            status_emoji, status_text = '🔴', 'Stopped'
         elif is_paused:
-            status_emoji = "⏸️"
-            status_text = "已暂停"
+            status_emoji, status_text = '⏸️', 'Paused'
         else:
-            status_emoji = "🟢"
-            status_text = "运行中"
+            status_emoji, status_text = '🟢', 'Running'
 
-        msg = f"{status_emoji} *策略状态*\n\n"
-        msg += f"*状态*: {status_text}\n"
-        msg += f"*交易对*: {self.escape_markdown(str(status_info.get('instrument_id', 'N/A')))}\n"
-        msg += f"*当前价*: ${status_info.get('current_price', 0):,.2f}\n"
-        msg += f"*余额*: ${status_info.get('equity', 0):,.2f}\n"
+        msg = f"{status_emoji} *Strategy Status*\n"
+        msg += "━━━━━━━━━━━━━━━━━━\n"
+        msg += f"*Status*: {status_text}\n"
+        msg += f"*Pair*: {self.escape_markdown(str(status_info.get('instrument_id', 'N/A')))}\n"
+        msg += f"*Price*: ${status_info.get('current_price', 0):,.2f}\n"
+        msg += f"*Balance*: ${status_info.get('equity', 0):,.2f}\n"
 
         pnl = status_info.get('unrealized_pnl', 0)
-        pnl_emoji = "📈" if pnl > 0 else "📉" if pnl < 0 else "➖"
-        msg += f"*未实现盈亏*: {pnl_emoji} ${pnl:,.2f}\n\n"
+        pnl_icon = self._pnl_icon(pnl)
+        msg += f"*Unrealized P&L*: {pnl_icon} ${pnl:,.2f}\n"
 
-        msg += f"*最新信号*: {self.escape_markdown(str(status_info.get('last_signal', 'N/A')))}\n"
-        msg += f"*信号时间*: {self.escape_markdown(str(status_info.get('last_signal_time', 'N/A')))}\n"
-        msg += f"*运行时长*: {self.escape_markdown(str(status_info.get('uptime', 'N/A')))}\n"
+        msg += f"\n*Last Signal*: {self.escape_markdown(str(status_info.get('last_signal', 'N/A')))}\n"
+        msg += f"*Signal Time*: {self.escape_markdown(str(status_info.get('last_signal_time', 'N/A')))}\n"
+        msg += f"*Uptime*: {self.escape_markdown(str(status_info.get('uptime', 'N/A')))}\n"
 
-        # v4.7: Portfolio Risk Section (CRITICAL)
+        # Portfolio risk
         liq_buffer_min = status_info.get('liquidation_buffer_portfolio_min_pct')
         total_funding = status_info.get('total_daily_funding_cost_usd')
         can_add_safely = status_info.get('can_add_position_safely')
 
-        # Only show portfolio risk if we have data
         if liq_buffer_min is not None or total_funding is not None:
-            msg += f"\n⚠️ *组合风险*\n"
-
+            msg += f"\n⚠️ *Portfolio Risk*\n"
             if liq_buffer_min is not None:
-                risk_emoji = "🔴" if liq_buffer_min < 10 else "🟡" if liq_buffer_min < 15 else "🟢"
-                msg += f"最小爆仓距离: {risk_emoji} {liq_buffer_min:.1f}%\n"
+                risk_icon = '🔴' if liq_buffer_min < 10 else '🟡' if liq_buffer_min < 15 else '🟢'
+                msg += f"  Liq Distance: {risk_icon} {liq_buffer_min:.1f}%\n"
                 if liq_buffer_min < 10:
-                    msg += "⚠️ *警告: 组合爆仓风险高*\n"
-
+                    msg += "  ⚠️ *HIGH LIQUIDATION RISK*\n"
             if total_funding is not None and total_funding > 0:
-                msg += f"日资金费: ${total_funding:.2f}\n"
+                msg += f"  Daily Funding: ${total_funding:.2f}\n"
 
-        # v4.6: Account capacity
+        # Account capacity
         used_margin = status_info.get('used_margin_pct')
         leverage = status_info.get('leverage')
 
         if used_margin is not None or leverage is not None:
-            msg += f"\n📊 *账户容量*\n"
+            msg += f"\n📊 *Account*\n"
             if leverage is not None:
-                msg += f"杠杆: {leverage}x\n"
+                msg += f"  Leverage: {leverage}x\n"
             if used_margin is not None:
-                cap_emoji = "🔴" if used_margin > 80 else "🟡" if used_margin > 60 else "🟢"
-                msg += f"已用保证金: {cap_emoji} {used_margin:.1f}%\n"
+                cap_icon = '🔴' if used_margin > 80 else '🟡' if used_margin > 60 else '🟢'
+                msg += f"  Margin Used: {cap_icon} {used_margin:.1f}%\n"
             if can_add_safely is not None:
-                safety_emoji = "✅" if can_add_safely else "⚠️"
-                safety_text = "可安全加仓" if can_add_safely else "加仓需谨慎"
-                msg += f"{safety_emoji} {safety_text}\n"
+                safety_icon = '✅' if can_add_safely else '⚠️'
+                safety_text = 'Safe to add' if can_add_safely else 'Caution'
+                msg += f"  {safety_icon} {safety_text}\n"
 
         return msg
 
@@ -1346,159 +1193,134 @@ class TelegramBot:
         Parameters
         ----------
         position_info : dict
-            Position information containing:
-            - has_position: bool
-            - side: LONG/SHORT
-            - quantity: float
-            - entry_price: float
-            - current_price: float
-            - unrealized_pnl: float
-            - pnl_pct: float
-            - sl_price: float (optional)
-            - tp_price: float (optional)
-            - liquidation_price: float (v4.7)
-            - liquidation_buffer_pct: float (v4.7)
-            - is_liquidation_risk_high: bool (v4.7)
-            - funding_rate_current: float (v4.7)
-            - daily_funding_cost_usd: float (v4.7)
-            - funding_rate_cumulative_usd: float (v4.7)
-            - effective_pnl_after_funding: float (v4.7)
-            - max_drawdown_pct: float (v4.7)
-            - peak_pnl_pct: float (v4.7)
-            - duration_minutes: int (v4.5)
-            - entry_confidence: str (v4.5)
+            Position information
         """
         if not position_info.get('has_position', False):
-            return "ℹ️ *无持仓*\n\n当前没有任何持仓。"
+            return "ℹ️ *No Position*\n\nNo active positions."
 
         side = position_info.get('side', 'UNKNOWN')
-        side_emoji = "🟢" if side == "LONG" else "🔴" if side == "SHORT" else "⚪"
-        side_cn = "多" if side == "LONG" else "空" if side == "SHORT" else side
+        side_emoji = '🟢' if side == 'LONG' else '🔴' if side == 'SHORT' else '⚪'
+        side_cn = '多' if side == 'LONG' else '空' if side == 'SHORT' else side
 
-        msg = f"{side_emoji} *当前持仓*\n\n"
-        msg += f"*方向*: {side_cn}\n"
-        msg += f"*数量*: {position_info.get('quantity', 0):.4f}\n"
-        msg += f"*入场价*: ${position_info.get('entry_price', 0):,.2f}\n"
-        msg += f"*当前价*: ${position_info.get('current_price', 0):,.2f}\n\n"
+        msg = f"{side_emoji} *Current Position — {side_cn}*\n"
+        msg += "━━━━━━━━━━━━━━━━━━\n"
+        msg += f"*Qty*: {position_info.get('quantity', 0):.4f} BTC\n"
+        msg += f"*Entry*: ${position_info.get('entry_price', 0):,.2f}\n"
+        msg += f"*Current*: ${position_info.get('current_price', 0):,.2f}\n"
 
         pnl = position_info.get('unrealized_pnl', 0)
         pnl_pct = position_info.get('pnl_pct', 0)
-        pnl_emoji = "📈" if pnl > 0 else "📉" if pnl < 0 else "➖"
-        msg += f"*未实现盈亏*: {pnl_emoji} ${pnl:,.2f} ({pnl_pct:+.2f}%)\n\n"
+        pnl_icon = self._pnl_icon(pnl)
+        msg += f"\n*P&L*: {pnl_icon} ${pnl:,.2f} ({pnl_pct:+.2f}%)\n"
 
-        # Add SL/TP if available
+        # SL/TP
         sl_price = position_info.get('sl_price')
         tp_price = position_info.get('tp_price')
-
         if sl_price:
-            msg += f"🛡️ *止损*: ${sl_price:,.2f}\n"
+            msg += f"\n🛑 *SL*: ${sl_price:,.2f}\n"
         if tp_price:
-            msg += f"🎯 *止盈*: ${tp_price:,.2f}\n"
+            msg += f"🎯 *TP*: ${tp_price:,.2f}\n"
 
-        # v4.7: Liquidation Risk Section (CRITICAL)
+        # Liquidation risk
         liq_price = position_info.get('liquidation_price')
         liq_buffer = position_info.get('liquidation_buffer_pct')
         is_liq_risk_high = position_info.get('is_liquidation_risk_high', False)
 
         if liq_price is not None:
-            msg += f"\n⚠️ *爆仓风险*\n"
-            msg += f"爆仓价: ${liq_price:,.2f}\n"
+            msg += f"\n⚠️ *Liquidation*\n"
+            msg += f"  Price: ${liq_price:,.2f}\n"
             if liq_buffer is not None:
-                risk_emoji = "🔴" if is_liq_risk_high else "🟢"
-                msg += f"距离: {risk_emoji} {liq_buffer:.1f}%\n"
-                if is_liq_risk_high:
-                    msg += "⚠️ *警告: 爆仓风险高* \\(<10%\\)\n"
+                risk_icon = '🔴' if is_liq_risk_high else '🟢'
+                msg += f"  Buffer: {risk_icon} {liq_buffer:.1f}%\n"
 
-        # v4.7: Funding Rate Section (for perpetuals)
+        # Funding rate
         funding_rate = position_info.get('funding_rate_current')
         daily_cost = position_info.get('daily_funding_cost_usd')
         cumulative_funding = position_info.get('funding_rate_cumulative_usd')
         effective_pnl = position_info.get('effective_pnl_after_funding')
 
         if funding_rate is not None:
-            msg += f"\n💰 *资金费率*\n"
+            msg += f"\n💰 *Funding*\n"
             fr_pct = funding_rate * 100
-            fr_emoji = "🔴" if fr_pct > 0.01 else "🟢" if fr_pct < -0.01 else "⚪"
-            msg += f"当前费率: {fr_emoji} {fr_pct:.4f}%/8h\n"
+            fr_icon = '🔴' if fr_pct > 0.01 else '🟢' if fr_pct < -0.01 else '⚪'
+            msg += f"  Rate: {fr_icon} {fr_pct:.4f}%/8h\n"
             if daily_cost is not None:
-                msg += f"日预估: ${daily_cost:.2f}\n"
+                msg += f"  Daily: ${daily_cost:.2f}\n"
             if cumulative_funding is not None and cumulative_funding != 0:
-                cum_emoji = "🔴" if cumulative_funding > 0 else "🟢"
-                msg += f"累计支付: {cum_emoji} ${cumulative_funding:+.2f}\n"
+                cum_icon = '🔴' if cumulative_funding > 0 else '🟢'
+                msg += f"  Cumulative: {cum_icon} ${cumulative_funding:+.2f}\n"
             if effective_pnl is not None:
-                eff_emoji = "📈" if effective_pnl > 0 else "📉" if effective_pnl < 0 else "➖"
-                msg += f"扣费后盈亏: {eff_emoji} ${effective_pnl:,.2f}\n"
+                eff_icon = self._pnl_icon(effective_pnl)
+                msg += f"  After Funding: {eff_icon} ${effective_pnl:,.2f}\n"
 
-        # v4.7: Drawdown Section
+        # Drawdown
         max_dd = position_info.get('max_drawdown_pct')
         peak_pnl = position_info.get('peak_pnl_pct')
-
         if max_dd is not None and max_dd > 0:
-            msg += f"\n📊 *回撤*\n"
-            msg += f"峰值盈利: {peak_pnl:+.2f}%\n" if peak_pnl else ""
-            msg += f"最大回撤: \\-{max_dd:.2f}%\n"
+            msg += f"\n📊 *Drawdown*\n"
+            if peak_pnl:
+                msg += f"  Peak: {peak_pnl:+.2f}%\n"
+            msg += f"  Max DD: -{max_dd:.2f}%\n"
 
-        # v4.5: Duration and confidence
+        # Duration and confidence
         duration = position_info.get('duration_minutes')
         confidence = position_info.get('entry_confidence')
-
         if duration is not None:
             hours = duration // 60
             mins = duration % 60
-            msg += f"\n⏱️ *持仓时长*: {int(hours)}h {int(mins)}m\n"
+            msg += f"\n⏱ Duration: {int(hours)}h {int(mins)}m\n"
         if confidence:
-            msg += f"📊 *入场信心*: {confidence}\n"
+            msg += f"📊 Confidence: {confidence}\n"
 
         return msg
-    
+
     def format_pause_response(self, success: bool, message: str = "") -> str:
         """Format response for /pause command."""
         if success:
-            return "⏸️ *策略已暂停*\n\n交易已暂停，不会下新订单。\n使用 /resume 恢复交易。"
-        else:
-            return f"❌ *暂停失败*\n\n{message}"
+            return "⏸️ *Trading Paused*\n\nNo new orders will be placed.\nUse /resume to resume."
+        return f"❌ *Pause Failed*\n\n{message}"
 
     def format_resume_response(self, success: bool, message: str = "") -> str:
         """Format response for /resume command."""
         if success:
-            return "▶️ *策略已恢复*\n\n交易已恢复，策略正在运行。"
-        else:
-            return f"❌ *恢复失败*\n\n{message}"
+            return "▶️ *Trading Resumed*\n\nStrategy is now active."
+        return f"❌ *Resume Failed*\n\n{message}"
 
     def format_help_response(self) -> str:
         """Format help message with available commands."""
-        msg = "🤖 *可用命令*\n\n"
-        msg += "*📊 查询命令*:\n"
-        msg += "• `/status` - 查看策略状态\n"
-        msg += "• `/position` - 查看当前持仓\n"
-        msg += "• `/orders` - 查看挂单\n"
-        msg += "• `/history` - 查看交易记录\n"
-        msg += "• `/risk` - 查看风险指标\n"
-        msg += "• `/daily` - 查看日报\n"
-        msg += "• `/weekly` - 查看周报\n\n"
-        msg += "*⚙️ 控制命令*:\n"
-        msg += "• `/pause` - 暂停交易\n"
-        msg += "• `/resume` - 恢复交易\n"
-        msg += "• `/close` - 平仓\n\n"
-        msg += "*📋 其他命令*:\n"
-        msg += "• `/menu` - 显示按钮菜单\n"
-        msg += "• `/help` - 显示帮助信息\n\n"
-        msg += "💡 _命令不区分大小写_\n"
-        return msg
+        return (
+            "🤖 *Commands*\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "\n📊 *Query*\n"
+            "  /status — Strategy status\n"
+            "  /position — Current position\n"
+            "  /orders — Open orders\n"
+            "  /history — Trade history\n"
+            "  /risk — Risk metrics\n"
+            "  /daily — Daily report\n"
+            "  /weekly — Weekly report\n"
+            "\n⚙️ *Control*\n"
+            "  /pause — Pause trading\n"
+            "  /resume — Resume trading\n"
+            "  /close — Close position\n"
+            "\n📋 *Other*\n"
+            "  /menu — Button menu\n"
+            "  /help — This help\n"
+        )
 
 
 # Convenience function for quick testing
 async def test_telegram_bot(token: str, chat_id: str) -> bool:
     """
     Quick test function for Telegram bot.
-    
+
     Parameters
     ----------
     token : str
         Bot token from @BotFather
     chat_id : str
         Chat ID to send test message to
-    
+
     Returns
     -------
     bool
@@ -1506,20 +1328,20 @@ async def test_telegram_bot(token: str, chat_id: str) -> bool:
     """
     try:
         bot = TelegramBot(token=token, chat_id=chat_id)
-        
+
         # Test connection
         if not await bot.test_connection():
             return False
-        
+
         # Send test message
         success = await bot.send_message(
             "🧪 *Test Message*\n\n"
             "Telegram bot is working correctly!\n"
             "Ready to send trading notifications."
         )
-        
+
         return success
-        
+
     except Exception as e:
         print(f"❌ Test failed: {e}")
         return False
@@ -1528,26 +1350,25 @@ async def test_telegram_bot(token: str, chat_id: str) -> bool:
 if __name__ == "__main__":
     """
     Standalone test mode.
-    
+
     Usage:
         python telegram_bot.py <token> <chat_id>
     """
     import sys
-    
+
     if len(sys.argv) != 3:
         print("Usage: python telegram_bot.py <token> <chat_id>")
         sys.exit(1)
-    
+
     token = sys.argv[1]
     chat_id = sys.argv[2]
-    
+
     # Run test
     result = asyncio.run(test_telegram_bot(token, chat_id))
-    
+
     if result:
         print("✅ Test successful!")
         sys.exit(0)
     else:
         print("❌ Test failed!")
         sys.exit(1)
-

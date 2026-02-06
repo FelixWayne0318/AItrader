@@ -1998,12 +1998,21 @@ class DeepSeekAIStrategy(Strategy):
             if cached_price is None and self.indicator_manager.recent_bars:
                 cached_price = float(self.indicator_manager.recent_bars[-1].close)
 
-            # 2. 获取 RSI
+            # 2. Get technical indicators (enhanced for v3.0 heartbeat)
             rsi = 0
+            technical_heartbeat = {}
             try:
                 if self.indicator_manager.is_initialized():
                     tech_data = self.indicator_manager.get_technical_data(cached_price or 0)
                     rsi = tech_data.get('rsi') or 0
+                    technical_heartbeat = {
+                        'adx': tech_data.get('adx'),
+                        'adx_regime': tech_data.get('adx_regime'),
+                        'trend_direction': tech_data.get('trend_direction'),
+                        'volume_ratio': tech_data.get('volume_ratio'),
+                        'bb_position': tech_data.get('bb_position'),
+                        'macd_histogram': tech_data.get('macd_histogram'),
+                    }
             except Exception:
                 pass
 
@@ -2147,7 +2156,9 @@ class DeepSeekAIStrategy(Strategy):
                 'derivatives': derivatives_heartbeat,
                 'order_book': orderbook_heartbeat,
                 'sr_zone': sr_zone_heartbeat,
-                # v4.1 signal execution status
+                # v3.0: Enhanced technical data for heartbeat
+                'technical': technical_heartbeat,
+                # Signal execution status
                 'signal_status': signal_status_heartbeat,
             })
             self.telegram_bot.send_message_sync(heartbeat_msg)
