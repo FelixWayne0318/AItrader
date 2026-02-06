@@ -817,8 +817,8 @@ def calculate_technical_sltp(
     resistance: float,
     confidence: str,
     use_support_resistance: bool = True,
-    sl_buffer_pct: float = 0.001,
-    tp_buffer_pct: float = 0.001,
+    sl_buffer_pct: float = 0.005,  # 0.5% buffer to confirm real S/R breakout
+    tp_buffer_pct: float = 0.005,  # 0.5% buffer before S/R for TP
     min_rr_ratio: float = 1.5,
 ) -> Tuple[float, float, str]:
     """

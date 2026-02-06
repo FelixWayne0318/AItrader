@@ -997,7 +997,7 @@ final_usdt = max_usdt × confidence_pct
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `enable_auto_sl_tp` | true | 启用自动止损止盈 |
-| `sl_buffer_pct` | 0.001 | 止损缓冲 (0.1%) |
+| `sl_buffer_pct` | 0.005 | 止损缓冲 0.5% (确认真正突破 S/R) |
 | `tp_high_confidence_pct` | 0.03 | 高信心止盈 3% |
 | `tp_medium_confidence_pct` | 0.02 | 中等信心止盈 2% |
 | `tp_low_confidence_pct` | 0.01 | 低信心止盈 1% |

@@ -124,7 +124,7 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     # Stop Loss & Take Profit
     enable_auto_sl_tp: bool = True
     sl_use_support_resistance: bool = True
-    sl_buffer_pct: float = 0.001
+    sl_buffer_pct: float = 0.005  # 0.5% buffer to confirm real S/R breakout
     tp_high_confidence_pct: float = 0.03
     tp_medium_confidence_pct: float = 0.02
     tp_low_confidence_pct: float = 0.01
