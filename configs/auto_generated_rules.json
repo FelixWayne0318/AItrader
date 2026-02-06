@@ -3439,12 +3439,112 @@
       "pattern_type": "contains",
       "created": "2026-02-06T02:38:09.123228",
       "auto_generated": true
+    },
+    {
+      "id": "8318cc363aef",
+      "commit": "88fb8e2",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix(sr-zones): Fix swing classification, add ADX regime-aware trading",
+      "pattern": "- ADX(14): {safe_get('adx'):.1f} ({data.get('adx_regime', 'N/A')})",
+      "pattern_type": "contains",
+      "created": "2026-02-06T11:03:33.827195",
+      "auto_generated": true
+    },
+    {
+      "id": "d024c91d1670",
+      "commit": "88fb8e2",
+      "file": "indicators/technical_manager.py",
+      "message": "fix(sr-zones): Fix swing classification, add ADX regime-aware trading",
+      "pattern": "_calculate_adx",
+      "pattern_type": "function_exists",
+      "created": "2026-02-06T11:03:33.847743",
+      "auto_generated": true
+    },
+    {
+      "id": "c8c2ace3a702",
+      "commit": "88fb8e2",
+      "file": "scripts/diagnose_sr_zones.py",
+      "message": "fix(sr-zones): Fix swing classification, add ADX regime-aware trading",
+      "pattern": "if sr_with_wall['success'] and sr_with_wall.get('tech_data'):",
+      "pattern_type": "contains",
+      "created": "2026-02-06T11:03:33.870264",
+      "auto_generated": true
+    },
+    {
+      "id": "a1456aaf6679",
+      "commit": "88fb8e2",
+      "file": "utils/sr_zone_calculator.py",
+      "message": "fix(sr-zones): Fix swing classification, add ADX regime-aware trading",
+      "pattern": "side='resistance',",
+      "pattern_type": "contains",
+      "created": "2026-02-06T11:03:33.891336",
+      "auto_generated": true
+    },
+    {
+      "id": "3e67dd4e2f51",
+      "commit": "09f23c6",
+      "file": "utils/sr_zone_calculator.py",
+      "message": "fix(sr-zones): Change touch counting to discrete touches (consecutive bars = 1)",
+      "pattern": "if in_zone and not was_in_zone:",
+      "pattern_type": "contains",
+      "created": "2026-02-06T11:03:33.928780",
+      "auto_generated": true
+    },
+    {
+      "id": "5fc06e6439b2",
+      "commit": "d452126",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "feat(sr-zones): Implement v3.0 S/R calculation with Swing Point, ATR clustering, and Touch Count",
+      "pattern": "sr_zones_config: Optional[Dict] = None,  # v3.0: S/R Zone config from base.yaml",
+      "pattern_type": "contains",
+      "created": "2026-02-06T11:03:33.969755",
+      "auto_generated": true
+    },
+    {
+      "id": "2a941dab1641",
+      "commit": "d452126",
+      "file": "main_live.py",
+      "message": "feat(sr-zones): Implement v3.0 S/R calculation with Swing Point, ATR clustering, and Touch Count",
+      "pattern": "# v3.0: S/R Zone Calculator config (passed as dict to MultiAgentAnalyzer)",
+      "pattern_type": "contains",
+      "created": "2026-02-06T11:03:33.988744",
+      "auto_generated": true
+    },
+    {
+      "id": "1547ce3cc80d",
+      "commit": "d452126",
+      "file": "scripts/diagnose_sr_zones.py",
+      "message": "feat(sr-zones): Implement v3.0 S/R calculation with Swing Point, ATR clustering, and Touch Count",
+      "pattern": "from utils.config_manager import ConfigManager",
+      "pattern_type": "import",
+      "created": "2026-02-06T11:03:34.012532",
+      "auto_generated": true
+    },
+    {
+      "id": "f66b93ff9a5b",
+      "commit": "d452126",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "feat(sr-zones): Implement v3.0 S/R calculation with Swing Point, ATR clustering, and Touch Count",
+      "pattern": "# v3.0: S/R Zone Calculator config (from configs/base.yaml sr_zones section)",
+      "pattern_type": "contains",
+      "created": "2026-02-06T11:03:34.040502",
+      "auto_generated": true
+    },
+    {
+      "id": "92104a7b17b0",
+      "commit": "d452126",
+      "file": "utils/sr_zone_calculator.py",
+      "message": "feat(sr-zones): Implement v3.0 S/R calculation with Swing Point, ATR clustering, and Touch Count",
+      "pattern": "from typing import List, Dict, Any, Optional, Tuple",
+      "pattern_type": "import",
+      "created": "2026-02-06T11:03:34.061034",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-06T02:38:13.885105",
-    "count": 344,
+    "updated": "2026-02-06T11:03:40.116393",
+    "count": 354,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
