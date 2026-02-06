@@ -2106,11 +2106,28 @@ class DeepSeekAIStrategy(Strategy):
                 if self.binance_kline_client:
                     binance_funding = self.binance_kline_client.get_funding_rate()
                     if binance_funding:
+                        # Also fetch history for trend calculation
+                        funding_history = None
+                        try:
+                            funding_history = self.binance_kline_client.get_funding_rate_history(limit=5)
+                        except Exception:
+                            pass
+                        # Calculate funding trend from history
+                        funding_trend = None
+                        if funding_history and len(funding_history) >= 3:
+                            rates = [float(h.get('fundingRate', 0)) for h in funding_history]
+                            if rates[-1] > rates[0] * 1.1:
+                                funding_trend = 'RISING'
+                            elif rates[-1] < rates[0] * 0.9:
+                                funding_trend = 'FALLING'
+                            else:
+                                funding_trend = 'STABLE'
                         derivatives_heartbeat = {
                             'funding_rate': binance_funding.get('funding_rate'),  # raw decimal
                             'funding_rate_pct': binance_funding.get('funding_rate_pct'),  # percentage
                             'predicted_rate_pct': binance_funding.get('predicted_rate_pct'),
                             'next_funding_countdown_min': binance_funding.get('next_funding_countdown_min'),
+                            'funding_trend': funding_trend,
                             'source': 'binance',
                         }
             except Exception:
@@ -2118,10 +2135,17 @@ class DeepSeekAIStrategy(Strategy):
             # Fallback: Coinalyze OI change (funding rate already from Binance above)
             if self.latest_derivatives_data and self.latest_derivatives_data.get('enabled'):
                 oi = self.latest_derivatives_data.get('open_interest', {})
+                liq = self.latest_derivatives_data.get('liquidations', {})
                 if derivatives_heartbeat is None:
                     derivatives_heartbeat = {}
                 if oi:
                     derivatives_heartbeat['oi_change_pct'] = oi.get('change_pct')
+                if liq:
+                    liq_buy = float(liq.get('buy', 0) or 0)
+                    liq_sell = float(liq.get('sell', 0) or 0)
+                    if liq_buy > 0 or liq_sell > 0:
+                        derivatives_heartbeat['liq_long'] = liq_buy
+                        derivatives_heartbeat['liq_short'] = liq_sell
 
             orderbook_heartbeat = None
             if self.latest_orderbook_data and self.latest_orderbook_data.get('_status', {}).get('code') == 'OK':
@@ -2129,7 +2153,7 @@ class DeepSeekAIStrategy(Strategy):
                 dynamics = self.latest_orderbook_data.get('dynamics', {})
                 orderbook_heartbeat = {
                     'weighted_obi': obi.get('weighted'),
-                    'obi_trend': dynamics.get('obi_trend'),
+                    'obi_trend': dynamics.get('trend'),  # fix: field is 'trend' not 'obi_trend'
                 }
 
             sr_zone_heartbeat = None
@@ -2177,7 +2201,14 @@ class DeepSeekAIStrategy(Strategy):
                     self._last_signal_status = signal_status_heartbeat
                     self.log.info("🔄 检测到仓位已平仓，更新信号状态")
 
-            # 10. 发送消息 (v4.2: 添加 SL/TP)
+            # 10. Get trailing stop status
+            trailing_activated = False
+            if position_side:
+                instrument_key = str(self.instrument_id)
+                ts_state = self.trailing_stop_state.get(instrument_key, {})
+                trailing_activated = ts_state.get('activated', False)
+
+            # 11. 发送消息
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
@@ -2187,19 +2218,17 @@ class DeepSeekAIStrategy(Strategy):
                 'position_pnl_pct': position_pnl_pct,
                 'entry_price': entry_price,
                 'position_size': position_size,
-                'sl_price': sl_price,      # v4.2: Add stop loss
-                'tp_price': tp_price,      # v4.2: Add take profit
+                'sl_price': sl_price,
+                'tp_price': tp_price,
+                'trailing_activated': trailing_activated,
                 'timer_count': getattr(self, '_timer_count', 0),
                 'equity': equity,
                 'uptime_str': uptime_str,
-                # v3.6/3.7/3.8 data
                 'order_flow': order_flow_heartbeat,
                 'derivatives': derivatives_heartbeat,
                 'order_book': orderbook_heartbeat,
                 'sr_zone': sr_zone_heartbeat,
-                # v3.0: Enhanced technical data for heartbeat
                 'technical': technical_heartbeat,
-                # Signal execution status
                 'signal_status': signal_status_heartbeat,
             })
             self.telegram_bot.send_message_sync(heartbeat_msg)

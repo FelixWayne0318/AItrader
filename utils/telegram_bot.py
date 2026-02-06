@@ -413,6 +413,7 @@ class TelegramBot:
         position_pnl_pct = heartbeat_data.get('position_pnl_pct') or 0
         sl_price = heartbeat_data.get('sl_price')
         tp_price = heartbeat_data.get('tp_price')
+        trailing_activated = heartbeat_data.get('trailing_activated', False)
         has_position = position_side in ('LONG', 'SHORT') if position_side else False
 
         # Enhanced technical data (new in v3.0 redesign)
@@ -445,10 +446,13 @@ class TelegramBot:
         block_long = sr_zone.get('block_long', False)
         block_short = sr_zone.get('block_short', False)
 
-        # Derivatives (v5.0: Binance funding rate with predicted rate)
+        # Derivatives (v5.0: Binance funding rate with predicted rate + trend)
         funding_rate_pct = derivatives.get('funding_rate_pct')
         predicted_rate_pct = derivatives.get('predicted_rate_pct')
         next_funding_min = derivatives.get('next_funding_countdown_min')
+        funding_trend = derivatives.get('funding_trend')
+        liq_long = derivatives.get('liq_long')
+        liq_short = derivatives.get('liq_short')
 
         # Signal status
         signal_status = heartbeat_data.get('signal_status') or {}
@@ -496,10 +500,14 @@ class TelegramBot:
                 else:
                     sl_dist = sl_price - entry_price
                     tp_dist = entry_price - tp_price
-                if sl_dist > 0:
+                if sl_dist > 0 and tp_dist > 0:
                     rr = tp_dist / sl_dist
                     rr_icon = '✅' if rr >= 2.0 else '✓' if rr >= 1.5 else '⚠️'
                     msg += f"  📊 R/R {rr:.1f}:1 {rr_icon}\n"
+
+            # Trailing stop status
+            if trailing_activated:
+                msg += f"  🔄 移动止损已激活\n"
 
         # ======= TECHNICAL SECTION =======
         if has_position:
@@ -563,7 +571,11 @@ class TelegramBot:
                     flow_parts.append(f"买入 {buy_ratio*100:.0f}% {br_icon}")
                 if funding_rate_pct is not None:
                     fr_icon = '🔴' if funding_rate_pct > 0.01 else '🟢' if funding_rate_pct < -0.01 else '⚪'
-                    flow_parts.append(f"费率 {funding_rate_pct:.4f}% {fr_icon}")
+                    fr_str = f"费率 {funding_rate_pct:.4f}% {fr_icon}"
+                    if funding_trend:
+                        ft_icon = '📈' if funding_trend == 'RISING' else '📉' if funding_trend == 'FALLING' else '➖'
+                        fr_str += f" {ft_icon}"
+                    flow_parts.append(fr_str)
                 elif funding_rate is not None:
                     fr = self._funding_display(funding_rate)
                     flow_parts.append(f"费率 {fr:.4f}%")
@@ -574,6 +586,12 @@ class TelegramBot:
                     flow_parts.append(f"CVD {c_icon}")
                 for i in range(0, len(flow_parts), 2):
                     msg += f"  {' | '.join(flow_parts[i:i+2])}\n"
+                # Liquidations (compact)
+                if liq_long is not None or liq_short is not None:
+                    l_long = liq_long or 0
+                    l_short = liq_short or 0
+                    if l_long > 0 or l_short > 0:
+                        msg += f"  爆仓 多${l_long*price:,.0f} 空${l_short*price:,.0f}\n"
             else:
                 # Detailed flow data when no position
                 msg += f"\n📈 *资金流向*\n"
@@ -588,6 +606,9 @@ class TelegramBot:
                     fr_line = f"  费率  {fr_icon} {funding_rate_pct:.4f}%"
                     if predicted_rate_pct is not None:
                         fr_line += f" (预测 {predicted_rate_pct:.4f}%)"
+                    if funding_trend:
+                        ft_icon = '📈' if funding_trend == 'RISING' else '📉' if funding_trend == 'FALLING' else '➖'
+                        fr_line += f" {ft_icon}"
                     msg += fr_line + "\n"
                     if next_funding_min is not None:
                         hours = next_funding_min // 60
@@ -603,13 +624,24 @@ class TelegramBot:
                 if weighted_obi is not None:
                     obi_icon = '🟢' if weighted_obi > 0.1 else '🔴' if weighted_obi < -0.1 else '⚪'
                     msg += f"  OBI   {obi_icon} {weighted_obi:+.3f}\n"
+                # Liquidations (1h)
+                if liq_long is not None or liq_short is not None:
+                    l_long = liq_long or 0
+                    l_short = liq_short or 0
+                    if l_long > 0 or l_short > 0:
+                        liq_icon = '🔥' if (l_long + l_short) * price > 50_000_000 else '💥'
+                        msg += f"  爆仓  {liq_icon} 多${l_long*price:,.0f} | 空${l_short*price:,.0f}\n"
 
         # ======= S/R ZONES SECTION (v5.0: full zone display) =======
         has_zones = bool(support_zones or resistance_zones)
         if has_zones:
             msg += f"\n📍 *支撑 / 阻力*\n"
-            # Resistance zones (top → bottom, closest first)
-            for z in resistance_zones:
+            # Sort: resistance by price ascending (closest to price first, displayed bottom-up)
+            resistance_zones = sorted(resistance_zones, key=lambda z: z.get('price', 0))
+            # Sort: support by price descending (closest to price first)
+            support_zones = sorted(support_zones, key=lambda z: z.get('price', 0), reverse=True)
+            # Resistance zones (closest first, then farther)
+            for z in reversed(resistance_zones):  # show highest at top
                 z_price = z.get('price', 0)
                 if z_price <= price:
                     continue
@@ -725,11 +757,11 @@ class TelegramBot:
         if sl_price or tp_price:
             msg += "\n"
             if sl_price:
-                sl_pct = abs((sl_price / entry_price - 1) * 100) if entry_price > 0 else 0
-                msg += f"🛑 止损 ${sl_price:,.2f} (-{sl_pct:.2f}%)\n"
+                sl_pct = ((sl_price / entry_price) - 1) * 100 if entry_price > 0 else 0
+                msg += f"🛑 止损 ${sl_price:,.2f} ({sl_pct:+.2f}%)\n"
             if tp_price:
-                tp_pct = abs((tp_price / entry_price - 1) * 100) if entry_price > 0 else 0
-                msg += f"🎯 止盈 ${tp_price:,.2f} (+{tp_pct:.2f}%)\n"
+                tp_pct = ((tp_price / entry_price) - 1) * 100 if entry_price > 0 else 0
+                msg += f"🎯 止盈 ${tp_price:,.2f} ({tp_pct:+.2f}%)\n"
 
             # R/R ratio
             if sl_price and tp_price and entry_price > 0:
@@ -739,10 +771,10 @@ class TelegramBot:
                 else:
                     sl_dist = sl_price - entry_price
                     tp_dist = entry_price - tp_price
-                if sl_dist > 0:
+                if sl_dist > 0 and tp_dist > 0:
                     rr = tp_dist / sl_dist
                     rr_icon = '✅' if rr >= 2.0 else '✓' if rr >= 1.5 else '⚠️'
-                    msg += f"📊 R/R {rr:.2f}:1 {rr_icon}\n"
+                    msg += f"📊 R/R {rr:.1f}:1 {rr_icon}\n"
 
         # S/R levels
         nearest_support = sr_zone.get('nearest_support')
@@ -823,10 +855,10 @@ class TelegramBot:
                 else:
                     sl_d = sl_price - entry_price
                     tp_d = entry_price - tp_price
-                if sl_d > 0:
+                if sl_d > 0 and tp_d > 0:
                     rr = tp_d / sl_d
                     rr_icon = '✅' if rr >= 2.0 else '✓' if rr >= 1.5 else '⚠️'
-                    msg += f"📊 R/R {rr:.2f}:1 {rr_icon}\n"
+                    msg += f"📊 R/R {rr:.1f}:1 {rr_icon}\n"
 
             if entry_quality:
                 msg += f"📍 入场质量: {entry_quality}\n"
