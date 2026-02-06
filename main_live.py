@@ -217,6 +217,9 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         volume_ma_period=config_manager.get('indicators', 'volume_ma_period', default=20),
         support_resistance_lookback=config_manager.get('indicators', 'support_resistance_lookback', default=20),
 
+        # v3.0: S/R Zone Calculator config (passed as dict to MultiAgentAnalyzer)
+        sr_zones_config=config_manager.get('sr_zones', default={}),
+
         # AI
         deepseek_api_key=deepseek_api_key,
         deepseek_model=config_manager.get('ai', 'deepseek', 'model', default='deepseek-chat'),

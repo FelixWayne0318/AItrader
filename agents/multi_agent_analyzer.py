@@ -243,6 +243,7 @@ class MultiAgentAnalyzer:
         retry_delay: float = 1.0,  # Configurable retry delay
         json_parse_max_retries: int = 2,  # Configurable JSON parse retries
         memory_file: str = "data/trading_memory.json",  # v3.12: Persistent memory
+        sr_zones_config: Optional[Dict] = None,  # v3.0: S/R Zone config from base.yaml
     ):
         """
         Initialize the multi-agent analyzer.
@@ -290,10 +291,31 @@ class MultiAgentAnalyzer:
         self.retry_delay = 1.0
 
         # v3.8: S/R Zone Calculator (multi-source support/resistance)
+        # v3.0: Accept config from base.yaml sr_zones section
+        sr_cfg = sr_zones_config or {}
+        swing_cfg = sr_cfg.get('swing_detection', {})
+        cluster_cfg = sr_cfg.get('clustering', {})
+        scoring_cfg = sr_cfg.get('scoring', {})
+        hard_ctrl_cfg = sr_cfg.get('hard_control', {})
+
         self.sr_calculator = SRZoneCalculator(
-            cluster_pct=0.5,              # 聚类阈值 0.5%
-            zone_expand_pct=0.1,          # Zone 扩展 0.1%
-            hard_control_threshold_pct=1.0,  # 硬风控阈值 1% (仅对 HIGH strength)
+            cluster_pct=cluster_cfg.get('cluster_pct', 0.5),
+            zone_expand_pct=sr_cfg.get('zone_expand_pct', 0.1),
+            hard_control_threshold_pct=hard_ctrl_cfg.get('threshold_pct', 1.0),
+            # v3.0: Swing Point config
+            swing_detection_enabled=swing_cfg.get('enabled', True),
+            swing_left_bars=swing_cfg.get('left_bars', 5),
+            swing_right_bars=swing_cfg.get('right_bars', 5),
+            swing_weight=swing_cfg.get('weight', 1.2),
+            swing_max_age=swing_cfg.get('max_swing_age', 100),
+            # v3.0: ATR adaptive clustering
+            use_atr_adaptive=cluster_cfg.get('use_atr_adaptive', True),
+            atr_cluster_multiplier=cluster_cfg.get('atr_cluster_multiplier', 0.5),
+            # v3.0: Touch count scoring
+            touch_count_enabled=scoring_cfg.get('touch_count_enabled', True),
+            touch_threshold_atr=scoring_cfg.get('touch_threshold_atr', 0.3),
+            optimal_touches=tuple(scoring_cfg.get('optimal_touches', [2, 3])),
+            decay_after_touches=scoring_cfg.get('decay_after_touches', 4),
             logger=self.logger,
         )
 
@@ -421,6 +443,8 @@ class MultiAgentAnalyzer:
         orderbook_report: Optional[Dict[str, Any]] = None,
         # ========== v4.6: Account Context for Add/Reduce Decisions ==========
         account_context: Optional[Dict[str, Any]] = None,
+        # ========== v3.0: OHLC bars for S/R Swing Detection ==========
+        bars_data: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis with Bull/Bear debate.
@@ -506,11 +530,12 @@ class MultiAgentAnalyzer:
             orderbook_summary = self._format_orderbook_report(orderbook_report)
 
             # v3.8: Calculate S/R Zones (multi-source support/resistance)
-            # v2.0: Use detailed report with raw data for AI verification
+            # v3.0: Pass bars_data for Swing Point detection and Touch Count
             sr_zones = self._calculate_sr_zones(
                 current_price=current_price,
                 technical_data=technical_report,
                 orderbook_data=orderbook_report,
+                bars_data=bars_data,
             )
             self._sr_zones_cache = sr_zones  # Cache for _evaluate_risk()
             # v2.0: Use detailed report (includes raw data + level/source_type)
@@ -1909,14 +1934,18 @@ ORDER FLOW (Binance Taker Data):
         current_price: float,
         technical_data: Optional[Dict[str, Any]],
         orderbook_data: Optional[Dict[str, Any]],
+        bars_data: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
-        Calculate S/R Zones from multiple data sources (v3.8).
+        Calculate S/R Zones from multiple data sources (v3.0).
 
         Combines:
         - Bollinger Bands (BB Upper/Lower)
         - SMA (SMA_50, SMA_200)
         - Order Book Walls (bid/ask anomalies)
+        - v3.0: Swing Points (from OHLC bars)
+        - v3.0: ATR-adaptive clustering
+        - v3.0: Touch Count scoring
 
         Parameters
         ----------
@@ -1926,6 +1955,9 @@ ORDER FLOW (Binance Taker Data):
             Technical indicator data containing BB and SMA values
         orderbook_data : Dict, optional
             Order book data containing anomalies (walls)
+        bars_data : List[Dict], optional
+            v3.0: OHLC bar data for swing detection and touch count
+            [{'high': float, 'low': float, 'close': float}, ...]
 
         Returns
         -------
@@ -1969,27 +2001,32 @@ ORDER FLOW (Binance Taker Data):
                     'ask_anomalies': anomalies.get('ask_anomalies', []),
                 }
 
-        # Calculate S/R zones with detailed report (v2.0)
+        # Calculate S/R zones with detailed report (v3.0: bars_data for swing/touch)
         try:
             result = self.sr_calculator.calculate_with_detailed_report(
                 current_price=current_price,
                 bb_data=bb_data,
                 sma_data=sma_data,
                 orderbook_anomalies=orderbook_anomalies,
+                bars_data=bars_data,
             )
 
             # Log S/R zone detection
             if result.get('nearest_resistance'):
                 r = result['nearest_resistance']
+                swing_tag = " [Swing]" if r.has_swing_point else ""
+                touch_tag = f" [T:{r.touch_count}]" if r.touch_count > 0 else ""
                 self.logger.debug(
                     f"S/R Zone: Nearest Resistance ${r.price_center:,.0f} "
-                    f"({r.distance_pct:.1f}% away) [{r.strength}]"
+                    f"({r.distance_pct:.1f}% away) [{r.strength}]{swing_tag}{touch_tag}"
                 )
             if result.get('nearest_support'):
                 s = result['nearest_support']
+                swing_tag = " [Swing]" if s.has_swing_point else ""
+                touch_tag = f" [T:{s.touch_count}]" if s.touch_count > 0 else ""
                 self.logger.debug(
                     f"S/R Zone: Nearest Support ${s.price_center:,.0f} "
-                    f"({s.distance_pct:.1f}% away) [{s.strength}]"
+                    f"({s.distance_pct:.1f}% away) [{s.strength}]{swing_tag}{touch_tag}"
                 )
 
             return result

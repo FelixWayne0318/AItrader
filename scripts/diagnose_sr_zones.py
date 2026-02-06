@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-支撑阻力位全面诊断脚本 v2.0
+支撑阻力位全面诊断脚本 v3.0
 
 功能:
 1. 检查所有支撑阻力数据来源
@@ -11,6 +11,7 @@
 6. v1.1: 价格分布极值检测 (类似 Volume Profile)
 7. v1.2: S/R 检测回测验证 (验证检测准确率)
 8. v2.0: 完整交易模拟回测 (模拟 AI R/R 决策 + SL/TP 盈亏统计)
+9. v3.0: Swing Point 检测 + ATR 自适应聚类 + Touch Count 评分
 
 使用方法:
     python3 scripts/diagnose_sr_zones.py                    # 完整诊断
@@ -143,8 +144,44 @@ def calculate_sr_zones_with_orderwall(current_price: float) -> Dict[str, Any]:
         if orderbook_data and orderbook_data.get('_status', {}).get('code') == 'OK':
             orderbook_anomalies = orderbook_data.get('anomalies', {})
 
-        # 计算 S/R Zones
-        sr_calc = SRZoneCalculator()
+        # 构建 bars_data (v3.0: Swing Point / ATR / Touch Count)
+        bars_data = []
+        for k in klines:
+            bars_data.append({
+                'open': float(k[1]),
+                'high': float(k[2]),
+                'low': float(k[3]),
+                'close': float(k[4]),
+            })
+
+        # 加载 sr_zones 配置
+        sr_cfg = {}
+        try:
+            from utils.config_manager import ConfigManager
+            cm = ConfigManager(env='production')
+            cm.load()
+            sr_cfg = cm.get('sr_zones', default={})
+        except Exception:
+            pass
+
+        swing_cfg = sr_cfg.get('swing_detection', {})
+        cluster_cfg = sr_cfg.get('clustering', {})
+        scoring_cfg = sr_cfg.get('scoring', {})
+
+        # 计算 S/R Zones (v3.0 with Swing Point + ATR + Touch Count)
+        sr_calc = SRZoneCalculator(
+            swing_detection_enabled=swing_cfg.get('enabled', True),
+            swing_left_bars=swing_cfg.get('left_bars', 5),
+            swing_right_bars=swing_cfg.get('right_bars', 5),
+            swing_weight=swing_cfg.get('weight', 1.2),
+            swing_max_age=swing_cfg.get('max_swing_age', 100),
+            use_atr_adaptive=cluster_cfg.get('use_atr_adaptive', True),
+            atr_cluster_multiplier=cluster_cfg.get('atr_cluster_multiplier', 0.5),
+            touch_count_enabled=scoring_cfg.get('touch_count_enabled', True),
+            touch_threshold_atr=scoring_cfg.get('touch_threshold_atr', 0.3),
+            optimal_touches=scoring_cfg.get('optimal_touches', [2, 3]),
+            decay_after_touches=scoring_cfg.get('decay_after_touches', 4),
+        )
         bb_data = {
             'upper': tech_data.get('bb_upper', 0),
             'lower': tech_data.get('bb_lower', 0),
@@ -160,6 +197,7 @@ def calculate_sr_zones_with_orderwall(current_price: float) -> Dict[str, Any]:
             bb_data=bb_data,
             sma_data=sma_data,
             orderbook_anomalies=orderbook_anomalies,
+            bars_data=bars_data,
         )
 
         return {
@@ -1258,8 +1296,21 @@ def calculate_sr_zones_without_orderwall(current_price: float) -> Dict[str, Any]
         else:
             bb_upper = bb_lower = 0
 
-        # 计算 S/R Zones (无 Order Wall)
-        sr_calc = SRZoneCalculator()
+        # 构建 bars_data (v3.0: Swing Point / ATR / Touch Count)
+        bars_data = []
+        for k in klines:
+            bars_data.append({
+                'open': float(k[1]),
+                'high': float(k[2]),
+                'low': float(k[3]),
+                'close': float(k[4]),
+            })
+
+        # 计算 S/R Zones v3.0 (无 Order Wall, 含 Swing Point)
+        sr_calc = SRZoneCalculator(
+            swing_detection_enabled=True,
+            use_atr_adaptive=True,
+        )
         bb_data = {'upper': bb_upper, 'lower': bb_lower, 'middle': sma_20}
         sma_data = {'sma_50': sma_50, 'sma_200': 0}  # 简化，不计算 SMA_200
 
@@ -1268,6 +1319,7 @@ def calculate_sr_zones_without_orderwall(current_price: float) -> Dict[str, Any]
             bb_data=bb_data,
             sma_data=sma_data,
             orderbook_anomalies=None,  # 不传入 Order Wall
+            bars_data=bars_data,
         )
 
         return {
@@ -1331,6 +1383,16 @@ def check_config() -> Dict[str, Any]:
         result['sr_hard_control_enabled'] = config.get('risk', 'sr_hard_control_enabled', default=True)
         result['sr_hard_control_threshold'] = config.get('risk', 'sr_hard_control_threshold_pct', default=1.0)
 
+        # v3.0 sr_zones config
+        sr_cfg = config.get('sr_zones', default={})
+        result['sr_zones_enabled'] = sr_cfg.get('enabled', True) if sr_cfg else True
+        swing_cfg = sr_cfg.get('swing_detection', {}) if sr_cfg else {}
+        result['swing_detection_enabled'] = swing_cfg.get('enabled', True)
+        cluster_cfg = sr_cfg.get('clustering', {}) if sr_cfg else {}
+        result['atr_adaptive_enabled'] = cluster_cfg.get('use_atr_adaptive', True)
+        scoring_cfg = sr_cfg.get('scoring', {}) if sr_cfg else {}
+        result['touch_count_enabled'] = scoring_cfg.get('touch_count_enabled', True)
+
     except Exception as e:
         result['error'] = str(e)
 
@@ -1373,7 +1435,7 @@ def analyze_telegram_data_source():
 
 def run_full_diagnosis():
     """运行完整诊断"""
-    print_header("支撑阻力位全面诊断 v1.0")
+    print_header("支撑阻力位全面诊断 v3.0")
     print(f"  时间: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
     # 1. 获取当前价格
@@ -1390,6 +1452,13 @@ def run_full_diagnosis():
         print_result("S/R 硬风控启用", config.get('sr_hard_control_enabled', True),
                     "ok" if config.get('sr_hard_control_enabled') else "warn")
         print_result("硬风控阈值", f"{config.get('sr_hard_control_threshold', 1.0)}%", "info")
+        # v3.0 features
+        print_result("Swing Point 检测", config.get('swing_detection_enabled', True),
+                    "ok" if config.get('swing_detection_enabled') else "warn")
+        print_result("ATR 自适应聚类", config.get('atr_adaptive_enabled', True),
+                    "ok" if config.get('atr_adaptive_enabled') else "warn")
+        print_result("Touch Count 评分", config.get('touch_count_enabled', True),
+                    "ok" if config.get('touch_count_enabled') else "warn")
     else:
         print_result("配置错误", config['error'], "error")
 
@@ -1418,11 +1487,15 @@ def run_full_diagnosis():
 
         print_result("支撑区数量", len(sup_zones), "info")
         for i, zone in enumerate(sup_zones[:2]):
-            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]")
+            swing_tag = " [Swing]" if zone.has_swing_point else ""
+            touch_tag = f" [T:{zone.touch_count}]" if zone.touch_count > 0 else ""
+            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{swing_tag}{touch_tag}")
 
         print_result("阻力区数量", len(res_zones), "info")
         for i, zone in enumerate(res_zones[:2]):
-            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]")
+            swing_tag = " [Swing]" if zone.has_swing_point else ""
+            touch_tag = f" [T:{zone.touch_count}]" if zone.touch_count > 0 else ""
+            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{swing_tag}{touch_tag}")
 
         hard_control = result.get('hard_control', {})
         print_result("Block LONG", hard_control.get('block_long', False),
@@ -1433,7 +1506,7 @@ def run_full_diagnosis():
         print_result("计算失败", sr_no_wall.get('error', 'Unknown'), "error")
 
     print()
-    print("  📝 计算方法: BB + SMA_50 聚合 (无订单簿数据)")
+    print("  📝 计算方法: BB + SMA_50 + Swing Point + ATR聚类 + Touch Count (v3.0)")
     print("  📝 来源: utils/sr_zone_calculator.py (orderbook_anomalies=None)")
 
     # 5. 计算 S/R Zone (含 Order Wall)
@@ -1447,15 +1520,19 @@ def run_full_diagnosis():
         print_result("支撑区数量", len(sup_zones), "info")
         for i, zone in enumerate(sup_zones[:3]):
             wall_info = f" [Order Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+            swing_tag = " [Swing]" if zone.has_swing_point else ""
+            touch_tag = f" [T:{zone.touch_count}]" if zone.touch_count > 0 else ""
             src = ", ".join(zone.sources[:2]) if zone.sources else zone.source_type
-            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}%) [{zone.strength}]{wall_info}")
+            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}%) [{zone.strength}]{wall_info}{swing_tag}{touch_tag}")
             print(f"         来源: {src}")
 
         print_result("阻力区数量", len(res_zones), "info")
         for i, zone in enumerate(res_zones[:3]):
             wall_info = f" [Order Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+            swing_tag = " [Swing]" if zone.has_swing_point else ""
+            touch_tag = f" [T:{zone.touch_count}]" if zone.touch_count > 0 else ""
             src = ", ".join(zone.sources[:2]) if zone.sources else zone.source_type
-            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}%) [{zone.strength}]{wall_info}")
+            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}%) [{zone.strength}]{wall_info}{swing_tag}{touch_tag}")
             print(f"         来源: {src}")
 
         hard_control = result.get('hard_control', {})
@@ -1485,7 +1562,7 @@ def run_full_diagnosis():
             print(f"  Traceback: {sr_with_wall['traceback'][:200]}...")
 
     print()
-    print("  📝 计算方法: BB + SMA_50 + Order Wall 聚合")
+    print("  📝 计算方法: BB + SMA_50 + Order Wall + Swing Point + ATR聚类 + Touch Count (v3.0)")
     print("  📝 来源: utils/sr_zone_calculator.py + utils/orderbook_processor.py")
 
     # 6. 价格分布极值检测 (新方法 v2.0)
@@ -1683,8 +1760,9 @@ def run_full_diagnosis():
         "将 Heartbeat 发送移到分析之后，使用最新数据",
         "降低 Order Wall 权重 (当前 2.0，建议 0.5-1.0)",
         "添加 Order Wall 最小 BTC 阈值 (如 > 10 BTC 才算大单)",
-        "考虑使用简单高低点作为主要支撑阻力来源",
-        "实现 Swing Point Detection (全球标准方法)",
+        "[v3.0 已实现] Swing Point Detection (Williams Fractal, Chan 2022 MDPI)",
+        "[v3.0 已实现] ATR 自适应聚类 (替代固定 0.5% 阈值)",
+        "[v3.0 已实现] Touch Count 评分 (Osler 2000, FRB NY: 2-3次最优)",
     ])
 
     for i, s in enumerate(suggestions, 1):
@@ -1734,26 +1812,30 @@ def run_full_diagnosis():
     print()
     print("  📊 方法评估 (基于 CME/IEEE 标准):")
     print()
-    print("     ┌─────────────────────────┬──────────┬──────────┬──────────┬──────────┐")
-    print("     │ 方法                    │ 稳定性   │ 实时性   │ 可靠性   │ 专业度   │")
-    print("     ├─────────────────────────┼──────────┼──────────┼──────────┼──────────┤")
-    print("     │ 简单高低点              │ ★★★★★    │ ★★★      │ ★★★      │ ★★       │")
-    print("     │ S/R Zone (BB+SMA)       │ ★★★★     │ ★★★      │ ★★★★     │ ★★★      │")
-    print("     │ Order Wall              │ ★★       │ ★★★★★    │ ★★       │ ★★★      │")
-    print("     │ Value Area (CME)        │ ★★★★★    │ ★★       │ ★★★★★    │ ★★★★★    │")
-    print("     │ HVN/LVN (Volume Profile)│ ★★★★★    │ ★★       │ ★★★★★    │ ★★★★★    │")
-    print("     └─────────────────────────┴──────────┴──────────┴──────────┴──────────┘")
+    print("     ┌──────────────────────────┬──────────┬──────────┬──────────┬──────────┐")
+    print("     │ 方法                     │ 稳定性   │ 实时性   │ 可靠性   │ 专业度   │")
+    print("     ├──────────────────────────┼──────────┼──────────┼──────────┼──────────┤")
+    print("     │ 简单高低点               │ ★★★★★    │ ★★★      │ ★★★      │ ★★       │")
+    print("     │ S/R Zone (BB+SMA)        │ ★★★★     │ ★★★      │ ★★★★     │ ★★★      │")
+    print("     │ Swing Point (v3.0)       │ ★★★★★    │ ★★★★     │ ★★★★★    │ ★★★★★    │")
+    print("     │ Order Wall               │ ★★       │ ★★★★★    │ ★★       │ ★★★      │")
+    print("     │ Value Area (CME)         │ ★★★★★    │ ★★       │ ★★★★★    │ ★★★★★    │")
+    print("     │ HVN/LVN (Volume Profile) │ ★★★★★    │ ★★       │ ★★★★★    │ ★★★★★    │")
+    print("     └──────────────────────────┴──────────┴──────────┴──────────┴──────────┘")
     print()
     print("  💡 全球标准做法:")
-    print("     1. Value Area 边界 = 主要 S/R (CME Market Profile)")
-    print("     2. HVN = 强支撑阻力 (价格在此停留时间长)")
-    print("     3. LVN = 快速穿越区 (不适合作为 S/R)")
-    print("     4. POC = 公平价格 (价格吸引点)")
+    print("     1. Swing Point (N-bar Pivot) = 最强 S/R 来源 (Chan 2022 MDPI, +65% ML利润)")
+    print("     2. ATR 自适应聚类 = 波动率感知的区域合并")
+    print("     3. Touch Count 2-3次 = 最佳强度 (Osler 2000, FRB NY)")
+    print("     4. Value Area 边界 = 主要 S/R (CME Market Profile)")
+    print("     5. HVN = 强支撑阻力 (价格在此停留时间长)")
+    print("     6. LVN = 快速穿越区 (不适合作为 S/R)")
     print()
     print("  📚 参考文献:")
+    print("     - Chan 2022 (MDPI): Support/Resistance in Algorithmic Trading")
+    print("     - Osler 2000 (FRB NY): Support/Resistance Technical Analysis")
     print("     - CME Group Market Profile User Guide")
     print("     - IEEE: Evolutionary Optimized Stock Support-Resistance")
-    print("     - MDPI: Support Resistance Levels in Algorithmic Trading")
 
     print()
     print(f"  诊断完成: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
@@ -1762,7 +1844,7 @@ def run_full_diagnosis():
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="支撑阻力位全面诊断 v2.0")
+    parser = argparse.ArgumentParser(description="支撑阻力位全面诊断 v3.0")
     parser.add_argument("--export", action="store_true", help="导出到文件")
     parser.add_argument("--backtest", action="store_true", help="仅运行交易模拟回测")
     parser.add_argument("--mock", action="store_true", help="使用模拟数据 (无网络环境)")

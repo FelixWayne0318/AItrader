@@ -91,6 +91,9 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     volume_ma_period: int = 20  # Volume MA period for analysis
     support_resistance_lookback: int = 20  # Support/resistance lookback period
 
+    # v3.0: S/R Zone Calculator config (from configs/base.yaml sr_zones section)
+    sr_zones_config: Dict = None  # type: ignore  # Passed as dict to MultiAgentAnalyzer
+
     # AI configuration
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-chat"
@@ -457,6 +460,7 @@ class DeepSeekAIStrategy(Strategy):
             debate_rounds=config.debate_rounds,
             retry_delay=config.multi_agent_retry_delay,
             json_parse_max_retries=config.multi_agent_json_parse_max_retries,
+            sr_zones_config=config.sr_zones_config,  # v3.0: S/R Zone config
         )
         self.log.info(f"✅ Multi-Agent analyzer initialized (debate_rounds={config.debate_rounds})")
 
@@ -1670,6 +1674,9 @@ class DeepSeekAIStrategy(Strategy):
                     except Exception as e:
                         self.log.warning(f"⚠️ Order book processing failed: {e}")
 
+                # v3.0: Get extended bars for S/R Swing Point detection
+                sr_bars_data = self.indicator_manager.get_kline_data(count=120)
+
                 signal_data = self.multi_agent.analyze(
                     symbol="BTCUSDT",
                     technical_report=ai_technical_data,
@@ -1683,6 +1690,8 @@ class DeepSeekAIStrategy(Strategy):
                     orderbook_report=orderbook_data,
                     # ========== v4.6 新增参数 ==========
                     account_context=account_context,
+                    # ========== v3.0: OHLC bars for S/R Swing Detection ==========
+                    bars_data=sr_bars_data,
                 )
 
                 # v3.8: Store S/R Zone data for heartbeat (from MultiAgentAnalyzer cache)
