@@ -1110,7 +1110,12 @@ class OrderSimulator(DiagnosticStep):
 
         print()
         use_sr = getattr(cfg, 'sl_use_support_resistance', True)
-        sl_buffer = getattr(cfg, 'sl_buffer_pct', 0.001)
+        sl_buffer = getattr(cfg, 'sl_buffer_pct', 0.005)  # v3.15.1: 0.5% buffer for real S/R breakout
+
+        print("  📋 v3.15 SL/TP 验证规则:")
+        print("     - 最小止损距离: 1% (否则拒绝 AI 的 SL)")
+        print(f"     - S/R 突破缓冲: {sl_buffer*100:.1f}% (确认真正突破)")
+        print()
 
         if multi_sl and multi_tp:
             is_valid, final_sl, final_tp, reason = validate_multiagent_sltp(
@@ -1122,7 +1127,7 @@ class OrderSimulator(DiagnosticStep):
             print(f"     验证结果: {'✅ 通过' if is_valid else '❌ 失败'} - {reason}")
 
             if not is_valid:
-                print("     ⚠️ AI SL/TP 验证失败，回退到 S/R Zone 技术分析")
+                print("     ⚠️ AI SL/TP 验证失败 (v3.15: 距离<1% 或方向错误)，回退到 S/R Zone 技术分析")
                 final_sl, final_tp, calc_method = calculate_technical_sltp(
                     side=signal,
                     entry_price=self.ctx.current_price,
