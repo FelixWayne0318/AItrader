@@ -351,8 +351,8 @@ class DataFlowSummary(DiagnosticStep):
         print_box("MTF 过滤状态")
         print()
 
-        print(f"  架构: TradingAgents v3.12 - AI 决策 + S/R Zone v2.0 风控")
-        print(f"  本地风控: S/R Zone v2.0 Block (执行层，含 level/source_type)")
+        print(f"  架构: TradingAgents v3.16 - AI 完全自主决策")
+        print(f"  S/R Zone 硬风控: 由 Risk Manager (AI) 自主判断 (非本地覆盖)")
         print()
 
         sd = self.ctx.signal_data

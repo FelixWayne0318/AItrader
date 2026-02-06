@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.7.1 (v3.15 止损修复验证)
+实盘信号诊断脚本 v2.7.2 (v3.16 AI 自主硬风控)
 
-基于 TradingAgents v3.12 架构的完整诊断工具。
+基于 TradingAgents v3.16 架构的完整诊断工具。
+
+v2.7.2 更新:
+- 新增: v3.16 S/R Zone 硬风控移至 AI 自主决策
+- 更新: 架构描述反映 "Autonomy is non-negotiable" 原则
+- 更新: 硬风控显示改为 "AI 决策建议" 而非 "本地阻止"
+- 优化: sr_hard_control_enabled 默认 FALSE
 
 v2.7.1 更新:
 - 新增: v3.15 止损距离验证规则显示 (最小 1%)
@@ -117,11 +123,11 @@ v2.1 更新 (v4.8 适配):
     python3 scripts/diagnose_realtime.py --export     # 导出到文件
     python3 scripts/diagnose_realtime.py --push       # 导出并推送到 GitHub
 
-架构 (TradingAgents v3.12):
+架构 (TradingAgents v3.16 - AI 完全自主):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
 - Phase 2: Judge 决策 (1 AI call)
-- Phase 3: Risk 评估 (1 AI call)
-- 本地风控: S/R Zone v2.0 Block
+- Phase 3: Risk 评估 (1 AI call) - 含 S/R Zone 硬风控判断
+- 原则: "Autonomy is non-negotiable" - AI 自主决定是否遵守 S/R 建议
 
 v3.18 订单流程模拟 (7 种场景):
 - 场景 1: 新开仓 (无持仓 → 开仓)

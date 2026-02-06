@@ -346,9 +346,14 @@ class MTFComponentTester(DiagnosticStep):
                 wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
                 print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
 
-            # Hard control status
+            # Hard control status (v3.16: AI 建议，非本地覆盖)
             hard_control = sr_result.get('hard_control', {})
-            print(f"     ⚠️ 硬风控: Block LONG={hard_control.get('block_long', False)}, Block SHORT={hard_control.get('block_short', False)}")
+            block_long = hard_control.get('block_long', False)
+            block_short = hard_control.get('block_short', False)
+            if block_long or block_short:
+                print(f"     📋 AI 建议: 避免 LONG={block_long}, 避免 SHORT={block_short} (v3.16 AI 自主判断)")
+            else:
+                print(f"     ✅ S/R Zone 建议: 无限制")
 
             print("     ✅ S/R Zone Calculator 测试完成")
 

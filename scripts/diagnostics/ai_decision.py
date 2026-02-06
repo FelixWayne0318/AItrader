@@ -612,16 +612,17 @@ class AIInputDataValidator(DiagnosticStep):
 
             print()
 
-            # Hard control status
+            # Hard control status (v3.16: AI 自主决策，非本地覆盖)
             hard_control = sr_data.get('hard_control', {})
             if hard_control.get('block_long') or hard_control.get('block_short'):
-                print("      ⚠️ 硬风控:")
+                print("      ⚠️ S/R Zone 建议 (v3.16 由 AI 自主判断):")
                 if hard_control.get('block_long'):
-                    print("        🚫 LONG 被阻止 (太靠近阻力位)")
+                    print("        📋 建议避免 LONG (太靠近 HIGH 强度阻力位)")
                 if hard_control.get('block_short'):
-                    print("        🚫 SHORT 被阻止 (太靠近支撑位)")
+                    print("        📋 建议避免 SHORT (太靠近 HIGH 强度支撑位)")
                 if hard_control.get('reason'):
                     print(f"        原因: {hard_control['reason']}")
+                print("        ℹ️ Risk Manager (AI) 可自主决定是否遵守")
             else:
                 print("      ✅ 硬风控: 无限制")
 
