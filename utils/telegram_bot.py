@@ -799,12 +799,12 @@ class TelegramBot:
             nearest_resistance = sr_zone.get('nearest_resistance')
             if nearest_support is not None or nearest_resistance is not None:
                 message += "\n🎯 *支撑/阻力 (平仓时)*:\n"
-                if nearest_support is not None:
-                    sup_dist = ((current_price - nearest_support) / current_price * 100) if current_price > 0 else 0
+                if nearest_support is not None and nearest_support < current_price:
+                    sup_dist = ((nearest_support - current_price) / current_price * 100) if current_price > 0 else 0
                     message += f"  • 支撑: ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
-                if nearest_resistance is not None:
+                if nearest_resistance is not None and nearest_resistance > current_price:
                     res_dist = ((nearest_resistance - current_price) / current_price * 100) if current_price > 0 else 0
-                    message += f"  • 阻力: ${nearest_resistance:,.2f} (+{res_dist:.2f}%)\n"
+                    message += f"  • 阻力: ${nearest_resistance:,.2f} ({res_dist:+.2f}%)\n"
 
         message += f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
 
@@ -923,12 +923,12 @@ class TelegramBot:
                     tp_pct = -tp_pct  # SHORT position: TP below entry is positive profit
                 msg += f"  🎯 止盈: ${tp_price:,.2f} (+{abs(tp_pct):.2f}%)\n"
             # S/R Zone
-            if nearest_support is not None:
-                sup_dist = ((entry_price - nearest_support) / entry_price * 100) if entry_price > 0 else 0
+            if nearest_support is not None and nearest_support < entry_price:
+                sup_dist = ((nearest_support - entry_price) / entry_price * 100) if entry_price > 0 else 0
                 msg += f"  📉 支撑: ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
-            if nearest_resistance is not None:
+            if nearest_resistance is not None and nearest_resistance > entry_price:
                 res_dist = ((nearest_resistance - entry_price) / entry_price * 100) if entry_price > 0 else 0
-                msg += f"  📈 阻力: ${nearest_resistance:,.2f} (+{res_dist:.2f}%)\n"
+                msg += f"  📈 阻力: ${nearest_resistance:,.2f} ({res_dist:+.2f}%)\n"
 
         # Add AI analysis if available
         if winning_side or reasoning:
@@ -1164,12 +1164,12 @@ class TelegramBot:
                 tp_dist = ((tp_price - price) / price * 100) if price > 0 else 0
                 msg += f"  🎯 止盈: ${tp_price:,.2f} ({tp_dist:+.2f}%)\n"
             # S/R Zone
-            if nearest_support is not None:
-                dist_sup = ((price - nearest_support) / price * 100) if price > 0 else 0
+            if nearest_support is not None and nearest_support < price:
+                dist_sup = ((nearest_support - price) / price * 100) if price > 0 else 0
                 msg += f"  📉 支撑: ${nearest_support:,.2f} ({dist_sup:+.2f}%)\n"
-            if nearest_resistance is not None:
+            if nearest_resistance is not None and nearest_resistance > price:
                 dist_res = ((nearest_resistance - price) / price * 100) if price > 0 else 0
-                msg += f"  📈 阻力: ${nearest_resistance:,.2f} (+{dist_res:.2f}%)\n"
+                msg += f"  📈 阻力: ${nearest_resistance:,.2f} ({dist_res:+.2f}%)\n"
             # Block status (hard control)
             if block_long or block_short:
                 block_str = []
@@ -1196,8 +1196,15 @@ class TelegramBot:
                 msg += f"━━━━━━━━━━━━━━━━\n"
             msg += f"📉 *衍生品 (v3.6)*\n"
             if funding_rate is not None:
-                fr_emoji = "🔴" if funding_rate > 0.01 else "🟢" if funding_rate < -0.01 else "⚪"
-                msg += f"  资金费: {fr_emoji} {funding_rate*100:.4f}%\n"
+                # Coinalyze raw value: 0.0001 = 0.01%. Threshold: ±0.01% (±0.0001 raw)
+                # Sanity check: funding rate > 1% (0.01 raw) is likely wrong units
+                if abs(funding_rate) > 0.01:
+                    # Suspect value already in percentage form, don't multiply
+                    fr_display = funding_rate
+                else:
+                    fr_display = funding_rate * 100
+                fr_emoji = "🔴" if fr_display > 0.01 else "🟢" if fr_display < -0.01 else "⚪"
+                msg += f"  资金费: {fr_emoji} {fr_display:.4f}%\n"
             if oi_change_pct is not None:
                 oi_emoji = "📈" if oi_change_pct > 5 else "📉" if oi_change_pct < -5 else "➖"
                 msg += f"  OI变化: {oi_emoji} {oi_change_pct:+.2f}%\n"
