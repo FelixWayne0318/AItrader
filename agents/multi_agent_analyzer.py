@@ -53,337 +53,121 @@ from strategy.trading_logic import (
 # =============================================================================
 INDICATOR_DEFINITIONS = """
 ====================================================================
-TRADING INDICATOR MANUAL (v3.25 — Regime-Aware Usage Guide)
+TRADING INDICATOR MANUAL (v3.27 — Condensed Regime-Aware Guide)
 ====================================================================
-This manual contains calculation methods, correct usage per market
-regime, failure modes, and confirmation rules for every indicator.
-YOUR TASK: Use this knowledge + the data provided to INDEPENDENTLY
-identify the current market regime and make trading decisions.
+STEP 1: MARKET REGIME DETECTION (determine this FIRST)
+The SAME indicator value means DIFFERENT things in different regimes.
 
-====================================================================
-STEP 1: MARKET REGIME DETECTION (DO THIS FIRST)
-====================================================================
-Before interpreting ANY indicator, determine the current regime.
-The SAME indicator value has DIFFERENT meanings in different regimes.
-
-DETECTION METHOD:
-  ADX > 25 + clear price direction    → TRENDING (up or down)
-  ADX < 20 + price oscillating        → RANGING (mean-reversion)
+  ADX > 25 + clear price direction    → TRENDING
+  ADX < 20 + price oscillating        → RANGING
   ADX < 20 + BB Width at lows         → SQUEEZE (pre-breakout)
-  ADX > 25 + BB Width expanding fast  → VOLATILE TREND (wide stops)
+  ADX > 25 + BB Width expanding fast  → VOLATILE TREND
 
-REGIME → CHARACTERISTIC BEHAVIOR:
-  TRENDING:   Trend-following entries have statistically higher win rates.
-              Counter-trend entries have historically high failure rates.
-              Momentum indicators (MACD, RSI trend) provide continuation signals.
-              Support levels frequently break in strong downtrends.
-              Resistance levels frequently break in strong uptrends.
-  RANGING:    Mean-reversion strategies have highest reliability here.
-              S/R bounces work: price oscillates between support and resistance.
-              RSI/BB extremes are statistically reliable reversal zones.
-  SQUEEZE:    A large move is imminent, but direction is UNKNOWN.
-              Pre-breakout entries face ~50% wrong-side risk. Head fakes are common.
-              Volume + direction confirmation reduces false breakout risk.
-  VOLATILE TREND: Trend-following still works but with wider price swings.
-              Larger stops needed to avoid noise-triggered exits.
+REGIME CHARACTERISTICS:
+  TRENDING:  Trend-following has statistically higher win rates.
+             Counter-trend has historically high failure rates.
+             Support/resistance levels frequently break.
+  RANGING:   Mean-reversion is most reliable. S/R bounces work.
+  SQUEEZE:   Big move imminent, direction unknown.
+             Pre-breakout entries face ~50% wrong-side risk.
+  VOLATILE:  Trend-following works, wider stops needed.
 
-STATISTICAL FACT: The #1 source of retail trading losses is applying
-ranging-market logic in trending markets (e.g., buying "support" in a
-downtrend — support levels break repeatedly in strong trends).
+Statistical fact: The #1 source of retail losses is applying ranging logic
+in trending markets (e.g., buying "support" in a downtrend).
 
 ====================================================================
-INDICATORS: CALCULATION + REGIME-SPECIFIC USAGE + FAILURE MODES
+SPECIALIZED KNOWLEDGE (beyond standard textbook)
 ====================================================================
 
---- RSI (Relative Strength Index) ---
-Calculation: 100 - (100 / (1 + RS)), RS = Avg Gain / Avg Loss (14 periods)
-Range: 0-100. Period: 14 bars.
+--- RSI: Cardwell Range Shifts ---
+TRENDING: RSI operates in shifted ranges, not traditional 30/70.
+  Uptrend: 40-80 range. Pullbacks to 40-50 are WITH-trend entries.
+    RSI 80 = strong momentum, not a reversal signal.
+  Downtrend: 20-60 range. Rallies to 50-60 are WITH-trend entries.
+    RSI 20 = strong downward momentum, not a buy signal.
+RANGING: Traditional 30/70 levels work.
+⚠️ Buying RSI <30 in a downtrend is the most common retail mistake.
+   Cardwell: bullish divergences can CONFIRM downtrends, not reverse them.
 
-TRENDING MARKET (ADX > 25):
-  Uptrend: RSI operates in 40-80 range (Cardwell range shift).
-    - Pullbacks to RSI 40-50 = buying opportunities WITH the trend.
-    - RSI 80 = strong momentum, NOT a sell signal.
-    - RSI rarely drops below 40 in strong uptrends.
-  Downtrend: RSI operates in 20-60 range.
-    - Rallies to RSI 50-60 = selling/shorting opportunities WITH trend.
-    - RSI 20 = strong downward momentum, NOT a buy signal.
-    - RSI rarely rises above 60 in strong downtrends.
+--- ADX / DI+ / DI- ---
+ADX = trend STRENGTH (not direction). DI+/DI- = direction.
+  0-20: ranging. 25-50: strong trend. 50+: very strong. 75+: exhaustion risk.
+  DI+ > DI- = uptrend. DI- > DI+ = downtrend.
+⚠️ ADX is lagging — confirms late. Brief spikes in choppy markets = false signals.
 
-RANGING MARKET (ADX < 20):
-  Traditional levels work: >70 overbought (sell zone), <30 oversold (buy zone).
-  Most reliable when combined with S/R zone touches.
-
-⚠️ FAILURE MODES:
-  1. Buying RSI <30 in a downtrend — RSI can stay oversold for WEEKS.
-     This is the single most common retail trading mistake.
-  2. Selling RSI >70 in an uptrend — RSI can stay overbought while
-     price keeps rising. Overbought = momentum strength in trends.
-  3. Trusting bullish divergence in downtrend — Cardwell discovered
-     that bullish divergences actually CONFIRM downtrends. Multiple
-     bullish divergences can appear while price keeps falling.
-
-Confirmations: RSI + ADX (regime filter), RSI + S/R zones, RSI + Volume.
-
---- ADX / DI+ / DI- (Average Directional Index) ---
-Calculation: Smoothed average of directional movement over N periods.
-ADX = trend STRENGTH (not direction). DI+/DI- = trend DIRECTION.
-
-ADX LEVELS:
-  0-20:  No trend / ranging — mean-reversion strategies have highest reliability
-  20-25: Emerging trend — early signal, may or may not develop
-  25-50: Strong trend — trend-following has high win rate, counter-trend has low win rate
-  50-75: Very strong trend — counter-trend entries historically have very poor outcomes
-  75+:   Extreme — trend may be exhausting, early reversal signs sometimes appear
-
-DIRECTION:
-  DI+ > DI- = uptrend dominant. DI- > DI+ = downtrend dominant.
-  DI+ crossing above DI- with ADX > 25 = confirmed uptrend start.
-  DI- crossing above DI+ with ADX > 25 = confirmed downtrend start.
-
-⚠️ FAILURE MODES:
-  1. ADX is LAGGING — by the time it confirms (>25), much of the
-     move may already be over. Use with price action for timing.
-  2. ADX doesn't tell direction — always check DI+/DI- together.
-  3. Brief ADX spikes above 25 in choppy markets = false signals.
-
-Confirmations: ADX + DI crossover, ADX + SMA direction, ADX + MACD.
-
---- MACD (Moving Average Convergence Divergence) ---
-Calculation: MACD = EMA(12) - EMA(26). Signal = EMA(9) of MACD.
-Histogram = MACD - Signal (momentum intensity).
-
-TRENDING MARKET:
-  MACD crossovers provide continuation entries.
-  Histogram growth = momentum building. Histogram shrinking = weakening.
-  Zero-line cross = major trend change signal.
-
-RANGING MARKET:
-  MACD WHIPSAWS repeatedly — crossover signals are unreliable in ranges.
-  MACD entry signals when ADX < 20 have historically high false positive rates.
-
-⚠️ FAILURE MODES:
-  1. Very high false signal rate in backtests (studies show 74-97%).
-     MACD alone has extremely poor reliability — confirmation from other indicators is essential.
-  2. Multiple divergences can appear in strong trends without reversal.
-  3. Consolidation drift — MACD drifts to zero during sideways, making
-     it hard to distinguish range from genuine trend change.
-
-BEST USE: Histogram for gauging momentum INTENSITY, not for entry signals.
-Confirmations: MACD + ADX (filter), MACD + RSI, MACD + Volume.
+--- MACD ---
+Histogram = momentum intensity (most useful output).
+TRENDING: Crossovers provide continuation signals. Zero-line cross = major shift.
+RANGING: Whipsaws repeatedly — high false positive rate (74-97% in backtests).
+⚠️ MACD alone has extremely poor reliability.
 
 --- BOLLINGER BANDS ---
-Calculation: Middle = SMA(20), Upper = Middle + 2σ, Lower = Middle - 2σ.
-BB Position: 0% = at lower band, 50% = at middle, 100% = at upper band.
-BB Width: (Upper - Lower) / Middle × 100 — measures volatility level.
+BB Position: 0% = lower band, 100% = upper band.
+BB Width: volatility measure. Low = squeeze imminent.
+TRENDING: Price "walks the band" — touching upper band in uptrend is NORMAL,
+  not a reversal signal. Shorting upper band in uptrend is the most common BB error.
+RANGING: Mean-reversion at bands works (upper = overbought, lower = oversold).
+SQUEEZE: Low BB Width = big move imminent, but direction unknown.
 
-TRENDING MARKET:
-  Price "walks the band" — touching upper band repeatedly in uptrend
-  or lower band in downtrend. This is NORMAL trend behavior, NOT a
-  reversal signal. Middle band (SMA 20) acts as dynamic support/resistance.
+--- SMA ---
+Primary use: TREND FILTER (not timing signal).
+  Price > SMA 200 = long-term uptrend bias. Price < SMA 200 = downtrend bias.
+  Golden Cross / Death Cross = long-term shift signals (but lag significantly).
+Dynamic S/R: SMA 20/50 act as pullback levels in trends.
+⚠️ Extreme lag (35% false signal rate on crosses). Whipsaws in ranges.
 
-RANGING MARKET:
-  Mean-reversion: Price at upper band = potential short, lower = potential long.
-  Most reliable when bands are relatively flat.
+--- VOLUME + CVD ---
+Volume confirms price: Rising price + rising volume = genuine. Falling volume = suspect.
+CVD aligns with price = real pressure. CVD diverges = warning:
+  Price up + CVD falling = hidden selling. Price down + CVD rising = accumulation.
+  Absorption: Positive CVD + flat price = large seller absorbing buys.
+⚠️ Low-volume moves are unreliable. CVD from candle data is approximate.
 
-SQUEEZE (BB Width at historical lows):
-  Low volatility → big move IMMINENT. But direction UNKNOWN.
-  Must use volume, CVD, or breakout confirmation for direction.
+--- FUNDING RATE ---
+Settlement every 8h. Positive = longs pay. Negative = shorts pay.
+Daily holding cost = rate × 3 settlements.
+  |Rate| < 0.03%: Normal. 0.01-0.03% in bull markets is standard, not bearish.
+  > +0.05%: Crowded longs. > +0.10%: Extreme, high reversal probability.
+  < -0.03%: Bearish pressure. < -0.10%: Extreme panic, bounce probability rises.
+  Predicted vs current divergence = expect shift at next settlement.
+⚠️ Funding alone without OI/price context leads to premature contrarian trades.
 
-⚠️ FAILURE MODES:
-  1. Shorting upper band in uptrend — price walks the band for weeks
-     in strong trends. This is the most common BB misuse.
-  2. Head fakes — price briefly pierces a band then reverses. Common
-     during squeezes. Wait for confirmation candle/volume.
-  3. Squeeze gives NO directional clue — use other tools for direction.
-
-Confirmations: BB + RSI divergence, BB + Volume, BB + ADX (regime filter).
-
---- SMA (Simple Moving Average) ---
-Calculation: Sum of last N closing prices / N.
-Common periods: 5 (short), 20 (medium), 50/200 (long-term trend).
-
-USAGE AS TREND FILTER (primary use):
-  Price > SMA 200 = long-term uptrend bias (prefer longs).
-  Price < SMA 200 = long-term downtrend bias (prefer shorts).
-  Golden Cross (SMA 50 crosses above SMA 200) = long-term bullish shift.
-  Death Cross (SMA 50 crosses below SMA 200) = long-term bearish shift.
-
-USAGE AS DYNAMIC S/R:
-  In uptrends: SMA 20/50 act as pullback support levels.
-  In downtrends: SMA 20/50 act as rally resistance levels.
-
-⚠️ FAILURE MODES:
-  1. Extreme lag — SMA 50/200 crosses happen LATE (35% false signal rate).
-     Use as FILTER for trade direction, not as entry TIMING signal.
-  2. Whipsaw when price oscillates around SMA in ranging markets.
-
-Confirmations: SMA + ADX (trend confirmation), SMA + Volume on cross.
-
---- VOLUME ---
-Volume Ratio: Current volume / Average volume (recent periods).
-  > 1.5x = high activity (confirms moves). < 0.7x = low activity (suspect).
-
-KEY PRINCIPLE: Volume CONFIRMS price moves.
-  Rising price + rising volume = strong bullish (genuine buying).
-  Rising price + falling volume = weak rally (likely to fail).
-  Falling price + rising volume = strong bearish (genuine selling).
-  Falling price + falling volume = weak decline (exhaustion possible).
-
-⚠️ FAILURE: Low volume moves are UNRELIABLE regardless of direction.
-
---- CVD (Cumulative Volume Delta) ---
-Calculation: Running sum of (taker buy volume - taker sell volume).
-CVD Trend: RISING (net buying), FALLING (net selling), NEUTRAL.
-
-USAGE:
-  CVD aligns with price = genuine pressure (confirms move).
-  CVD diverges from price = warning signal:
-    Price rising + CVD falling = fake pump, hidden selling.
-    Price falling + CVD rising = accumulation, hidden buying.
-  Absorption: Positive CVD but price flat = large seller absorbing buys.
-
-⚠️ FAILURE MODES:
-  1. Data quality — CVD from candle data is approximate, not tick-level.
-  2. Noisy during low-volume periods (weekends, holidays).
-
-Confirmations: CVD + Price action (primary), CVD + RSI extremes.
-
---- FUNDING RATE (Crypto Perpetual Futures) ---
-Calculation: Premium Index + clamp(Interest Rate - Premium Index, ±0.05%).
-Settlement: Every 8 hours. Positive = longs pay shorts. Negative = shorts pay longs.
-
-USAGE:
-  |Rate| < 0.03%: Normal. No signal. Typical in bull markets.
-  Rate > +0.05%: Crowded longs, increased risk of long squeeze/correction.
-  Rate > +0.10%: Extreme — high probability of bearish reversal.
-  Rate < -0.03%: Bearish pressure, potential for short squeeze.
-  Rate < -0.10%: Extreme panic — high probability of bullish bounce.
-
-  Predicted Rate diverging from current = expect shift at next settlement.
-  As HOLDING COST: Daily cost = rate × 3 settlements. Factor into R:R.
-
-⚠️ FAILURE MODES:
-  1. Normal positive funding (0.01-0.03%) in bull markets is standard and not
-     inherently bearish. Shorting based solely on positive funding has poor results.
-  2. Extreme rates can persist for days during parabolic moves.
-  3. Funding alone without OI and price context leads to premature contrarian trades.
-
-Confirmations: Funding + OI (most powerful), Funding + Liquidations, Funding + Price.
-
---- OPEN INTEREST (OI) ---
-Total outstanding derivative contracts. Rising = new money entering.
-
-THE 4-QUADRANT MATRIX (critical framework):
-  Price ↑ + OI ↑ = New longs entering → BULLISH CONFIRMATION
-  Price ↑ + OI ↓ = Short covering → WEAK rally (no new conviction)
-  Price ↓ + OI ↑ = New shorts entering → BEARISH CONFIRMATION
+--- OPEN INTEREST: 4-QUADRANT MATRIX ---
+  Price ↑ + OI ↑ = New longs → BULLISH CONFIRMATION
+  Price ↑ + OI ↓ = Short covering → WEAK rally
+  Price ↓ + OI ↑ = New shorts → BEARISH CONFIRMATION
   Price ↓ + OI ↓ = Long liquidation → BEARISH EXHAUSTION (potential bottom)
+Rising OI in consolidation = energy building. Sharp OI drop after crash = capitulation.
+⚠️ OI alone reveals nothing — must combine with price direction.
 
-  Rising OI during consolidation = building energy for breakout.
-  Sharp OI drop after crash = leverage cleansing (capitulation signal).
+--- ORDER BOOK ---
+OBI: (Bid Vol - Ask Vol) / Total. Positive = buy support. Negative = sell pressure.
+Dynamics: OBI/depth changes vs previous snapshot (trend direction).
+Walls (>3x avg size): Potential S/R, but can be spoofed.
+Slippage: High = low liquidity → smaller positions.
 
-⚠️ FAILURE MODES:
-  1. OI does NOT reveal direction — must combine with price.
-  2. High OI can sustain indefinitely in equilibrium.
+--- S/R ZONES ---
+Strength: HIGH (≥3 sources), MEDIUM (2), LOW (1).
+TRENDING: S/R breaks. Broken support → resistance and vice versa.
+RANGING: S/R holds. Mean-reversion reliable.
+⚠️ ADX > 40: S/R bounce rate drops to ~25%.
 
-Confirmations: OI + Price direction (essential), OI + Funding, OI + Volume.
+--- SENTIMENT (Binance L/S Ratio) ---
+Contrarian signal at extremes: >55% long = squeeze risk. >55% short = rally risk.
+⚠️ Extremes can persist in strong trends. Only useful at very high readings (>60%).
 
---- ORDER BOOK DEPTH ---
-Bid/ask limit orders at various price levels (100 levels from Binance).
-
-OBI (Order Book Imbalance):
-  Calculation: (Bid Vol - Ask Vol) / (Bid Vol + Ask Vol). Range: -1 to +1.
-  Positive OBI = more buy orders (support). Negative = more sell orders (pressure).
-  Adaptive OBI adjusts weighting based on volatility.
-
-Dynamics: Changes in OBI and depth vs previous snapshot.
-  Trend: STRENGTHENING_BIDS, WEAKENING_BIDS, etc.
-
-Pressure Gradient: How concentrated orders are near current price.
-  High near-5% concentration = tight liquidity, potential for sharp moves.
-
-Anomalies (Order Walls): Orders >3x average size.
-  Large bid wall = potential support. Large ask wall = potential resistance.
-  ⚠️ Walls can be spoofed (placed and cancelled). Treat as soft signals.
-
-Slippage: Expected price impact for market orders of given size.
-  High slippage = low liquidity → use smaller position sizes.
-
---- SUPPORT/RESISTANCE ZONES ---
-Price levels from multiple sources: Order Book Walls, BB, SMA, Pivots, Swing Points.
-
-Zone Strength: HIGH (≥3 sources), MEDIUM (2 sources), LOW (1 source).
-Zone Level: MAJOR (daily/weekly), INTERMEDIATE (4H), MINOR (15M/1H).
-
-TRENDING MARKET: S/R zones BREAK. Support breaks in downtrends.
-  Resistance breaks in uptrends. Broken support becomes resistance and vice versa.
-RANGING MARKET: S/R zones HOLD. Mean-reversion at zones is reliable.
-
-⚠️ STATISTICAL CONTEXT: In strong trends (ADX > 40), S/R bounce rates drop
-to ~25%. Support/resistance levels break more often than they hold.
-
---- SENTIMENT (Binance Long/Short Ratio) ---
-Global ratio of accounts holding long vs short positions.
-  Long > 55%: Bullish crowd positioning (contrarian: potential for squeeze).
-  Short > 55%: Bearish crowd positioning (contrarian: potential for rally).
-  Near 50/50: Balanced, no extreme signal.
-
-⚠️ FAILURE: Sentiment extremes can persist in strong trends.
-Only useful as CONTRARIAN signal at extreme readings (>60%/>40%).
-
---- HISTORICAL CONTEXT (Time-Series Data) ---
-Purpose: Shows continuous trajectories (like a human reading charts).
-All series are ordered oldest → newest (chronological).
-
-Core series (20 bars = ~5 hours at 15min):
-  price_trend: Closing prices — price action, patterns, level tests
-  volume_trend: Volume — accumulation/distribution
-  rsi_trend: RSI trajectory — overbought/oversold approach, divergences
-  macd_trend: MACD — momentum builds, crossovers, histogram changes
-  adx_trend + di_plus + di_minus: Trend strength + direction trajectory
-  bb_width_trend: Volatility squeeze/expansion
-  sma_history: SMA values — crossover detection
-
-Binance derivatives history (10 data points each):
-  Top Traders Position: Institutional positioning trend
-  Taker Buy/Sell Ratio: Aggressive order flow trend
-  OI History: Open interest buildup/decline
-  Funding History: ~3.3 days of settlement rates
-  Sentiment History: Long/short ratio evolution
-  Liquidation Hourly: 24h liquidation pattern
-
-HOW TO USE SERIES DATA:
-  - Compare current value to recent trajectory (is it rising/falling?)
-  - Look for DIVERGENCES between price and indicator series
-  - Identify TREND CHANGES (indicator reversing direction)
-  - Spot ACCELERATION or DECELERATION in momentum
+--- TIME-SERIES DATA ---
+All series: oldest → newest (chronological).
+Use for: divergences, trend changes, acceleration/deceleration patterns.
 
 ====================================================================
-INDICATOR CONFLUENCE FRAMEWORK
+CONFLUENCE FRAMEWORK
 ====================================================================
-Single-indicator signals have high false positive rates (e.g., MACD alone:
-74-97% false signals in backtests). Multi-indicator confluence from DIFFERENT
-information types dramatically reduces false signals:
-
-  Layer 1 — TREND: What direction? (SMA 200 position, ADX direction, DI cross)
-  Layer 2 — MOMENTUM: How strong? (RSI level, MACD histogram, CVD alignment)
-  Layer 3 — KEY LEVEL: Where exactly? (S/R zone, BB band, Volume cluster)
-
-EXAMPLE — High-confidence LONG setup:
-  ✅ Trend: Price > SMA 200, ADX > 25, DI+ > DI- (uptrend confirmed)
-  ✅ Momentum: RSI pulled back to 45 (Cardwell buy zone), MACD histogram growing
-  ✅ Key Level: Price at SMA 50 support + strong bid wall in order book
-  → 3/3 layers align = HIGH confidence
-
-EXAMPLE — Low-confidence setup (common failure pattern):
-  ❌ Trend: Price < SMA 200, ADX = 45, DI- >> DI+ (strong DOWNTREND)
-  ❌ Momentum: RSI = 25 (looks oversold, but Cardwell range shift: normal in downtrend)
-  ⚠️ Key Level: Price at "support" zone (support levels frequently break in strong trends)
-  → Trend layer contradicts the other signals → historically poor trade quality
-
-STATISTICAL FACT: When Layer 1 (Trend) conflicts with Layer 2/3, trend is
-statistically the stronger predictor. Counter-trend signals during strong
-trends are the primary source of retail trading losses.
+Single indicators have high false positive rates. Multi-layer confirmation:
+  Layer 1 — TREND: SMA 200, ADX direction, DI cross
+  Layer 2 — MOMENTUM: RSI, MACD histogram, CVD
+  Layer 3 — KEY LEVEL: S/R zone, BB band, order book wall
+When trend conflicts with other layers, trend is statistically the stronger predictor.
 """
 
 
@@ -968,10 +752,10 @@ PAST REFLECTIONS ON MISTAKES:
 {past_memories if past_memories else "No past data - this is a fresh start."}
 
 YOUR TASK:
-1. First verify: Did both analysts correctly identify the market regime?
-   Check ADX value in key metrics — if ADX > 25, it is TRENDING.
-   If one analyst used ranging-market logic in a trending market, their
-   argument is FLAWED (e.g., "RSI oversold = buy" in a downtrend is WRONG).
+1. Using the indicator manual, independently verify the current market regime
+   from the key metrics. Then assess: did both analysts apply the correct
+   regime-specific logic? (e.g., ranging-market logic in a trending market
+   produces flawed conclusions.)
 2. Summarize key points from both sides, focusing on the most compelling evidence.
 3. Your recommendation—LONG, SHORT, or HOLD—must be clear and actionable.
 4. Avoid defaulting to HOLD simply because both sides have valid points;
@@ -988,7 +772,14 @@ OUTPUT FORMAT (JSON only, no other text):
     "acknowledged_risks": ["risk1", "risk2"]
 }}"""
 
-        system_prompt = "You are a Portfolio Manager and debate facilitator. Critically evaluate the debate and make a decisive trading recommendation. Avoid defaulting to HOLD - commit to the side with stronger evidence. Learn from past mistakes."
+        system_prompt = f"""You are a Portfolio Manager and debate facilitator.
+Critically evaluate the debate and make a decisive trading recommendation.
+Commit to the side with stronger evidence. Learn from past mistakes.
+
+{INDICATOR_DEFINITIONS}
+
+Use the indicator manual to independently verify whether the analysts
+applied the correct regime-specific interpretation of the data."""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["judge"] = {
@@ -1348,6 +1139,7 @@ OUTPUT FORMAT (JSON only, no other text):
     "stop_loss": <price_number>,
     "take_profit": <price_number>,
     "reason": "<one sentence explaining the final decision>",
+    "invalidation": "<specific condition that would prove this trade wrong>",
     "debate_summary": "<brief summary of bull vs bear debate>"
 }}"""
 
