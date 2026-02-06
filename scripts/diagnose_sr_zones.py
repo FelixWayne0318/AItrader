@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-支撑阻力位全面诊断脚本 v3.0
+支撑阻力位全面诊断脚本 v3.1
 
 功能:
 1. 检查所有支撑阻力数据来源
@@ -12,12 +12,13 @@
 7. v1.2: S/R 检测回测验证 (验证检测准确率)
 8. v2.0: 完整交易模拟回测 (模拟 AI R/R 决策 + SL/TP 盈亏统计)
 9. v3.0: Swing Point 检测 + ATR 自适应聚类 + Touch Count 评分
+10. v3.1: 完整 S/R + SL/TP 详情, 14天默认回测, 质量分析
 
 使用方法:
-    python3 scripts/diagnose_sr_zones.py                    # 完整诊断
-    python3 scripts/diagnose_sr_zones.py --export           # 导出到文件
-    python3 scripts/diagnose_sr_zones.py --backtest         # 仅运行回测
-    python3 scripts/diagnose_sr_zones.py --backtest --days 7  # 回测7天
+    python3 scripts/diagnose_sr_zones.py                      # 完整诊断
+    python3 scripts/diagnose_sr_zones.py --export             # 导出到文件
+    python3 scripts/diagnose_sr_zones.py --backtest           # 仅运行回测 (14天)
+    python3 scripts/diagnose_sr_zones.py --backtest --days 30 # 回测30天
 """
 
 import os
@@ -1165,11 +1166,13 @@ def backtest_sr_trading_simulation(
 
 
 def print_backtest_results(result: Dict[str, Any]) -> None:
-    """打印回测结果"""
-    print_header(f"S/R 交易模拟回测 v2.0 (v3.17 R/R 驱动)")
+    """打印回测结果 (v3.0: 完整 S/R + SL/TP 详情)"""
+    print_header(f"S/R 交易模拟回测 v3.0 (v3.17 R/R 驱动)")
 
     if not result['success']:
         print_result("回测失败", result.get('error', 'Unknown'), "error")
+        if result.get('traceback'):
+            print(f"  {result['traceback'][:300]}")
         return
 
     cfg = result['config']
@@ -1223,6 +1226,212 @@ def print_backtest_results(result: Dict[str, Any]) -> None:
     print_result("平均实际 R/R", f"{risk['avg_actual_rr']:.2f}",
                 "ok" if risk['avg_actual_rr'] > 0 else "error")
 
+    # ========== 全部交易记录 (完整 S/R + SL/TP 详情) ==========
+    all_trades = result.get('all_trades', result.get('trades', []))
+    print_section(f"全部交易记录 ({len(all_trades)} 笔, 含 S/R + SL/TP 详情)")
+
+    if all_trades:
+        # 表头
+        print("  ┌──────┬──────────────────┬───────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────┬────────┬──────────┬──────────┐")
+        print("  │  ID  │ 时间             │ 方向  │ 入场价   │ 支撑位   │ 阻力位   │  SL 价   │  TP 价   │ R/R  │ 结果   │ 出场价   │ 盈亏     │")
+        print("  ├──────┼──────────────────┼───────┼──────────┼──────────┼──────────┼──────────┼──────────┼──────┼────────┼──────────┼──────────┤")
+
+        for t in all_trades:
+            result_emoji = {"WIN": "✅", "LOSS": "❌", "TIMEOUT": "⏱️"}.get(t['result'], "?")
+            pnl_str = f"${t['pnl_usdt']:+.0f}"
+            print(f"  │ {t['id']:>4} │ {t['time']:<16} │ {t['signal']:<5} │ "
+                  f"${t['entry_price']:>7,.0f} │ ${t['support']:>7,.0f} │ ${t['resistance']:>7,.0f} │ "
+                  f"${t['sl_price']:>7,.0f} │ ${t['tp_price']:>7,.0f} │ {t['rr_ratio']:>4.1f} │ "
+                  f"{result_emoji:<2}{t['result']:<4} │ ${t['exit_price']:>7,.0f} │ {pnl_str:>8} │")
+
+        print("  └──────┴──────────────────┴───────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────┴────────┴──────────┴──────────┘")
+
+        # ========== 每笔交易的 SL/TP 距离分析 ==========
+        print()
+        print_section("SL/TP 距离分析 (每笔交易)")
+        print("  ┌──────┬───────┬────────────┬────────────┬─────────────┬─────────────┬──────────────────────┐")
+        print("  │  ID  │ 方向  │ SL距入场   │ TP距入场   │ 支撑距入场  │ 阻力距入场  │ S/R评分 (支撑/阻力)  │")
+        print("  ├──────┼───────┼────────────┼────────────┼─────────────┼─────────────┼──────────────────────┤")
+
+        for t in all_trades:
+            entry = t['entry_price']
+            sl_dist = abs(t['sl_price'] - entry) / entry * 100
+            tp_dist = abs(t['tp_price'] - entry) / entry * 100
+            sup_dist = abs(entry - t['support']) / entry * 100
+            res_dist = abs(t['resistance'] - entry) / entry * 100
+            score_str = f"{t['support_score']:.2f} / {t['resistance_score']:.2f}"
+            print(f"  │ {t['id']:>4} │ {t['signal']:<5} │ {sl_dist:>8.2f}%  │ {tp_dist:>8.2f}%  │ "
+                  f"{sup_dist:>9.2f}%   │ {res_dist:>9.2f}%   │ {score_str:>20} │")
+
+        print("  └──────┴───────┴────────────┴────────────┴─────────────┴─────────────┴──────────────────────┘")
+
+    # ========== S/R + SL/TP 质量分析 ==========
+    print_section("S/R + SL/TP 质量分析")
+
+    if all_trades:
+        # SL 距离统计
+        sl_distances = []
+        tp_distances = []
+        sup_distances = []
+        res_distances = []
+
+        for t in all_trades:
+            entry = t['entry_price']
+            sl_distances.append(abs(t['sl_price'] - entry) / entry * 100)
+            tp_distances.append(abs(t['tp_price'] - entry) / entry * 100)
+            sup_distances.append(abs(entry - t['support']) / entry * 100)
+            res_distances.append(abs(t['resistance'] - entry) / entry * 100)
+
+        avg_sl_dist = sum(sl_distances) / len(sl_distances)
+        avg_tp_dist = sum(tp_distances) / len(tp_distances)
+        avg_sup_dist = sum(sup_distances) / len(sup_distances)
+        avg_res_dist = sum(res_distances) / len(res_distances)
+        min_sl_dist = min(sl_distances)
+        max_sl_dist = max(sl_distances)
+        min_tp_dist = min(tp_distances)
+        max_tp_dist = max(tp_distances)
+
+        print("  📏 距离统计:")
+        print(f"     SL 距入场:  平均 {avg_sl_dist:.2f}%  (最小 {min_sl_dist:.2f}%, 最大 {max_sl_dist:.2f}%)")
+        print(f"     TP 距入场:  平均 {avg_tp_dist:.2f}%  (最小 {min_tp_dist:.2f}%, 最大 {max_tp_dist:.2f}%)")
+        print(f"     支撑距入场: 平均 {avg_sup_dist:.2f}%")
+        print(f"     阻力距入场: 平均 {avg_res_dist:.2f}%")
+
+        # SL 合理性评估
+        print()
+        print("  📊 SL 合理性评估:")
+        tight_sl = sum(1 for d in sl_distances if d < 0.3)
+        normal_sl = sum(1 for d in sl_distances if 0.3 <= d <= 2.0)
+        wide_sl = sum(1 for d in sl_distances if d > 2.0)
+        total = len(sl_distances)
+        print(f"     过紧 (<0.3%): {tight_sl}/{total} ({tight_sl/total*100:.0f}%)"
+              f"  {'⚠️ 容易被噪音触发' if tight_sl/total > 0.2 else ''}")
+        print(f"     正常 (0.3-2%): {normal_sl}/{total} ({normal_sl/total*100:.0f}%)"
+              f"  {'✅ 合理范围' if normal_sl/total > 0.5 else ''}")
+        print(f"     过宽 (>2%):   {wide_sl}/{total} ({wide_sl/total*100:.0f}%)"
+              f"  {'⚠️ 风险过大' if wide_sl/total > 0.3 else ''}")
+
+        # TP 合理性评估
+        print()
+        print("  📊 TP 合理性评估:")
+        tight_tp = sum(1 for d in tp_distances if d < 0.5)
+        normal_tp = sum(1 for d in tp_distances if 0.5 <= d <= 3.0)
+        ambitious_tp = sum(1 for d in tp_distances if d > 3.0)
+        print(f"     过近 (<0.5%): {tight_tp}/{total} ({tight_tp/total*100:.0f}%)"
+              f"  {'⚠️ 盈利空间不足' if tight_tp/total > 0.2 else ''}")
+        print(f"     正常 (0.5-3%): {normal_tp}/{total} ({normal_tp/total*100:.0f}%)"
+              f"  {'✅ 合理范围' if normal_tp/total > 0.5 else ''}")
+        print(f"     过远 (>3%):   {ambitious_tp}/{total} ({ambitious_tp/total*100:.0f}%)"
+              f"  {'⚠️ 难以触及, 多TIMEOUT' if ambitious_tp/total > 0.3 else ''}")
+
+        # S/R 评分与胜率相关性
+        print()
+        print("  📊 S/R 评分与胜率相关性:")
+        high_score_trades = [t for t in all_trades if t['support_score'] >= 0.5 or t['resistance_score'] >= 0.5]
+        low_score_trades = [t for t in all_trades if t['support_score'] < 0.5 and t['resistance_score'] < 0.5]
+
+        if high_score_trades:
+            high_wins = len([t for t in high_score_trades if t['result'] == 'WIN'])
+            high_wr = high_wins / len(high_score_trades) * 100
+            print(f"     高评分 (≥0.5) S/R: {len(high_score_trades)} 笔, 胜率 {high_wr:.1f}%")
+        if low_score_trades:
+            low_wins = len([t for t in low_score_trades if t['result'] == 'WIN'])
+            low_wr = low_wins / len(low_score_trades) * 100
+            print(f"     低评分 (<0.5) S/R: {len(low_score_trades)} 笔, 胜率 {low_wr:.1f}%")
+
+        if high_score_trades and low_score_trades:
+            high_wr = len([t for t in high_score_trades if t['result'] == 'WIN']) / len(high_score_trades) * 100
+            low_wr = len([t for t in low_score_trades if t['result'] == 'WIN']) / len(low_score_trades) * 100
+            if high_wr > low_wr + 5:
+                print("     ✅ S/R 评分与胜率正相关 — 高评分 S/R 更可靠")
+            elif abs(high_wr - low_wr) <= 5:
+                print("     ⚠️ S/R 评分与胜率无明显相关 — 评分系统需优化")
+            else:
+                print("     ❌ S/R 评分与胜率负相关 — 评分逻辑可能有问题")
+
+        # 按日期分组的表现 (检测趋势vs震荡)
+        print()
+        print("  📊 按日期分组表现:")
+        from collections import defaultdict
+        daily_stats = defaultdict(lambda: {'wins': 0, 'losses': 0, 'timeouts': 0, 'pnl': 0.0, 'trades': 0})
+        for t in all_trades:
+            date = t['time'][:10]
+            daily_stats[date]['trades'] += 1
+            daily_stats[date]['pnl'] += t['pnl_usdt']
+            if t['result'] == 'WIN':
+                daily_stats[date]['wins'] += 1
+            elif t['result'] == 'LOSS':
+                daily_stats[date]['losses'] += 1
+            else:
+                daily_stats[date]['timeouts'] += 1
+
+        print("  ┌────────────┬───────┬──────┬──────┬──────┬──────────┬────────┐")
+        print("  │ 日期       │ 交易  │ 胜利 │ 亏损 │ 超时 │ 盈亏     │ 胜率   │")
+        print("  ├────────────┼───────┼──────┼──────┼──────┼──────────┼────────┤")
+
+        for date in sorted(daily_stats.keys()):
+            d = daily_stats[date]
+            wr = d['wins'] / d['trades'] * 100 if d['trades'] > 0 else 0
+            pnl_str = f"${d['pnl']:+,.0f}"
+            wr_emoji = "✅" if wr >= 50 else "❌" if wr < 30 else "⚠️"
+            print(f"  │ {date} │ {d['trades']:>5} │ {d['wins']:>4} │ {d['losses']:>4} │ "
+                  f"{d['timeouts']:>4} │ {pnl_str:>8} │ {wr_emoji}{wr:>4.0f}% │")
+
+        print("  └────────────┴───────┴──────┴──────┴──────┴──────────┴────────┘")
+
+        # 识别连续亏损段
+        print()
+        print("  📊 连续亏损段分析:")
+        streak_start = None
+        streak_count = 0
+        streaks = []
+        for i, t in enumerate(all_trades):
+            if t['result'] == 'LOSS':
+                if streak_start is None:
+                    streak_start = i
+                streak_count += 1
+            else:
+                if streak_count >= 3:  # 3连续亏损以上才记录
+                    streaks.append({
+                        'start_idx': streak_start,
+                        'count': streak_count,
+                        'start_time': all_trades[streak_start]['time'],
+                        'end_time': all_trades[streak_start + streak_count - 1]['time'],
+                        'total_loss': sum(all_trades[streak_start + j]['pnl_usdt'] for j in range(streak_count)),
+                        'directions': [all_trades[streak_start + j]['signal'] for j in range(streak_count)],
+                    })
+                streak_start = None
+                streak_count = 0
+        # 检查尾部
+        if streak_count >= 3:
+            streaks.append({
+                'start_idx': streak_start,
+                'count': streak_count,
+                'start_time': all_trades[streak_start]['time'],
+                'end_time': all_trades[streak_start + streak_count - 1]['time'],
+                'total_loss': sum(all_trades[streak_start + j]['pnl_usdt'] for j in range(streak_count)),
+                'directions': [all_trades[streak_start + j]['signal'] for j in range(streak_count)],
+            })
+
+        if streaks:
+            for s in streaks:
+                dir_counts = {}
+                for d in s['directions']:
+                    dir_counts[d] = dir_counts.get(d, 0) + 1
+                dir_str = ", ".join(f"{k}×{v}" for k, v in dir_counts.items())
+                print(f"     {s['start_time']} ~ {s['end_time']}: "
+                      f"{s['count']} 连亏, 亏损 ${s['total_loss']:,.0f} ({dir_str})")
+                # 诊断原因
+                if len(dir_counts) == 1:
+                    only_dir = list(dir_counts.keys())[0]
+                    print(f"       → 全部 {only_dir}: 可能是单边行情中逆势操作")
+                elif dir_counts.get('LONG', 0) > dir_counts.get('SHORT', 0) * 2:
+                    print(f"       → LONG 为主: 可能处于下跌趋势")
+                elif dir_counts.get('SHORT', 0) > dir_counts.get('LONG', 0) * 2:
+                    print(f"       → SHORT 为主: 可能处于上涨趋势")
+        else:
+            print("     ✅ 无 3 连亏以上的情况")
+
     # 结论
     print_section("结论")
 
@@ -1243,29 +1452,25 @@ def print_backtest_results(result: Dict[str, Any]) -> None:
     print()
     print("  📊 分析:")
     if summary['win_rate'] < 40:
-        print("     • 胜率偏低 - 考虑更严格的入场条件")
+        print("     - 胜率偏低 - 考虑更严格的入场条件")
     if summary['long_win_rate'] < summary['short_win_rate'] - 10:
-        print("     • LONG 胜率明显低于 SHORT - 可能处于下跌趋势")
+        print("     - LONG 胜率明显低于 SHORT - 可能处于下跌趋势")
     elif summary['short_win_rate'] < summary['long_win_rate'] - 10:
-        print("     • SHORT 胜率明显低于 LONG - 可能处于上涨趋势")
+        print("     - SHORT 胜率明显低于 LONG - 可能处于上涨趋势")
     if risk['max_consecutive_losses'] > 5:
-        print("     • 连续亏损次数较多 - 考虑加入趋势过滤")
+        print("     - 连续亏损次数较多 - 考虑加入趋势过滤 (ADX v3.20)")
 
-    # 最近交易
-    print_section("最近交易记录 (最新 10 笔)")
-
-    trades = result['trades'][-10:]
-    print("  ┌──────┬──────────────────┬───────┬──────────┬──────────┬────────┬──────────┐")
-    print("  │ ID   │ 时间             │ 方向  │ 入场价   │ 出场价   │ 结果   │ 盈亏     │")
-    print("  ├──────┼──────────────────┼───────┼──────────┼──────────┼────────┼──────────┤")
-
-    for t in trades:
-        result_emoji = {"WIN": "✅", "LOSS": "❌", "TIMEOUT": "⏱️"}.get(t['result'], "?")
-        pnl_str = f"${t['pnl_usdt']:+.0f}"
-        print(f"  │ {t['id']:>4} │ {t['time']:<16} │ {t['signal']:<5} │ ${t['entry_price']:>7,.0f} │ "
-              f"${t['exit_price']:>7,.0f} │ {result_emoji:<2}{t['result']:<4} │ {pnl_str:>8} │")
-
-    print("  └──────┴──────────────────┴───────┴──────────┴──────────┴────────┴──────────┘")
+    if all_trades:
+        # SL/TP 优化建议
+        print()
+        print("  💡 SL/TP 优化建议:")
+        if avg_sl_dist < 0.5:
+            print(f"     - SL 平均距离 {avg_sl_dist:.2f}% 偏小, 建议增大 sl_buffer_pct (当前 {cfg['sl_buffer_pct']}%)")
+        if avg_tp_dist > 3.0:
+            print(f"     - TP 平均距离 {avg_tp_dist:.2f}% 偏大, 阻力位可能不准确或市场无法到达")
+        timeout_rate = summary['timeout_count'] / summary['total_trades'] * 100 if summary['total_trades'] > 0 else 0
+        if timeout_rate > 20:
+            print(f"     - 超时率 {timeout_rate:.0f}% 偏高, TP 可能设置过远或持仓时间不足")
 
 
 def calculate_sr_zones_without_orderwall(current_price: float) -> Dict[str, Any]:
@@ -1435,7 +1640,7 @@ def analyze_telegram_data_source():
 
 def run_full_diagnosis():
     """运行完整诊断"""
-    print_header("支撑阻力位全面诊断 v3.0")
+    print_header("支撑阻力位全面诊断 v3.1")
     print(f"  时间: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
     # 1. 获取当前价格
@@ -1868,11 +2073,11 @@ def run_full_diagnosis():
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="支撑阻力位全面诊断 v3.0")
+    parser = argparse.ArgumentParser(description="支撑阻力位全面诊断 v3.1")
     parser.add_argument("--export", action="store_true", help="导出到文件")
     parser.add_argument("--backtest", action="store_true", help="仅运行交易模拟回测")
     parser.add_argument("--mock", action="store_true", help="使用模拟数据 (无网络环境)")
-    parser.add_argument("--days", type=int, default=7, help="回测天数 (默认 7)")
+    parser.add_argument("--days", type=int, default=14, help="回测天数 (默认 14)")
     parser.add_argument("--min-rr", type=float, default=1.5, help="最小 R/R 比率 (默认 1.5)")
     parser.add_argument("--position", type=float, default=1000, help="每笔仓位 USDT (默认 1000)")
     parser.add_argument("--leverage", type=int, default=10, help="杠杆倍数 (默认 10)")
@@ -1929,9 +2134,9 @@ def main():
             run_full_diagnosis()
             # 添加完整交易回测
             print()
-            print("  ⏳ 正在运行完整交易模拟回测 (7 天)...")
+            print(f"  ⏳ 正在运行完整交易模拟回测 ({args.days} 天)...")
             print()
-            result = backtest_sr_trading_simulation(days=7)
+            result = backtest_sr_trading_simulation(days=args.days)
             print_backtest_results(result)
 
         output = buffer.getvalue()
@@ -1946,9 +2151,9 @@ def main():
         run_full_diagnosis()
         # 添加完整交易回测
         print()
-        print("  ⏳ 正在运行完整交易模拟回测 (7 天)...")
+        print(f"  ⏳ 正在运行完整交易模拟回测 ({args.days} 天)...")
         print()
-        result = backtest_sr_trading_simulation(days=7)
+        result = backtest_sr_trading_simulation(days=args.days)
         print_backtest_results(result)
 
 
