@@ -1,8 +1,25 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断脚本 v2.7.0 (v3.18 订单流程模拟)
+实盘信号诊断脚本 v2.7.3 (v3.17 R/R 驱动入场)
 
-基于 TradingAgents v3.12 架构的完整诊断工具。
+基于 TradingAgents v3.17 架构的完整诊断工具。
+
+v2.7.3 更新:
+- 新增: v3.17 入场规则简化 - R/R 是唯一入场标准
+- 移除: "1-2% 内" 硬性入场距离限制
+- 更新: 入场质量完全由 R/R 比率决定
+- 新增: R/R 与仓位大小关联 (R/R 越高可用越大仓位)
+
+v2.7.2 更新:
+- 新增: v3.16 S/R Zone 硬风控移至 AI 自主决策
+- 更新: 架构描述反映 "Autonomy is non-negotiable" 原则
+- 更新: 硬风控显示改为 "AI 决策建议" 而非 "本地阻止"
+- 优化: sr_hard_control_enabled 默认 FALSE
+
+v2.7.1 更新:
+- 新增: v3.15 止损距离验证规则显示 (最小 1%)
+- 更新: sl_buffer_pct 默认值从 0.1% → 0.5% (确认真正 S/R 突破)
+- 优化: SL/TP 验证失败原因更明确 (距离<1% 或方向错误)
 
 v2.7.0 更新:
 - 新增: v3.18 订单流程完整模拟 (7 种场景)
@@ -112,11 +129,12 @@ v2.1 更新 (v4.8 适配):
     python3 scripts/diagnose_realtime.py --export     # 导出到文件
     python3 scripts/diagnose_realtime.py --push       # 导出并推送到 GitHub
 
-架构 (TradingAgents v3.12):
+架构 (TradingAgents v3.17 - R/R 驱动入场):
 - Phase 1: Bull/Bear 辩论 (2 AI calls)
 - Phase 2: Judge 决策 (1 AI call)
-- Phase 3: Risk 评估 (1 AI call)
-- 本地风控: S/R Zone v2.0 Block
+- Phase 3: Risk 评估 (1 AI call) - R/R >= 1.5:1 是唯一入场标准
+- 原则: R/R 驱动一切 - 入场质量、仓位大小均由 R/R 决定
+- 移除: "1-2% from S/R" 硬性距离规则
 
 v3.18 订单流程模拟 (7 种场景):
 - 场景 1: 新开仓 (无持仓 → 开仓)

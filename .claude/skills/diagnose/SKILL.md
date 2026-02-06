@@ -127,11 +127,55 @@ python3 scripts/diagnose.py 2>&1 | grep -E "(RSI|MACD|SMA)"
 | File | Purpose |
 |------|---------|
 | `scripts/diagnose.py` | Main diagnostic script |
-| `scripts/diagnose_realtime.py` | Real-time API diagnostic |
+| `scripts/diagnose_realtime.py` | Real-time API diagnostic (v2.7.0) |
+| `scripts/diagnostics/` | Modular diagnostic system |
 | `scripts/smart_commit_analyzer.py` | Regression detection (auto-evolving rules) |
 | `strategy/deepseek_strategy.py` | Main strategy logic |
 | `configs/base.yaml` | Base configuration (all parameters) |
 | `configs/production.yaml` | Production environment overrides |
+
+## Order Flow Simulation (v3.18)
+
+**New in v2.7.0**: 模块化诊断系统现在包含 7 个订单流场景模拟。
+
+### 7 Scenarios (模拟场景)
+
+| 场景 | 描述 | 测试目标 |
+|------|------|----------|
+| **1. New Position** | 开新仓 (无现有持仓) | Bracket 订单创建 |
+| **2. Add to Position** | 加仓 (同方向) | SL/TP 数量更新 |
+| **3. Reduce Position** | 减仓 | SL/TP 数量减少 |
+| **4. Reversal** | 反转仓位 (多→空/空→多) | 两阶段提交逻辑 |
+| **5. Close Position** | 平仓信号 | 仓位关闭 + 取消 SL/TP |
+| **6. Bracket Failure** | SL/TP 订单失败 | CRITICAL 告警 (不回退) |
+| **7. SL/TP Modify Failure** | SL/TP 修改失败 | WARNING 告警 |
+
+### Run Order Flow Simulation
+
+```bash
+cd /home/linuxuser/nautilus_AItrader
+source venv/bin/activate
+python3 scripts/diagnose_realtime.py
+```
+
+诊断输出将包含 "Step 9: Order Flow Simulation (v3.18)" 显示所有 7 个场景的模拟结果。
+
+### Expected Output
+
+```
+============================================================
+Step 9: Order Flow Simulation (v3.18)
+============================================================
+✅ Scenario 1: New Position - PASSED
+✅ Scenario 2: Add to Position - PASSED
+✅ Scenario 3: Reduce Position - PASSED
+✅ Scenario 4: Reversal - PASSED
+✅ Scenario 5: Close Position - PASSED
+✅ Scenario 6: Bracket Failure - PASSED
+✅ Scenario 7: SL/TP Modify Failure - PASSED
+
+📊 Order Flow Simulation Summary: 7/7 scenarios passed
+```
 
 ## 回归检测 (修改代码后必须运行)
 

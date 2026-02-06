@@ -843,35 +843,42 @@ OUTPUT FORMAT (JSON only, no other text):
         if isinstance(risks, list):
             risks = risks.copy()  # Don't modify original
 
-        # ========== v3.8: S/R Zone Hard Control ==========
-        # Uses multi-source S/R zones (BB + SMA + Order Book Walls)
-        # Only blocks when near HIGH strength zones (confluence of multiple sources)
-        # v3.9: Can be disabled via sr_hard_control_enabled config
-        sr_hard_control_enabled = getattr(self, 'sr_hard_control_enabled', True)
+        # ========== v3.16: S/R Zone Hard Control moved to AI ==========
+        # v3.8-v3.15: Local hard control (blocked trades programmatically)
+        # v3.16: Moved to AI - Risk Manager now decides autonomously
+        #        Local override only for emergency (sr_hard_control_enabled: true)
+        #
+        # TradingAgents principle: "Autonomy is non-negotiable"
+        # AI receives hard_control info and decides whether to block
+        # ================================================================
+        sr_hard_control_enabled = getattr(self, 'sr_hard_control_enabled', False)  # v3.16: Default FALSE
         blocked_reason = ""
+        hard_control_info = {}
 
-        if sr_hard_control_enabled and self._sr_zones_cache:
-            hard_control = self._sr_zones_cache.get('hard_control', {})
+        if self._sr_zones_cache:
+            hard_control_info = self._sr_zones_cache.get('hard_control', {})
 
-            # Block LONG if too close to HIGH strength resistance
-            if action == "LONG" and hard_control.get('block_long'):
-                blocked_reason = hard_control.get('reason', 'Too close to resistance')
-                self.logger.warning(f"⚠️ {blocked_reason}")
-                proposed_action["decision"] = "HOLD"
-                proposed_action["confidence"] = "LOW"
-                rationale = f"Blocked: {blocked_reason}"
-                risks.append("Too close to HIGH strength resistance zone")
-                action = "HOLD"
+            # v3.16: Only use local override if explicitly enabled (emergency mode)
+            if sr_hard_control_enabled:
+                # Block LONG if too close to HIGH strength resistance
+                if action == "LONG" and hard_control_info.get('block_long'):
+                    blocked_reason = hard_control_info.get('reason', 'Too close to resistance')
+                    self.logger.warning(f"⚠️ [LOCAL OVERRIDE] {blocked_reason}")
+                    proposed_action["decision"] = "HOLD"
+                    proposed_action["confidence"] = "LOW"
+                    rationale = f"Blocked: {blocked_reason}"
+                    risks.append("Too close to HIGH strength resistance zone")
+                    action = "HOLD"
 
-            # Block SHORT if too close to HIGH strength support
-            elif action == "SHORT" and hard_control.get('block_short'):
-                blocked_reason = hard_control.get('reason', 'Too close to support')
-                self.logger.warning(f"⚠️ {blocked_reason}")
-                proposed_action["decision"] = "HOLD"
-                proposed_action["confidence"] = "LOW"
-                rationale = f"Blocked: {blocked_reason}"
-                risks.append("Too close to HIGH strength support zone")
-                action = "HOLD"
+                # Block SHORT if too close to HIGH strength support
+                elif action == "SHORT" and hard_control_info.get('block_short'):
+                    blocked_reason = hard_control_info.get('reason', 'Too close to support')
+                    self.logger.warning(f"⚠️ [LOCAL OVERRIDE] {blocked_reason}")
+                    proposed_action["decision"] = "HOLD"
+                    proposed_action["confidence"] = "LOW"
+                    rationale = f"Blocked: {blocked_reason}"
+                    risks.append("Too close to HIGH strength support zone")
+                    action = "HOLD"
         # ========== End of S/R Zone Hard Control ==========
 
         # Format strategic actions for prompt
@@ -884,7 +891,28 @@ OUTPUT FORMAT (JSON only, no other text):
             if not sr_zones_for_risk:
                 sr_zones_for_risk = self._sr_zones_cache.get('ai_report', '')
 
+        # v3.16: Format hard control info for AI (moved from local override to AI decision)
+        hard_control_section = ""
+        if hard_control_info:
+            block_long = hard_control_info.get('block_long', False)
+            block_short = hard_control_info.get('block_short', False)
+            hc_reason = hard_control_info.get('reason', '')
+            if block_long or block_short:
+                hard_control_section = f"""
+⛔ S/R ZONE HARD CONTROL ALERT (v3.16 - AI Decision Required):
+- Block LONG Signal: {'YES - TOO CLOSE TO HIGH STRENGTH RESISTANCE' if block_long else 'No'}
+- Block SHORT Signal: {'YES - TOO CLOSE TO HIGH STRENGTH SUPPORT' if block_short else 'No'}
+- Reason: {hc_reason if hc_reason else 'N/A'}
+
+YOU MUST evaluate this alert and decide:
+- If block_long=YES and proposed action is LONG → You SHOULD change to HOLD (unless you have exceptional reasoning)
+- If block_short=YES and proposed action is SHORT → You SHOULD change to HOLD (unless you have exceptional reasoning)
+- "HIGH strength" means multiple sources confirm this S/R zone (BB + SMA + Order Wall confluence)
+- Trading against HIGH strength zones has historically low success rate
+"""
+
         prompt = f"""As the Risk Manager, provide final trade parameters.
+{hard_control_section}
 
 PROPOSED TRADE:
 - Action: {action}
@@ -911,37 +939,44 @@ CURRENT PRICE: ${current_price:,.2f}
 YOUR TASK:
 ⚠️ CRITICAL: Entry will be at CURRENT MARKET PRICE (${current_price:,.2f}), not at S/R levels.
 
-1. FIRST - Validate if CURRENT PRICE is at a good entry point:
-   - For LONG: Current price must be ALREADY near SUPPORT (within 1-2%) to approve
-   - For SHORT: Current price must be ALREADY near RESISTANCE (within 1-2%) to approve
-   - If price is in the MIDDLE of S/R range: Change to HOLD (bad R/R at current price)
-   - If price is far from ideal entry zone: Change to HOLD (wait for better price)
+0. PRIORITY CHECK - S/R Zone Hard Control (v3.16):
+   - If a "⛔ S/R ZONE HARD CONTROL ALERT" is shown above, you MUST address it first
+   - Block LONG=YES + proposed LONG → Change to HOLD (price too close to HIGH strength resistance)
+   - Block SHORT=YES + proposed SHORT → Change to HOLD (price too close to HIGH strength support)
+   - HIGH strength zones have multiple confirming sources - trading against them is high risk
+   - You may override ONLY if you have exceptional reasoning (e.g., major breakout with volume confirmation)
+   - If you override, you MUST explain why in your "reason" field
 
-2. Determine stop loss using S/R zones as reference:
-   - For LONG: Place SL below nearest SUPPORT zone (preferably with ORDER_FLOW or HIGH strength)
-   - For SHORT: Place SL above nearest RESISTANCE zone (preferably with ORDER_FLOW or HIGH strength)
-   - Consider market volatility: in high volatility, use wider SL to avoid noise-triggered stops
-   - Aim for SL distance of at least 0.5-1% to account for normal price fluctuation
+1. Calculate SL/TP based on S/R zones:
+   - For LONG: SL below nearest SUPPORT, TP at nearest RESISTANCE
+   - For SHORT: SL above nearest RESISTANCE, TP at nearest SUPPORT
+   - Prefer zones with HIGH strength or ORDER_FLOW confirmation
+   - Minimum SL distance: 0.5-1% to avoid noise-triggered stops
 
-3. Determine take profit using S/R zones as reference:
-   - For LONG: Target nearest RESISTANCE zone as TP (consider zone Level: MAJOR > INTERMEDIATE > MINOR)
-   - For SHORT: Target nearest SUPPORT zone as TP
+2. Evaluate Risk/Reward ratio (THIS IS THE ONLY ENTRY CRITERION - v3.17):
+   - Calculate: Risk = |current_price - stop_loss|, Reward = |take_profit - current_price|
+   - R/R = Reward / Risk
+   - MINIMUM acceptable R/R is 1.5:1
 
-4. Evaluate Risk/Reward ratio at CURRENT PRICE (CRITICAL):
-   - Calculate: SL distance = |current_price - stop_loss|, TP distance = |take_profit - current_price|
-   - MINIMUM acceptable R/R is 1.5:1 (TP distance >= 1.5x SL distance)
-   - IMPORTANT: If R/R at current price is below 1.5:1, you MUST change signal to HOLD
-   - DO NOT adjust SL/TP to artificially inflate R/R - if the entry is bad, signal HOLD
+   Understanding R/R and price position:
+   - Price closer to SUPPORT → LONG has better R/R (small risk, large reward)
+   - Price closer to RESISTANCE → SHORT has better R/R (small risk, large reward)
+   - Price in MIDDLE → Both directions have poor R/R → likely HOLD
 
-5. FINAL VALIDATION (v3.15 - Market Order Reality Check):
-   - Entry happens at CURRENT PRICE, not at S/R zones
-   - REJECT LONG if current price is far from support (> 2% away) - bad entry timing
-   - REJECT SHORT if current price is far from resistance (> 2% away) - bad entry timing
-   - APPROVE LONG only if current price is already near support AND R/R >= 1.5:1
-   - APPROVE SHORT only if current price is already near resistance AND R/R >= 1.5:1
-   - When in doubt, choose HOLD - waiting for better entry is better than bad entry
+   ⚠️ R/R is the ONLY criterion for entry quality. Do NOT use arbitrary distance rules.
+   ⚠️ If R/R < 1.5:1, you MUST change signal to HOLD regardless of other factors.
 
-6. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
+3. Position sizing based on R/R quality:
+   - R/R >= 2.5:1 → Can use higher position size (80-100%)
+   - R/R 2.0-2.5:1 → Medium position size (50-80%)
+   - R/R 1.5-2.0:1 → Conservative position size (30-50%)
+   - R/R < 1.5:1 → HOLD (do not trade)
+
+4. Final validation:
+   - Entry happens at CURRENT MARKET PRICE
+   - If proposed signal has R/R >= 1.5:1 → APPROVE
+   - If proposed signal has R/R < 1.5:1 → Change to HOLD
+   - When in doubt, calculate R/R - it tells you everything about entry quality
 
 SIGNAL TYPES (v3.12 - choose the most appropriate):
 - LONG: Open new long or add to existing long position

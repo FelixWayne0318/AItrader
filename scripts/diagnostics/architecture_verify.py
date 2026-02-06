@@ -164,15 +164,16 @@ class DiagnosticSummaryBox(DiagnosticStep):
     def run(self) -> bool:
         print()
         print("=" * 70)
-        print("  诊断总结 (TradingAgents v3.12 - AI 决策 + S/R Zone v2.0 风控)")
+        print("  诊断总结 (TradingAgents v3.17 - R/R 驱动入场)")
         print("=" * 70)
         print()
 
         sd = self.ctx.signal_data
         judge = sd.get('judge_decision', {})
 
-        print("  📊 架构: TradingAgents v3.12 - AI 决策 + S/R Zone v2.0 风控")
-        print("     本地风控: S/R Zone v2.0 Block (执行层，含 level/source_type)")
+        print("  📊 架构: TradingAgents v3.17 - R/R 驱动入场")
+        print("     入场标准: R/R >= 1.5:1 (唯一入场标准)")
+        print("     仓位大小: 由 R/R 质量决定 (R/R 越高 → 仓位越大)")
         print()
 
         print(f"  📊 AI Signal: {sd.get('signal', 'N/A')}")

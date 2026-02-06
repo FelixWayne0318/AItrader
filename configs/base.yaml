@@ -147,7 +147,7 @@ risk:
   stop_loss:
     enabled: true
     use_support_resistance: true
-    buffer_pct: 0.001             # 缓冲 0.1%
+    buffer_pct: 0.005             # 缓冲 0.5% (确认真正突破 S/R)
 
   take_profit:
     high_confidence_pct: 0.03     # 高信心: 3%

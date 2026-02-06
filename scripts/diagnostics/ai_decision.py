@@ -21,6 +21,11 @@ class AIInputDataValidator(DiagnosticStep):
 
     Based on v11.16: AI 输入数据验证 (传给 MultiAgent)
 
+    v2.7.3 更新 (v3.17 R/R 驱动入场):
+    - 更新: 入场验证规则改为 R/R 驱动 (移除 "1-2% within S/R" 硬性规则)
+    - 更新: R/R >= 1.5:1 是唯一入场标准
+    - 新增: R/R 与仓位大小关联说明
+
     v2.6.0 更新:
     - 新增: [11] S/R Zones 验证 (支撑/阻力区计算)
     - 新增: S/R Zone 数据用于 SL/TP 回退计算
@@ -612,16 +617,17 @@ class AIInputDataValidator(DiagnosticStep):
 
             print()
 
-            # Hard control status
+            # Hard control status (v3.16: AI 自主决策，非本地覆盖)
             hard_control = sr_data.get('hard_control', {})
             if hard_control.get('block_long') or hard_control.get('block_short'):
-                print("      ⚠️ 硬风控:")
+                print("      ⚠️ S/R Zone 建议 (v3.16 由 AI 自主判断):")
                 if hard_control.get('block_long'):
-                    print("        🚫 LONG 被阻止 (太靠近阻力位)")
+                    print("        📋 建议避免 LONG (太靠近 HIGH 强度阻力位)")
                 if hard_control.get('block_short'):
-                    print("        🚫 SHORT 被阻止 (太靠近支撑位)")
+                    print("        📋 建议避免 SHORT (太靠近 HIGH 强度支撑位)")
                 if hard_control.get('reason'):
                     print(f"        原因: {hard_control['reason']}")
+                print("        ℹ️ Risk Manager (AI) 可自主决定是否遵守")
             else:
                 print("      ✅ 硬风控: 无限制")
 
@@ -1110,7 +1116,13 @@ class OrderSimulator(DiagnosticStep):
 
         print()
         use_sr = getattr(cfg, 'sl_use_support_resistance', True)
-        sl_buffer = getattr(cfg, 'sl_buffer_pct', 0.001)
+        sl_buffer = getattr(cfg, 'sl_buffer_pct', 0.005)  # v3.15.1: 0.5% buffer for real S/R breakout
+
+        print("  📋 v3.17 入场验证规则 (R/R 驱动):")
+        print("     - R/R >= 1.5:1 是唯一入场标准 (移除距离硬性规则)")
+        print("     - 最小止损距离: 1% (技术要求，非入场标准)")
+        print(f"     - S/R 突破缓冲: {sl_buffer*100:.1f}% (确认真正突破)")
+        print()
 
         if multi_sl and multi_tp:
             is_valid, final_sl, final_tp, reason = validate_multiagent_sltp(
@@ -1122,7 +1134,7 @@ class OrderSimulator(DiagnosticStep):
             print(f"     验证结果: {'✅ 通过' if is_valid else '❌ 失败'} - {reason}")
 
             if not is_valid:
-                print("     ⚠️ AI SL/TP 验证失败，回退到 S/R Zone 技术分析")
+                print("     ⚠️ AI SL/TP 验证失败 (v3.15: 距离<1% 或方向错误)，回退到 S/R Zone 技术分析")
                 final_sl, final_tp, calc_method = calculate_technical_sltp(
                     side=signal,
                     entry_price=self.ctx.current_price,
@@ -1169,10 +1181,22 @@ class OrderSimulator(DiagnosticStep):
             rr_ratio = tp_pct / sl_pct if sl_pct > 0 else 0
 
             print()
-            print("  📊 风险/收益分析:")
+            print("  📊 风险/收益分析 (v3.17 R/R 驱动):")
             print(f"     止损距离: {sl_pct:.2f}%")
             print(f"     止盈距离: {tp_pct:.2f}%")
-            print(f"     风险/收益比: 1:{rr_ratio:.2f}")
+            print(f"     R/R 比率: {rr_ratio:.2f}:1")
+
+            # v3.17: R/R-based position sizing guidance
+            if rr_ratio >= 2.5:
+                rr_status = "✅ 优秀 (建议 80-100% 仓位)"
+            elif rr_ratio >= 2.0:
+                rr_status = "✅ 良好 (建议 50-80% 仓位)"
+            elif rr_ratio >= 1.5:
+                rr_status = "⚠️ 可接受 (建议 30-50% 仓位)"
+            else:
+                rr_status = "❌ 不达标 (建议 HOLD)"
+            print(f"     v3.17 评估: {rr_status}")
+
             print(f"     最大亏损: ${quantity * self.ctx.current_price * sl_pct / 100:,.2f}")
             print(f"     最大盈利: ${quantity * self.ctx.current_price * tp_pct / 100:,.2f}")
 

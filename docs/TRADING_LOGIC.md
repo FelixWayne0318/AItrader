@@ -1,8 +1,8 @@
 # AItrader 完整交易逻辑文档
 
-> 版本: 2.0
-> 更新日期: 2026-01-27
-> 适用代码版本: main 分支
+> 版本: 2.1
+> 更新日期: 2026-02-05
+> 适用代码版本: main 分支 (含 v3.18 订单流安全修复)
 
 本文档详细描述 AItrader 的完整数据流、信号生成、仓位管理和风险控制逻辑。
 
@@ -569,7 +569,59 @@ _execute_trade() 执行条件检查:
    └─ 无现仓 → _open_new_position()
 ```
 
-### 6.3 反向交易保护
+### 6.3 订单流程安全 (v3.18)
+
+**v3.18 新增**: 订单执行过程中的安全保护机制
+
+```
+7 种订单流程场景:
+
+┌───────────────────────────────────────────────────────────────┐
+│ 场景 1: 开新仓 (无现有持仓)                                    │
+│ └─ 创建 Market Order + Bracket Order (SL/TP)                  │
+│                                                               │
+│ 场景 2: 加仓 (同方向)                                         │
+│ └─ 执行加仓 + 调用 _update_sltp_quantity() 更新 SL/TP 数量    │
+│                                                               │
+│ 场景 3: 减仓                                                  │
+│ └─ 执行减仓 + 调用 _update_sltp_quantity() 减少 SL/TP 数量    │
+│                                                               │
+│ 场景 4: 反转仓位 (多→空/空→多) ⭐ 关键                        │
+│ ├─ 使用 _pending_reversal 状态变量防止竞态条件                │
+│ └─ on_position_closed 中两阶段提交: 先确认平仓，再开反向仓    │
+│                                                               │
+│ 场景 5: 平仓信号                                              │
+│ └─ 关闭仓位 + 取消所有相关 SL/TP 订单                         │
+│                                                               │
+│ 场景 6: Bracket 订单失败 ⭐ 关键                               │
+│ ├─ 不回退到无保护 MARKET 单                                   │
+│ └─ 发送 CRITICAL 告警并保持 HOLD                              │
+│                                                               │
+│ 场景 7: SL/TP 修改失败                                        │
+│ └─ 发送 WARNING 告警，保留原有保护                            │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**反转交易两阶段提交**:
+```python
+# Phase 1: 提交平仓订单，设置 _pending_reversal
+self._pending_reversal = {
+    'new_side': new_side,
+    'quantity': quantity,
+    'signal_data': signal_data
+}
+
+# Phase 2: 在 on_position_closed 回调中执行
+if self._pending_reversal:
+    self._execute_new_position(
+        self._pending_reversal['new_side'],
+        self._pending_reversal['quantity'],
+        self._pending_reversal['signal_data']
+    )
+    self._pending_reversal = None
+```
+
+### 6.4 反向交易保护
 
 ```python
 反向交易条件:

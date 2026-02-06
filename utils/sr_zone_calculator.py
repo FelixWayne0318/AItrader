@@ -105,18 +105,28 @@ class SRZoneCalculator:
     """
 
     # 权重配置
+    # v2.1: 降低 Order Wall 权重 (从 2.0 → 0.8)
+    # 原因: Order Wall 是临时的盘口订单，不应该覆盖技术指标
     WEIGHTS = {
-        'Order_Wall': 2.0,      # 订单簿大单 (最重要)
-        'SMA_200': 1.5,         # 长期趋势
+        'Order_Wall': 0.8,      # 订单簿大单 (v2.1: 降低权重，仅作为辅助确认)
+        'SMA_200': 1.5,         # 长期趋势 (最重要)
         'BB_Upper': 1.0,        # 布林带
         'BB_Lower': 1.0,
         'SMA_50': 0.8,          # 中期趋势
         'Pivot': 0.7,           # Pivot Points (可选)
     }
 
+    # v2.1: Order Wall 过滤阈值
+    ORDER_WALL_THRESHOLDS = {
+        'min_btc': 50.0,        # 最小 BTC 阈值 (小于此值不算大单)
+        'min_distance_pct': 0.5, # 最小距离阈值 (距离当前价 < 0.5% 的不算 S/R)
+        'high_strength_btc': 100.0,  # 达到此 BTC 量才能贡献 HIGH strength
+    }
+
     # 强度阈值
+    # v2.1: HIGH 需要 total_weight >= 3.0 或 Order Wall >= 100 BTC
     STRENGTH_THRESHOLDS = {
-        'HIGH': 3.0,            # 总权重 >= 3.0 或有 Order Wall
+        'HIGH': 3.0,            # 总权重 >= 3.0 或 Order Wall >= high_strength_btc
         'MEDIUM': 1.5,          # 总权重 >= 1.5
         'LOW': 0.0,             # 其他
     }
@@ -298,38 +308,84 @@ class SRZoneCalculator:
                 ))
 
         # Order Book Walls (MINOR level, ORDER_FLOW type - 最实时)
+        # v2.1: 添加严格过滤条件，避免盘口普通订单被误识别为 S/R
         if orderbook_anomalies:
+            min_btc = self.ORDER_WALL_THRESHOLDS['min_btc']
+            min_distance_pct = self.ORDER_WALL_THRESHOLDS['min_distance_pct']
+
             # Bid walls = Support
             for wall in orderbook_anomalies.get('bid_anomalies', []):
-                if wall.get('price', 0) < current_price:
-                    candidates.append(SRCandidate(
-                        price=wall['price'],
-                        source=f"Order_Wall_${wall['price']:.0f}",
-                        weight=self.WEIGHTS['Order_Wall'],
-                        side='support',
-                        extra={
-                            'size_btc': wall.get('volume_btc', 0),
-                            'multiplier': wall.get('multiplier', 1),
-                        },
-                        level=SRLevel.MINOR,
-                        source_type=SRSourceType.ORDER_FLOW,
-                    ))
+                wall_price = wall.get('price', 0)
+                wall_btc = wall.get('volume_btc', 0)
+
+                # v2.1: 过滤条件
+                if wall_price <= 0 or wall_price >= current_price:
+                    continue
+
+                # 检查最小 BTC 阈值
+                if wall_btc < min_btc:
+                    self.logger.debug(
+                        f"Skipping bid wall at ${wall_price:.0f}: {wall_btc:.1f} BTC < {min_btc} BTC threshold"
+                    )
+                    continue
+
+                # 检查最小距离阈值
+                distance_pct = (current_price - wall_price) / current_price * 100
+                if distance_pct < min_distance_pct:
+                    self.logger.debug(
+                        f"Skipping bid wall at ${wall_price:.0f}: {distance_pct:.2f}% < {min_distance_pct}% min distance"
+                    )
+                    continue
+
+                candidates.append(SRCandidate(
+                    price=wall_price,
+                    source=f"Order_Wall_${wall_price:.0f}",
+                    weight=self.WEIGHTS['Order_Wall'],
+                    side='support',
+                    extra={
+                        'size_btc': wall_btc,
+                        'multiplier': wall.get('multiplier', 1),
+                    },
+                    level=SRLevel.MINOR,
+                    source_type=SRSourceType.ORDER_FLOW,
+                ))
 
             # Ask walls = Resistance
             for wall in orderbook_anomalies.get('ask_anomalies', []):
-                if wall.get('price', 0) > current_price:
-                    candidates.append(SRCandidate(
-                        price=wall['price'],
-                        source=f"Order_Wall_${wall['price']:.0f}",
-                        weight=self.WEIGHTS['Order_Wall'],
-                        side='resistance',
-                        extra={
-                            'size_btc': wall.get('volume_btc', 0),
-                            'multiplier': wall.get('multiplier', 1),
-                        },
-                        level=SRLevel.MINOR,
-                        source_type=SRSourceType.ORDER_FLOW,
-                    ))
+                wall_price = wall.get('price', 0)
+                wall_btc = wall.get('volume_btc', 0)
+
+                # v2.1: 过滤条件
+                if wall_price <= 0 or wall_price <= current_price:
+                    continue
+
+                # 检查最小 BTC 阈值
+                if wall_btc < min_btc:
+                    self.logger.debug(
+                        f"Skipping ask wall at ${wall_price:.0f}: {wall_btc:.1f} BTC < {min_btc} BTC threshold"
+                    )
+                    continue
+
+                # 检查最小距离阈值
+                distance_pct = (wall_price - current_price) / current_price * 100
+                if distance_pct < min_distance_pct:
+                    self.logger.debug(
+                        f"Skipping ask wall at ${wall_price:.0f}: {distance_pct:.2f}% < {min_distance_pct}% min distance"
+                    )
+                    continue
+
+                candidates.append(SRCandidate(
+                    price=wall_price,
+                    source=f"Order_Wall_${wall_price:.0f}",
+                    weight=self.WEIGHTS['Order_Wall'],
+                    side='resistance',
+                    extra={
+                        'size_btc': wall_btc,
+                        'multiplier': wall.get('multiplier', 1),
+                    },
+                    level=SRLevel.MINOR,
+                    source_type=SRSourceType.ORDER_FLOW,
+                ))
 
         # Pivot Points (STRUCTURAL type)
         if pivot_data:
@@ -436,7 +492,13 @@ class SRZoneCalculator:
                 })
 
         # 计算强度
-        if has_order_wall or total_weight >= self.STRENGTH_THRESHOLDS['HIGH']:
+        # v2.1: 修改 HIGH 判断逻辑
+        # - Order Wall 必须达到 high_strength_btc (100 BTC) 才能贡献 HIGH
+        # - 或者 total_weight >= 3.0 (需要多个来源 confluence)
+        high_strength_btc = self.ORDER_WALL_THRESHOLDS['high_strength_btc']
+        has_significant_wall = has_order_wall and wall_size_btc >= high_strength_btc
+
+        if has_significant_wall or total_weight >= self.STRENGTH_THRESHOLDS['HIGH']:
             strength = 'HIGH'
         elif total_weight >= self.STRENGTH_THRESHOLDS['MEDIUM']:
             strength = 'MEDIUM'
