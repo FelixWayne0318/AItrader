@@ -607,6 +607,22 @@ Environment=AUTO_CONFIRM=true
     - 文件：`strategy/deepseek_strategy.py:3200-3500`
     - 诊断：`scripts/diagnose_realtime.py` v2.7.0 新增 7 种场景模拟
 
+18. **v3.16 S/R Zone 硬风控移至 AI** (TradingAgents Autonomy) - **架构改进**
+    - **背景**: TradingAgents 原则 "Autonomy is non-negotiable" - AI 应完全自主决策
+    - **问题**: v3.8-v3.15 本地硬风控在 AI 决策后强制覆盖信号，违反 AI 自主权
+    - **修复**: 将硬风控逻辑移入 Risk Manager prompt，由 AI 自主判断
+    - **变更**:
+      - `sr_hard_control_enabled` 默认值从 `True` 改为 `False`
+      - Risk Manager prompt 新增 "⛔ S/R ZONE HARD CONTROL ALERT" 段落
+      - AI 收到 `block_long`/`block_short` 信息后自主决定是否遵守
+      - 本地覆盖仅在显式启用 `sr_hard_control_enabled: true` 时生效 (紧急模式)
+    - **AI 决策规则**:
+      - `Block LONG=YES + proposed LONG` → AI 应改为 HOLD (除非有特殊理由)
+      - `Block SHORT=YES + proposed SHORT` → AI 应改为 HOLD (除非有特殊理由)
+      - AI 可在特殊情况下覆盖 (如突破 + 成交量确认)，但必须在 reason 中说明
+    - 文件：`agents/multi_agent_analyzer.py:846-912`
+    - 参考：[TradingAgents Framework](https://github.com/TauricResearch/TradingAgents)
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
