@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-支撑阻力位全面诊断脚本 v1.1
+支撑阻力位全面诊断脚本 v1.2
 
 功能:
 1. 检查所有支撑阻力数据来源
@@ -9,6 +9,7 @@
 4. 分析 Telegram Heartbeat 使用的数据
 5. 给出诊断报告和修复建议
 6. v1.1: 价格分布极值检测 (类似 Volume Profile)
+7. v1.2: S/R 检测回测验证 (验证检测准确率)
 
 使用方法:
     python3 scripts/diagnose_sr_zones.py
@@ -374,6 +375,259 @@ def calculate_price_distribution_sr(
         }
 
 
+def backtest_sr_detection(
+    days: int = 3,
+    interval: str = "15m",
+    sr_tolerance_pct: float = 0.5,  # S/R 触及容差
+    bounce_threshold_pct: float = 0.3,  # 反弹阈值
+) -> Dict[str, Any]:
+    """
+    回测 S/R 检测准确率
+
+    方法:
+    1. 获取过去 N 天的 K 线数据
+    2. 每隔一段时间计算 S/R (模拟实时检测)
+    3. 检查后续价格是否在 S/R 处反弹
+    4. 统计成功率
+
+    参数:
+    - days: 回测天数
+    - interval: K 线周期
+    - sr_tolerance_pct: 价格接近 S/R 的容差 (%)
+    - bounce_threshold_pct: 判定反弹的最小幅度 (%)
+
+    返回:
+    - 各方法的成功率统计
+    """
+    try:
+        import requests
+        import numpy as np
+        from datetime import datetime, timedelta
+
+        # 计算需要多少根 K 线
+        intervals_per_day = {
+            "15m": 96,   # 24 * 4
+            "1h": 24,
+            "4h": 6,
+        }
+        bars_needed = days * intervals_per_day.get(interval, 96) + 100  # 额外 100 根用于计算
+
+        # 获取历史 K 线
+        resp = requests.get(
+            "https://fapi.binance.com/fapi/v1/klines",
+            params={"symbol": "BTCUSDT", "interval": interval, "limit": min(bars_needed, 1000)},
+            timeout=30
+        )
+        klines = resp.json()
+
+        if not klines or len(klines) < 200:
+            return {'success': False, 'error': f'Insufficient data: {len(klines)} bars'}
+
+        # 准备数据
+        data = []
+        for k in klines:
+            data.append({
+                'time': datetime.fromtimestamp(k[0] / 1000),
+                'open': float(k[1]),
+                'high': float(k[2]),
+                'low': float(k[3]),
+                'close': float(k[4]),
+                'volume': float(k[5]),
+            })
+
+        # 回测结果
+        results = {
+            'simple_high_low': {'tests': 0, 'support_hits': 0, 'resistance_hits': 0, 'support_bounces': 0, 'resistance_bounces': 0},
+            'value_area': {'tests': 0, 'support_hits': 0, 'resistance_hits': 0, 'support_bounces': 0, 'resistance_bounces': 0},
+            'hvn': {'tests': 0, 'support_hits': 0, 'resistance_hits': 0, 'support_bounces': 0, 'resistance_bounces': 0},
+        }
+
+        test_events = []
+
+        # 每 8 根 K 线 (2 小时) 做一次检测
+        step = 8
+        lookback = 100  # 用于计算 S/R 的历史数据量
+        lookahead = 16  # 检查后续 16 根 K 线 (4 小时)
+
+        for i in range(lookback, len(data) - lookahead, step):
+            current_bar = data[i]
+            current_price = current_bar['close']
+            history = data[i-lookback:i]
+            future = data[i:i+lookahead]
+
+            # ========== 方法 1: 简单高低点 ==========
+            lows = [d['low'] for d in history[-20:]]
+            highs = [d['high'] for d in history[-20:]]
+            support_simple = min(lows)
+            resistance_simple = max(highs)
+
+            # 检查未来是否触及并反弹
+            future_lows = [d['low'] for d in future]
+            future_highs = [d['high'] for d in future]
+            future_closes = [d['close'] for d in future]
+
+            results['simple_high_low']['tests'] += 1
+
+            # 支撑测试: 价格是否接近支撑并反弹
+            min_future_low = min(future_lows)
+            if abs(min_future_low - support_simple) / support_simple * 100 < sr_tolerance_pct:
+                results['simple_high_low']['support_hits'] += 1
+                # 检查是否反弹 (之后价格上涨)
+                min_idx = future_lows.index(min_future_low)
+                if min_idx < len(future_closes) - 1:
+                    bounce = (max(future_closes[min_idx:]) - min_future_low) / min_future_low * 100
+                    if bounce > bounce_threshold_pct:
+                        results['simple_high_low']['support_bounces'] += 1
+
+            # 阻力测试: 价格是否接近阻力并回落
+            max_future_high = max(future_highs)
+            if abs(max_future_high - resistance_simple) / resistance_simple * 100 < sr_tolerance_pct:
+                results['simple_high_low']['resistance_hits'] += 1
+                max_idx = future_highs.index(max_future_high)
+                if max_idx < len(future_closes) - 1:
+                    rejection = (max_future_high - min(future_closes[max_idx:])) / max_future_high * 100
+                    if rejection > bounce_threshold_pct:
+                        results['simple_high_low']['resistance_bounces'] += 1
+
+            # ========== 方法 2: Value Area ==========
+            # 简化的 Volume Profile 计算
+            price_min = min(d['low'] for d in history)
+            price_max = max(d['high'] for d in history)
+            bin_size = 500  # $500 区间
+
+            bins = np.arange(price_min, price_max + bin_size, bin_size)
+            if len(bins) < 3:
+                continue
+
+            bin_centers = (bins[:-1] + bins[1:]) / 2
+            volume_sum = np.zeros(len(bin_centers))
+
+            for d in history:
+                for j, (bl, bh) in enumerate(zip(bins[:-1], bins[1:])):
+                    if d['low'] <= bh and d['high'] >= bl:
+                        overlap = (min(d['high'], bh) - max(d['low'], bl)) / (d['high'] - d['low']) if d['high'] > d['low'] else 1
+                        volume_sum[j] += d['volume'] * overlap
+
+            if volume_sum.sum() == 0:
+                continue
+
+            # POC 和 Value Area
+            poc_idx = np.argmax(volume_sum)
+            total_vol = volume_sum.sum()
+            target_vol = total_vol * 0.70
+
+            va_low_idx = va_high_idx = poc_idx
+            current_vol = volume_sum[poc_idx]
+
+            while current_vol < target_vol and (va_low_idx > 0 or va_high_idx < len(volume_sum) - 1):
+                expand_low = volume_sum[va_low_idx - 1] if va_low_idx > 0 else 0
+                expand_high = volume_sum[va_high_idx + 1] if va_high_idx < len(volume_sum) - 1 else 0
+
+                if expand_low >= expand_high and va_low_idx > 0:
+                    va_low_idx -= 1
+                    current_vol += expand_low
+                elif va_high_idx < len(volume_sum) - 1:
+                    va_high_idx += 1
+                    current_vol += expand_high
+                else:
+                    break
+
+            va_low = bins[va_low_idx]
+            va_high = bins[va_high_idx + 1]
+
+            results['value_area']['tests'] += 1
+
+            # VA Low 作为支撑测试
+            if abs(min_future_low - va_low) / va_low * 100 < sr_tolerance_pct:
+                results['value_area']['support_hits'] += 1
+                min_idx = future_lows.index(min_future_low)
+                if min_idx < len(future_closes) - 1:
+                    bounce = (max(future_closes[min_idx:]) - min_future_low) / min_future_low * 100
+                    if bounce > bounce_threshold_pct:
+                        results['value_area']['support_bounces'] += 1
+
+            # VA High 作为阻力测试
+            if abs(max_future_high - va_high) / va_high * 100 < sr_tolerance_pct:
+                results['value_area']['resistance_hits'] += 1
+                max_idx = future_highs.index(max_future_high)
+                if max_idx < len(future_closes) - 1:
+                    rejection = (max_future_high - min(future_closes[max_idx:])) / max_future_high * 100
+                    if rejection > bounce_threshold_pct:
+                        results['value_area']['resistance_bounces'] += 1
+
+            # ========== 方法 3: HVN 检测 ==========
+            # 找局部极大值
+            score = volume_sum / volume_sum.max() if volume_sum.max() > 0 else volume_sum
+            hvn_supports = []
+            hvn_resistances = []
+
+            for j in range(1, len(score) - 1):
+                if score[j] > score[j-1] and score[j] > score[j+1] and score[j] > 0.3:
+                    hvn_price = bin_centers[j]
+                    if hvn_price < current_price:
+                        hvn_supports.append(hvn_price)
+                    else:
+                        hvn_resistances.append(hvn_price)
+
+            results['hvn']['tests'] += 1
+
+            # HVN 支撑测试
+            for hvn_sup in hvn_supports[:2]:  # 最近 2 个
+                if abs(min_future_low - hvn_sup) / hvn_sup * 100 < sr_tolerance_pct:
+                    results['hvn']['support_hits'] += 1
+                    min_idx = future_lows.index(min_future_low)
+                    if min_idx < len(future_closes) - 1:
+                        bounce = (max(future_closes[min_idx:]) - min_future_low) / min_future_low * 100
+                        if bounce > bounce_threshold_pct:
+                            results['hvn']['support_bounces'] += 1
+                    break
+
+            # HVN 阻力测试
+            for hvn_res in hvn_resistances[:2]:
+                if abs(max_future_high - hvn_res) / hvn_res * 100 < sr_tolerance_pct:
+                    results['hvn']['resistance_hits'] += 1
+                    max_idx = future_highs.index(max_future_high)
+                    if max_idx < len(future_closes) - 1:
+                        rejection = (max_future_high - min(future_closes[max_idx:])) / max_future_high * 100
+                        if rejection > bounce_threshold_pct:
+                            results['hvn']['resistance_bounces'] += 1
+                    break
+
+        # 计算统计
+        stats = {}
+        for method, r in results.items():
+            if r['tests'] > 0:
+                support_hit_rate = r['support_hits'] / r['tests'] * 100
+                resistance_hit_rate = r['resistance_hits'] / r['tests'] * 100
+                support_bounce_rate = r['support_bounces'] / r['support_hits'] * 100 if r['support_hits'] > 0 else 0
+                resistance_bounce_rate = r['resistance_bounces'] / r['resistance_hits'] * 100 if r['resistance_hits'] > 0 else 0
+
+                stats[method] = {
+                    'tests': r['tests'],
+                    'support_hit_rate': round(support_hit_rate, 1),
+                    'resistance_hit_rate': round(resistance_hit_rate, 1),
+                    'support_bounce_rate': round(support_bounce_rate, 1),
+                    'resistance_bounce_rate': round(resistance_bounce_rate, 1),
+                    'overall_effectiveness': round((support_bounce_rate + resistance_bounce_rate) / 2, 1),
+                }
+
+        return {
+            'success': True,
+            'days': days,
+            'total_bars': len(data),
+            'results': results,
+            'stats': stats,
+        }
+
+    except Exception as e:
+        import traceback
+        return {
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }
+
+
 def calculate_sr_zones_without_orderwall(current_price: float) -> Dict[str, Any]:
     """使用 S/R Zone Calculator (不含 Order Wall) 计算"""
     try:
@@ -707,11 +961,61 @@ def run_full_diagnosis():
     else:
         print_result("计算失败", dist_result.get('error', 'Unknown'), "error")
 
-    # 7. Telegram 数据源分析
+    # 7. S/R 检测回测验证
+    print_section("7. S/R 检测回测验证 (过去 3 天)")
+    print("  ⏳ 正在进行回测分析，请稍候...")
+    print()
+
+    backtest_result = backtest_sr_detection(days=3, interval="15m")
+
+    if backtest_result['success']:
+        stats = backtest_result['stats']
+        print(f"  📊 回测数据: {backtest_result['total_bars']} 根 K 线 ({backtest_result['days']} 天)")
+        print()
+
+        print("  ┌─────────────────────┬──────────┬──────────┬──────────┬──────────┬──────────┐")
+        print("  │ 检测方法            │ 测试次数 │ 支撑命中 │ 阻力命中 │ 支撑反弹 │ 阻力反弹 │")
+        print("  ├─────────────────────┼──────────┼──────────┼──────────┼──────────┼──────────┤")
+
+        for method, s in stats.items():
+            method_name = {
+                'simple_high_low': '简单高低点',
+                'value_area': 'Value Area',
+                'hvn': 'HVN 极值检测',
+            }.get(method, method)
+            print(f"  │ {method_name:<17} │ {s['tests']:>8} │ {s['support_hit_rate']:>7.1f}% │ "
+                  f"{s['resistance_hit_rate']:>7.1f}% │ {s['support_bounce_rate']:>7.1f}% │ {s['resistance_bounce_rate']:>7.1f}% │")
+
+        print("  └─────────────────────┴──────────┴──────────┴──────────┴──────────┴──────────┘")
+        print()
+
+        # 评估哪个方法最好
+        best_method = max(stats.items(), key=lambda x: x[1]['overall_effectiveness'])
+        print(f"  🏆 最有效方法: {best_method[0]} (综合有效率: {best_method[1]['overall_effectiveness']:.1f}%)")
+        print()
+
+        # 解释指标
+        print("  📝 指标说明:")
+        print("     • 支撑/阻力命中: 价格在 ±0.5% 范围内触及 S/R")
+        print("     • 支撑/阻力反弹: 触及后在 4 小时内反弹 ≥0.3%")
+        print("     • 综合有效率: (支撑反弹率 + 阻力反弹率) / 2")
+        print()
+
+        # 给出建议
+        if best_method[1]['overall_effectiveness'] > 50:
+            print(f"  ✅ {best_method[0]} 方法可靠性较高，建议作为主要 S/R 来源")
+        elif best_method[1]['overall_effectiveness'] > 30:
+            print(f"  ⚠️ {best_method[0]} 方法效果一般，建议结合多种方法使用")
+        else:
+            print("  ❌ 当前市场可能处于趋势行情，S/R 效果不明显")
+    else:
+        print_result("回测失败", backtest_result.get('error', 'Unknown'), "error")
+
+    # 8. Telegram 数据源分析
     analyze_telegram_data_source()
 
-    # 8. 服务日志检查
-    print_section("8. 服务日志检查")
+    # 9. 服务日志检查
+    print_section("9. 服务日志检查")
     logs = check_service_logs()
     if logs.get('sr_zone_logs'):
         print("  📋 最近的 S/R 相关日志:")
@@ -726,8 +1030,8 @@ def run_full_diagnosis():
         for err in logs['errors'][-3:]:
             print(f"      {err[:100]}...")
 
-    # 9. 问题诊断
-    print_section("9. 问题诊断")
+    # 10. 问题诊断
+    print_section("10. 问题诊断")
 
     problems = []
     suggestions = []
@@ -770,8 +1074,8 @@ def run_full_diagnosis():
     else:
         print("  ✅ 未发现明显问题")
 
-    # 10. 修复建议
-    print_section("10. 修复建议")
+    # 11. 修复建议
+    print_section("11. 修复建议")
 
     suggestions.extend([
         "将 Heartbeat 发送移到分析之后，使用最新数据",
@@ -784,8 +1088,8 @@ def run_full_diagnosis():
     for i, s in enumerate(suggestions, 1):
         print(f"  {i}. {s}")
 
-    # 11. 总结
-    print_section("11. 总结对比表")
+    # 12. 总结
+    print_section("12. 总结对比表")
 
     print("  ┌─────────────────────────┬───────────────────┬───────────────────┐")
     print("  │ 计算方法                │ 支撑位            │ 阻力位            │")
