@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-支撑阻力位全面诊断脚本 v1.2
+支撑阻力位全面诊断脚本 v2.0
 
 功能:
 1. 检查所有支撑阻力数据来源
@@ -10,10 +10,13 @@
 5. 给出诊断报告和修复建议
 6. v1.1: 价格分布极值检测 (类似 Volume Profile)
 7. v1.2: S/R 检测回测验证 (验证检测准确率)
+8. v2.0: 完整交易模拟回测 (模拟 AI R/R 决策 + SL/TP 盈亏统计)
 
 使用方法:
-    python3 scripts/diagnose_sr_zones.py
-    python3 scripts/diagnose_sr_zones.py --export  # 导出到文件
+    python3 scripts/diagnose_sr_zones.py                    # 完整诊断
+    python3 scripts/diagnose_sr_zones.py --export           # 导出到文件
+    python3 scripts/diagnose_sr_zones.py --backtest         # 仅运行回测
+    python3 scripts/diagnose_sr_zones.py --backtest --days 7  # 回测7天
 """
 
 import os
@@ -628,6 +631,522 @@ def backtest_sr_detection(
         }
 
 
+def backtest_sr_trading_simulation(
+    days: int = 7,
+    interval: str = "15m",
+    min_rr_ratio: float = 1.5,
+    sl_buffer_pct: float = 0.5,
+    position_usdt: float = 1000,
+    leverage: int = 10,
+) -> Dict[str, Any]:
+    """
+    完整的 S/R 交易模拟回测 (v2.0)
+
+    模拟 v3.17 R/R 驱动的 AI 决策:
+    1. 每隔一段时间计算 S/R zones
+    2. 基于 R/R >= 1.5:1 决定是否入场
+    3. 使用 S/R 计算 SL/TP
+    4. 跟踪后续价格，判断触及 SL 还是 TP
+    5. 统计胜率、盈亏比、预期收益
+
+    参数:
+    - days: 回测天数
+    - interval: K 线周期
+    - min_rr_ratio: 最小 R/R 比率 (v3.17 默认 1.5)
+    - sl_buffer_pct: SL 缓冲百分比
+    - position_usdt: 每笔仓位 USDT
+    - leverage: 杠杆倍数
+
+    返回:
+    - 完整的交易统计和分析
+    """
+    try:
+        import requests
+        from datetime import datetime, timedelta
+
+        # 计算需要多少根 K 线
+        intervals_per_day = {
+            "15m": 96,   # 24 * 4
+            "1h": 24,
+            "4h": 6,
+        }
+        bars_per_day = intervals_per_day.get(interval, 96)
+        bars_needed = days * bars_per_day + 200  # 额外用于计算
+
+        # Binance API 限制每次 1500 根，需要分批获取
+        all_klines = []
+        end_time = None
+
+        while len(all_klines) < bars_needed:
+            params = {
+                "symbol": "BTCUSDT",
+                "interval": interval,
+                "limit": min(1500, bars_needed - len(all_klines) + 100),
+            }
+            if end_time:
+                params["endTime"] = end_time
+
+            resp = requests.get(
+                "https://fapi.binance.com/fapi/v1/klines",
+                params=params,
+                timeout=30
+            )
+            klines = resp.json()
+
+            if not klines:
+                break
+
+            # 插入到开头 (旧数据在前)
+            all_klines = klines + all_klines
+            end_time = klines[0][0] - 1  # 下一批的结束时间
+
+            if len(klines) < 100:  # 没有更多数据了
+                break
+
+        if len(all_klines) < 300:
+            return {'success': False, 'error': f'数据不足: {len(all_klines)} bars'}
+
+        # 准备数据
+        data = []
+        for k in all_klines:
+            data.append({
+                'time': datetime.fromtimestamp(k[0] / 1000),
+                'open': float(k[1]),
+                'high': float(k[2]),
+                'low': float(k[3]),
+                'close': float(k[4]),
+                'volume': float(k[5]),
+            })
+
+        # 只保留最近 days 天的数据用于回测
+        test_start_idx = len(data) - (days * bars_per_day)
+        if test_start_idx < 100:
+            test_start_idx = 100
+
+        # 交易记录
+        trades = []
+        trade_id = 0
+
+        # 每 4 根 K 线 (1 小时) 做一次检测
+        step = 4
+        lookback = 100  # 用于计算 S/R 的历史数据量
+        max_hold_bars = 48  # 最长持仓时间 (12 小时)
+
+        for i in range(test_start_idx, len(data) - max_hold_bars, step):
+            current_bar = data[i]
+            current_price = current_bar['close']
+            current_time = current_bar['time']
+            history = data[i-lookback:i]
+
+            # ========== 计算 S/R Zones (简化版 Volume Profile) ==========
+            price_min = min(d['low'] for d in history)
+            price_max = max(d['high'] for d in history)
+            bin_size = 500  # $500 区间
+
+            # 使用列表代替 numpy
+            bins = []
+            p = price_min - bin_size
+            while p <= price_max + bin_size * 2:
+                bins.append(p)
+                p += bin_size
+
+            if len(bins) < 5:
+                continue
+
+            bin_centers = [(bins[i] + bins[i+1]) / 2 for i in range(len(bins) - 1)]
+            volume_sum = [0.0] * len(bin_centers)
+
+            for d in history:
+                for j, (bl, bh) in enumerate(zip(bins[:-1], bins[1:])):
+                    if d['low'] <= bh and d['high'] >= bl:
+                        if d['high'] > d['low']:
+                            overlap = (min(d['high'], bh) - max(d['low'], bl)) / (d['high'] - d['low'])
+                        else:
+                            overlap = 1.0
+                        volume_sum[j] += d['volume'] * overlap
+
+            if sum(volume_sum) == 0:
+                continue
+
+            # 找到当前价格所在的 bin
+            current_bin_idx = 0
+            for idx, b in enumerate(bins):
+                if b > current_price:
+                    current_bin_idx = max(0, idx - 1)
+                    break
+            current_bin_idx = max(0, min(current_bin_idx, len(bin_centers) - 1))
+
+            # ========== 找支撑位 (当前价格下方的 HVN) ==========
+            support = None
+            support_score = 0
+            max_vol = max(volume_sum) if volume_sum else 1
+            score = [v / max_vol if max_vol > 0 else 0 for v in volume_sum]
+
+            for j in range(current_bin_idx - 1, 0, -1):
+                if score[j] > score[j-1] and score[j] > score[j+1] and score[j] > 0.3:
+                    support = bin_centers[j]
+                    support_score = score[j]
+                    break
+
+            # 回退: 使用最近 20 根 K 线最低点
+            if support is None:
+                support = min(d['low'] for d in history[-20:])
+                support_score = 0.2
+
+            # ========== 找阻力位 (当前价格上方的 HVN) ==========
+            resistance = None
+            resistance_score = 0
+
+            for j in range(current_bin_idx + 1, len(score) - 1):
+                if score[j] > score[j-1] and score[j] > score[j+1] and score[j] > 0.3:
+                    resistance = bin_centers[j]
+                    resistance_score = score[j]
+                    break
+
+            # 回退: 使用最近 20 根 K 线最高点
+            if resistance is None:
+                resistance = max(d['high'] for d in history[-20:])
+                resistance_score = 0.2
+
+            # ========== 计算 R/R 并决定是否入场 ==========
+            # LONG: SL 在支撑下方, TP 在阻力位
+            long_sl = support * (1 - sl_buffer_pct / 100)
+            long_tp = resistance
+            long_risk = current_price - long_sl
+            long_reward = long_tp - current_price
+            long_rr = long_reward / long_risk if long_risk > 0 else 0
+
+            # SHORT: SL 在阻力上方, TP 在支撑位
+            short_sl = resistance * (1 + sl_buffer_pct / 100)
+            short_tp = support
+            short_risk = short_sl - current_price
+            short_reward = current_price - short_tp
+            short_rr = short_reward / short_risk if short_risk > 0 else 0
+
+            # v3.17 决策: 只有 R/R >= min_rr_ratio 才入场
+            signal = None
+            sl_price = 0
+            tp_price = 0
+            rr_ratio = 0
+
+            if long_rr >= min_rr_ratio and long_rr > short_rr:
+                signal = "LONG"
+                sl_price = long_sl
+                tp_price = long_tp
+                rr_ratio = long_rr
+            elif short_rr >= min_rr_ratio and short_rr > long_rr:
+                signal = "SHORT"
+                sl_price = short_sl
+                tp_price = short_tp
+                rr_ratio = short_rr
+
+            if signal is None:
+                continue  # R/R 不达标，跳过
+
+            # ========== 模拟交易执行 ==========
+            trade_id += 1
+            entry_price = current_price
+
+            # 跟踪后续 K 线，看是否触及 SL 或 TP
+            result = "OPEN"
+            exit_price = 0
+            exit_time = None
+            bars_held = 0
+
+            for k in range(i + 1, min(i + max_hold_bars, len(data))):
+                future_bar = data[k]
+                bars_held += 1
+
+                if signal == "LONG":
+                    # 检查是否触及 SL (先检查 SL，再检查 TP)
+                    if future_bar['low'] <= sl_price:
+                        result = "LOSS"
+                        exit_price = sl_price
+                        exit_time = future_bar['time']
+                        break
+                    elif future_bar['high'] >= tp_price:
+                        result = "WIN"
+                        exit_price = tp_price
+                        exit_time = future_bar['time']
+                        break
+                else:  # SHORT
+                    if future_bar['high'] >= sl_price:
+                        result = "LOSS"
+                        exit_price = sl_price
+                        exit_time = future_bar['time']
+                        break
+                    elif future_bar['low'] <= tp_price:
+                        result = "WIN"
+                        exit_price = tp_price
+                        exit_time = future_bar['time']
+                        break
+
+            # 超时平仓
+            if result == "OPEN":
+                result = "TIMEOUT"
+                exit_price = data[min(i + max_hold_bars, len(data) - 1)]['close']
+                exit_time = data[min(i + max_hold_bars, len(data) - 1)]['time']
+
+            # 计算盈亏
+            if signal == "LONG":
+                pnl_pct = (exit_price - entry_price) / entry_price * 100
+            else:
+                pnl_pct = (entry_price - exit_price) / entry_price * 100
+
+            pnl_usdt = position_usdt * leverage * pnl_pct / 100
+
+            trade = {
+                'id': trade_id,
+                'time': current_time.strftime('%Y-%m-%d %H:%M'),
+                'signal': signal,
+                'entry_price': round(entry_price, 2),
+                'sl_price': round(sl_price, 2),
+                'tp_price': round(tp_price, 2),
+                'rr_ratio': round(rr_ratio, 2),
+                'support': round(support, 2),
+                'resistance': round(resistance, 2),
+                'support_score': round(support_score, 3),
+                'resistance_score': round(resistance_score, 3),
+                'result': result,
+                'exit_price': round(exit_price, 2),
+                'exit_time': exit_time.strftime('%Y-%m-%d %H:%M') if exit_time else None,
+                'bars_held': bars_held,
+                'pnl_pct': round(pnl_pct, 2),
+                'pnl_usdt': round(pnl_usdt, 2),
+            }
+            trades.append(trade)
+
+        # ========== 统计分析 ==========
+        if not trades:
+            return {'success': False, 'error': '没有产生任何交易信号'}
+
+        total_trades = len(trades)
+        wins = [t for t in trades if t['result'] == 'WIN']
+        losses = [t for t in trades if t['result'] == 'LOSS']
+        timeouts = [t for t in trades if t['result'] == 'TIMEOUT']
+
+        win_count = len(wins)
+        loss_count = len(losses)
+        timeout_count = len(timeouts)
+
+        win_rate = win_count / total_trades * 100 if total_trades > 0 else 0
+
+        total_pnl_usdt = sum(t['pnl_usdt'] for t in trades)
+        win_pnls = [t['pnl_usdt'] for t in wins]
+        loss_pnls = [t['pnl_usdt'] for t in losses]
+        avg_win = sum(win_pnls) / len(win_pnls) if win_pnls else 0
+        avg_loss = sum(loss_pnls) / len(loss_pnls) if loss_pnls else 0
+
+        # 期望收益
+        expected_value = (win_rate / 100 * avg_win) + ((100 - win_rate) / 100 * avg_loss) if total_trades > 0 else 0
+
+        # 按信号类型分析
+        long_trades = [t for t in trades if t['signal'] == 'LONG']
+        short_trades = [t for t in trades if t['signal'] == 'SHORT']
+
+        long_wins = len([t for t in long_trades if t['result'] == 'WIN'])
+        short_wins = len([t for t in short_trades if t['result'] == 'WIN'])
+
+        long_win_rate = long_wins / len(long_trades) * 100 if long_trades else 0
+        short_win_rate = short_wins / len(short_trades) * 100 if short_trades else 0
+
+        # 最大连续亏损
+        max_consecutive_losses = 0
+        current_losses = 0
+        for t in trades:
+            if t['result'] == 'LOSS':
+                current_losses += 1
+                max_consecutive_losses = max(max_consecutive_losses, current_losses)
+            else:
+                current_losses = 0
+
+        # 最大回撤
+        cumulative_pnl = []
+        running_pnl = 0
+        for t in trades:
+            running_pnl += t['pnl_usdt']
+            cumulative_pnl.append(running_pnl)
+
+        peak = 0
+        max_drawdown = 0
+        for pnl in cumulative_pnl:
+            if pnl > peak:
+                peak = pnl
+            drawdown = peak - pnl
+            if drawdown > max_drawdown:
+                max_drawdown = drawdown
+
+        # 平均 R/R (实际)
+        actual_rrs = []
+        for t in trades:
+            if t['result'] == 'WIN':
+                actual_rrs.append(t['rr_ratio'])
+            elif t['result'] == 'LOSS':
+                actual_rrs.append(-1)  # 亏损 = -1R
+        avg_actual_rr = sum(actual_rrs) / len(actual_rrs) if actual_rrs else 0
+
+        # 盈利因子
+        gross_profit = sum(t['pnl_usdt'] for t in trades if t['pnl_usdt'] > 0)
+        gross_loss = abs(sum(t['pnl_usdt'] for t in trades if t['pnl_usdt'] < 0))
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+
+        return {
+            'success': True,
+            'config': {
+                'days': days,
+                'interval': interval,
+                'min_rr_ratio': min_rr_ratio,
+                'sl_buffer_pct': sl_buffer_pct,
+                'position_usdt': position_usdt,
+                'leverage': leverage,
+            },
+            'data': {
+                'total_bars': len(data),
+                'test_bars': len(data) - test_start_idx,
+                'date_range': f"{data[test_start_idx]['time'].strftime('%Y-%m-%d')} - {data[-1]['time'].strftime('%Y-%m-%d')}",
+            },
+            'summary': {
+                'total_trades': total_trades,
+                'win_count': win_count,
+                'loss_count': loss_count,
+                'timeout_count': timeout_count,
+                'win_rate': round(win_rate, 1),
+                'long_trades': len(long_trades),
+                'short_trades': len(short_trades),
+                'long_win_rate': round(long_win_rate, 1),
+                'short_win_rate': round(short_win_rate, 1),
+            },
+            'pnl': {
+                'total_pnl_usdt': round(total_pnl_usdt, 2),
+                'avg_win_usdt': round(avg_win, 2),
+                'avg_loss_usdt': round(avg_loss, 2),
+                'expected_value_per_trade': round(expected_value, 2),
+                'profit_factor': round(profit_factor, 2),
+                'gross_profit': round(gross_profit, 2),
+                'gross_loss': round(gross_loss, 2),
+            },
+            'risk': {
+                'max_consecutive_losses': max_consecutive_losses,
+                'max_drawdown_usdt': round(max_drawdown, 2),
+                'avg_actual_rr': round(avg_actual_rr, 2),
+            },
+            'trades': trades[-20:],  # 最近 20 笔交易
+            'all_trades': trades,    # 所有交易 (供详细分析)
+        }
+
+    except Exception as e:
+        import traceback
+        return {
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }
+
+
+def print_backtest_results(result: Dict[str, Any]) -> None:
+    """打印回测结果"""
+    print_header(f"S/R 交易模拟回测 v2.0 (v3.17 R/R 驱动)")
+
+    if not result['success']:
+        print_result("回测失败", result.get('error', 'Unknown'), "error")
+        return
+
+    cfg = result['config']
+    data = result['data']
+    summary = result['summary']
+    pnl = result['pnl']
+    risk = result['risk']
+
+    # 配置信息
+    print_section("回测配置")
+    print(f"  回测周期: {cfg['days']} 天")
+    print(f"  K 线周期: {cfg['interval']}")
+    print(f"  最小 R/R: {cfg['min_rr_ratio']}:1 (v3.17 标准)")
+    print(f"  SL 缓冲: {cfg['sl_buffer_pct']}%")
+    print(f"  仓位大小: ${cfg['position_usdt']:,} × {cfg['leverage']}x = ${cfg['position_usdt'] * cfg['leverage']:,}")
+    print()
+    print(f"  数据范围: {data['date_range']}")
+    print(f"  K 线数量: {data['total_bars']} (测试: {data['test_bars']})")
+
+    # 交易统计
+    print_section("交易统计")
+    print(f"  ┌─────────────────────┬──────────────────────────────────────┐")
+    print(f"  │ 总交易次数          │ {summary['total_trades']:>36} │")
+    print(f"  │ 胜利 / 亏损 / 超时  │ {summary['win_count']} / {summary['loss_count']} / {summary['timeout_count']:>27} │")
+    print(f"  │ 胜率                │ {summary['win_rate']:>35.1f}% │")
+    print(f"  ├─────────────────────┼──────────────────────────────────────┤")
+    print(f"  │ LONG 交易           │ {summary['long_trades']:>26} ({summary['long_win_rate']:.1f}% 胜率) │")
+    print(f"  │ SHORT 交易          │ {summary['short_trades']:>26} ({summary['short_win_rate']:.1f}% 胜率) │")
+    print(f"  └─────────────────────┴──────────────────────────────────────┘")
+
+    # 盈亏分析
+    print_section("盈亏分析")
+    pnl_status = "ok" if pnl['total_pnl_usdt'] > 0 else "error"
+    print_result("总盈亏", f"${pnl['total_pnl_usdt']:,.2f}", pnl_status)
+    print_result("平均盈利", f"${pnl['avg_win_usdt']:,.2f}", "info")
+    print_result("平均亏损", f"${pnl['avg_loss_usdt']:,.2f}", "info")
+    print_result("每笔期望收益", f"${pnl['expected_value_per_trade']:,.2f}",
+                "ok" if pnl['expected_value_per_trade'] > 0 else "warn")
+    print_result("盈利因子", f"{pnl['profit_factor']:.2f}",
+                "ok" if pnl['profit_factor'] > 1.5 else "warn" if pnl['profit_factor'] > 1 else "error")
+    print()
+    print(f"     毛利润: ${pnl['gross_profit']:,.2f}")
+    print(f"     毛亏损: ${pnl['gross_loss']:,.2f}")
+
+    # 风险指标
+    print_section("风险指标")
+    print_result("最大连续亏损", f"{risk['max_consecutive_losses']} 笔",
+                "ok" if risk['max_consecutive_losses'] <= 5 else "warn")
+    print_result("最大回撤", f"${risk['max_drawdown_usdt']:,.2f}",
+                "ok" if risk['max_drawdown_usdt'] < cfg['position_usdt'] else "warn")
+    print_result("平均实际 R/R", f"{risk['avg_actual_rr']:.2f}",
+                "ok" if risk['avg_actual_rr'] > 0 else "error")
+
+    # 结论
+    print_section("结论")
+
+    if pnl['total_pnl_usdt'] > 0 and pnl['profit_factor'] > 1.5:
+        print("  ✅ 策略盈利能力: 强")
+        print(f"     基于 S/R 的 SL/TP 设置在过去 {cfg['days']} 天表现良好")
+        print(f"     v3.17 R/R >= {cfg['min_rr_ratio']}:1 入场标准有效过滤低质量信号")
+    elif pnl['total_pnl_usdt'] > 0:
+        print("  ⚠️ 策略盈利能力: 中等")
+        print(f"     盈利但盈利因子偏低 ({pnl['profit_factor']:.2f})")
+        print("     建议: 提高 R/R 要求 或 优化 S/R 计算方法")
+    else:
+        print("  ❌ 策略盈利能力: 弱")
+        print("     S/R 基础的 SL/TP 在当前市场条件下表现不佳")
+        print("     可能原因: 趋势行情突破 S/R, 或 S/R 计算不准确")
+
+    # 建议
+    print()
+    print("  📊 分析:")
+    if summary['win_rate'] < 40:
+        print("     • 胜率偏低 - 考虑更严格的入场条件")
+    if summary['long_win_rate'] < summary['short_win_rate'] - 10:
+        print("     • LONG 胜率明显低于 SHORT - 可能处于下跌趋势")
+    elif summary['short_win_rate'] < summary['long_win_rate'] - 10:
+        print("     • SHORT 胜率明显低于 LONG - 可能处于上涨趋势")
+    if risk['max_consecutive_losses'] > 5:
+        print("     • 连续亏损次数较多 - 考虑加入趋势过滤")
+
+    # 最近交易
+    print_section("最近交易记录 (最新 10 笔)")
+
+    trades = result['trades'][-10:]
+    print("  ┌──────┬──────────────────┬───────┬──────────┬──────────┬────────┬──────────┐")
+    print("  │ ID   │ 时间             │ 方向  │ 入场价   │ 出场价   │ 结果   │ 盈亏     │")
+    print("  ├──────┼──────────────────┼───────┼──────────┼──────────┼────────┼──────────┤")
+
+    for t in trades:
+        result_emoji = {"WIN": "✅", "LOSS": "❌", "TIMEOUT": "⏱️"}.get(t['result'], "?")
+        pnl_str = f"${t['pnl_usdt']:+.0f}"
+        print(f"  │ {t['id']:>4} │ {t['time']:<16} │ {t['signal']:<5} │ ${t['entry_price']:>7,.0f} │ "
+              f"${t['exit_price']:>7,.0f} │ {result_emoji:<2}{t['result']:<4} │ {pnl_str:>8} │")
+
+    print("  └──────┴──────────────────┴───────┴──────────┴──────────┴────────┴──────────┘")
+
+
 def calculate_sr_zones_without_orderwall(current_price: float) -> Dict[str, Any]:
     """使用 S/R Zone Calculator (不含 Order Wall) 计算"""
     try:
@@ -1160,12 +1679,53 @@ def run_full_diagnosis():
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="支撑阻力位全面诊断")
+    parser = argparse.ArgumentParser(description="支撑阻力位全面诊断 v2.0")
     parser.add_argument("--export", action="store_true", help="导出到文件")
+    parser.add_argument("--backtest", action="store_true", help="仅运行交易模拟回测")
+    parser.add_argument("--days", type=int, default=7, help="回测天数 (默认 7)")
+    parser.add_argument("--min-rr", type=float, default=1.5, help="最小 R/R 比率 (默认 1.5)")
+    parser.add_argument("--position", type=float, default=1000, help="每笔仓位 USDT (默认 1000)")
+    parser.add_argument("--leverage", type=int, default=10, help="杠杆倍数 (默认 10)")
     args = parser.parse_args()
 
-    if args.export:
-        # 重定向输出到文件
+    def run_backtest_only():
+        """仅运行回测"""
+        print("  ⏳ 正在获取历史数据并运行回测，请稍候...")
+        print()
+        result = backtest_sr_trading_simulation(
+            days=args.days,
+            min_rr_ratio=args.min_rr,
+            position_usdt=args.position,
+            leverage=args.leverage,
+        )
+        print_backtest_results(result)
+
+    if args.backtest:
+        # 仅运行回测
+        if args.export:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = project_root / "logs" / f"sr_backtest_{timestamp}.txt"
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+
+            import io
+            from contextlib import redirect_stdout
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                run_backtest_only()
+
+            output = buffer.getvalue()
+            print(output)
+
+            with open(output_file, 'w') as f:
+                f.write(output)
+
+            print(f"\n📁 回测报告已保存到: {output_file}")
+        else:
+            run_backtest_only()
+
+    elif args.export:
+        # 完整诊断 + 导出
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = project_root / "logs" / f"sr_diagnosis_{timestamp}.txt"
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1176,16 +1736,29 @@ def main():
         buffer = io.StringIO()
         with redirect_stdout(buffer):
             run_full_diagnosis()
+            # 添加完整交易回测
+            print()
+            print("  ⏳ 正在运行完整交易模拟回测 (7 天)...")
+            print()
+            result = backtest_sr_trading_simulation(days=7)
+            print_backtest_results(result)
 
         output = buffer.getvalue()
-        print(output)  # 也打印到终端
+        print(output)
 
         with open(output_file, 'w') as f:
             f.write(output)
 
         print(f"\n📁 诊断报告已保存到: {output_file}")
     else:
+        # 完整诊断
         run_full_diagnosis()
+        # 添加完整交易回测
+        print()
+        print("  ⏳ 正在运行完整交易模拟回测 (7 天)...")
+        print()
+        result = backtest_sr_trading_simulation(days=7)
+        print_backtest_results(result)
 
 
 if __name__ == "__main__":
