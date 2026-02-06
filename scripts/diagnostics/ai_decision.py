@@ -10,7 +10,9 @@ Enhanced from v11.16 monolithic script with:
 
 from typing import Any, Dict, Optional
 
-from .base import DiagnosticContext, DiagnosticStep, safe_float, print_wrapped, print_box
+import time
+
+from .base import DiagnosticContext, DiagnosticStep, safe_float, print_wrapped, print_box, step_timer
 
 
 class AIInputDataValidator(DiagnosticStep):
@@ -42,66 +44,77 @@ class AIInputDataValidator(DiagnosticStep):
     - 确保显示的数据与实际传给 AI 的数据一致
     """
 
-    name = "AI 输入数据验证 (传给 MultiAgent, 11 类数据)"
+    name = "AI 输入数据验证 (传给 MultiAgent, 13 类数据)"
 
     def run(self) -> bool:
         print("-" * 70)
         print()
-        print_box("AI 输入数据验证 (传给 MultiAgent)", 65)
+        print_box("AI 输入数据验证 (传给 MultiAgent, 13 类)", 65)
         print()
 
-        # v2.4.2: 先获取 order_flow, derivatives, order_book 数据
-        # 确保显示的数据与实际传给 AI 的数据一致
-        self._fetch_mtf_data()
+        # v3.0.0: Fetch all external data FIRST (matches live on_timer flow)
+        self._fetch_all_data()
 
-        # [1] Technical data
+        # [1] Technical data (15M)
         self._print_technical_data()
 
         # [2] Sentiment data
         self._print_sentiment_data()
 
-        # [3] Price data
+        # [3] Price data (v3.6)
         self._print_price_data()
 
-        # [4] Order flow report
+        # [4] Order flow report (Binance klines)
         self._print_order_flow_data()
 
-        # [5] Derivatives report
+        # [5] Derivatives report (Coinalyze)
         self._print_derivatives_data()
 
-        # [5.5] Order book data
+        # [6] Binance Derivatives (Top Traders, Taker Ratio) v3.21
+        self._print_binance_derivatives_data()
+
+        # [7] Order book data (v3.7)
         self._print_orderbook_data()
 
-        # [6] MTF Decision layer (4H)
+        # [8] MTF Decision layer (4H)
         self._print_mtf_decision_data()
 
-        # [7] MTF Trend layer (1D)
+        # [9] MTF Trend layer (1D)
         self._print_mtf_trend_data()
 
-        # [8] Current position
+        # [10] Current position
         self._print_position_data()
 
-        # [9] Account context (v4.7)
+        # [11] Account context (v4.7)
         self._print_account_context()
 
-        # [10] Historical context (v2.5.0 / EVALUATION_FRAMEWORK v3.0.1)
+        # [12] Historical context (EVALUATION_FRAMEWORK v3.0.1)
         self._print_historical_context()
 
-        # [11] S/R Zones (v2.6.0)
+        # [13] S/R Zones (v2.6.0) + bars_data for Swing Detection
         self._print_sr_zones_data()
 
         print()
         print("  ────────────────────────────────────────────────────────────────")
-        print("  ✅ AI 输入数据验证完成 (11 类数据)")
+        print("  ✅ AI 输入数据验证完成 (13 类数据)")
         return True
 
-    def _fetch_mtf_data(self) -> None:
+    def _fetch_all_data(self) -> None:
         """
-        Fetch order flow, derivatives, and order book data before printing.
+        Fetch ALL external data before printing — 100% matches live on_timer() flow.
 
-        v2.4.2: 确保 AI 输入验证显示的数据与实际传给 AI 的一致。
+        Live system data fetch order (deepseek_strategy.py:1620-1731):
+        1. Order flow (Binance klines → OrderFlowProcessor)
+        2. Derivatives (Coinalyze OI/Funding/Liquidations)
+        3. Order book (if enabled)
+        4. Binance derivatives (Top Traders, Taker Ratio) ← was MISSING
+        5. S/R bars (120 bars for Swing Point detection) ← was MISSING
+        6. kline_ohlcv (20 bars OHLCV for AI) ← was MISSING
+        7. historical_context (35-bar trend data)
+        8. S/R Zones calculation
         """
         import os
+        timings = self.ctx.step_timings
 
         try:
             from utils.binance_kline_client import BinanceKlineClient
@@ -126,10 +139,9 @@ class AIInputDataValidator(DiagnosticStep):
 
             sentiment_client = SentimentDataFetcher()
 
-            # Check if order book is enabled
+            # ========== Order book client (v3.7) ==========
             order_book_cfg = self.ctx.base_config.get('order_book', {})
             order_book_enabled = order_book_cfg.get('enabled', False)
-
             binance_orderbook = None
             orderbook_processor = None
 
@@ -151,7 +163,6 @@ class AIInputDataValidator(DiagnosticStep):
                     anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
                     slippage_amounts = ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0])
 
-                    # v2.4.5: 添加缺失的 min_decay 和 max_decay 字段
                     weighted_obi_config = {
                         "base_decay": weighted_obi_cfg.get('base_decay', 0.8),
                         "adaptive": weighted_obi_cfg.get('adaptive', True),
@@ -169,29 +180,58 @@ class AIInputDataValidator(DiagnosticStep):
                 except ImportError as e:
                     print(f"  ⚠️ Order book modules not available: {e}")
 
+            # ========== Binance Derivatives client (v3.21) ==========
+            binance_derivatives_client = None
+            try:
+                from utils.binance_derivatives_client import BinanceDerivativesClient
+                bd_cfg = self.ctx.base_config.get('binance_derivatives', {})
+                binance_derivatives_client = BinanceDerivativesClient(
+                    timeout=bd_cfg.get('timeout', 10),
+                    logger=None,
+                    config=self.ctx.base_config,
+                )
+            except ImportError as e:
+                print(f"  ⚠️ BinanceDerivativesClient not available: {e}")
+
+            # ========== AIDataAssembler (matches live system) ==========
             assembler = AIDataAssembler(
                 binance_kline_client=kline_client,
                 order_flow_processor=processor,
                 coinalyze_client=coinalyze_client,
                 sentiment_client=sentiment_client,
+                binance_derivatives_client=binance_derivatives_client,
                 binance_orderbook_client=binance_orderbook,
                 orderbook_processor=orderbook_processor,
                 logger=None
             )
 
-            assembled_data = assembler.assemble(
-                technical_data=self.ctx.technical_data,
-                position_data=self.ctx.current_position,
-                symbol=self.ctx.symbol,
-                interval=self.ctx.interval
-            )
+            with step_timer("AIDataAssembler.assemble()", timings):
+                assembled_data = assembler.assemble(
+                    technical_data=self.ctx.technical_data,
+                    position_data=self.ctx.current_position,
+                    symbol=self.ctx.symbol,
+                    interval=self.ctx.interval
+                )
 
-            # Store in context for printing and later use by MultiAgentAnalyzer
+            # Store ALL data in context (matches live system exactly)
             self.ctx.order_flow_report = assembled_data.get('order_flow')
             self.ctx.derivatives_report = assembled_data.get('derivatives')
             self.ctx.orderbook_report = assembled_data.get('order_book')
 
-            # v2.4.4: Debug logging for order book status
+            # v3.21: Binance Derivatives (Top Traders, Taker Ratio)
+            if assembled_data.get('binance_derivatives'):
+                self.ctx.binance_derivatives_data = assembled_data.get('binance_derivatives')
+            elif binance_derivatives_client:
+                # Fallback: fetch directly if assembler didn't include it
+                try:
+                    with step_timer("BinanceDerivatives.fetch_all()", timings):
+                        bd_data = binance_derivatives_client.fetch_all()
+                    if bd_data:
+                        self.ctx.binance_derivatives_data = bd_data
+                except Exception as bd_err:
+                    print(f"  ⚠️ Binance derivatives fetch failed: {bd_err}")
+
+            # Order book status logging
             ob_data = assembled_data.get('order_book')
             if ob_data:
                 ob_status = ob_data.get('_status', {})
@@ -200,77 +240,99 @@ class AIInputDataValidator(DiagnosticStep):
                     ob_msg = ob_status.get('message', 'No message')
                     print(f"  ℹ️ Order book status: {ob_code} - {ob_msg}")
             else:
-                # Check metadata to understand why
                 metadata = assembled_data.get('_metadata', {})
                 ob_enabled = metadata.get('orderbook_enabled', False)
                 ob_status = metadata.get('orderbook_status', 'UNKNOWN')
                 print(f"  ℹ️ Order book data is None (enabled={ob_enabled}, status={ob_status})")
 
-            # Also store binance_derivatives if available
-            if assembled_data.get('binance_derivatives'):
-                self.ctx.binance_derivatives_data = assembled_data.get('binance_derivatives')
-
-            # v2.5.0: Get historical_context from indicator_manager (EVALUATION_FRAMEWORK v3.0.1)
-            # AI needs trend data, not isolated single indicator values
-            # count=35 ensures MACD history has enough data (slow_period=26 + 5 + buffer)
-            if hasattr(self.ctx, 'indicator_manager') and self.ctx.indicator_manager:
-                try:
-                    historical_context = self.ctx.indicator_manager.get_historical_context(count=35)
-                    if historical_context and historical_context.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR']:
-                        self.ctx.historical_context = historical_context
-                        # Also add to technical_data for AI analysis consistency
-                        if self.ctx.technical_data:
-                            self.ctx.technical_data['historical_context'] = historical_context
-                    else:
-                        self.ctx.historical_context = None
-                except Exception as hc_err:
-                    print(f"  ⚠️ Historical context 获取失败: {hc_err}")
-                    self.ctx.historical_context = None
-            else:
-                self.ctx.historical_context = None
-
-            # v2.6.0: Calculate S/R Zones (for SL/TP calculation)
-            # Uses SRZoneCalculator to aggregate BB, SMA, Order Walls
-            try:
-                from utils.sr_zone_calculator import SRZoneCalculator
-
-                td = self.ctx.technical_data
-                sr_calculator = SRZoneCalculator()
-
-                # Prepare data for S/R calculation
-                bb_data = {
-                    'upper': td.get('bb_upper', 0),
-                    'lower': td.get('bb_lower', 0),
-                    'middle': td.get('sma_20', 0),
-                }
-                sma_data = {
-                    'sma_50': td.get('sma_50', 0),
-                    'sma_200': td.get('sma_200', 0),
-                }
-
-                # Get order book anomalies if available
-                orderbook_anomalies = None
-                if self.ctx.orderbook_report and self.ctx.orderbook_report.get('_status', {}).get('code') == 'OK':
-                    orderbook_anomalies = self.ctx.orderbook_report.get('anomalies', {})
-
-                sr_result = sr_calculator.calculate_with_detailed_report(
-                    current_price=self.ctx.current_price,
-                    bb_data=bb_data,
-                    sma_data=sma_data,
-                    orderbook_anomalies=orderbook_anomalies,
-                )
-
-                self.ctx.sr_zones_data = sr_result
-                print(f"  ℹ️ S/R Zones 计算完成: {len(sr_result.get('support_zones', []))} 支撑, {len(sr_result.get('resistance_zones', []))} 阻力")
-
-            except Exception as sr_err:
-                print(f"  ⚠️ S/R Zones 计算失败: {sr_err}")
-                self.ctx.sr_zones_data = None
-
         except Exception as e:
-            print(f"  ⚠️ MTF 数据获取失败: {e}, 将显示空数据")
+            print(f"  ⚠️ AIDataAssembler 数据获取失败: {e}")
             import traceback
             traceback.print_exc()
+
+        # ========== Indicator-based data (matches live on_timer enrichment) ==========
+        if hasattr(self.ctx, 'indicator_manager') and self.ctx.indicator_manager:
+            # v3.21: kline_ohlcv (20 bars) — live line 1613
+            try:
+                kline_ohlcv = self.ctx.indicator_manager.get_kline_data(count=20)
+                if kline_ohlcv:
+                    self.ctx.technical_data['kline_ohlcv'] = kline_ohlcv
+                    print(f"  ℹ️ kline_ohlcv: {len(kline_ohlcv)} bars added to technical_data")
+            except Exception as e:
+                print(f"  ⚠️ kline_ohlcv 获取失败: {e}")
+
+            # v3.0: S/R bars (120 bars for Swing Point detection) — live line 1712
+            try:
+                sr_bars = self.ctx.indicator_manager.get_kline_data(count=120)
+                if sr_bars:
+                    self.ctx.sr_bars_data = sr_bars
+                    print(f"  ℹ️ sr_bars_data: {len(sr_bars)} bars for S/R detection")
+            except Exception as e:
+                print(f"  ⚠️ sr_bars_data 获取失败: {e}")
+
+            # historical_context (35-bar trend data) — live line 1599
+            try:
+                historical_context = self.ctx.indicator_manager.get_historical_context(count=35)
+                if historical_context and historical_context.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR']:
+                    self.ctx.historical_context = historical_context
+                    if self.ctx.technical_data:
+                        self.ctx.technical_data['historical_context'] = historical_context
+                else:
+                    self.ctx.historical_context = None
+            except Exception as hc_err:
+                print(f"  ⚠️ Historical context 获取失败: {hc_err}")
+                self.ctx.historical_context = None
+        else:
+            self.ctx.historical_context = None
+
+        # ========== Enrich technical_data (matches live on_timer lines 1551-1575) ==========
+        td = self.ctx.technical_data
+        if td:
+            td['timeframe'] = '15M'
+            td['price'] = self.ctx.current_price
+            if self.ctx.price_data:
+                td['price_change'] = self.ctx.price_data.get('price_change', 0)
+                td['period_high'] = self.ctx.price_data.get('period_high', 0)
+                td['period_low'] = self.ctx.price_data.get('period_low', 0)
+                td['period_change_pct'] = self.ctx.price_data.get('period_change_pct', 0)
+                td['period_hours'] = self.ctx.price_data.get('period_hours', 0)
+
+        # ========== S/R Zones calculation ==========
+        try:
+            from utils.sr_zone_calculator import SRZoneCalculator
+
+            td = self.ctx.technical_data
+            sr_calculator = SRZoneCalculator()
+
+            bb_data = {
+                'upper': td.get('bb_upper', 0),
+                'lower': td.get('bb_lower', 0),
+                'middle': td.get('sma_20', 0),
+            }
+            sma_data = {
+                'sma_50': td.get('sma_50', 0),
+                'sma_200': td.get('sma_200', 0),
+            }
+
+            orderbook_anomalies = None
+            if self.ctx.orderbook_report and self.ctx.orderbook_report.get('_status', {}).get('code') == 'OK':
+                orderbook_anomalies = self.ctx.orderbook_report.get('anomalies', {})
+
+            sr_result = sr_calculator.calculate_with_detailed_report(
+                current_price=self.ctx.current_price,
+                bb_data=bb_data,
+                sma_data=sma_data,
+                orderbook_anomalies=orderbook_anomalies,
+            )
+
+            self.ctx.sr_zones_data = sr_result
+            print(f"  ℹ️ S/R Zones: {len(sr_result.get('support_zones', []))} 支撑, {len(sr_result.get('resistance_zones', []))} 阻力")
+
+        except Exception as sr_err:
+            print(f"  ⚠️ S/R Zones 计算失败: {sr_err}")
+            self.ctx.sr_zones_data = None
+
+        print()
 
     def _print_technical_data(self) -> None:
         """Print technical indicator data."""
@@ -363,6 +425,51 @@ class AIInputDataValidator(DiagnosticStep):
             print("  [5] derivatives_report: None (未获取)")
         print()
 
+    def _print_binance_derivatives_data(self) -> None:
+        """Print Binance Derivatives data (Top Traders, Taker Ratio) v3.21."""
+        bd = getattr(self.ctx, 'binance_derivatives_data', None)
+
+        if bd:
+            print("  [6] binance_derivatives (大户数据 v3.21):")
+            # Top Traders Long/Short Position Ratio
+            top_pos = bd.get('top_long_short_position', {})
+            latest_pos = top_pos.get('latest')
+            if latest_pos:
+                ratio = float(latest_pos.get('longShortRatio', 1))
+                long_pct = float(latest_pos.get('longAccount', 50))
+                short_pct = float(latest_pos.get('shortAccount', 50))
+                print(f"      Top Traders Position L/S:  {ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%)")
+            else:
+                print(f"      Top Traders Position L/S:  N/A")
+
+            # Top Traders Long/Short Account Ratio
+            top_acc = bd.get('top_long_short_account', {})
+            latest_acc = top_acc.get('latest')
+            if latest_acc:
+                ratio = float(latest_acc.get('longShortRatio', 1))
+                print(f"      Top Traders Account L/S:   {ratio:.2f}")
+            else:
+                print(f"      Top Traders Account L/S:   N/A")
+
+            # Taker Buy/Sell Ratio
+            taker = bd.get('taker_long_short', {})
+            latest_taker = taker.get('latest')
+            if latest_taker:
+                ratio = float(latest_taker.get('buySellRatio', 1))
+                print(f"      Taker Buy/Sell Ratio:      {ratio:.2f}")
+            else:
+                print(f"      Taker Buy/Sell Ratio:      N/A")
+
+            # Trends
+            trends = bd.get('trends', {})
+            if trends:
+                print(f"      Position Trend:            {trends.get('position_trend', 'N/A')}")
+                print(f"      Account Trend:             {trends.get('account_trend', 'N/A')}")
+                print(f"      Taker Trend:               {trends.get('taker_trend', 'N/A')}")
+        else:
+            print("  [6] binance_derivatives: None (未获取)")
+        print()
+
     def _print_orderbook_data(self) -> None:
         """Print order book data."""
         ob = self.ctx.orderbook_report
@@ -371,7 +478,7 @@ class AIInputDataValidator(DiagnosticStep):
         if ob:
             status = ob.get('_status', {})
             status_code = status.get('code', 'UNKNOWN')
-            print(f"  [5.5] order_book_data (订单簿深度 v3.7) [状态: {status_code}]:")
+            print(f"  [7] order_book_data (订单簿深度 v3.7) [状态: {status_code}]:")
 
             if status_code == 'OK':
                 obi = ob.get('obi', {})
@@ -402,9 +509,9 @@ class AIInputDataValidator(DiagnosticStep):
                 print(f"      reason:          {status.get('message', 'Unknown')}")
         else:
             if ob_cfg.get('enabled', False):
-                print("  [5.5] order_book_data: 获取失败")
+                print("  [7] order_book_data: 获取失败")
             else:
-                print("  [5.5] order_book_data: 未启用 (order_book.enabled = false)")
+                print("  [7] order_book_data: 未启用 (order_book.enabled = false)")
         print()
 
     def _print_mtf_decision_data(self) -> None:
@@ -413,7 +520,7 @@ class AIInputDataValidator(DiagnosticStep):
         mtf_decision = td.get('mtf_decision_layer')
 
         if mtf_decision:
-            print("  [6] mtf_decision_layer (4H 决策层):")
+            print("  [8] mtf_decision_layer (4H 决策层):")
             print(f"      rsi:             {mtf_decision.get('rsi', 0):.2f}")
             print(f"      macd:            {mtf_decision.get('macd', 0):.4f}")
             print(f"      sma_20:          ${mtf_decision.get('sma_20', 0):,.2f}")
@@ -423,7 +530,7 @@ class AIInputDataValidator(DiagnosticStep):
             bb_pos = mtf_decision.get('bb_position', 0.5)
             print(f"      bb_position:     {bb_pos * 100:.1f}%")
         else:
-            print("  [6] mtf_decision_layer (4H): 未初始化或未启用")
+            print("  [8] mtf_decision_layer (4H): 未初始化或未启用")
         print()
 
     def _print_mtf_trend_data(self) -> None:
@@ -432,7 +539,7 @@ class AIInputDataValidator(DiagnosticStep):
         mtf_trend = td.get('mtf_trend_layer')
 
         if mtf_trend:
-            print("  [7] mtf_trend_layer (1D 趋势层):")
+            print("  [9] mtf_trend_layer (1D 趋势层):")
             sma_200 = mtf_trend.get('sma_200', 0)
             print(f"      sma_200:         ${sma_200:,.2f}")
             if sma_200 > 0:
@@ -441,7 +548,7 @@ class AIInputDataValidator(DiagnosticStep):
             print(f"      macd:            {mtf_trend.get('macd', 0):.4f}")
             print(f"      macd_signal:     {mtf_trend.get('macd_signal', 0):.4f}")
         else:
-            print("  [7] mtf_trend_layer (1D): 未初始化或未启用")
+            print("  [9] mtf_trend_layer (1D): 未初始化或未启用")
         print()
 
     def _print_position_data(self) -> None:
@@ -449,7 +556,7 @@ class AIInputDataValidator(DiagnosticStep):
         pos = self.ctx.current_position
 
         if pos:
-            print("  [8] current_position (当前持仓 - 25 fields v4.8.1):")
+            print("  [10] current_position (当前持仓 - 25 fields v4.8.1):")
             print(f"      side:            {pos.get('side', 'N/A')}")
             print(f"      quantity:        {pos.get('quantity', 0)} BTC")
             entry = pos.get('entry_price') or pos.get('avg_px', 0)
@@ -469,7 +576,7 @@ class AIInputDataValidator(DiagnosticStep):
             if max_dd:
                 print(f"      max_drawdown:    {max_dd:.2f}%")
         else:
-            print("  [8] current_position: None (无持仓)")
+            print("  [10] current_position: None (无持仓)")
         print()
 
     def _print_account_context(self) -> None:
@@ -481,7 +588,7 @@ class AIInputDataValidator(DiagnosticStep):
         ac = self.ctx.account_context
 
         if ac:
-            print("  [9] account_context (v4.7 Portfolio Risk - 13 fields):")
+            print("  [11] account_context (v4.7 Portfolio Risk - 13 fields):")
 
             # Core fields (8 fields) - v4.8.1 correct names
             print(f"      equity:             ${ac.get('equity', 0):,.2f}")
@@ -521,7 +628,7 @@ class AIInputDataValidator(DiagnosticStep):
             safety_emoji = "✅" if can_safely else "⚠️"
             print(f"      can_add_safely:     {safety_emoji} {can_safely}")
         else:
-            print("  [9] account_context: None (未获取)")
+            print("  [11] account_context: None (未获取)")
         print()
 
     def _print_historical_context(self) -> None:
@@ -534,7 +641,7 @@ class AIInputDataValidator(DiagnosticStep):
         hc = getattr(self.ctx, 'historical_context', None)
 
         if hc and hc.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR', None]:
-            print("  [10] historical_context (35-bar 趋势数据 v3.0.1):")
+            print("  [12] historical_context (35-bar 趋势数据 v3.0.1):")
             print(f"      trend_direction:    {hc.get('trend_direction', 'N/A')}")
             print(f"      momentum_shift:     {hc.get('momentum_shift', 'N/A')}")
             print(f"      data_points:        {hc.get('data_points', 0)}")
@@ -575,11 +682,11 @@ class AIInputDataValidator(DiagnosticStep):
             print("      ℹ️ 参考: EVALUATION_FRAMEWORK.md Section 2.1 数据完整性")
         else:
             if hasattr(self.ctx, 'indicator_manager') and self.ctx.indicator_manager:
-                print("  [10] historical_context: 数据不足 (需要至少 35 根 K线)")
+                print("  [12] historical_context: 数据不足 (需要至少 35 根 K线)")
                 print("      ℹ️ 诊断脚本刚启动，历史数据可能不足")
                 print("      ℹ️ 实盘服务运行后会自动累积数据")
             else:
-                print("  [10] historical_context: indicator_manager 未初始化")
+                print("  [12] historical_context: indicator_manager 未初始化")
 
     def _print_sr_zones_data(self) -> None:
         """
@@ -591,7 +698,7 @@ class AIInputDataValidator(DiagnosticStep):
         sr_data = getattr(self.ctx, 'sr_zones_data', None)
 
         if sr_data:
-            print("  [11] S/R Zones (支撑/阻力区 v2.6.0):")
+            print("  [13] S/R Zones (支撑/阻力区 v2.6.0):")
 
             # Nearest support
             nearest_sup = sr_data.get('nearest_support')
@@ -654,7 +761,7 @@ class AIInputDataValidator(DiagnosticStep):
             print()
             print("      ℹ️ 数据来源: SRZoneCalculator (BB + SMA + Order Walls)")
         else:
-            print("  [11] S/R Zones: 未计算 (可能缺少技术数据)")
+            print("  [13] S/R Zones: 未计算 (可能缺少技术数据)")
 
         print()
 
@@ -673,16 +780,20 @@ class MultiAgentAnalyzer(DiagnosticStep):
 
     def run(self) -> bool:
         print("-" * 70)
-        print("  📋 决策流程:")
-        print("     Phase 1: Bull/Bear Debate (辩论)")
-        print("     Phase 2: Judge (Portfolio Manager) Decision")
-        print("     Phase 3: Risk Evaluation")
+        print()
+        print_box("MultiAgent 层级决策 (4 AI Calls)", 65)
+        print()
+        print("  📋 决策流程 (100% 匹配实盘 multi_agent.analyze()):")
+        print("     Phase 1: Bull/Bear Debate (2 AI calls)")
+        print("     Phase 2: Judge (Portfolio Manager) Decision (1 AI call)")
+        print("     Phase 3: Risk Evaluation (1 AI call)")
         print()
 
         try:
             from agents.multi_agent_analyzer import MultiAgentAnalyzer as MAAnalyzer
 
             cfg = self.ctx.strategy_config
+            timings = self.ctx.step_timings
 
             # Initialize with same parameters as deepseek_strategy.py
             self.ctx.multi_agent = MAAnalyzer(
@@ -697,29 +808,74 @@ class MultiAgentAnalyzer(DiagnosticStep):
             print(f"  Temperature: {cfg.deepseek_temperature}")
             print(f"  Debate Rounds: {cfg.debate_rounds}")
             print()
-            print("  🐂 Bull Agent 分析中...")
-            print("  🐻 Bear Agent 分析中...")
-            print("  ⚖️ Judge Agent 判断中...")
-            print("  🛡️ Risk Manager 评估中...")
 
-            # Get MTF data if available
-            order_flow_report, derivatives_report = self._get_mtf_data()
+            # ========== Data completeness check ==========
+            # Verify all 10 parameters match live system (deepseek_strategy.py:1714-1731)
+            params = {
+                'symbol': self.ctx.symbol,
+                'technical_report': self.ctx.technical_data,
+                'sentiment_report': self.ctx.sentiment_data,
+                'current_position': self.ctx.current_position,
+                'price_data': self.ctx.price_data,
+                'order_flow_report': self.ctx.order_flow_report,
+                'derivatives_report': self.ctx.derivatives_report,
+                'binance_derivatives_report': getattr(self.ctx, 'binance_derivatives_data', None),
+                'orderbook_report': self.ctx.orderbook_report,
+                'account_context': self.ctx.account_context,
+                'bars_data': self.ctx.sr_bars_data,
+            }
 
-            # Run analysis (v4.7: include account_context for portfolio risk)
+            print("  📊 analyze() 参数完整性检查 (vs 实盘):")
+            live_params = [
+                'symbol', 'technical_report', 'sentiment_report',
+                'current_position', 'price_data', 'order_flow_report',
+                'derivatives_report', 'binance_derivatives_report',
+                'orderbook_report', 'account_context', 'bars_data',
+            ]
+            for param_name in live_params:
+                value = params[param_name]
+                if value is not None:
+                    if isinstance(value, dict):
+                        status = f"✅ ({len(value)} fields)"
+                    elif isinstance(value, list):
+                        status = f"✅ ({len(value)} items)"
+                    elif isinstance(value, str):
+                        status = f"✅ ({value})"
+                    else:
+                        status = f"✅"
+                else:
+                    status = "⚠️ None"
+                print(f"     {param_name:32s} {status}")
+            print()
+
+            # ========== Run analysis with ALL parameters ==========
+            print("  Running AI analysis...")
+            t_start = time.monotonic()
+
             signal_data = self.ctx.multi_agent.analyze(
                 symbol=self.ctx.symbol,
                 technical_report=self.ctx.technical_data,
                 sentiment_report=self.ctx.sentiment_data,
                 current_position=self.ctx.current_position,
                 price_data=self.ctx.price_data,
-                order_flow_report=order_flow_report,
-                derivatives_report=derivatives_report,
-                account_context=self.ctx.account_context,  # v4.7
+                # ========== MTF v2.1 ==========
+                order_flow_report=self.ctx.order_flow_report,
+                derivatives_report=self.ctx.derivatives_report,
+                # ========== v3.21: Binance derivatives ==========
+                binance_derivatives_report=getattr(self.ctx, 'binance_derivatives_data', None),
+                # ========== v3.7: Order book ==========
+                orderbook_report=self.ctx.orderbook_report,
+                # ========== v4.6: Account context ==========
+                account_context=self.ctx.account_context,
+                # ========== v3.0: S/R bars ==========
+                bars_data=self.ctx.sr_bars_data,
             )
 
+            t_elapsed = time.monotonic() - t_start
+            timings['MultiAgent.analyze() total'] = t_elapsed
+            print(f"  [{t_elapsed:.1f}s] AI analysis complete")
+
             self.ctx.signal_data = signal_data
-            self.ctx.order_flow_report = order_flow_report
-            self.ctx.derivatives_report = derivatives_report
 
             # Display results
             self._display_results(signal_data)
@@ -731,67 +887,6 @@ class MultiAgentAnalyzer(DiagnosticStep):
             import traceback
             traceback.print_exc()
             return False
-
-    def _get_mtf_data(self) -> tuple:
-        """Get order flow and derivatives data if available.
-
-        v2.4.2: 优先使用 AIInputDataValidator 已获取的数据，避免重复 API 调用。
-        """
-        # v2.4.2: 检查是否已经在 AIInputDataValidator 中获取了数据
-        if self.ctx.order_flow_report is not None or self.ctx.derivatives_report is not None:
-            # 数据已经在 AIInputDataValidator 中获取，直接使用
-            return self.ctx.order_flow_report, self.ctx.derivatives_report
-
-        # 如果没有预先获取的数据，才重新获取（向后兼容）
-        order_flow_report = None
-        derivatives_report = None
-
-        try:
-            from utils.binance_kline_client import BinanceKlineClient
-            from utils.order_flow_processor import OrderFlowProcessor
-            from utils.coinalyze_client import CoinalyzeClient
-            from utils.ai_data_assembler import AIDataAssembler
-            from utils.sentiment_client import SentimentDataFetcher
-            import os
-
-            kline_client = BinanceKlineClient(timeout=10)
-            processor = OrderFlowProcessor(logger=None)
-
-            # Get Coinalyze config
-            coinalyze_cfg = self.ctx.base_config.get('order_flow', {}).get('coinalyze', {})
-            coinalyze_api_key = coinalyze_cfg.get('api_key') or os.getenv('COINALYZE_API_KEY')
-
-            coinalyze_client = CoinalyzeClient(
-                api_key=coinalyze_api_key,
-                timeout=coinalyze_cfg.get('timeout', 10),
-                max_retries=coinalyze_cfg.get('max_retries', 2),
-                logger=None
-            )
-
-            sentiment_client = SentimentDataFetcher()
-
-            assembler = AIDataAssembler(
-                binance_kline_client=kline_client,
-                order_flow_processor=processor,
-                coinalyze_client=coinalyze_client,
-                sentiment_client=sentiment_client,
-                logger=None
-            )
-
-            assembled_data = assembler.assemble(
-                technical_data=self.ctx.technical_data,
-                position_data=self.ctx.current_position,
-                symbol=self.ctx.symbol,
-                interval=self.ctx.interval
-            )
-
-            order_flow_report = assembled_data.get('order_flow')
-            derivatives_report = assembled_data.get('derivatives')
-
-        except Exception as e:
-            print(f"  ⚠️ MTF 数据获取失败: {e}, 继续使用基础数据")
-
-        return order_flow_report, derivatives_report
 
     def _display_results(self, signal_data: Dict) -> None:
         """Display analysis results."""
@@ -850,6 +945,12 @@ class MultiAgentAnalyzer(DiagnosticStep):
         print()
         reason_text = reason[:200] + "..." if len(reason) > 200 else reason
         print(f"     Reason: {reason_text}")
+
+        # v3.27: Invalidation conditions (nof1 Alpha Arena alignment)
+        invalidation = signal_data.get('invalidation', 'N/A')
+        if invalidation and invalidation != 'N/A':
+            inv_text = invalidation[:200] + "..." if len(str(invalidation)) > 200 else str(invalidation)
+            print(f"     Invalidation: {inv_text}")
 
         # Display debate transcript (v11.16)
         self._display_debate_transcript()
@@ -943,10 +1044,11 @@ class MultiAgentAnalyzer(DiagnosticStep):
 
             print()
 
-        print("  📋 v3.12 架构要求:")
-        print("     - System Prompt: 角色定义 + INDICATOR_DEFINITIONS (知识背景)")
-        print("     - User Prompt: 原始数据 + 任务指令 (当前任务)")
+        print("  📋 v3.27.1 架构要求:")
+        print("     - System Prompt: 角色定义 + INDICATOR_DEFINITIONS (v3.27 精简版)")
+        print("     - User Prompt: 原始数据 + 任务指令 (纯知识，无指令性语句)")
         print("     - Judge Prompt: 包含 PAST REFLECTIONS (过去交易记忆)")
+        print("     - Risk Manager output: 包含 invalidation 字段 (v3.27)")
 
 
 class SignalProcessor(DiagnosticStep):

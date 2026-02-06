@@ -341,6 +341,12 @@ class DataFlowSummary(DiagnosticStep):
             for i, risk in enumerate(risks[:2], 1):
                 print(f"    {i}. {risk[:70]}...")
 
+        # v3.27: Invalidation field (nof1 alignment)
+        invalidation = sd.get('invalidation', '')
+        if invalidation:
+            print()
+            print(f"  ⛔ 失效条件: {invalidation[:100]}{'...' if len(invalidation) > 100 else ''}")
+
         print()
         reason = sd.get('reason', 'N/A')
         print(f"  决策理由: {reason[:100]}...")
@@ -351,9 +357,10 @@ class DataFlowSummary(DiagnosticStep):
         print_box("MTF 过滤状态")
         print()
 
-        print(f"  架构: TradingAgents v3.17 - R/R 驱动入场")
-        print(f"  入场标准: R/R >= 1.5:1 (唯一入场标准，移除距离硬性规则)")
-        print(f"  仓位大小: 由 R/R 质量决定 (R/R 越高 → 仓位越大)")
+        print(f"  架构: TradingAgents v3.27.1 - Pure Knowledge Prompts + R/R 驱动入场")
+        print(f"  入场标准: R/R >= 1.5:1 (唯一入场标准)")
+        print(f"  AI 决策: 纯知识描述 prompts (无 MUST/NEVER/ALWAYS 指令)")
+        print(f"  输出格式: 包含 invalidation 字段 (nof1 对齐)")
         print()
 
         sd = self.ctx.signal_data
@@ -540,6 +547,13 @@ class DeepAnalysis(DiagnosticStep):
         print(f"  📋 Judge 完整理由:")
         reason = sd.get('reason', 'N/A')
         print_wrapped(reason)
+
+        # v3.27: Show invalidation condition
+        invalidation = sd.get('invalidation', '')
+        if invalidation:
+            print()
+            print(f"  ⛔ 失效条件 (Invalidation):")
+            print_wrapped(invalidation)
 
         # Show debate summary if available
         debate_summary = sd.get('debate_summary')

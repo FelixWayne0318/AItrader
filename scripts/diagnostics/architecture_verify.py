@@ -1,8 +1,8 @@
 """
 Architecture Verification Module
 
-Verifies TradingAgents v3.3 architecture compliance.
-Restored from v11.16 monolithic script [7.5/10] section.
+Verifies TradingAgents v3.27.1 architecture compliance.
+Performs live data completeness checks against the actual live system.
 """
 
 from typing import Dict, Optional
@@ -16,130 +16,186 @@ from .base import (
 
 class TradingAgentsArchitectureVerifier(DiagnosticStep):
     """
-    Verify TradingAgents v3.3 architecture compliance.
+    Verify TradingAgents v3.27.1 architecture compliance.
 
-    Based on v11.16: [7.5/10] TradingAgents v3.3 架构验证
+    v3.0.0 rewrite: Replaces static text with live data completeness verification.
 
-    Shows:
-    - Design philosophy ("Autonomy is non-negotiable")
-    - Removed local hardcoded rules
-    - Removed pre-computed labels
-    - Raw data AI receives
-    - AI decision result (unfiltered)
-    - MTF state estimation
+    Checks:
+    - analyze() parameter completeness vs live system
+    - INDICATOR_DEFINITIONS presence in all 4 AI prompts
+    - Prompt architecture: pure knowledge, no directives
+    - Data pipeline coverage (13 categories)
+    - Timing breakdown
     """
 
-    name = "TradingAgents v3.3 架构验证"
+    name = "TradingAgents v3.27.1 架构验证"
 
     def run(self) -> bool:
         print("-" * 70)
-
-        print("  📊 TradingAgents v3.3 设计理念:")
-        print('     "Autonomy is non-negotiable" - AI 像人类分析师一样思考')
-        print("     AI 接收原始数值 + INDICATOR_DEFINITIONS 自主解读")
+        print()
+        print_box("TradingAgents v3.27.1 架构验证", 65)
         print()
 
-        self._print_removed_rules()
-        self._print_removed_labels()
-        self._print_ai_received_data()
-        self._print_ai_decision_result()
-        self._print_mtf_state_estimation()
+        print("  📊 架构原则 (v3.27.1):")
+        print('     "Autonomy is non-negotiable" - AI 完全自主决策')
+        print("     Prompts 包含纯知识描述，无 MUST/NEVER/ALWAYS 指令")
+        print("     INDICATOR_DEFINITIONS v3.27: 117 行精简版 (统一 TRENDING/RANGING/failure)")
+        print("     Risk Manager output 包含 invalidation 字段 (nof1 对齐)")
+        print()
+
+        self._verify_data_completeness()
+        self._verify_prompt_architecture()
+        self._verify_ai_decision()
+        self._print_timing_breakdown()
 
         print()
-        print("  ✅ TradingAgents v3.4 架构验证完成")
+        print("  ✅ TradingAgents v3.27.1 架构验证完成")
         return True
 
-    def _print_removed_rules(self) -> None:
-        """Print removed local hardcoded rules."""
-        print("  ✅ 已移除的本地硬编码规则:")
-        print("     ❌ 趋势方向权限检查 (allow_long/allow_short)")
-        print("     ❌ 支撑/阻力位边界检查 (proximity_threshold)")
-        print("     ❌ RSI 入场范围限制")
-        print("     ❌ 确认计数框架 (bullish_count/bearish_count)")
-        print()
+    def _verify_data_completeness(self) -> None:
+        """Verify all 13 data categories are available."""
+        print("  📋 数据完整性检查 (13 类):")
 
-    def _print_removed_labels(self) -> None:
-        """Print removed pre-computed labels."""
-        print("  ✅ 不再传给 AI 的预计算标签 (v3.3 移除):")
-        print("     ❌ support/resistance - AI 用 SMA_50/BB 作动态支撑阻力")
-        print("     ❌ cvd_trend - AI 从 recent_10_bars 推断")
-        print("     ❌ overall_trend - AI 从 SMA 关系推断")
-        print("     ❌ Interpretation: Bullish/Bearish - AI 从原始比例推断")
-        print()
+        checks = [
+            ("[1] technical_data (15M)", self.ctx.technical_data, True),
+            ("[2] sentiment_data", self.ctx.sentiment_data, True),
+            ("[3] price_data", self.ctx.price_data, True),
+            ("[4] order_flow_report", self.ctx.order_flow_report, False),
+            ("[5] derivatives_report (Coinalyze)", self.ctx.derivatives_report, False),
+            ("[6] binance_derivatives (Top Traders)", getattr(self.ctx, 'binance_derivatives_data', None), False),
+            ("[7] orderbook_report", self.ctx.orderbook_report, False),
+            ("[8] mtf_decision_layer (4H)", self.ctx.technical_data.get('mtf_decision_layer') if self.ctx.technical_data else None, False),
+            ("[9] mtf_trend_layer (1D)", self.ctx.technical_data.get('mtf_trend_layer') if self.ctx.technical_data else None, False),
+            ("[10] current_position", self.ctx.current_position, False),
+            ("[11] account_context", self.ctx.account_context, True),
+            ("[12] historical_context", getattr(self.ctx, 'historical_context', None), False),
+            ("[13] sr_zones_data", self.ctx.sr_zones_data, False),
+        ]
 
-    def _print_ai_received_data(self) -> None:
-        """Print raw data AI receives."""
-        td = self.ctx.technical_data
-        of = self.ctx.order_flow_report or {}
-
-        print("  📋 AI 接收的数据 (原始数值，由 AI 自主解读):")
-        print(f"     - Price: ${self.ctx.current_price:,.2f}")
-        print(f"     - SMA_5/20/50: ${td.get('sma_5', 0):,.2f} / ${td.get('sma_20', 0):,.2f} / ${td.get('sma_50', 0):,.2f}")
-        print(f"     - RSI: {td.get('rsi', 0):.1f}")
-        print(f"     - MACD/Signal: {td.get('macd', 0):.4f} / {td.get('macd_signal', 0):.4f}")
-        print(f"     - BB: ${td.get('bb_lower', 0):,.2f} - ${td.get('bb_upper', 0):,.2f}")
-        print(f"     - Buy Ratio: {of.get('buy_ratio', 0)*100:.1f}%")
-        print()
-
-    def _print_ai_decision_result(self) -> None:
-        """Print AI decision result (unfiltered)."""
-        sd = self.ctx.signal_data
-
-        print("  🎯 AI 决策结果 (无本地过滤):")
-        print(f"     Signal: {sd.get('signal', 'N/A')}")
-        print(f"     Confidence: {sd.get('confidence', 'N/A')}")
-        print()
-
-    def _print_mtf_state_estimation(self) -> None:
-        """Print MTF state estimation based on current data."""
-        td = self.ctx.technical_data
-
-        print("  📊 MTF 状态估算 (基于当前数据，非实盘实时状态):")
-
-        # Trend layer (1D)
-        sma_200 = td.get('sma_200', 0)
-        if sma_200 > 0:
-            price_vs_sma200 = ((self.ctx.current_price / sma_200 - 1) * 100)
-            trend_status = "BULLISH" if price_vs_sma200 > 0 else "BEARISH"
-            print(f"     趋势层 (1D): {trend_status} - 价格 {'>' if price_vs_sma200 > 0 else '<'} SMA_200 ({price_vs_sma200:+.2f}%) (供 AI 参考)")
-        else:
-            # Use MTF trend layer data if available
-            mtf_trend = td.get('mtf_trend_layer', {})
-            mtf_sma_200 = mtf_trend.get('sma_200', 0)
-            if mtf_sma_200 > 0:
-                price_vs_sma200 = ((self.ctx.current_price / mtf_sma_200 - 1) * 100)
-                trend_status = "BULLISH" if price_vs_sma200 > 0 else "BEARISH"
-                print(f"     趋势层 (1D): {trend_status} - 价格 {'>' if price_vs_sma200 > 0 else '<'} SMA_200 ({price_vs_sma200:+.2f}%) (供 AI 参考)")
+        available = 0
+        required_ok = True
+        for label, data, required in checks:
+            has_data = data is not None and data != {}
+            if has_data:
+                available += 1
+                if isinstance(data, dict):
+                    detail = f"{len(data)} fields"
+                elif isinstance(data, list):
+                    detail = f"{len(data)} items"
+                else:
+                    detail = "present"
+                print(f"     ✅ {label}: {detail}")
             else:
-                print("     趋势层 (1D): N/A - SMA_200 数据不足")
+                marker = "❌" if required else "⚠️"
+                note = " (REQUIRED)" if required else " (optional)"
+                print(f"     {marker} {label}: None{note}")
+                if required:
+                    required_ok = False
 
-        # Decision layer (4H)
-        sma_5 = td.get('sma_5', 0)
-        sma_20 = td.get('sma_20', 0)
-        rsi = td.get('rsi', 50)
-
-        if sma_5 > sma_20:
-            decision_status = "ALLOW_LONG"
-        elif sma_5 < sma_20:
-            decision_status = "ALLOW_SHORT"
+        # kline_ohlcv check (nested in technical_data)
+        kline_ohlcv = self.ctx.technical_data.get('kline_ohlcv', []) if self.ctx.technical_data else []
+        if kline_ohlcv:
+            print(f"     ✅ [+] kline_ohlcv: {len(kline_ohlcv)} bars (in technical_data)")
         else:
-            decision_status = "WAIT"
+            print(f"     ⚠️ [+] kline_ohlcv: None (in technical_data)")
 
-        print(f"     决策层 (4H): {decision_status} - SMA_5 {'>' if sma_5 > sma_20 else '<'} SMA_20, RSI={rsi:.1f}")
-
-        # Execution layer (15M)
-        bb_upper = td.get('bb_upper', 0)
-        bb_lower = td.get('bb_lower', 0)
-        if bb_upper and bb_lower and bb_upper > bb_lower:
-            bb_width = bb_upper - bb_lower
-            bb_position = ((self.ctx.current_price - bb_lower) / bb_width) * 100
+        # bars_data check
+        sr_bars = self.ctx.sr_bars_data
+        if sr_bars:
+            print(f"     ✅ [+] bars_data (S/R Swing): {len(sr_bars)} bars")
         else:
-            bb_position = 50.0
+            print(f"     ⚠️ [+] bars_data (S/R Swing): None")
 
-        print(f"     执行层 (15M): BB 位置 {bb_position:.1f}% (0%=下轨, 100%=上轨)")
         print()
-        print("  ⚠️ 注意: 以上为基于当前数据的估算值")
-        print("     v3.1: 所有交易决策由 AI (MultiAgent) 完成，本地不做趋势判断")
+        status = "✅ COMPLETE" if required_ok else "❌ MISSING REQUIRED DATA"
+        print(f"     数据覆盖率: {available}/13 ({available/13*100:.0f}%) {status}")
+        print()
+
+    def _verify_prompt_architecture(self) -> None:
+        """Verify prompt architecture matches v3.27.1 specifications."""
+        print("  📋 Prompt 架构验证:")
+
+        if not self.ctx.multi_agent:
+            print("     ⚠️ MultiAgent 未初始化，跳过 Prompt 验证")
+            return
+
+        if not hasattr(self.ctx.multi_agent, 'get_last_prompts'):
+            print("     ⚠️ get_last_prompts() 不可用")
+            return
+
+        last_prompts = self.ctx.multi_agent.get_last_prompts()
+        if not last_prompts:
+            print("     ⚠️ 无 Prompt 数据")
+            return
+
+        for agent_name in ["bull", "bear", "judge", "risk"]:
+            if agent_name not in last_prompts:
+                print(f"     ⚠️ {agent_name.upper()}: 无 Prompt 数据")
+                continue
+
+            prompts = last_prompts[agent_name]
+            sys_prompt = prompts.get("system", "")
+            user_prompt = prompts.get("user", "")
+
+            has_indicator_ref = "INDICATOR REFERENCE" in sys_prompt
+            has_memories = "PAST REFLECTIONS" in user_prompt
+            has_invalidation = "invalidation" in user_prompt.lower() if agent_name == "risk" else None
+
+            # Check for directive language (should be zero)
+            directive_patterns = ["you MUST", "Do NOT", "NEVER trade", "ALWAYS defer", "RULE:"]
+            directive_count = sum(1 for p in directive_patterns if p in sys_prompt or p in user_prompt)
+
+            status = "✅" if has_indicator_ref else "⚠️"
+            extras = []
+            if agent_name == "judge" and has_memories:
+                extras.append("memories")
+            if has_invalidation:
+                extras.append("invalidation")
+            if directive_count > 0:
+                extras.append(f"WARN: {directive_count} directives found")
+
+            extra_str = f" [{', '.join(extras)}]" if extras else ""
+            print(f"     {status} {agent_name.upper()}: sys={len(sys_prompt)}ch, user={len(user_prompt)}ch, "
+                  f"INDICATOR_REF={'yes' if has_indicator_ref else 'NO'}{extra_str}")
+
+        print()
+
+    def _verify_ai_decision(self) -> None:
+        """Verify AI decision output format."""
+        sd = self.ctx.signal_data
+        print("  📋 AI 决策输出验证:")
+
+        expected_fields = ['signal', 'confidence', 'risk_level', 'position_size_pct',
+                          'stop_loss', 'take_profit', 'reason', 'invalidation', 'debate_summary']
+        present = [f for f in expected_fields if f in sd and sd[f] is not None]
+        missing = [f for f in expected_fields if f not in sd or sd[f] is None]
+
+        for f in present:
+            val = sd[f]
+            if isinstance(val, str) and len(val) > 50:
+                val = val[:50] + "..."
+            print(f"     ✅ {f}: {val}")
+        for f in missing:
+            marker = "❌" if f in ['signal', 'confidence'] else "⚠️"
+            print(f"     {marker} {f}: missing")
+
+        print(f"     覆盖率: {len(present)}/{len(expected_fields)}")
+        print()
+
+    def _print_timing_breakdown(self) -> None:
+        """Print timing breakdown for all measured steps."""
+        timings = self.ctx.step_timings
+        if not timings:
+            return
+
+        print("  📋 耗时分析:")
+        total = sum(timings.values())
+        for label, elapsed in sorted(timings.items(), key=lambda x: -x[1]):
+            pct = (elapsed / total * 100) if total > 0 else 0
+            bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
+            print(f"     {bar} {elapsed:6.2f}s ({pct:4.1f}%) {label}")
+        print(f"     {'─' * 20} {total:6.2f}s TOTAL")
+        print()
 
     def should_skip(self) -> bool:
         return self.ctx.summary_mode
@@ -164,16 +220,17 @@ class DiagnosticSummaryBox(DiagnosticStep):
     def run(self) -> bool:
         print()
         print("=" * 70)
-        print("  诊断总结 (TradingAgents v3.17 - R/R 驱动入场)")
+        print("  诊断总结 (TradingAgents v3.27.1)")
         print("=" * 70)
         print()
 
         sd = self.ctx.signal_data
         judge = sd.get('judge_decision', {})
 
-        print("  📊 架构: TradingAgents v3.17 - R/R 驱动入场")
-        print("     入场标准: R/R >= 1.5:1 (唯一入场标准)")
-        print("     仓位大小: 由 R/R 质量决定 (R/R 越高 → 仓位越大)")
+        print("  📊 架构: TradingAgents v3.27.1")
+        print("     AI Prompts: 纯知识描述 (无 MUST/NEVER 指令)")
+        print("     INDICATOR_DEFINITIONS: v3.27 精简版 (117 行)")
+        print("     Risk Manager: invalidation 字段 (nof1 对齐)")
         print()
 
         print(f"  📊 AI Signal: {sd.get('signal', 'N/A')}")
