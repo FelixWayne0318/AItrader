@@ -405,13 +405,12 @@ class SRZoneCalculator:
         atr_value: float,
     ) -> int:
         """
-        Count how many times price has touched a zone.
+        Count discrete touches of a zone (consecutive bars = 1 touch).
 
-        A "touch" is defined as the bar's high or low coming within
-        (ATR × touch_threshold_atr) of the zone center, OR the bar's
-        range overlapping with the zone boundaries.
-
-        Reference: Osler (2000) - 2-3 touches is optimal for S/R strength.
+        A "touch" requires price to leave the zone and then re-enter it.
+        Consecutive bars overlapping the same zone count as a single touch.
+        This matches Osler (2000)'s definition where 2-3 discrete visits
+        to a price level indicate optimal S/R strength.
 
         Parameters
         ----------
@@ -429,7 +428,7 @@ class SRZoneCalculator:
         Returns
         -------
         int
-            Number of touches.
+            Number of discrete touches.
         """
         if not bars_data or atr_value <= 0:
             return 0
@@ -439,6 +438,8 @@ class SRZoneCalculator:
         expanded_high = zone_high + touch_distance
 
         touches = 0
+        was_in_zone = False
+
         for bar in bars_data:
             bar_high = float(bar.get('high', 0))
             bar_low = float(bar.get('low', 0))
@@ -447,8 +448,13 @@ class SRZoneCalculator:
                 continue
 
             # Bar overlaps with the expanded zone
-            if bar_low <= expanded_high and bar_high >= expanded_low:
+            in_zone = (bar_low <= expanded_high and bar_high >= expanded_low)
+
+            if in_zone and not was_in_zone:
+                # Price just entered the zone — count as a new touch
                 touches += 1
+
+            was_in_zone = in_zone
 
         return touches
 
