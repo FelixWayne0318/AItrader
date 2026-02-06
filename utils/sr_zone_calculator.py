@@ -312,24 +312,26 @@ class SRZoneCalculator:
             age_factor = max(0.5, 1.0 - (bars_ago / self.swing_max_age) * 0.5)
 
             if is_swing_high:
-                side = 'resistance' if bar_high > current_price else 'support'
+                # Swing highs (price peaks) are ALWAYS resistance
+                # They represent historical selling pressure regardless of current price
                 candidates.append(SRCandidate(
                     price=bar_high,
                     source=f"Swing_High",
                     weight=self.WEIGHTS['Swing_High'] * age_factor,
-                    side=side,
+                    side='resistance',
                     extra={'bar_index': i, 'bars_ago': bars_ago, 'age_factor': age_factor},
                     level=SRLevel.INTERMEDIATE,
                     source_type=SRSourceType.STRUCTURAL,
                 ))
 
             if is_swing_low:
-                side = 'support' if bar_low < current_price else 'resistance'
+                # Swing lows (price troughs) are ALWAYS support
+                # They represent historical buying pressure regardless of current price
                 candidates.append(SRCandidate(
                     price=bar_low,
                     source=f"Swing_Low",
                     weight=self.WEIGHTS['Swing_Low'] * age_factor,
-                    side=side,
+                    side='support',
                     extra={'bar_index': i, 'bars_ago': bars_ago, 'age_factor': age_factor},
                     level=SRLevel.INTERMEDIATE,
                     source_type=SRSourceType.STRUCTURAL,

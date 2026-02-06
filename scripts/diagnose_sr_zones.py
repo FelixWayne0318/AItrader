@@ -1565,6 +1565,30 @@ def run_full_diagnosis():
     print("  📝 计算方法: BB + SMA_50 + Order Wall + Swing Point + ATR聚类 + Touch Count (v3.0)")
     print("  📝 来源: utils/sr_zone_calculator.py + utils/orderbook_processor.py")
 
+    # 5.5 ADX 趋势强度 (v3.20)
+    if sr_with_wall['success'] and sr_with_wall.get('tech_data'):
+        tech = sr_with_wall['tech_data']
+        adx_val = tech.get('adx', 0)
+        di_plus = tech.get('di_plus', 0)
+        di_minus = tech.get('di_minus', 0)
+        adx_regime = tech.get('adx_regime', 'N/A')
+        adx_dir = tech.get('adx_direction', 'N/A')
+
+        print()
+        print_section("5.5 趋势强度 (ADX v3.20)")
+        adx_status = "ok" if adx_val < 25 else "warn"
+        print_result("ADX(14)", f"{adx_val:.1f} ({adx_regime})", adx_status)
+        print_result("方向", f"DI+={di_plus:.1f}, DI-={di_minus:.1f} → {adx_dir}", "info")
+
+        if adx_val < 20:
+            print_result("S/R 可靠性", "HIGH — 震荡市，S/R 反弹概率 ~70%", "ok")
+        elif adx_val < 25:
+            print_result("S/R 可靠性", "MODERATE — 弱趋势，需要确认", "warn")
+        elif adx_val < 40:
+            print_result("S/R 可靠性", "LOW — 强趋势，S/R 反弹概率 ~25%，优先顺势", "warn")
+        else:
+            print_result("S/R 可靠性", "VERY LOW — 极强趋势，避免逆势 S/R 入场", "error")
+
     # 6. 价格分布极值检测 (新方法 v2.0)
     print_section("6. 方法四: Volume Profile 风格分析 (CME 标准)")
     dist_result = calculate_price_distribution_sr(

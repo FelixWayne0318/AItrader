@@ -988,8 +988,22 @@ YOUR TASK:
    - Price closer to RESISTANCE → SHORT has better R/R (small risk, large reward)
    - Price in MIDDLE → Both directions have poor R/R → likely HOLD
 
-   ⚠️ R/R is the ONLY criterion for entry quality. Do NOT use arbitrary distance rules.
+   ⚠️ R/R is the primary criterion for entry quality. Do NOT use arbitrary distance rules.
    ⚠️ If R/R < 1.5:1, you MUST change signal to HOLD regardless of other factors.
+
+   REGIME-AWARE R/R ADJUSTMENT (v3.20 - statistical context, not mandate):
+   Check the ADX value in the technical data above:
+   - ADX < 20 (RANGING): S/R bounces are ~70% reliable. Standard R/R 1.5:1 minimum applies.
+   - ADX 20-30 (WEAK TREND): Counter-trend entries need R/R >= 2.0:1. With-trend R/R 1.5:1 is fine.
+   - ADX 30-40 (STRONG TREND): S/R levels are frequently broken (~25% bounce rate).
+     Counter-trend entries need R/R >= 3.0:1. Strongly prefer with-trend entries.
+   - ADX > 40 (VERY STRONG TREND): Avoid counter-trend S/R entries entirely.
+     With-trend entries remain valid with R/R >= 1.5:1.
+
+   "Counter-trend" means: LONG when DI- > DI+ (bearish), or SHORT when DI+ > DI- (bullish).
+   This is statistical guidance based on Osler (2000) and ADX research, not a hard rule.
+   You may override in exceptional cases (exhaustion divergence, capitulation volume),
+   but you MUST explain the exceptional reasoning in your "reason" field.
 
 3. Position sizing based on R/R quality:
    - R/R >= 2.5:1 → Can use higher position size (80-100%)
@@ -1226,6 +1240,12 @@ MOMENTUM:
 - MACD: {safe_get('macd'):.4f}
 - MACD Signal: {safe_get('macd_signal'):.4f}
 - MACD Histogram: {safe_get('macd_histogram'):.4f}
+
+TREND STRENGTH (ADX):
+- ADX(14): {safe_get('adx'):.1f} ({data.get('adx_regime', 'N/A')})
+- DI+: {safe_get('di_plus'):.1f}, DI-: {safe_get('di_minus'):.1f} → {data.get('adx_direction', 'N/A')} direction
+- S/R Reliability: {"HIGH (mean-reversion works well)" if safe_get('adx') < 20 else "MODERATE (confirm with volume)" if safe_get('adx') < 25 else "LOW (S/R breakouts more likely, trade with trend)" if safe_get('adx') < 40 else "VERY LOW (strong trend, avoid counter-trend S/R entries)"}
+- Note: ADX < 20 = ranging (S/R bounces ~70% reliable), ADX > 30 = strong trend (S/R bounces ~25% reliable)
 
 VOLATILITY (Bollinger Bands):
 - Upper: ${safe_get('bb_upper'):,.2f}

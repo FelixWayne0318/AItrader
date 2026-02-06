@@ -184,6 +184,9 @@ class TechnicalIndicatorManager:
             current_price, sma_values, macd_value, macd_signal_value
         )
 
+        # ADX (trend strength)
+        adx_data = self._calculate_adx(period=14)
+
         # Combine all data
         technical_data = {
             # SMAs
@@ -206,6 +209,12 @@ class TechnicalIndicatorManager:
             # Support/Resistance
             "support": support,
             "resistance": resistance,
+            # ADX (trend strength)
+            "adx": adx_data['adx'],
+            "di_plus": adx_data['di_plus'],
+            "di_minus": adx_data['di_minus'],
+            "adx_regime": adx_data['adx_regime'],
+            "adx_direction": adx_data.get('adx_direction', ''),
             # Trend analysis
             **trend_data,
         }
@@ -232,6 +241,139 @@ class TechnicalIndicatorManager:
         resistance = max(float(bar.high) for bar in recent)
 
         return support, resistance
+
+    def _calculate_adx(self, period: int = 14) -> Dict[str, Any]:
+        """
+        Calculate ADX (Average Directional Index) from recent bars.
+
+        ADX measures trend strength (not direction):
+        - ADX < 20: No trend / ranging market
+        - ADX 20-25: Weak/emerging trend
+        - ADX 25-40: Strong trend
+        - ADX > 40: Very strong trend
+
+        Also returns +DI and -DI for trend direction:
+        - +DI > -DI: Bullish trend
+        - -DI > +DI: Bearish trend
+
+        Parameters
+        ----------
+        period : int
+            ADX smoothing period (default 14, Wilder's standard)
+
+        Returns
+        -------
+        Dict with adx, di_plus, di_minus, adx_regime
+        """
+        bars = self.recent_bars
+        n = len(bars)
+        # Need at least 2 * period + 1 bars for meaningful ADX
+        if n < 2 * period + 1:
+            return {
+                'adx': 0.0, 'di_plus': 0.0, 'di_minus': 0.0,
+                'adx_regime': 'INSUFFICIENT_DATA',
+            }
+
+        # Step 1: Calculate TR, +DM, -DM for each bar
+        tr_list = []
+        plus_dm_list = []
+        minus_dm_list = []
+
+        for i in range(1, n):
+            high = float(bars[i].high)
+            low = float(bars[i].low)
+            prev_close = float(bars[i - 1].close)
+            prev_high = float(bars[i - 1].high)
+            prev_low = float(bars[i - 1].low)
+
+            # True Range
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            tr_list.append(tr)
+
+            # +DM and -DM
+            up_move = high - prev_high
+            down_move = prev_low - low
+
+            if up_move > down_move and up_move > 0:
+                plus_dm_list.append(up_move)
+            else:
+                plus_dm_list.append(0.0)
+
+            if down_move > up_move and down_move > 0:
+                minus_dm_list.append(down_move)
+            else:
+                minus_dm_list.append(0.0)
+
+        if len(tr_list) < period:
+            return {
+                'adx': 0.0, 'di_plus': 0.0, 'di_minus': 0.0,
+                'adx_regime': 'INSUFFICIENT_DATA',
+            }
+
+        # Step 2: Wilder's smoothing for TR, +DM, -DM
+        # First value is simple sum of first 'period' values
+        smoothed_tr = sum(tr_list[:period])
+        smoothed_plus_dm = sum(plus_dm_list[:period])
+        smoothed_minus_dm = sum(minus_dm_list[:period])
+
+        dx_list = []
+
+        for i in range(period, len(tr_list)):
+            # Wilder's smoothing: prev - (prev / period) + current
+            smoothed_tr = smoothed_tr - (smoothed_tr / period) + tr_list[i]
+            smoothed_plus_dm = smoothed_plus_dm - (smoothed_plus_dm / period) + plus_dm_list[i]
+            smoothed_minus_dm = smoothed_minus_dm - (smoothed_minus_dm / period) + minus_dm_list[i]
+
+            # +DI and -DI
+            if smoothed_tr > 0:
+                di_plus = (smoothed_plus_dm / smoothed_tr) * 100
+                di_minus = (smoothed_minus_dm / smoothed_tr) * 100
+            else:
+                di_plus = 0.0
+                di_minus = 0.0
+
+            # DX
+            di_sum = di_plus + di_minus
+            if di_sum > 0:
+                dx = abs(di_plus - di_minus) / di_sum * 100
+            else:
+                dx = 0.0
+            dx_list.append(dx)
+
+        if len(dx_list) < period:
+            return {
+                'adx': 0.0, 'di_plus': di_plus, 'di_minus': di_minus,
+                'adx_regime': 'INSUFFICIENT_DATA',
+            }
+
+        # Step 3: ADX = smoothed DX (Wilder's method)
+        adx = sum(dx_list[:period]) / period
+        for i in range(period, len(dx_list)):
+            adx = (adx * (period - 1) + dx_list[i]) / period
+
+        # Determine regime
+        if adx < 20:
+            regime = 'RANGING'
+        elif adx < 25:
+            regime = 'WEAK_TREND'
+        elif adx < 40:
+            regime = 'STRONG_TREND'
+        else:
+            regime = 'VERY_STRONG_TREND'
+
+        # Determine direction from DI
+        if di_plus > di_minus:
+            direction = 'BULLISH'
+        else:
+            direction = 'BEARISH'
+
+        return {
+            'adx': round(adx, 1),
+            'di_plus': round(di_plus, 1),
+            'di_minus': round(di_minus, 1),
+            'adx_regime': regime,
+            'adx_direction': direction,
+        }
 
     def _analyze_trend(
         self,

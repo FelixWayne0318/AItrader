@@ -82,6 +82,9 @@ indicators:
   bb_period: 20
   bb_std: 2.0
 
+  # ADX (趋势强度) 配置
+  adx_period: 14
+
   # 其他
   volume_ma_period: 20
   support_resistance_lookback: 20
