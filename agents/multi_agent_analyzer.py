@@ -613,6 +613,7 @@ class MultiAgentAnalyzer:
                 current_price=current_price,
                 technical_data=technical_report,  # v3.7: Pass dict for BB checks
                 account_context=account_context,  # v4.6: Account info for add/reduce
+                derivatives_report=derivatives_summary,  # v3.22: Funding rate for cost analysis
             )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
@@ -856,6 +857,7 @@ OUTPUT FORMAT (JSON only, no other text):
         current_price: float,
         technical_data: Optional[Dict[str, Any]] = None,
         account_context: Optional[Dict[str, Any]] = None,
+        derivatives_report: str = "",
     ) -> Dict[str, Any]:
         """
         Final risk evaluation and position sizing.
@@ -866,6 +868,7 @@ OUTPUT FORMAT (JSON only, no other text):
         v3.8: Replaced BB-only check with multi-source S/R Zone check
         v3.11: Removed preset rules from prompt, let AI decide autonomously
         v4.6: Added account_context for position sizing decisions
+        v3.22: Added derivatives_report for funding rate cost analysis
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
@@ -961,6 +964,9 @@ MARKET DATA:
 
 {sr_zones_for_risk}
 
+DERIVATIVES & FUNDING RATE:
+{derivatives_report if derivatives_report else "N/A"}
+
 CURRENT POSITION:
 {self._format_position(current_position)}
 
@@ -1018,6 +1024,16 @@ YOUR TASK:
    - R/R 2.0-2.5:1 → Medium position size (50-80%)
    - R/R 1.5-2.0:1 → Conservative position size (30-50%)
    - R/R < 1.5:1 → HOLD (do not trade)
+
+   FUNDING RATE COST ADJUSTMENT (v3.22):
+   Check the funding rate data in DERIVATIVES section above.
+   - Funding rate is a DIRECT COST paid every 8 hours while holding a position.
+   - LONG pays funding when rate is POSITIVE. SHORT pays when rate is NEGATIVE.
+   - Daily cost = |funding_rate| × 3 (three 8h settlements per day)
+   - If daily funding cost > 0.1% (rate > 0.033%), reduce position size by one tier.
+   - If daily funding cost > 0.3% (rate > 0.1%), consider HOLD unless R/R > 3:1.
+   - Predicted rate diverging from current rate signals changing market sentiment.
+   - Settlement countdown < 30min with extreme rate: expect short-term volatility.
 
 4. Final validation:
    - Entry happens at CURRENT MARKET PRICE
