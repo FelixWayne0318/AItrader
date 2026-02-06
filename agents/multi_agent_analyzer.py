@@ -125,6 +125,14 @@ FUNDING RATE (Perpetual Futures):
   * Negative rate = shorts pay longs (indicating more short positions)
   * Magnitude shows degree of position imbalance
 - Note: Binance 8h funding rate is the actual rate traders pay/receive
+- Predicted Funding Rate: Real-time estimate of next settlement rate based on current Mark-Index price spread
+  * If predicted rate diverges significantly from last settled rate, expect rate change at next settlement
+  * Rising predicted rate = increasing long leverage / bullish crowding
+  * Falling predicted rate = increasing short leverage / bearish crowding
+- Funding History: Last 10 settlement rates (~3.3 days) show funding rate trend
+  * Consistently positive = sustained long bias (contrarian: potential short squeeze exhaustion)
+  * Consistently negative = sustained short bias (contrarian: potential short covering rally)
+  * Reversal in trend = sentiment shift signal
 
 OPEN INTEREST (OI):
 - Total number of outstanding derivative contracts (sum of all open positions)
@@ -1893,7 +1901,7 @@ ORDER FLOW (Binance Taker Data):
             else:
                 parts.append("- Open Interest: N/A")
 
-            # Funding Rate (v3.9: removed trend label for AI autonomy)
+            # Funding Rate (v3.22: 完整币安数据 — 当前 + 预期 + 历史趋势)
             funding = data.get('funding_rate')
             if funding:
                 try:
@@ -1901,7 +1909,32 @@ ORDER FLOW (Binance Taker Data):
                 except (ValueError, TypeError):
                     rate = 0.0
                 rate_pct = rate * 100
-                parts.append(f"- Funding Rate: {rate_pct:.4f}%")
+                parts.append(f"- Funding Rate (last settled): {rate_pct:.4f}%")
+
+                # 预期费率 (从 Mark-Index 价差实时计算)
+                predicted_pct = funding.get('predicted_rate_pct')
+                if predicted_pct is not None:
+                    parts.append(f"- Predicted Next Funding Rate: {predicted_pct:.4f}%")
+
+                # 下次结算倒计时
+                countdown = funding.get('next_funding_countdown_min')
+                if countdown is not None:
+                    hours = countdown // 60
+                    mins = countdown % 60
+                    parts.append(f"- Next Settlement: {hours}h {mins}m")
+
+                # 结算历史 (最近 10 次 = ~3.3 天)
+                history = funding.get('history', [])
+                if history and len(history) >= 2:
+                    rates_str = " → ".join(
+                        [f"{r['rate_pct']:.4f}%" for r in history]
+                    )
+                    parts.append(f"- Funding History (last {len(history)}): {rates_str}")
+
+                    # 趋势
+                    trend = funding.get('trend', 'N/A')
+                    if trend != 'N/A':
+                        parts.append(f"- Funding Trend: {trend}")
             else:
                 parts.append("- Funding Rate: N/A")
 

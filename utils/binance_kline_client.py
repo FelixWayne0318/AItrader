@@ -1,5 +1,6 @@
 # utils/binance_kline_client.py
 
+import time
 import requests
 import logging
 from typing import List, Optional, Dict, Any
@@ -101,17 +102,30 @@ class BinanceKlineClient:
 
     def get_funding_rate(self, symbol: str = "BTCUSDT") -> Optional[Dict[str, Any]]:
         """
-        获取 Binance 直接的 Funding Rate (用于对比 Coinalyze 数据)
+        获取 Binance 完整的资金费率数据 (v3.22: 增强版)
+
+        从 premiumIndex 提取所有字段，并计算预期资金费率。
+
+        币安资金费率公式:
+            Funding Rate = Premium Index + clamp(Interest Rate - Premium Index, ±0.05%)
+            Premium Index = (Mark Price - Index Price) / Index Price
 
         Returns
         -------
         Dict or None
             {
                 "symbol": "BTCUSDT",
-                "funding_rate": 0.0001,      # 原始值 (0.01%)
-                "funding_rate_pct": 0.01,    # 百分比形式
+                "funding_rate": 0.0001,           # 上次结算费率 (原始值)
+                "funding_rate_pct": 0.01,         # 上次结算费率 (百分比)
+                "predicted_rate": 0.00015,        # 预期下次费率 (原始值)
+                "predicted_rate_pct": 0.015,      # 预期下次费率 (百分比)
                 "next_funding_time": 1234567890000,
-                "source": "binance_direct"
+                "next_funding_countdown_min": 180, # 距下次结算分钟数
+                "mark_price": 98000.0,
+                "index_price": 97950.0,
+                "interest_rate": 0.0001,          # 基础利率
+                "premium_index": 0.00051,         # 当前溢价指数
+                "source": "binance_direct",
             }
         """
         try:
@@ -122,13 +136,46 @@ class BinanceKlineClient:
 
             if response.status_code == 200:
                 data = response.json()
+
+                # 提取所有字段
                 funding_rate = float(data.get('lastFundingRate', 0))
+                mark_price = float(data.get('markPrice', 0))
+                index_price = float(data.get('indexPrice', 0))
+                interest_rate = float(data.get('interestRate', 0))
+                next_funding_time = data.get('nextFundingTime', 0)
+
+                # 计算当前溢价指数 (Premium Index)
+                premium_index = 0.0
+                if index_price > 0:
+                    premium_index = (mark_price - index_price) / index_price
+
+                # 计算预期资金费率 (Predicted Funding Rate)
+                # 公式: FR = Premium Index + clamp(Interest Rate - Premium Index, ±0.05%)
+                clamp_limit = 0.0005  # ±0.05%
+                diff = interest_rate - premium_index
+                clamped_diff = max(-clamp_limit, min(clamp_limit, diff))
+                predicted_rate = premium_index + clamped_diff
+
+                # 计算距下次结算的分钟数
+                countdown_min = None
+                if next_funding_time and next_funding_time > 0:
+                    now_ms = int(time.time() * 1000)
+                    remaining_ms = next_funding_time - now_ms
+                    if remaining_ms > 0:
+                        countdown_min = round(remaining_ms / 60000)
+
                 return {
                     "symbol": data.get('symbol'),
                     "funding_rate": funding_rate,
-                    "funding_rate_pct": round(funding_rate * 100, 4),  # 转为百分比
-                    "next_funding_time": data.get('nextFundingTime'),
-                    "mark_price": float(data.get('markPrice', 0)),
+                    "funding_rate_pct": round(funding_rate * 100, 4),
+                    "predicted_rate": predicted_rate,
+                    "predicted_rate_pct": round(predicted_rate * 100, 4),
+                    "next_funding_time": next_funding_time,
+                    "next_funding_countdown_min": countdown_min,
+                    "mark_price": mark_price,
+                    "index_price": index_price,
+                    "interest_rate": interest_rate,
+                    "premium_index": premium_index,
                     "source": "binance_direct",
                 }
             else:
@@ -139,4 +186,46 @@ class BinanceKlineClient:
 
         except Exception as e:
             self.logger.warning(f"⚠️ Binance funding rate fetch error: {e}")
+            return None
+
+    def get_funding_rate_history(
+        self,
+        symbol: str = "BTCUSDT",
+        limit: int = 10,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        获取币安资金费率结算历史 (v3.22 新增)
+
+        每 8 小时结算一次 (00:00, 08:00, 16:00 UTC)
+        limit=10 = 最近 ~3.3 天的结算记录
+
+        Returns
+        -------
+        List[Dict] or None
+            [
+                {
+                    "symbol": "BTCUSDT",
+                    "fundingTime": 1234567890000,
+                    "fundingRate": "0.00010000",
+                    "markPrice": "50000.00"
+                },
+                ...
+            ]
+        """
+        try:
+            url = f"{self.BASE_URL}/fapi/v1/fundingRate"
+            params = {"symbol": symbol, "limit": limit}
+
+            response = requests.get(url, params=params, timeout=self.timeout)
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self.logger.warning(
+                    f"⚠️ Binance funding rate history API error: {response.status_code}"
+                )
+                return None
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ Binance funding rate history fetch error: {e}")
             return None
