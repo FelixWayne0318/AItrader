@@ -390,14 +390,14 @@ def run_full_diagnosis():
         print_result("支撑区数量", len(sup_zones), "info")
         for i, zone in enumerate(sup_zones[:3]):
             wall_info = f" [Order Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
-            src = ", ".join(zone.source_names[:2]) if zone.source_names else "Unknown"
+            src = ", ".join(zone.sources[:2]) if zone.sources else zone.source_type
             print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}%) [{zone.strength}]{wall_info}")
             print(f"         来源: {src}")
 
         print_result("阻力区数量", len(res_zones), "info")
         for i, zone in enumerate(res_zones[:3]):
             wall_info = f" [Order Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
-            src = ", ".join(zone.source_names[:2]) if zone.source_names else "Unknown"
+            src = ", ".join(zone.sources[:2]) if zone.sources else zone.source_type
             print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}%) [{zone.strength}]{wall_info}")
             print(f"         来源: {src}")
 
