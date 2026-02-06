@@ -36,23 +36,20 @@ from strategy.trading_logic import (
 
 
 # =============================================================================
-# TradingAgents v3.15: Market Order Reality Check
+# INDICATOR_DEFINITIONS — Regime-Aware Trading Knowledge Manual
 #
-# v3.15 Changes:
-# - Updated Bull/Bear/Risk prompts to reflect market order entry behavior
-# - AI now explicitly told: entry at CURRENT PRICE, not at S/R levels
-# - LONG only recommended if price ALREADY near support (within 1-2%)
-# - SHORT only recommended if price ALREADY near resistance (within 1-2%)
-# - If price is in middle of S/R range, recommend HOLD (wait for better entry)
+# Evolution:
+# - v3.12: Basic calculation definitions (TradingAgents style)
+# - v3.15: Added "entry at current market price" (removed in v3.17+)
+# - v3.17: Replaced distance-based rules with R/R-driven entry criteria
+# - v3.25: Complete rewrite — regime-aware usage guide with failure modes
+# - v3.26: Risk Manager gets full manual + removed hard rules for AI autonomy
 #
-# v3.12: Indicator Definitions for AI
-# Borrowed from: TradingAgents/agents/analysts/market_analyst.py
-#
-# Philosophy: "Teach AI WHAT indicators mean, not HOW to use them"
-# - Provide calculation methods and mathematical definitions
-# - Explain what values represent, not trading rules
-# - Let AI form its own interpretation based on raw data
-# - Aligned with TradingAgents "授人以渔" (teach fishing, not give fish) principle
+# Philosophy (nof1 Alpha Arena / TradingAgents):
+# - Encode complete trading knowledge in the system prompt
+# - Teach AI regime detection, indicator interpretation, and failure modes
+# - Let AI synthesize all data and make independent decisions
+# - No hard thresholds that override AI judgment
 # =============================================================================
 INDICATOR_DEFINITIONS = """
 ====================================================================
@@ -1214,16 +1211,16 @@ OUTPUT FORMAT (JSON only, no other text):
             hc_reason = hard_control_info.get('reason', '')
             if block_long or block_short:
                 hard_control_section = f"""
-⛔ S/R ZONE HARD CONTROL ALERT (v3.16 - AI Decision Required):
-- Block LONG Signal: {'YES - TOO CLOSE TO HIGH STRENGTH RESISTANCE' if block_long else 'No'}
-- Block SHORT Signal: {'YES - TOO CLOSE TO HIGH STRENGTH SUPPORT' if block_short else 'No'}
-- Reason: {hc_reason if hc_reason else 'N/A'}
+⚠️ S/R ZONE PROXIMITY ALERT (v3.26 - Information for Your Assessment):
+- Near HIGH Strength RESISTANCE: {'YES' if block_long else 'No'}
+- Near HIGH Strength SUPPORT: {'YES' if block_short else 'No'}
+- Detail: {hc_reason if hc_reason else 'N/A'}
 
-YOU MUST evaluate this alert and decide:
-- If block_long=YES and proposed action is LONG → You SHOULD change to HOLD (unless you have exceptional reasoning)
-- If block_short=YES and proposed action is SHORT → You SHOULD change to HOLD (unless you have exceptional reasoning)
-- "HIGH strength" means multiple sources confirm this S/R zone (BB + SMA + Order Wall confluence)
-- Trading against HIGH strength zones has historically low success rate
+Context for your assessment:
+- "HIGH strength" means multiple sources confirm this zone (BB + SMA + Order Wall confluence)
+- Historical data shows trading against HIGH strength multi-source zones has lower success rates
+- However, breakouts through strong zones (with volume confirmation) can signal powerful moves
+- Consider this information alongside all other market data when making your decision
 """
 
         prompt = f"""As the Risk Manager, provide final trade parameters.
@@ -1260,79 +1257,71 @@ ACCOUNT CONTEXT:
 CURRENT PRICE: ${current_price:,.2f}
 
 YOUR TASK:
-⚠️ CRITICAL: Entry will be at CURRENT MARKET PRICE (${current_price:,.2f}), not at S/R levels.
+Note: Entry will be at CURRENT MARKET PRICE (${current_price:,.2f}), not at S/R levels.
 
-0. PRIORITY CHECK - S/R Zone Hard Control (v3.16):
-   - If a "⛔ S/R ZONE HARD CONTROL ALERT" is shown above, you MUST address it first
-   - Block LONG=YES + proposed LONG → Change to HOLD (price too close to HIGH strength resistance)
-   - Block SHORT=YES + proposed SHORT → Change to HOLD (price too close to HIGH strength support)
-   - HIGH strength zones have multiple confirming sources - trading against them is high risk
-   - You may override ONLY if you have exceptional reasoning (e.g., major breakout with volume confirmation)
-   - If you override, you MUST explain why in your "reason" field
+1. First, independently verify the MARKET REGIME using the indicator manual above:
+   - Check ADX, BB Width, price vs SMAs to determine TRENDING / RANGING / SQUEEZE
+   - Verify the proposed trade direction is consistent with the current regime
+   - If the Judge recommended a counter-trend trade in a strong trend, assess the risk carefully
 
-1. Calculate SL/TP based on S/R zones:
+2. If an S/R Zone Proximity Alert is shown above, factor it into your assessment:
+   - HIGH strength zones (multi-source confluence) have historically higher bounce rates
+   - However, breakout through strong zones can be powerful — use volume and momentum to judge
+   - This is information, not a rule — weigh it alongside all other data
+
+3. Calculate SL/TP based on S/R zones and market structure:
    - For LONG: SL below nearest SUPPORT, TP at nearest RESISTANCE
    - For SHORT: SL above nearest RESISTANCE, TP at nearest SUPPORT
    - Prefer zones with HIGH strength or ORDER_FLOW confirmation
-   - Minimum SL distance: 0.5-1% to avoid noise-triggered stops
+   - Consider minimum SL distance of 0.5-1% to avoid noise-triggered stops
 
-2. Evaluate Risk/Reward ratio (THIS IS THE ONLY ENTRY CRITERION - v3.17):
+4. Evaluate Risk/Reward ratio:
    - Calculate: Risk = |current_price - stop_loss|, Reward = |take_profit - current_price|
    - R/R = Reward / Risk
-   - MINIMUM acceptable R/R is 1.5:1
 
-   Understanding R/R and price position:
+   Statistical context on R/R (from institutional trading research):
+   - R/R >= 1.5:1 is the standard institutional minimum for favorable expected value
+   - R/R < 1.5:1 means risk exceeds reward — historically negative expectancy
+   - Trades with R/R < 1.0:1 have strongly negative expected returns
+
+   R/R naturally reflects price position:
    - Price closer to SUPPORT → LONG has better R/R (small risk, large reward)
-   - Price closer to RESISTANCE → SHORT has better R/R (small risk, large reward)
-   - Price in MIDDLE → Both directions have poor R/R → likely HOLD
+   - Price closer to RESISTANCE → SHORT has better R/R
+   - Price in MIDDLE of range → Both directions tend to have poor R/R
 
-   ⚠️ R/R is the primary criterion for entry quality. Do NOT use arbitrary distance rules.
-   ⚠️ If R/R < 1.5:1, you MUST change signal to HOLD regardless of other factors.
+   Regime context (Osler 2000, ADX research):
+   - ADX < 20 (RANGING): S/R bounces are ~70% reliable, standard R/R analysis applies
+   - ADX 20-30 (WEAK TREND): Counter-trend entries are riskier, need higher R/R to compensate
+   - ADX 30-40 (STRONG TREND): S/R levels break more often (~25% bounce rate)
+   - ADX > 40 (VERY STRONG TREND): Counter-trend S/R entries historically have very low success rate
+   - "Counter-trend" = LONG when DI- > DI+ (bearish), or SHORT when DI+ > DI- (bullish)
 
-   REGIME-AWARE R/R ADJUSTMENT (v3.20 - statistical context, not mandate):
-   Check the ADX value in the technical data above:
-   - ADX < 20 (RANGING): S/R bounces are ~70% reliable. Standard R/R 1.5:1 minimum applies.
-   - ADX 20-30 (WEAK TREND): Counter-trend entries need R/R >= 2.0:1. With-trend R/R 1.5:1 is fine.
-   - ADX 30-40 (STRONG TREND): S/R levels are frequently broken (~25% bounce rate).
-     Counter-trend entries need R/R >= 3.0:1. Strongly prefer with-trend entries.
-   - ADX > 40 (VERY STRONG TREND): Avoid counter-trend S/R entries entirely.
-     With-trend entries remain valid with R/R >= 1.5:1.
+5. Position sizing — consider these factors together:
+   - R/R quality: Higher R/R supports larger position, lower R/R warrants smaller position
+   - General guideline: R/R >= 2.5:1 (80-100%), 2.0-2.5:1 (50-80%), 1.5-2.0:1 (30-50%)
+   - Regime: Strong trend with-trend trades can be sized more aggressively
 
-   "Counter-trend" means: LONG when DI- > DI+ (bearish), or SHORT when DI+ > DI- (bullish).
-   This is statistical guidance based on Osler (2000) and ADX research, not a hard rule.
-   You may override in exceptional cases (exhaustion divergence, capitulation volume),
-   but you MUST explain the exceptional reasoning in your "reason" field.
+   Funding rate cost:
+   - Funding rate is a DIRECT COST paid every 8 hours while holding a position
+   - LONG pays when rate is POSITIVE, SHORT pays when rate is NEGATIVE
+   - Daily cost = |funding_rate| x 3 (three 8h settlements per day)
+   - High funding costs erode profits — factor this into your R/R and sizing assessment
+   - Predicted rate diverging from current rate signals changing market sentiment
+   - Settlement countdown < 30min with extreme rate: expect short-term volatility
 
-3. Position sizing based on R/R quality:
-   - R/R >= 2.5:1 → Can use higher position size (80-100%)
-   - R/R 2.0-2.5:1 → Medium position size (50-80%)
-   - R/R 1.5-2.0:1 → Conservative position size (30-50%)
-   - R/R < 1.5:1 → HOLD (do not trade)
+   Liquidity and slippage:
+   - Check ORDER FLOW and ORDER BOOK data for execution risk
+   - Wide spreads, large order walls, and low depth increase slippage risk
+   - Extreme buy_ratio (>0.65 or <0.35) means one-sided positioning — potential contrarian signal
+   - Adjust position size based on expected execution quality
 
-   FUNDING RATE COST ADJUSTMENT (v3.22):
-   Check the funding rate data in DERIVATIVES section above.
-   - Funding rate is a DIRECT COST paid every 8 hours while holding a position.
-   - LONG pays funding when rate is POSITIVE. SHORT pays when rate is NEGATIVE.
-   - Daily cost = |funding_rate| × 3 (three 8h settlements per day)
-   - If daily funding cost > 0.1% (rate > 0.033%), reduce position size by one tier.
-   - If daily funding cost > 0.3% (rate > 0.1%), consider HOLD unless R/R > 3:1.
-   - Predicted rate diverging from current rate signals changing market sentiment.
-   - Settlement countdown < 30min with extreme rate: expect short-term volatility.
+6. Make your final decision:
+   - You have the indicator manual, all market data, and the Judge's recommendation
+   - Synthesize everything and make an independent risk-adjusted decision
+   - If the trade quality is poor (bad R/R, adverse regime, high costs), change to HOLD
+   - Explain your reasoning clearly in the "reason" field
 
-   LIQUIDITY & SLIPPAGE ADJUSTMENT (v3.23):
-   Check ORDER FLOW and ORDER BOOK data above for execution risk.
-   - If order book spread > 0.05%, expect higher slippage — reduce position size.
-   - If order book shows significant anomalies (large walls), SL/TP may not fill at expected price.
-   - If buy_ratio is extreme (>0.65 or <0.35), the crowd is one-sided — contrarian signal.
-   - Low liquidity (high slippage for 1 BTC) means large orders will move price — use smaller size.
-
-4. Final validation:
-   - Entry happens at CURRENT MARKET PRICE
-   - If proposed signal has R/R >= 1.5:1 → APPROVE
-   - If proposed signal has R/R < 1.5:1 → Change to HOLD
-   - When in doubt, calculate R/R - it tells you everything about entry quality
-
-SIGNAL TYPES (v3.12 - choose the most appropriate):
+SIGNAL TYPES (choose the most appropriate):
 - LONG: Open new long or add to existing long position
 - SHORT: Open new short or add to existing short position
 - CLOSE: Close current position completely (do NOT open opposite position)
@@ -1357,7 +1346,14 @@ OUTPUT FORMAT (JSON only, no other text):
     "debate_summary": "<brief summary of bull vs bear debate>"
 }}"""
 
-        system_prompt = "You are a Risk Manager. Analyze the market data and set appropriate trade parameters based on market structure and risk/reward."
+        system_prompt = f"""You are a Risk Manager.
+Your role is to evaluate proposed trades, set SL/TP levels, and determine position sizing.
+
+{INDICATOR_DEFINITIONS}
+
+Use the indicator manual to independently verify the market regime and validate
+that the proposed trade direction is consistent with current market conditions.
+Make your own assessment — do not blindly follow the Judge's recommendation."""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["risk"] = {
@@ -2240,14 +2236,16 @@ ORDER FLOW (Binance Taker Data):
         if data and data.get('enabled', True):
             parts.append("COINALYZE DERIVATIVES:")
 
-            # Open Interest (v3.9: removed trend label for AI autonomy)
+            # Open Interest (v3.26: restored trend — single snapshot needs trend context)
+            trends = data.get('trends', {})
             oi = data.get('open_interest')
             if oi:
                 try:
                     oi_btc = float(oi.get('value', 0) or 0)
                 except (ValueError, TypeError):
                     oi_btc = 0.0
-                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
+                oi_trend = trends.get('oi_trend', 'N/A')
+                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC (Trend: {oi_trend})")
             else:
                 parts.append("- Open Interest: N/A")
 
@@ -2329,15 +2327,17 @@ ORDER FLOW (Binance Taker Data):
             else:
                 parts.append("- Liquidations (24h): N/A")
 
-            # Long/Short Ratio from Coinalyze (v3.9: removed trend label)
+            # Long/Short Ratio from Coinalyze (v3.26: restored trend for single-snapshot context)
             ls_hist = data.get('long_short_ratio_history')
             if ls_hist and ls_hist.get('history'):
                 latest = ls_hist['history'][-1]
                 ls_ratio = float(latest.get('r', 1))
                 long_pct = float(latest.get('l', 50))
                 short_pct = float(latest.get('s', 50))
+                ls_trend = trends.get('long_short_trend', 'N/A')
                 parts.append(
-                    f"- Long/Short Ratio: {ls_ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%)"
+                    f"- Long/Short Ratio: {ls_ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%) "
+                    f"(Trend: {ls_trend})"
                 )
         else:
             parts.append("COINALYZE: Data not available")
