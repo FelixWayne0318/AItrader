@@ -947,37 +947,36 @@ YOUR TASK:
    - You may override ONLY if you have exceptional reasoning (e.g., major breakout with volume confirmation)
    - If you override, you MUST explain why in your "reason" field
 
-1. SECOND - Validate if CURRENT PRICE is at a good entry point:
-   - For LONG: Current price must be ALREADY near SUPPORT (within 1-2%) to approve
-   - For SHORT: Current price must be ALREADY near RESISTANCE (within 1-2%) to approve
-   - If price is in the MIDDLE of S/R range: Change to HOLD (bad R/R at current price)
-   - If price is far from ideal entry zone: Change to HOLD (wait for better price)
+1. Calculate SL/TP based on S/R zones:
+   - For LONG: SL below nearest SUPPORT, TP at nearest RESISTANCE
+   - For SHORT: SL above nearest RESISTANCE, TP at nearest SUPPORT
+   - Prefer zones with HIGH strength or ORDER_FLOW confirmation
+   - Minimum SL distance: 0.5-1% to avoid noise-triggered stops
 
-2. Determine stop loss using S/R zones as reference:
-   - For LONG: Place SL below nearest SUPPORT zone (preferably with ORDER_FLOW or HIGH strength)
-   - For SHORT: Place SL above nearest RESISTANCE zone (preferably with ORDER_FLOW or HIGH strength)
-   - Consider market volatility: in high volatility, use wider SL to avoid noise-triggered stops
-   - Aim for SL distance of at least 0.5-1% to account for normal price fluctuation
+2. Evaluate Risk/Reward ratio (THIS IS THE ONLY ENTRY CRITERION - v3.17):
+   - Calculate: Risk = |current_price - stop_loss|, Reward = |take_profit - current_price|
+   - R/R = Reward / Risk
+   - MINIMUM acceptable R/R is 1.5:1
 
-3. Determine take profit using S/R zones as reference:
-   - For LONG: Target nearest RESISTANCE zone as TP (consider zone Level: MAJOR > INTERMEDIATE > MINOR)
-   - For SHORT: Target nearest SUPPORT zone as TP
+   Understanding R/R and price position:
+   - Price closer to SUPPORT → LONG has better R/R (small risk, large reward)
+   - Price closer to RESISTANCE → SHORT has better R/R (small risk, large reward)
+   - Price in MIDDLE → Both directions have poor R/R → likely HOLD
 
-4. Evaluate Risk/Reward ratio at CURRENT PRICE (CRITICAL):
-   - Calculate: SL distance = |current_price - stop_loss|, TP distance = |take_profit - current_price|
-   - MINIMUM acceptable R/R is 1.5:1 (TP distance >= 1.5x SL distance)
-   - IMPORTANT: If R/R at current price is below 1.5:1, you MUST change signal to HOLD
-   - DO NOT adjust SL/TP to artificially inflate R/R - if the entry is bad, signal HOLD
+   ⚠️ R/R is the ONLY criterion for entry quality. Do NOT use arbitrary distance rules.
+   ⚠️ If R/R < 1.5:1, you MUST change signal to HOLD regardless of other factors.
 
-5. FINAL VALIDATION (v3.15 - Market Order Reality Check):
-   - Entry happens at CURRENT PRICE, not at S/R zones
-   - REJECT LONG if current price is far from support (> 2% away) - bad entry timing
-   - REJECT SHORT if current price is far from resistance (> 2% away) - bad entry timing
-   - APPROVE LONG only if current price is already near support AND R/R >= 1.5:1
-   - APPROVE SHORT only if current price is already near resistance AND R/R >= 1.5:1
-   - When in doubt, choose HOLD - waiting for better entry is better than bad entry
+3. Position sizing based on R/R quality:
+   - R/R >= 2.5:1 → Can use higher position size (80-100%)
+   - R/R 2.0-2.5:1 → Medium position size (50-80%)
+   - R/R 1.5-2.0:1 → Conservative position size (30-50%)
+   - R/R < 1.5:1 → HOLD (do not trade)
 
-6. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
+4. Final validation:
+   - Entry happens at CURRENT MARKET PRICE
+   - If proposed signal has R/R >= 1.5:1 → APPROVE
+   - If proposed signal has R/R < 1.5:1 → Change to HOLD
+   - When in doubt, calculate R/R - it tells you everything about entry quality
 
 SIGNAL TYPES (v3.12 - choose the most appropriate):
 - LONG: Open new long or add to existing long position

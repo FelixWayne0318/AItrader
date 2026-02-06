@@ -623,6 +623,28 @@ Environment=AUTO_CONFIRM=true
     - 文件：`agents/multi_agent_analyzer.py:846-912`
     - 参考：[TradingAgents Framework](https://github.com/TauricResearch/TradingAgents)
 
+19. **v3.17 入场规则简化** (R/R 驱动) - **架构改进**
+    - **背景**: v3.15 的 "1-2% 内" 硬性规则过于主观，导致过多 HOLD
+    - **问题**: 固定百分比不考虑市场状况，真正重要的是 R/R 比率
+    - **修复**: 移除距离百分比限制，改为纯 R/R 驱动
+    - **变更**:
+      - 移除 "within 1-2%" 硬性入场规则
+      - 移除 "> 2% away" 拒绝规则
+      - R/R >= 1.5:1 是**唯一**入场标准
+      - 新增 R/R 与仓位大小关联 (R/R 越高可用越大仓位)
+    - **新入场逻辑**:
+      ```
+      R/R >= 2.5:1 → 高仓位 (80-100%)
+      R/R 2.0-2.5:1 → 中仓位 (50-80%)
+      R/R 1.5-2.0:1 → 低仓位 (30-50%)
+      R/R < 1.5:1 → HOLD (不交易)
+      ```
+    - **原理**: 价格位置自然反映在 R/R 中
+      - 靠近支撑 → LONG R/R 好
+      - 靠近阻力 → SHORT R/R 好
+      - 中间位置 → 两边 R/R 都差 → HOLD
+    - 文件：`agents/multi_agent_analyzer.py:950-979`
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
