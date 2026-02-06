@@ -3539,12 +3539,152 @@
       "pattern_type": "import",
       "created": "2026-02-06T11:03:34.061034",
       "auto_generated": true
+    },
+    {
+      "id": "95134574659c",
+      "commit": "2ff4d9d",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(telegram): Fix 7 bugs + add funding trend, liquidations, trailing stop status",
+      "pattern": "if funding_history and len(funding_history) >= 3:",
+      "pattern_type": "contains",
+      "created": "2026-02-06T23:52:49.474493",
+      "auto_generated": true
+    },
+    {
+      "id": "039fa0052695",
+      "commit": "2ff4d9d",
+      "file": "utils/telegram_bot.py",
+      "message": "fix(telegram): Fix 7 bugs + add funding trend, liquidations, trailing stop status",
+      "pattern": "trailing_activated = heartbeat_data.get('trailing_activated', False)",
+      "pattern_type": "contains",
+      "created": "2026-02-06T23:52:49.478235",
+      "auto_generated": true
+    },
+    {
+      "id": "13c1d9bb2356",
+      "commit": "4688391",
+      "file": "main_live.py",
+      "message": "fix(binance): Add server time sync to prevent -1021 timestamp errors + real-time price for heartbeat",
+      "pattern": "get_binance_config",
+      "pattern_type": "function_exists",
+      "created": "2026-02-06T23:52:49.484387",
+      "auto_generated": true
+    },
+    {
+      "id": "99e5a8f99437",
+      "commit": "4688391",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(binance): Add server time sync to prevent -1021 timestamp errors + real-time price for heartbeat",
+      "pattern": "if hasattr(self, 'binance_account') and self.binance_account:",
+      "pattern_type": "contains",
+      "created": "2026-02-06T23:52:49.489268",
+      "auto_generated": true
+    },
+    {
+      "id": "3c10dbf05a09",
+      "commit": "4688391",
+      "file": "utils/binance_account.py",
+      "message": "fix(binance): Add server time sync to prevent -1021 timestamp errors + real-time price for heartbeat",
+      "pattern": "_sync_server_time",
+      "pattern_type": "function_exists",
+      "created": "2026-02-06T23:52:49.492255",
+      "auto_generated": true
+    },
+    {
+      "id": "e3b01ec201da",
+      "commit": "32c52f5",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "feat(telegram): Complete redesign of Telegram messaging system (v3.0)",
+      "pattern": "'adx': tech_data.get('adx'),",
+      "pattern_type": "contains",
+      "created": "2026-02-06T23:52:49.500635",
+      "auto_generated": true
+    },
+    {
+      "id": "c781a654e204",
+      "commit": "32c52f5",
+      "file": "utils/telegram_bot.py",
+      "message": "feat(telegram): Complete redesign of Telegram messaging system (v3.0)",
+      "pattern": "_bar",
+      "pattern_type": "function_exists",
+      "created": "2026-02-06T23:52:49.506212",
+      "auto_generated": true
+    },
+    {
+      "id": "36d51cdba8f3",
+      "commit": "a63a09e",
+      "file": "utils/telegram_bot.py",
+      "message": "fix(telegram): Fix 5 bugs in heartbeat message display",
+      "pattern": "if nearest_support is not None and nearest_support < current_price:",
+      "pattern_type": "contains",
+      "created": "2026-02-06T23:52:49.512705",
+      "auto_generated": true
+    },
+    {
+      "id": "fc70bcb8fa91",
+      "commit": "f941f2e",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "feat(diagnostics): Rewrite diagnostic system for 100% live consistency (v3.0.0)",
+      "pattern": "# Phase 5.5: Architecture Verification (live data completeness check)",
+      "pattern_type": "contains",
+      "created": "2026-02-06T23:52:49.518356",
+      "auto_generated": true
+    },
+    {
+      "id": "c2ae12eaf702",
+      "commit": "f941f2e",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "feat(diagnostics): Rewrite diagnostic system for 100% live consistency (v3.0.0)",
+      "pattern": "import time",
+      "pattern_type": "import",
+      "created": "2026-02-06T23:52:49.522332",
+      "auto_generated": true
+    },
+    {
+      "id": "66292d98b2ad",
+      "commit": "f941f2e",
+      "file": "scripts/diagnostics/architecture_verify.py",
+      "message": "feat(diagnostics): Rewrite diagnostic system for 100% live consistency (v3.0.0)",
+      "pattern": "_verify_data_completeness",
+      "pattern_type": "function_exists",
+      "created": "2026-02-06T23:52:49.525445",
+      "auto_generated": true
+    },
+    {
+      "id": "598ac545b354",
+      "commit": "f941f2e",
+      "file": "scripts/diagnostics/base.py",
+      "message": "feat(diagnostics): Rewrite diagnostic system for 100% live consistency (v3.0.0)",
+      "pattern": "import time",
+      "pattern_type": "import",
+      "created": "2026-02-06T23:52:49.528348",
+      "auto_generated": true
+    },
+    {
+      "id": "561b41c1576a",
+      "commit": "f941f2e",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "feat(diagnostics): Rewrite diagnostic system for 100% live consistency (v3.0.0)",
+      "pattern": "invalidation = sd.get('invalidation', '')",
+      "pattern_type": "contains",
+      "created": "2026-02-06T23:52:49.531291",
+      "auto_generated": true
+    },
+    {
+      "id": "263644f55c95",
+      "commit": "91b46c3",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix(ai-data): Add CVD Trend to order flow + expand Judge key_metrics (v3.24)",
+      "pattern": "di_plus = technical_data.get('di_plus')",
+      "pattern_type": "contains",
+      "created": "2026-02-06T23:52:49.537674",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-06T11:03:40.116393",
-    "count": 354,
+    "updated": "2026-02-06T23:52:49.562015",
+    "count": 368,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
