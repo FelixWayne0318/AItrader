@@ -72,21 +72,24 @@ DETECTION METHOD:
   ADX < 20 + BB Width at lows         → SQUEEZE (pre-breakout)
   ADX > 25 + BB Width expanding fast  → VOLATILE TREND (wide stops)
 
-REGIME → STRATEGY MAP:
-  TRENDING:   Trade WITH the trend ONLY. Do NOT buy dips against trend.
-              Use momentum indicators for continuation entries.
-              Support levels WILL break in strong downtrends.
-              Resistance levels WILL break in strong uptrends.
-  RANGING:    Mean-reversion works. Buy support, sell resistance.
-              RSI/BB extremes are reliable reversal signals.
-  SQUEEZE:    A big move is coming, but direction is UNKNOWN.
-              Wait for breakout confirmation (volume + direction).
-              Do NOT enter before breakout confirms.
-  VOLATILE TREND: Trade with trend but use wider stops.
-              Position size SMALLER (higher risk per bar).
+REGIME → CHARACTERISTIC BEHAVIOR:
+  TRENDING:   Trend-following entries have statistically higher win rates.
+              Counter-trend entries have historically high failure rates.
+              Momentum indicators (MACD, RSI trend) provide continuation signals.
+              Support levels frequently break in strong downtrends.
+              Resistance levels frequently break in strong uptrends.
+  RANGING:    Mean-reversion strategies have highest reliability here.
+              S/R bounces work: price oscillates between support and resistance.
+              RSI/BB extremes are statistically reliable reversal zones.
+  SQUEEZE:    A large move is imminent, but direction is UNKNOWN.
+              Pre-breakout entries face ~50% wrong-side risk. Head fakes are common.
+              Volume + direction confirmation reduces false breakout risk.
+  VOLATILE TREND: Trend-following still works but with wider price swings.
+              Larger stops needed to avoid noise-triggered exits.
 
-⚠️ THE #1 CAUSE OF LOSS: Applying ranging strategies in trending
-markets (e.g., buying support in a downtrend = catching a falling knife).
+STATISTICAL FACT: The #1 source of retail trading losses is applying
+ranging-market logic in trending markets (e.g., buying "support" in a
+downtrend — support levels break repeatedly in strong trends).
 
 ====================================================================
 INDICATORS: CALCULATION + REGIME-SPECIFIC USAGE + FAILURE MODES
@@ -126,11 +129,11 @@ Calculation: Smoothed average of directional movement over N periods.
 ADX = trend STRENGTH (not direction). DI+/DI- = trend DIRECTION.
 
 ADX LEVELS:
-  0-20:  No trend / ranging → use mean-reversion strategies
-  20-25: Emerging trend → prepare, watch for confirmation
-  25-50: Strong trend → ONLY trade with the trend
-  50-75: Very strong trend → stay with trend, no counter-trend trades
-  75+:   Extreme → trend may be exhausting, watch for reversal signs
+  0-20:  No trend / ranging — mean-reversion strategies have highest reliability
+  20-25: Emerging trend — early signal, may or may not develop
+  25-50: Strong trend — trend-following has high win rate, counter-trend has low win rate
+  50-75: Very strong trend — counter-trend entries historically have very poor outcomes
+  75+:   Extreme — trend may be exhausting, early reversal signs sometimes appear
 
 DIRECTION:
   DI+ > DI- = uptrend dominant. DI- > DI+ = downtrend dominant.
@@ -155,12 +158,12 @@ TRENDING MARKET:
   Zero-line cross = major trend change signal.
 
 RANGING MARKET:
-  MACD WHIPSAWS repeatedly — crossover signals are unreliable.
-  Avoid using MACD as entry signal when ADX < 20.
+  MACD WHIPSAWS repeatedly — crossover signals are unreliable in ranges.
+  MACD entry signals when ADX < 20 have historically high false positive rates.
 
 ⚠️ FAILURE MODES:
   1. Very high false signal rate in backtests (studies show 74-97%).
-     NEVER use MACD alone — always confirm with other indicators.
+     MACD alone has extremely poor reliability — confirmation from other indicators is essential.
   2. Multiple divergences can appear in strong trends without reversal.
   3. Consolidation drift — MACD drifts to zero during sideways, making
      it hard to distinguish range from genuine trend change.
@@ -260,10 +263,10 @@ USAGE:
   As HOLDING COST: Daily cost = rate × 3 settlements. Factor into R:R.
 
 ⚠️ FAILURE MODES:
-  1. Normal positive funding (0.01-0.03%) in bull markets is NOT bearish.
-     Do NOT short just because funding is positive.
+  1. Normal positive funding (0.01-0.03%) in bull markets is standard and not
+     inherently bearish. Shorting based solely on positive funding has poor results.
   2. Extreme rates can persist for days during parabolic moves.
-  3. Funding alone without OI and price context = premature contrarian trades.
+  3. Funding alone without OI and price context leads to premature contrarian trades.
 
 Confirmations: Funding + OI (most powerful), Funding + Liquidations, Funding + Price.
 
@@ -316,8 +319,8 @@ TRENDING MARKET: S/R zones BREAK. Support breaks in downtrends.
   Resistance breaks in uptrends. Broken support becomes resistance and vice versa.
 RANGING MARKET: S/R zones HOLD. Mean-reversion at zones is reliable.
 
-⚠️ CRITICAL: In strong trends (ADX > 40), do NOT expect support to hold
-for long entries or resistance to hold for short entries.
+⚠️ STATISTICAL CONTEXT: In strong trends (ADX > 40), S/R bounce rates drop
+to ~25%. Support/resistance levels break more often than they hold.
 
 --- SENTIMENT (Binance Long/Short Ratio) ---
 Global ratio of accounts holding long vs short positions.
@@ -356,10 +359,11 @@ HOW TO USE SERIES DATA:
   - Spot ACCELERATION or DECELERATION in momentum
 
 ====================================================================
-INDICATOR CONFLUENCE RULES
+INDICATOR CONFLUENCE FRAMEWORK
 ====================================================================
-NEVER trade on a single indicator. Require 2-3 confirmations from
-DIFFERENT types of information:
+Single-indicator signals have high false positive rates (e.g., MACD alone:
+74-97% false signals in backtests). Multi-indicator confluence from DIFFERENT
+information types dramatically reduces false signals:
 
   Layer 1 — TREND: What direction? (SMA 200 position, ADX direction, DI cross)
   Layer 2 — MOMENTUM: How strong? (RSI level, MACD histogram, CVD alignment)
@@ -371,14 +375,15 @@ EXAMPLE — High-confidence LONG setup:
   ✅ Key Level: Price at SMA 50 support + strong bid wall in order book
   → 3/3 layers align = HIGH confidence
 
-EXAMPLE — AVOID this trade (approach 2 failure case):
+EXAMPLE — Low-confidence setup (common failure pattern):
   ❌ Trend: Price < SMA 200, ADX = 45, DI- >> DI+ (strong DOWNTREND)
-  ❌ Momentum: RSI = 25 (looks oversold, but Cardwell says this is NORMAL in downtrend)
-  ⚠️ Key Level: Price at "support" zone (but supports BREAK in downtrends)
-  → Trend says DOWN, "oversold" is misleading, support will likely break = HOLD or SHORT
+  ❌ Momentum: RSI = 25 (looks oversold, but Cardwell range shift: normal in downtrend)
+  ⚠️ Key Level: Price at "support" zone (support levels frequently break in strong trends)
+  → Trend layer contradicts the other signals → historically poor trade quality
 
-RULE: If Layer 1 (Trend) conflicts with Layer 2/3, ALWAYS defer to trend.
-Trend is the strongest force. Fighting the trend is the primary cause of losses.
+STATISTICAL FACT: When Layer 1 (Trend) conflicts with Layer 2/3, trend is
+statistically the stronger predictor. Counter-trend signals during strong
+trends are the primary source of retail trading losses.
 """
 
 
@@ -833,7 +838,7 @@ TASK:
 4. Present 2-3 compelling reasons for going LONG
 5. If bear made arguments, counter them with evidence
 6. Entry is at CURRENT MARKET PRICE — assess if current price offers
-   favorable R:R ratio (>= 1.5:1) based on S/R zones and market structure
+   favorable R:R ratio based on S/R zones and market structure
 7. State what would INVALIDATE your bullish thesis
 
 Deliver your argument (2-3 paragraphs):"""
@@ -909,7 +914,7 @@ TASK:
 4. Present 2-3 compelling reasons AGAINST going LONG (or for going SHORT)
 5. Counter the bull's arguments with evidence
 6. Entry is at CURRENT MARKET PRICE — assess if current price offers
-   favorable R:R ratio (>= 1.5:1) based on S/R zones and market structure
+   favorable R:R ratio based on S/R zones and market structure
 7. State what would INVALIDATE your bearish thesis
 
 Deliver your argument (2-3 paragraphs):"""
@@ -1555,7 +1560,7 @@ MOMENTUM:
 TREND STRENGTH (ADX):
 - ADX(14): {safe_get('adx'):.1f} ({data.get('adx_regime', 'N/A')})
 - DI+: {safe_get('di_plus'):.1f}, DI-: {safe_get('di_minus'):.1f} → {data.get('adx_direction', 'N/A')} direction
-- S/R Reliability: {"HIGH (mean-reversion works well)" if safe_get('adx') < 20 else "MODERATE (confirm with volume)" if safe_get('adx') < 25 else "LOW (S/R breakouts more likely, trade with trend)" if safe_get('adx') < 40 else "VERY LOW (strong trend, avoid counter-trend S/R entries)"}
+- S/R Reliability: {"HIGH (~70% bounce rate, mean-reversion reliable)" if safe_get('adx') < 20 else "MODERATE (~50% bounce rate, confirm with volume)" if safe_get('adx') < 25 else "LOW (~25% bounce rate, S/R breakouts frequent)" if safe_get('adx') < 40 else "VERY LOW (<25% bounce rate, counter-trend S/R historically poor)"}
 - Note: ADX < 20 = ranging (S/R bounces ~70% reliable), ADX > 30 = strong trend (S/R bounces ~25% reliable)
 
 VOLATILITY (Bollinger Bands):
