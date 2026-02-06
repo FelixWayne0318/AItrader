@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-支撑阻力位全面诊断脚本 v1.0
+支撑阻力位全面诊断脚本 v1.1
 
 功能:
 1. 检查所有支撑阻力数据来源
@@ -8,6 +8,7 @@
 3. 检查实盘服务的日志和缓存
 4. 分析 Telegram Heartbeat 使用的数据
 5. 给出诊断报告和修复建议
+6. v1.1: 价格分布极值检测 (类似 Volume Profile)
 
 使用方法:
     python3 scripts/diagnose_sr_zones.py
@@ -162,6 +163,128 @@ def calculate_sr_zones_with_orderwall(current_price: float) -> Dict[str, Any]:
             'result': result,
             'tech_data': tech_data,
             'orderbook_anomalies': orderbook_anomalies,
+        }
+
+    except Exception as e:
+        import traceback
+        return {
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+        }
+
+
+def calculate_price_distribution_sr(
+    price_min: float = 55000,
+    price_max: float = 70000,
+    interval: float = 1000,
+    bars: int = 500,
+) -> Dict[str, Any]:
+    """
+    价格分布极值检测 (类似 Volume Profile)
+
+    方法:
+    1. 获取历史K线数据
+    2. 统计每个价格区间的触及频率和成交量
+    3. 找出局部极大值（峰值）作为支撑阻力
+
+    参数:
+    - price_min: 价格区间下限
+    - price_max: 价格区间上限
+    - interval: 每个区间的宽度
+    - bars: 使用多少根K线
+
+    返回:
+    - 价格分布直方图
+    - 极值点（支撑阻力候选）
+    """
+    try:
+        import requests
+        import numpy as np
+
+        # 获取历史K线
+        resp = requests.get(
+            "https://fapi.binance.com/fapi/v1/klines",
+            params={"symbol": "BTCUSDT", "interval": "15m", "limit": bars},
+            timeout=30
+        )
+        klines = resp.json()
+
+        if not klines:
+            return {'success': False, 'error': 'No klines data'}
+
+        # 创建价格区间
+        bins = np.arange(price_min, price_max + interval, interval)
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+        n_bins = len(bin_centers)
+
+        # 统计每个区间的触及次数和成交量
+        touch_count = np.zeros(n_bins)  # K线 high/low 落在该区间的次数
+        volume_sum = np.zeros(n_bins)   # 该区间的成交量
+
+        for k in klines:
+            high = float(k[2])
+            low = float(k[3])
+            close = float(k[4])
+            volume = float(k[5])
+
+            # 统计 K 线覆盖的所有区间
+            for i, (bin_low, bin_high) in enumerate(zip(bins[:-1], bins[1:])):
+                # K 线覆盖了这个区间吗？
+                if low <= bin_high and high >= bin_low:
+                    touch_count[i] += 1
+                    # 按覆盖比例分配成交量
+                    overlap_low = max(low, bin_low)
+                    overlap_high = min(high, bin_high)
+                    if high > low:
+                        overlap_ratio = (overlap_high - overlap_low) / (high - low)
+                    else:
+                        overlap_ratio = 1.0
+                    volume_sum[i] += volume * overlap_ratio
+
+        # 归一化
+        touch_norm = touch_count / touch_count.max() if touch_count.max() > 0 else touch_count
+        volume_norm = volume_sum / volume_sum.max() if volume_sum.max() > 0 else volume_sum
+
+        # 综合得分 = 触及次数 * 0.5 + 成交量 * 0.5
+        combined_score = touch_norm * 0.5 + volume_norm * 0.5
+
+        # 检测局部极大值（峰值）
+        # 峰值定义: 比左右两个相邻区间都高
+        peaks = []
+        for i in range(1, n_bins - 1):
+            if combined_score[i] > combined_score[i-1] and combined_score[i] > combined_score[i+1]:
+                # 只保留得分较高的峰值 (> 0.3)
+                if combined_score[i] > 0.3:
+                    peaks.append({
+                        'price': bin_centers[i],
+                        'score': round(combined_score[i], 3),
+                        'touch_count': int(touch_count[i]),
+                        'volume': round(volume_sum[i], 2),
+                    })
+
+        # 按得分排序
+        peaks.sort(key=lambda x: x['score'], reverse=True)
+
+        # 创建分布数据
+        distribution = []
+        for i in range(n_bins):
+            distribution.append({
+                'range': f"${bins[i]:,.0f}-${bins[i+1]:,.0f}",
+                'center': bin_centers[i],
+                'touch_count': int(touch_count[i]),
+                'volume': round(volume_sum[i], 2),
+                'score': round(combined_score[i], 3),
+            })
+
+        return {
+            'success': True,
+            'distribution': distribution,
+            'peaks': peaks,
+            'bins': list(bins),
+            'bars_analyzed': len(klines),
+            'price_range': f"${price_min:,.0f} - ${price_max:,.0f}",
+            'interval': interval,
         }
 
     except Exception as e:
@@ -431,11 +554,62 @@ def run_full_diagnosis():
     print("  📝 计算方法: BB + SMA_50 + Order Wall 聚合")
     print("  📝 来源: utils/sr_zone_calculator.py + utils/orderbook_processor.py")
 
-    # 6. Telegram 数据源分析
+    # 6. 价格分布极值检测 (新方法)
+    print_section("6. 方法四: 价格分布极值检测 (Volume Profile 风格)")
+    dist_result = calculate_price_distribution_sr(
+        price_min=55000,
+        price_max=70000,
+        interval=1000,
+        bars=500
+    )
+
+    if dist_result['success']:
+        print(f"  📊 分析范围: {dist_result['price_range']}")
+        print(f"  📊 区间宽度: ${dist_result['interval']:,}")
+        print(f"  📊 分析K线数: {dist_result['bars_analyzed']}")
+        print()
+
+        # 显示分布直方图 (ASCII 风格)
+        print("  📈 价格分布直方图:")
+        print()
+        distribution = dist_result['distribution']
+        max_score = max(d['score'] for d in distribution)
+
+        for d in distribution:
+            bar_len = int(d['score'] / max_score * 30) if max_score > 0 else 0
+            bar = "█" * bar_len
+            # 标记当前价格所在区间
+            is_current = d['center'] - 500 <= current_price <= d['center'] + 500
+            marker = " ◀ 当前价格" if is_current else ""
+            # 标记峰值
+            is_peak = any(p['price'] == d['center'] for p in dist_result['peaks'])
+            peak_marker = " ⭐" if is_peak else ""
+            print(f"      {d['range']:>18} │{bar:<30} {d['score']:.2f}{peak_marker}{marker}")
+
+        print()
+        print("  ⭐ 检测到的极值点 (潜在支撑阻力):")
+        peaks = dist_result['peaks']
+        if peaks:
+            for i, peak in enumerate(peaks[:5], 1):
+                # 判断是支撑还是阻力
+                sr_type = "支撑" if peak['price'] < current_price else "阻力"
+                distance_pct = abs(peak['price'] - current_price) / current_price * 100
+                print(f"      {i}. ${peak['price']:,.0f} [{sr_type}] (得分: {peak['score']:.3f}, "
+                      f"触及: {peak['touch_count']}次, 距离: {distance_pct:.1f}%)")
+        else:
+            print("      未检测到明显极值点")
+
+        print()
+        print("  📝 计算方法: 统计每个价格区间的K线触及次数和成交量，找出局部峰值")
+        print("  📝 理论依据: Volume Profile / Market Profile (CME TPO)")
+    else:
+        print_result("计算失败", dist_result.get('error', 'Unknown'), "error")
+
+    # 7. Telegram 数据源分析
     analyze_telegram_data_source()
 
-    # 7. 服务日志检查
-    print_section("7. 服务日志检查")
+    # 8. 服务日志检查
+    print_section("8. 服务日志检查")
     logs = check_service_logs()
     if logs.get('sr_zone_logs'):
         print("  📋 最近的 S/R 相关日志:")
@@ -450,8 +624,8 @@ def run_full_diagnosis():
         for err in logs['errors'][-3:]:
             print(f"      {err[:100]}...")
 
-    # 8. 问题诊断
-    print_section("8. 问题诊断")
+    # 9. 问题诊断
+    print_section("9. 问题诊断")
 
     problems = []
     suggestions = []
@@ -494,8 +668,8 @@ def run_full_diagnosis():
     else:
         print("  ✅ 未发现明显问题")
 
-    # 9. 修复建议
-    print_section("9. 修复建议")
+    # 10. 修复建议
+    print_section("10. 修复建议")
 
     suggestions.extend([
         "将 Heartbeat 发送移到分析之后，使用最新数据",
@@ -508,8 +682,8 @@ def run_full_diagnosis():
     for i, s in enumerate(suggestions, 1):
         print(f"  {i}. {s}")
 
-    # 10. 总结
-    print_section("10. 总结对比表")
+    # 11. 总结
+    print_section("11. 总结对比表")
 
     print("  ┌─────────────────────────┬───────────────────┬───────────────────┐")
     print("  │ 计算方法                │ 支撑位            │ 阻力位            │")
@@ -532,7 +706,32 @@ def run_full_diagnosis():
         res_price = f"${res.price_center:,.0f}" if res else "N/A"
         print(f"  │ S/R Zone (含 Order Wall)│ {sup_price:>17} │ {res_price:>17} │")
 
+    # 添加价格分布检测结果
+    if dist_result['success'] and dist_result['peaks']:
+        peaks = dist_result['peaks']
+        # 找最近的支撑和阻力
+        supports = [p for p in peaks if p['price'] < current_price]
+        resistances = [p for p in peaks if p['price'] > current_price]
+        sup_price = f"${supports[0]['price']:,.0f}" if supports else "N/A"
+        res_price = f"${resistances[0]['price']:,.0f}" if resistances else "N/A"
+        print(f"  │ 价格分布极值 (新方法)  │ {sup_price:>17} │ {res_price:>17} │")
+
     print("  └─────────────────────────┴───────────────────┴───────────────────┘")
+
+    # 方法评估
+    print()
+    print("  📊 方法评估:")
+    print()
+    print("     ┌─────────────────────────┬──────────┬──────────┬──────────┐")
+    print("     │ 方法                    │ 稳定性   │ 实时性   │ 可靠性   │")
+    print("     ├─────────────────────────┼──────────┼──────────┼──────────┤")
+    print("     │ 简单高低点              │ ★★★★★    │ ★★★      │ ★★★      │")
+    print("     │ S/R Zone (BB+SMA)       │ ★★★★     │ ★★★      │ ★★★★     │")
+    print("     │ Order Wall              │ ★★       │ ★★★★★    │ ★★       │")
+    print("     │ 价格分布极值 (新)       │ ★★★★★    │ ★★       │ ★★★★★    │")
+    print("     └─────────────────────────┴──────────┴──────────┴──────────┘")
+    print()
+    print("  💡 建议: 价格分布极值 + 简单高低点 作为主要 S/R，Order Wall 仅作辅助确认")
 
     print()
     print(f"  诊断完成: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
