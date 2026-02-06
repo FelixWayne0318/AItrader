@@ -610,9 +610,11 @@ class MultiAgentAnalyzer:
             # Phase 2: Judge makes decision (1 AI call)
             self.logger.info("Phase 2: Judge evaluating debate...")
             # v3.23: Build key metrics for Judge's independent sanity check
+            # v3.24: Pass all raw data sources for comprehensive verification
             key_metrics = self._build_key_metrics(
                 technical_report, derivatives_report,
                 order_flow_report, current_price,
+                binance_derivatives_report, sentiment_report,
             )
             judge_decision = self._get_judge_decision(
                 debate_history=debate_history,
@@ -883,10 +885,13 @@ OUTPUT FORMAT (JSON only, no other text):
         derivatives_data: Optional[Dict] = None,
         order_flow_data: Optional[Dict] = None,
         current_price: float = 0.0,
+        binance_derivatives_data: Optional[Dict] = None,
+        sentiment_data: Optional[Dict] = None,
     ) -> str:
         """
         Build concise key metrics for Judge's independent sanity check (v3.23).
 
+        v3.24: Expanded from ~8 to ~18 fields for comprehensive verification.
         Only includes raw numbers — no interpretation — so Judge can verify
         whether Bull/Bear analysts correctly used the data.
         """
@@ -896,16 +901,38 @@ OUTPUT FORMAT (JSON only, no other text):
                 lines.append(f"Price: ${current_price:,.2f}")
 
             if technical_data and isinstance(technical_data, dict):
+                # RSI
                 rsi = technical_data.get('rsi')
                 if rsi is not None:
                     lines.append(f"RSI: {rsi:.1f}")
+                # ADX + DI+/DI- (v3.24: added DI for trend direction)
                 adx = technical_data.get('adx')
                 if adx is not None:
-                    lines.append(f"ADX: {adx:.1f}")
+                    di_plus = technical_data.get('di_plus')
+                    di_minus = technical_data.get('di_minus')
+                    adx_str = f"ADX: {adx:.1f}"
+                    if di_plus is not None and di_minus is not None:
+                        adx_str += f" (DI+: {di_plus:.1f}, DI-: {di_minus:.1f})"
+                    lines.append(adx_str)
+                # MACD
                 macd = technical_data.get('macd')
                 macd_signal = technical_data.get('macd_signal')
                 if macd is not None and macd_signal is not None:
                     lines.append(f"MACD: {macd:.2f} (signal: {macd_signal:.2f})")
+                # v3.24: BB Position (where price sits within Bollinger Bands)
+                bb_pos = technical_data.get('bb_position')
+                if bb_pos is not None:
+                    lines.append(f"BB Position: {bb_pos:.1%}")
+                # v3.24: SMA positions relative to price
+                for period in [50, 200]:
+                    sma_val = technical_data.get(f'sma_{period}')
+                    if sma_val is not None and sma_val > 0 and current_price > 0:
+                        pct = (current_price - sma_val) / sma_val * 100
+                        lines.append(f"Price vs SMA{period}: {pct:+.2f}%")
+                # v3.24: Volume ratio
+                vol_ratio = technical_data.get('volume_ratio')
+                if vol_ratio is not None:
+                    lines.append(f"Volume Ratio: {vol_ratio:.2f}x")
 
             if derivatives_data and isinstance(derivatives_data, dict):
                 fr = derivatives_data.get('funding_rate', {})
@@ -920,6 +947,12 @@ OUTPUT FORMAT (JSON only, no other text):
                 liq = derivatives_data.get('liquidations', {})
                 if isinstance(liq, dict) and liq.get('total_usd', 0) > 0:
                     lines.append(f"Liquidations (24h): ${liq['total_usd']:,.0f}")
+                # v3.24: OI change
+                oi = derivatives_data.get('open_interest', {})
+                if isinstance(oi, dict):
+                    oi_change = oi.get('change_pct')
+                    if oi_change is not None:
+                        lines.append(f"OI Change: {oi_change:+.2f}%")
 
             if order_flow_data and isinstance(order_flow_data, dict):
                 buy_ratio = order_flow_data.get('buy_ratio')
@@ -928,6 +961,23 @@ OUTPUT FORMAT (JSON only, no other text):
                 cvd = order_flow_data.get('cvd_trend')
                 if cvd:
                     lines.append(f"CVD Trend: {cvd}")
+
+            # v3.24: Binance derivatives (top traders)
+            if binance_derivatives_data and isinstance(binance_derivatives_data, dict):
+                top_pos = binance_derivatives_data.get('top_long_short_position', {})
+                latest = top_pos.get('latest') if isinstance(top_pos, dict) else None
+                if latest:
+                    long_pct = float(latest.get('longAccount', 0.5)) * 100
+                    lines.append(f"Top Traders Long: {long_pct:.1f}%")
+
+            # v3.24: Sentiment
+            if sentiment_data and isinstance(sentiment_data, dict):
+                net = sentiment_data.get('net_sentiment')
+                if net is not None:
+                    try:
+                        lines.append(f"Sentiment Net: {float(net):+.3f}")
+                    except (ValueError, TypeError):
+                        pass
 
         except Exception:
             pass
@@ -1999,15 +2049,17 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         avg_trade = data.get('avg_trade_usdt', 0)
         volume_usdt = data.get('volume_usdt', 0)
         trades_count = data.get('trades_count', 0)
+        cvd_trend = data.get('cvd_trend', 'N/A')
         recent_bars = data.get('recent_10_bars', [])
 
         # Format recent bars (raw data only, AI infers trend)
         recent_str = ", ".join([f"{r:.1%}" for r in recent_bars]) if recent_bars else "N/A"
 
-        # TradingAgents v3.6: Added volume_usdt for market activity assessment
+        # v3.24: Added CVD Trend (was missing — critical confirmation signal)
         return f"""
 ORDER FLOW (Binance Taker Data):
 - Buy Ratio (10-bar avg): {buy_ratio:.1%}
+- CVD Trend: {cvd_trend}
 - Volume (USDT): ${volume_usdt:,.0f}
 - Avg Trade Size: ${avg_trade:,.0f} USDT
 - Trade Count: {trades_count:,}
