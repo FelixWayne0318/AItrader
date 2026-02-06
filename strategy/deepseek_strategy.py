@@ -2100,14 +2100,28 @@ class DeepSeekAIStrategy(Strategy):
                     'cvd_trend': self.latest_order_flow_data.get('cvd_trend'),
                 }
 
+            # v5.0: Use Binance as authoritative funding rate source (not Coinalyze)
             derivatives_heartbeat = None
+            try:
+                if self.binance_kline_client:
+                    binance_funding = self.binance_kline_client.get_funding_rate()
+                    if binance_funding:
+                        derivatives_heartbeat = {
+                            'funding_rate': binance_funding.get('funding_rate'),  # raw decimal
+                            'funding_rate_pct': binance_funding.get('funding_rate_pct'),  # percentage
+                            'predicted_rate_pct': binance_funding.get('predicted_rate_pct'),
+                            'next_funding_countdown_min': binance_funding.get('next_funding_countdown_min'),
+                            'source': 'binance',
+                        }
+            except Exception:
+                pass
+            # Fallback: Coinalyze OI change (funding rate already from Binance above)
             if self.latest_derivatives_data and self.latest_derivatives_data.get('enabled'):
-                funding = self.latest_derivatives_data.get('funding_rate', {})
                 oi = self.latest_derivatives_data.get('open_interest', {})
-                derivatives_heartbeat = {
-                    'funding_rate': funding.get('value') if funding else None,
-                    'oi_change_pct': oi.get('change_pct') if oi else None,
-                }
+                if derivatives_heartbeat is None:
+                    derivatives_heartbeat = {}
+                if oi:
+                    derivatives_heartbeat['oi_change_pct'] = oi.get('change_pct')
 
             orderbook_heartbeat = None
             if self.latest_orderbook_data and self.latest_orderbook_data.get('_status', {}).get('code') == 'OK':
@@ -2120,13 +2134,29 @@ class DeepSeekAIStrategy(Strategy):
 
             sr_zone_heartbeat = None
             if self.latest_sr_zones_data:
-                # v3.8 fix: Access SRZone objects directly, extract price_center
-                nearest_sup = self.latest_sr_zones_data.get('nearest_support')
-                nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
+                # v5.0: Pass full S/R zone data with strength/level for Telegram display
+                support_zones = self.latest_sr_zones_data.get('support_zones', [])
+                resistance_zones = self.latest_sr_zones_data.get('resistance_zones', [])
                 hard_control = self.latest_sr_zones_data.get('hard_control', {})
+
+                def _zone_to_dict(zone):
+                    """Convert SRZone object to dict for heartbeat."""
+                    return {
+                        'price': zone.price_center,
+                        'price_low': zone.price_low,
+                        'price_high': zone.price_high,
+                        'strength': getattr(zone, 'strength', 'LOW'),
+                        'level': getattr(zone, 'level', 'MINOR'),
+                        'sources': getattr(zone, 'sources', []),
+                        'touch_count': getattr(zone, 'touch_count', 0),
+                        'has_swing_point': getattr(zone, 'has_swing_point', False),
+                        'has_order_wall': getattr(zone, 'has_order_wall', False),
+                        'distance_pct': getattr(zone, 'distance_pct', 0),
+                    }
+
                 sr_zone_heartbeat = {
-                    'nearest_support': nearest_sup.price_center if nearest_sup else None,
-                    'nearest_resistance': nearest_res.price_center if nearest_res else None,
+                    'support_zones': [_zone_to_dict(z) for z in support_zones[:3]],
+                    'resistance_zones': [_zone_to_dict(z) for z in resistance_zones[:3]],
                     'block_long': hard_control.get('block_long', False),
                     'block_short': hard_control.get('block_short', False),
                 }

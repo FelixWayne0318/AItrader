@@ -438,12 +438,17 @@ class TelegramBot:
         order_book = heartbeat_data.get('order_book') or {}
         weighted_obi = order_book.get('weighted_obi')
 
-        # S/R zones
+        # S/R zones (v5.0: full zone data with strength/level)
         sr_zone = heartbeat_data.get('sr_zone') or {}
-        nearest_support = sr_zone.get('nearest_support')
-        nearest_resistance = sr_zone.get('nearest_resistance')
+        support_zones = sr_zone.get('support_zones', [])
+        resistance_zones = sr_zone.get('resistance_zones', [])
         block_long = sr_zone.get('block_long', False)
         block_short = sr_zone.get('block_short', False)
+
+        # Derivatives (v5.0: Binance funding rate with predicted rate)
+        funding_rate_pct = derivatives.get('funding_rate_pct')
+        predicted_rate_pct = derivatives.get('predicted_rate_pct')
+        next_funding_min = derivatives.get('next_funding_countdown_min')
 
         # Signal status
         signal_status = heartbeat_data.get('signal_status') or {}
@@ -545,8 +550,8 @@ class TelegramBot:
 
         # ======= FLOW & SENTIMENT SECTION =======
         has_flow = (buy_ratio is not None or cvd_trend or
-                    funding_rate is not None or oi_change_pct is not None or
-                    weighted_obi is not None)
+                    funding_rate is not None or funding_rate_pct is not None or
+                    oi_change_pct is not None or weighted_obi is not None)
 
         if has_flow:
             if has_position:
@@ -556,7 +561,10 @@ class TelegramBot:
                 if buy_ratio is not None:
                     br_icon = '🟢' if buy_ratio > 0.55 else '🔴' if buy_ratio < 0.45 else '⚪'
                     flow_parts.append(f"买入 {buy_ratio*100:.0f}% {br_icon}")
-                if funding_rate is not None:
+                if funding_rate_pct is not None:
+                    fr_icon = '🔴' if funding_rate_pct > 0.01 else '🟢' if funding_rate_pct < -0.01 else '⚪'
+                    flow_parts.append(f"费率 {funding_rate_pct:.4f}% {fr_icon}")
+                elif funding_rate is not None:
                     fr = self._funding_display(funding_rate)
                     flow_parts.append(f"费率 {fr:.4f}%")
                 if oi_change_pct is not None:
@@ -575,7 +583,17 @@ class TelegramBot:
                 if cvd_trend:
                     c_icon = '📈' if cvd_trend == 'RISING' else '📉' if cvd_trend == 'FALLING' else '➖'
                     msg += f"  CVD   {c_icon} {cvd_trend}\n"
-                if funding_rate is not None:
+                if funding_rate_pct is not None:
+                    fr_icon = '🔴' if funding_rate_pct > 0.01 else '🟢' if funding_rate_pct < -0.01 else '⚪'
+                    fr_line = f"  费率  {fr_icon} {funding_rate_pct:.4f}%"
+                    if predicted_rate_pct is not None:
+                        fr_line += f" (预测 {predicted_rate_pct:.4f}%)"
+                    msg += fr_line + "\n"
+                    if next_funding_min is not None:
+                        hours = next_funding_min // 60
+                        mins = next_funding_min % 60
+                        msg += f"  结算  ⏱ {hours}h {mins}m\n"
+                elif funding_rate is not None:
                     fr = self._funding_display(funding_rate)
                     fr_icon = '🔴' if fr > 0.01 else '🟢' if fr < -0.01 else '⚪'
                     msg += f"  费率  {fr_icon} {fr:.4f}%\n"
@@ -586,36 +604,46 @@ class TelegramBot:
                     obi_icon = '🟢' if weighted_obi > 0.1 else '🔴' if weighted_obi < -0.1 else '⚪'
                     msg += f"  OBI   {obi_icon} {weighted_obi:+.3f}\n"
 
-        # ======= KEY LEVELS SECTION =======
-        has_levels = (nearest_support is not None or nearest_resistance is not None)
-        if has_levels:
-            if has_position:
-                # Single line for position mode
-                level_parts = []
-                if nearest_support is not None and nearest_support < price:
-                    s_pct = ((nearest_support - price) / price * 100) if price > 0 else 0
-                    level_parts.append(f"S ${nearest_support:,.0f} ({s_pct:+.1f}%)")
-                if nearest_resistance is not None and nearest_resistance > price:
-                    r_pct = ((nearest_resistance - price) / price * 100) if price > 0 else 0
-                    level_parts.append(f"R ${nearest_resistance:,.0f} ({r_pct:+.1f}%)")
-                if level_parts:
-                    msg += f"\n📍 {' | '.join(level_parts)}\n"
-            else:
-                # Detailed levels when no position
-                msg += f"\n📍 *关键价位*\n"
-                if nearest_support is not None and nearest_support < price:
-                    s_pct = ((nearest_support - price) / price * 100) if price > 0 else 0
-                    msg += f"  支撑 ${nearest_support:,.2f} ({s_pct:+.2f}%)\n"
-                if nearest_resistance is not None and nearest_resistance > price:
-                    r_pct = ((nearest_resistance - price) / price * 100) if price > 0 else 0
-                    msg += f"  阻力 ${nearest_resistance:,.2f} ({r_pct:+.2f}%)\n"
-                if block_long or block_short:
-                    blocks = []
-                    if block_long:
-                        blocks.append("🚫 LONG")
-                    if block_short:
-                        blocks.append("🚫 SHORT")
-                    msg += f"  ⚠️ {' | '.join(blocks)}\n"
+        # ======= S/R ZONES SECTION (v5.0: full zone display) =======
+        has_zones = bool(support_zones or resistance_zones)
+        if has_zones:
+            msg += f"\n📍 *支撑 / 阻力*\n"
+            # Resistance zones (top → bottom, closest first)
+            for z in resistance_zones:
+                z_price = z.get('price', 0)
+                if z_price <= price:
+                    continue
+                z_pct = ((z_price - price) / price * 100) if price > 0 else 0
+                strength = z.get('strength', 'LOW')
+                level = z.get('level', 'MINOR')
+                touch = z.get('touch_count', 0)
+                s_icon = '🔴' if strength == 'HIGH' else '🟠' if strength == 'MEDIUM' else '⚪'
+                l_tag = '日' if level == 'MAJOR' else '4H' if level == 'INTERMEDIATE' else '15m'
+                touch_str = f" T{touch}" if touch > 0 else ""
+                msg += f"  {s_icon} R ${z_price:,.0f} ({z_pct:+.1f}%) [{l_tag}|{strength}{touch_str}]\n"
+            # Current price marker
+            msg += f"  ── 当前 ${price:,.0f} ──\n"
+            # Support zones (top → bottom, closest first)
+            for z in support_zones:
+                z_price = z.get('price', 0)
+                if z_price >= price:
+                    continue
+                z_pct = ((z_price - price) / price * 100) if price > 0 else 0
+                strength = z.get('strength', 'LOW')
+                level = z.get('level', 'MINOR')
+                touch = z.get('touch_count', 0)
+                s_icon = '🟢' if strength == 'HIGH' else '🟡' if strength == 'MEDIUM' else '⚪'
+                l_tag = '日' if level == 'MAJOR' else '4H' if level == 'INTERMEDIATE' else '15m'
+                touch_str = f" T{touch}" if touch > 0 else ""
+                msg += f"  {s_icon} S ${z_price:,.0f} ({z_pct:+.1f}%) [{l_tag}|{strength}{touch_str}]\n"
+            # Hard control warnings
+            if block_long or block_short:
+                blocks = []
+                if block_long:
+                    blocks.append("🚫 LONG")
+                if block_short:
+                    blocks.append("🚫 SHORT")
+                msg += f"  ⚠️ {' | '.join(blocks)}\n"
 
         # ======= SIGNAL SECTION =======
         sig_icon = self._signal_icon(signal)
