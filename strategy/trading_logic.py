@@ -772,6 +772,19 @@ def validate_multiagent_sltp(
     # v3.12: Support both legacy (BUY/SELL) and new (LONG/SHORT) formats
     is_long = side.upper() in ('BUY', 'LONG')
 
+    # v3.15: Enforce minimum SL distance (reverts v3.13 "trust AI" approach)
+    # Problem: AI can return SL too close to entry (e.g., 0.09%), causing immediate stop-outs
+    # Solution: Reject AI SL/TP if distance < min threshold, force fallback to S/R-based calculation
+    min_sl = get_min_sl_distance_pct()
+    min_tp = get_min_tp_distance_pct()
+
+    # Hard rejection for SL too close (this is the key fix)
+    if sl_distance < min_sl:
+        return False, None, None, (
+            f"SL too close to entry ({sl_distance*100:.2f}% < {min_sl*100}% minimum). "
+            f"Will use S/R-based technical analysis instead."
+        )
+
     if is_long:
         # BUY: SL must be < entry, TP must be > entry
         if multi_sl >= entry_price:
@@ -779,18 +792,9 @@ def validate_multiagent_sltp(
         if multi_tp <= entry_price:
             return False, None, None, f"BUY TP (${multi_tp:,.2f}) must be > entry (${entry_price:,.2f})"
 
-        # v3.13: TradingAgents style - warn for close SL but trust AI's S/R-based decision
-        # Only reject for critical errors (wrong side), not for "too close"
-        min_sl = get_min_sl_distance_pct()
-        min_tp = get_min_tp_distance_pct()
-        warnings = []
-        if sl_distance < min_sl:
-            warnings.append(f"SL close to entry ({sl_distance*100:.2f}% < {min_sl*100}%)")
+        # TP can be close (smaller profit target is acceptable)
         if tp_distance < min_tp:
-            warnings.append(f"TP close to entry ({tp_distance*100:.2f}% < {min_tp*100}%)")
-
-        if warnings:
-            return True, multi_sl, multi_tp, f"Valid with warnings: {'; '.join(warnings)}"
+            return True, multi_sl, multi_tp, f"Valid with note: TP close to entry ({tp_distance*100:.2f}%)"
         return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
 
     else:  # SELL
@@ -800,17 +804,9 @@ def validate_multiagent_sltp(
         if multi_tp >= entry_price:
             return False, None, None, f"SELL TP (${multi_tp:,.2f}) must be < entry (${entry_price:,.2f})"
 
-        # v3.13: TradingAgents style - warn for close SL but trust AI's S/R-based decision
-        min_sl = get_min_sl_distance_pct()
-        min_tp = get_min_tp_distance_pct()
-        warnings = []
-        if sl_distance < min_sl:
-            warnings.append(f"SL close to entry ({sl_distance*100:.2f}% < {min_sl*100}%)")
+        # TP can be close (smaller profit target is acceptable)
         if tp_distance < min_tp:
-            warnings.append(f"TP close to entry ({tp_distance*100:.2f}% < {min_tp*100}%)")
-
-        if warnings:
-            return True, multi_sl, multi_tp, f"Valid with warnings: {'; '.join(warnings)}"
+            return True, multi_sl, multi_tp, f"Valid with note: TP close to entry ({tp_distance*100:.2f}%)"
         return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
 
 
