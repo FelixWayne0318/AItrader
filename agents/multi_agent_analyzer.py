@@ -1305,39 +1305,75 @@ TREND INDICATORS (1D):
 """
 
         # Add historical context if available (EVALUATION_FRAMEWORK v3.0.1)
-        # This shows AI the 20-value trends instead of isolated single values
+        # v3.21: Show ALL values (not truncated to 5) for better AI trend analysis
         historical = data.get('historical_context')
         if historical and historical.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR', None]:
             trend_dir = historical.get('trend_direction', 'N/A')
             momentum = historical.get('momentum_shift', 'N/A')
+            price_change = historical.get('price_change_pct', 0)
+            vol_ratio = historical.get('current_volume_ratio', 1.0)
 
-            # Format recent values (last 5 of 20 for brevity)
-            def format_recent(values, fmt=".1f"):
+            # v3.21: Format ALL values (full time-series for AI pattern recognition)
+            def format_all_values(values, fmt=".1f"):
                 if not values or not isinstance(values, list):
                     return "N/A"
-                recent = values[-5:] if len(values) >= 5 else values
-                return " → ".join([f"{v:{fmt}}" for v in recent])
+                return " → ".join([f"{v:{fmt}}" for v in values])
 
             price_trend = historical.get('price_trend', [])
             rsi_trend = historical.get('rsi_trend', [])
             macd_trend = historical.get('macd_trend', [])
+            volume_trend = historical.get('volume_trend', [])
+            n_bars = len(price_trend)
+            hours_covered = n_bars * 15 / 60  # 15min bars → hours
 
             report += f"""
-=== HISTORICAL CONTEXT (Last 20 bars) ===
+=== HISTORICAL CONTEXT (Last {n_bars} bars, ~{hours_covered:.1f} hours) ===
 
 TREND ANALYSIS:
 - Overall Direction: {trend_dir}
 - Momentum Shift: {momentum}
+- Price Change: {price_change:+.2f}% over {n_bars} bars
+- Current Volume vs Avg: {vol_ratio:.2f}x
 
-RECENT PRICE MOVEMENT (last 5 of 20):
-- Prices: ${format_recent(price_trend, ",.0f")}
+PRICE SERIES ({n_bars} bars, 15min each):
+{format_all_values(price_trend, ",.0f")}
 
-RECENT RSI MOVEMENT (last 5 of 20):
-- RSI: {format_recent(rsi_trend)}
+RSI SERIES ({len(rsi_trend)} values):
+{format_all_values(rsi_trend)}
 
-RECENT MACD MOVEMENT (last 5 of 20):
-- MACD: {format_recent(macd_trend, ".4f")}
+MACD SERIES ({len(macd_trend)} values):
+{format_all_values(macd_trend, ".4f")}
+
+VOLUME SERIES ({len(volume_trend)} values, BTC):
+{format_all_values(volume_trend, ",.1f")}
 """
+
+        # v3.21: Add K-line OHLCV data (让 AI 看到实际价格形态)
+        kline_ohlcv = data.get('kline_ohlcv')
+        if kline_ohlcv and isinstance(kline_ohlcv, list) and len(kline_ohlcv) > 0:
+            from datetime import datetime
+            n_klines = len(kline_ohlcv)
+            report += f"""
+=== K-LINE OHLCV DATA (Last {n_klines} bars, 15min) ===
+"""
+            report += "Time            | Open      | High      | Low       | Close     | Volume\n"
+            report += "-" * 85 + "\n"
+            for bar in kline_ohlcv:
+                ts = bar.get('timestamp', 0)
+                try:
+                    # NautilusTrader ts_init is in nanoseconds
+                    time_str = datetime.utcfromtimestamp(ts / 1e9).strftime('%m-%d %H:%M') if ts > 1e15 else (
+                        datetime.utcfromtimestamp(ts / 1000).strftime('%m-%d %H:%M') if ts > 1e10 else
+                        datetime.utcfromtimestamp(ts).strftime('%m-%d %H:%M') if ts > 0 else "N/A"
+                    )
+                except (OSError, ValueError):
+                    time_str = "N/A"
+                o = bar.get('open', 0)
+                h = bar.get('high', 0)
+                l = bar.get('low', 0)
+                c = bar.get('close', 0)
+                v = bar.get('volume', 0)
+                report += f"{time_str:<15} | ${o:>8,.0f} | ${h:>8,.0f} | ${l:>8,.0f} | ${c:>8,.0f} | {v:>8,.1f}\n"
 
         return report
 

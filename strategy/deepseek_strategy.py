@@ -42,6 +42,7 @@ from utils.order_flow_processor import OrderFlowProcessor
 from utils.coinalyze_client import CoinalyzeClient
 from utils.binance_orderbook_client import BinanceOrderBookClient
 from utils.orderbook_processor import OrderBookProcessor
+from utils.binance_derivatives_client import BinanceDerivativesClient
 from strategy.trading_logic import (
     check_confidence_threshold,
     calculate_position_size,
@@ -686,6 +687,13 @@ class DeepSeekAIStrategy(Strategy):
                 self.orderbook_processor = None
                 self.log.info("Order Book disabled by config")
 
+            # ========== Binance Derivatives (v3.21: Top Traders, Taker Ratio) ==========
+            # 无需 API Key，使用公开端点
+            self.binance_derivatives_client = BinanceDerivativesClient(
+                timeout=config.order_flow_binance_timeout if hasattr(config, 'order_flow_binance_timeout') else 10,
+                logger=self.log,
+            )
+
             self.log.info("✅ Order Flow & Derivatives clients initialized")
         else:
             self.binance_kline_client = None
@@ -693,6 +701,7 @@ class DeepSeekAIStrategy(Strategy):
             self.coinalyze_client = None
             self.binance_orderbook_client = None
             self.orderbook_processor = None
+            self.binance_derivatives_client = None
             self.log.info("Order Flow disabled by config")
 
         # State tracking
@@ -1599,6 +1608,15 @@ class DeepSeekAIStrategy(Strategy):
                 except Exception as e:
                     self.log.warning(f"[历史上下文] 获取失败: {e}")
 
+                # ========== 获取 K线 OHLCV 数据 (v3.21: 给 AI 看实际价格形态) ==========
+                try:
+                    kline_ohlcv = self.indicator_manager.get_kline_data(count=20)
+                    if kline_ohlcv:
+                        ai_technical_data['kline_ohlcv'] = kline_ohlcv
+                        self.log.debug(f"[K线数据] {len(kline_ohlcv)} bars OHLCV 已加入 AI 数据")
+                except Exception as e:
+                    self.log.warning(f"[K线数据] 获取失败: {e}")
+
                 # ========== 获取订单流数据 (MTF v2.1) ==========
                 order_flow_data = None
                 if self.binance_kline_client and self.order_flow_processor:
@@ -1674,6 +1692,22 @@ class DeepSeekAIStrategy(Strategy):
                     except Exception as e:
                         self.log.warning(f"⚠️ Order book processing failed: {e}")
 
+                # ========== 获取 Binance 衍生品数据 (v3.21: Top Traders, Taker Ratio) ==========
+                binance_derivatives_data = None
+                if self.binance_derivatives_client:
+                    try:
+                        binance_derivatives_data = self.binance_derivatives_client.fetch_all()
+                        if binance_derivatives_data:
+                            top_pos = binance_derivatives_data.get('top_long_short_position', {})
+                            latest = top_pos.get('latest')
+                            if latest:
+                                ratio = float(latest.get('longShortRatio', 1))
+                                self.log.info(
+                                    f"📊 Binance Derivatives: Top Traders L/S={ratio:.2f}"
+                                )
+                    except Exception as e:
+                        self.log.warning(f"⚠️ Binance derivatives fetch failed: {e}")
+
                 # v3.0: Get extended bars for S/R Swing Point detection
                 sr_bars_data = self.indicator_manager.get_kline_data(count=120)
 
@@ -1686,6 +1720,8 @@ class DeepSeekAIStrategy(Strategy):
                     # ========== MTF v2.1 新增参数 ==========
                     order_flow_report=order_flow_data,
                     derivatives_report=derivatives_data,
+                    # ========== v3.21: Binance 衍生品 (Top Traders, Taker Ratio) ==========
+                    binance_derivatives_report=binance_derivatives_data,
                     # ========== v3.7 新增参数 ==========
                     orderbook_report=orderbook_data,
                     # ========== v4.6 新增参数 ==========
