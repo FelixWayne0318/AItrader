@@ -179,24 +179,37 @@ def calculate_price_distribution_sr(
     price_max: float = 70000,
     interval: float = 1000,
     bars: int = 500,
+    current_price: float = 0,
+    min_distance_pct: float = 1.0,  # 排除当前价格 ±1% 内的峰值
 ) -> Dict[str, Any]:
     """
-    价格分布极值检测 (类似 Volume Profile)
+    价格分布极值检测 v2.0 (Volume Profile 风格)
+
+    基于全球标准做法:
+    - CME Market Profile: POC, Value Area, HVN/LVN
+    - Swing Point Detection: Left/Right lookback
+    - IEEE Research: Kernel Density based S/R
 
     方法:
     1. 获取历史K线数据
     2. 统计每个价格区间的触及频率和成交量
-    3. 找出局部极大值（峰值）作为支撑阻力
+    3. 计算 POC (Point of Control) 和 Value Area (70%)
+    4. 找出 HVN (High Volume Nodes) 作为支撑阻力
+    5. 排除当前价格附近的峰值 (避免误识别)
 
     参数:
     - price_min: 价格区间下限
     - price_max: 价格区间上限
     - interval: 每个区间的宽度
     - bars: 使用多少根K线
+    - current_price: 当前价格 (用于过滤)
+    - min_distance_pct: 最小距离阈值 (排除当前价格 ±N% 内的峰值)
 
     返回:
     - 价格分布直方图
-    - 极值点（支撑阻力候选）
+    - POC (Point of Control)
+    - Value Area (VA High / VA Low)
+    - HVN (High Volume Nodes) 作为 S/R
     """
     try:
         import requests
@@ -249,22 +262,75 @@ def calculate_price_distribution_sr(
         # 综合得分 = 触及次数 * 0.5 + 成交量 * 0.5
         combined_score = touch_norm * 0.5 + volume_norm * 0.5
 
-        # 检测局部极大值（峰值）
-        # 峰值定义: 比左右两个相邻区间都高
+        # ========== POC (Point of Control) ==========
+        # 成交量最高的价格区间
+        poc_idx = np.argmax(volume_sum)
+        poc_price = bin_centers[poc_idx]
+        poc_volume = volume_sum[poc_idx]
+
+        # ========== Value Area (70%) ==========
+        # 从 POC 向两侧扩展，直到覆盖 70% 的总成交量
+        total_volume = volume_sum.sum()
+        target_volume = total_volume * 0.70
+
+        va_low_idx = poc_idx
+        va_high_idx = poc_idx
+        current_volume = volume_sum[poc_idx]
+
+        while current_volume < target_volume:
+            # 向两侧扩展，选择成交量更大的一侧
+            expand_low = volume_sum[va_low_idx - 1] if va_low_idx > 0 else 0
+            expand_high = volume_sum[va_high_idx + 1] if va_high_idx < n_bins - 1 else 0
+
+            if expand_low >= expand_high and va_low_idx > 0:
+                va_low_idx -= 1
+                current_volume += expand_low
+            elif va_high_idx < n_bins - 1:
+                va_high_idx += 1
+                current_volume += expand_high
+            else:
+                break
+
+        va_low = bin_centers[va_low_idx] - interval / 2
+        va_high = bin_centers[va_high_idx] + interval / 2
+
+        # ========== HVN Detection (High Volume Nodes) ==========
+        # 检测局部极大值（峰值），排除当前价格附近
         peaks = []
         for i in range(1, n_bins - 1):
             if combined_score[i] > combined_score[i-1] and combined_score[i] > combined_score[i+1]:
                 # 只保留得分较高的峰值 (> 0.3)
                 if combined_score[i] > 0.3:
+                    peak_price = bin_centers[i]
+
+                    # v2.0: 排除当前价格附近的峰值
+                    if current_price > 0:
+                        distance_pct = abs(peak_price - current_price) / current_price * 100
+                        if distance_pct < min_distance_pct:
+                            continue  # 跳过太近的峰值
+
                     peaks.append({
-                        'price': bin_centers[i],
+                        'price': peak_price,
                         'score': round(combined_score[i], 3),
                         'touch_count': int(touch_count[i]),
                         'volume': round(volume_sum[i], 2),
+                        'is_poc': (i == poc_idx),
+                        'in_value_area': (va_low <= peak_price <= va_high),
                     })
 
         # 按得分排序
         peaks.sort(key=lambda x: x['score'], reverse=True)
+
+        # ========== LVN Detection (Low Volume Nodes) ==========
+        # 检测局部极小值（价格快速穿越区域）
+        lvn = []
+        for i in range(1, n_bins - 1):
+            if combined_score[i] < combined_score[i-1] and combined_score[i] < combined_score[i+1]:
+                if combined_score[i] < 0.2:  # 低成交量
+                    lvn.append({
+                        'price': bin_centers[i],
+                        'score': round(combined_score[i], 3),
+                    })
 
         # 创建分布数据
         distribution = []
@@ -275,12 +341,24 @@ def calculate_price_distribution_sr(
                 'touch_count': int(touch_count[i]),
                 'volume': round(volume_sum[i], 2),
                 'score': round(combined_score[i], 3),
+                'is_poc': (i == poc_idx),
+                'in_va': (va_low <= bin_centers[i] <= va_high),
             })
 
         return {
             'success': True,
             'distribution': distribution,
-            'peaks': peaks,
+            'peaks': peaks,  # HVN = S/R candidates
+            'lvn': lvn,      # Low Volume Nodes
+            'poc': {
+                'price': poc_price,
+                'volume': round(poc_volume, 2),
+            },
+            'value_area': {
+                'low': va_low,
+                'high': va_high,
+                'pct': round(current_volume / total_volume * 100, 1),
+            },
             'bins': list(bins),
             'bars_analyzed': len(klines),
             'price_range': f"${price_min:,.0f} - ${price_max:,.0f}",
@@ -554,19 +632,31 @@ def run_full_diagnosis():
     print("  📝 计算方法: BB + SMA_50 + Order Wall 聚合")
     print("  📝 来源: utils/sr_zone_calculator.py + utils/orderbook_processor.py")
 
-    # 6. 价格分布极值检测 (新方法)
-    print_section("6. 方法四: 价格分布极值检测 (Volume Profile 风格)")
+    # 6. 价格分布极值检测 (新方法 v2.0)
+    print_section("6. 方法四: Volume Profile 风格分析 (CME 标准)")
     dist_result = calculate_price_distribution_sr(
         price_min=55000,
         price_max=70000,
         interval=1000,
-        bars=500
+        bars=500,
+        current_price=current_price,
+        min_distance_pct=1.0,  # 排除当前价格 ±1% 内的峰值
     )
 
     if dist_result['success']:
         print(f"  📊 分析范围: {dist_result['price_range']}")
         print(f"  📊 区间宽度: ${dist_result['interval']:,}")
         print(f"  📊 分析K线数: {dist_result['bars_analyzed']}")
+        print()
+
+        # POC 和 Value Area (CME 标准)
+        poc = dist_result['poc']
+        va = dist_result['value_area']
+        print(f"  🎯 POC (Point of Control): ${poc['price']:,.0f}")
+        print(f"     └─ 成交量最密集的价格，市场公认的\"公平价格\"")
+        print()
+        print(f"  📦 Value Area ({va['pct']:.0f}% 成交覆盖): ${va['low']:,.0f} - ${va['high']:,.0f}")
+        print(f"     └─ 70% 交易活动发生的区域，VA边界是重要 S/R")
         print()
 
         # 显示分布直方图 (ASCII 风格)
@@ -580,28 +670,40 @@ def run_full_diagnosis():
             bar = "█" * bar_len
             # 标记当前价格所在区间
             is_current = d['center'] - 500 <= current_price <= d['center'] + 500
-            marker = " ◀ 当前价格" if is_current else ""
-            # 标记峰值
+            marker = " ◀ 当前" if is_current else ""
+            # 标记 POC
+            poc_marker = " [POC]" if d.get('is_poc') else ""
+            # 标记 Value Area
+            va_marker = " VA" if d.get('in_va') else ""
+            # 标记 HVN 峰值
             is_peak = any(p['price'] == d['center'] for p in dist_result['peaks'])
-            peak_marker = " ⭐" if is_peak else ""
-            print(f"      {d['range']:>18} │{bar:<30} {d['score']:.2f}{peak_marker}{marker}")
+            peak_marker = " ⭐HVN" if is_peak else ""
+            print(f"      {d['range']:>18} │{bar:<30} {d['score']:.2f}{poc_marker}{va_marker}{peak_marker}{marker}")
 
         print()
-        print("  ⭐ 检测到的极值点 (潜在支撑阻力):")
+        print("  ⭐ HVN (High Volume Nodes) - 强 S/R 区域:")
         peaks = dist_result['peaks']
         if peaks:
             for i, peak in enumerate(peaks[:5], 1):
-                # 判断是支撑还是阻力
                 sr_type = "支撑" if peak['price'] < current_price else "阻力"
                 distance_pct = abs(peak['price'] - current_price) / current_price * 100
+                va_tag = " [在VA内]" if peak.get('in_value_area') else ""
                 print(f"      {i}. ${peak['price']:,.0f} [{sr_type}] (得分: {peak['score']:.3f}, "
-                      f"触及: {peak['touch_count']}次, 距离: {distance_pct:.1f}%)")
+                      f"触及: {peak['touch_count']}次, 距离: {distance_pct:.1f}%){va_tag}")
         else:
-            print("      未检测到明显极值点")
+            print("      未检测到 ±1% 外的明显 HVN")
+
+        # LVN (Low Volume Nodes)
+        lvn = dist_result.get('lvn', [])
+        if lvn:
+            print()
+            print("  ⚡ LVN (Low Volume Nodes) - 价格快速穿越区域:")
+            for node in lvn[:3]:
+                print(f"      ${node['price']:,.0f} (得分: {node['score']:.3f})")
 
         print()
-        print("  📝 计算方法: 统计每个价格区间的K线触及次数和成交量，找出局部峰值")
-        print("  📝 理论依据: Volume Profile / Market Profile (CME TPO)")
+        print("  📝 理论依据: CME Market Profile / Volume Profile")
+        print("  📝 参考: POC 是价格吸引点, VA 边界是重要 S/R, HVN 是强支撑阻力")
     else:
         print_result("计算失败", dist_result.get('error', 'Unknown'), "error")
 
@@ -707,31 +809,45 @@ def run_full_diagnosis():
         print(f"  │ S/R Zone (含 Order Wall)│ {sup_price:>17} │ {res_price:>17} │")
 
     # 添加价格分布检测结果
-    if dist_result['success'] and dist_result['peaks']:
-        peaks = dist_result['peaks']
-        # 找最近的支撑和阻力
+    if dist_result['success']:
+        # Value Area 边界作为 S/R
+        va = dist_result['value_area']
+        print(f"  │ Value Area 边界        │ ${va['low']:>14,.0f} │ ${va['high']:>14,.0f} │")
+
+        # HVN (排除当前价格附近)
+        peaks = dist_result.get('peaks', [])
         supports = [p for p in peaks if p['price'] < current_price]
         resistances = [p for p in peaks if p['price'] > current_price]
         sup_price = f"${supports[0]['price']:,.0f}" if supports else "N/A"
         res_price = f"${resistances[0]['price']:,.0f}" if resistances else "N/A"
-        print(f"  │ 价格分布极值 (新方法)  │ {sup_price:>17} │ {res_price:>17} │")
+        print(f"  │ HVN 极值 (>1%距离)     │ {sup_price:>17} │ {res_price:>17} │")
 
     print("  └─────────────────────────┴───────────────────┴───────────────────┘")
 
-    # 方法评估
+    # 方法评估 (基于全球标准)
     print()
-    print("  📊 方法评估:")
+    print("  📊 方法评估 (基于 CME/IEEE 标准):")
     print()
-    print("     ┌─────────────────────────┬──────────┬──────────┬──────────┐")
-    print("     │ 方法                    │ 稳定性   │ 实时性   │ 可靠性   │")
-    print("     ├─────────────────────────┼──────────┼──────────┼──────────┤")
-    print("     │ 简单高低点              │ ★★★★★    │ ★★★      │ ★★★      │")
-    print("     │ S/R Zone (BB+SMA)       │ ★★★★     │ ★★★      │ ★★★★     │")
-    print("     │ Order Wall              │ ★★       │ ★★★★★    │ ★★       │")
-    print("     │ 价格分布极值 (新)       │ ★★★★★    │ ★★       │ ★★★★★    │")
-    print("     └─────────────────────────┴──────────┴──────────┴──────────┘")
+    print("     ┌─────────────────────────┬──────────┬──────────┬──────────┬──────────┐")
+    print("     │ 方法                    │ 稳定性   │ 实时性   │ 可靠性   │ 专业度   │")
+    print("     ├─────────────────────────┼──────────┼──────────┼──────────┼──────────┤")
+    print("     │ 简单高低点              │ ★★★★★    │ ★★★      │ ★★★      │ ★★       │")
+    print("     │ S/R Zone (BB+SMA)       │ ★★★★     │ ★★★      │ ★★★★     │ ★★★      │")
+    print("     │ Order Wall              │ ★★       │ ★★★★★    │ ★★       │ ★★★      │")
+    print("     │ Value Area (CME)        │ ★★★★★    │ ★★       │ ★★★★★    │ ★★★★★    │")
+    print("     │ HVN/LVN (Volume Profile)│ ★★★★★    │ ★★       │ ★★★★★    │ ★★★★★    │")
+    print("     └─────────────────────────┴──────────┴──────────┴──────────┴──────────┘")
     print()
-    print("  💡 建议: 价格分布极值 + 简单高低点 作为主要 S/R，Order Wall 仅作辅助确认")
+    print("  💡 全球标准做法:")
+    print("     1. Value Area 边界 = 主要 S/R (CME Market Profile)")
+    print("     2. HVN = 强支撑阻力 (价格在此停留时间长)")
+    print("     3. LVN = 快速穿越区 (不适合作为 S/R)")
+    print("     4. POC = 公平价格 (价格吸引点)")
+    print()
+    print("  📚 参考文献:")
+    print("     - CME Group Market Profile User Guide")
+    print("     - IEEE: Evolutionary Optimized Stock Support-Resistance")
+    print("     - MDPI: Support Resistance Levels in Algorithmic Trading")
 
     print()
     print(f"  诊断完成: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
