@@ -215,13 +215,25 @@ SUPPORT/RESISTANCE ZONES (v2.0):
   * MAJOR level zones are more significant for longer-term trades
   * Multiple overlapping sources increase confidence in the zone
 
-HISTORICAL CONTEXT (v3.0.1 - 20-bar trend data):
-- Purpose: Shows indicator trends over last 20 bars instead of isolated single values
-- Data provided:
-  * price_trend: Last 20 closing prices
-  * rsi_trend: Last 20 RSI values
-  * macd_trend: Last 20 MACD values
-- Trend Direction: Calculated from price movement
+HISTORICAL CONTEXT (v3.24 - full time-series data, simulating chart view):
+- Purpose: Shows continuous indicator trajectories (like a human looking at charts)
+- Core series (20 bars = ~5 hours of 15min data):
+  * price_trend: Closing prices — see price action, patterns, support tests
+  * volume_trend: Volume bars — see accumulation/distribution
+  * rsi_trend: RSI trajectory — see overbought/oversold approach, divergences
+  * macd_trend: MACD trajectory — see momentum builds, crossovers
+- v3.24 New series:
+  * adx_trend + di_plus_trend + di_minus_trend: Trend strength trajectory
+    - ADX rising = trend strengthening. ADX falling = trend weakening
+    - DI+ crossing above DI- = bullish. DI- crossing above DI+ = bearish
+  * bb_width_trend: Bollinger Band width (% of middle band)
+    - Narrowing = volatility squeeze → big move coming
+    - Widening = volatility expansion → trend underway
+  * sma_history: SMA values over time for each period
+    - Price crossing above SMA = golden cross signal
+    - Price crossing below SMA = death cross signal
+    - SMA convergence = trend exhaustion
+- Trend Direction: Calculated from price movement linear regression
   * BULLISH: Clear upward trend (higher highs, higher lows)
   * BEARISH: Clear downward trend (lower highs, lower lows)
   * NEUTRAL: No clear direction (consolidation)
@@ -907,7 +919,7 @@ OUTPUT FORMAT (JSON only, no other text):
                         lines.append(fr_str)
                 liq = derivatives_data.get('liquidations', {})
                 if isinstance(liq, dict) and liq.get('total_usd', 0) > 0:
-                    lines.append(f"Liquidations (1h): ${liq['total_usd']:,.0f}")
+                    lines.append(f"Liquidations (24h): ${liq['total_usd']:,.0f}")
 
             if order_flow_data and isinstance(order_flow_data, dict):
                 buy_ratio = order_flow_data.get('buy_ratio')
@@ -1460,6 +1472,37 @@ MACD SERIES ({len(macd_trend)} values):
 VOLUME SERIES ({len(volume_trend)} values, BTC):
 {format_all_values(volume_trend, ",.1f")}
 """
+            # v3.24: ADX/DI history (trend strength trajectory)
+            adx_trend = historical.get('adx_trend', [])
+            di_plus_trend = historical.get('di_plus_trend', [])
+            di_minus_trend = historical.get('di_minus_trend', [])
+            if adx_trend and len(adx_trend) >= 2:
+                report += f"""
+ADX SERIES ({len(adx_trend)} values):
+{format_all_values(adx_trend)}
+
+DI+ SERIES:
+{format_all_values(di_plus_trend)}
+
+DI- SERIES:
+{format_all_values(di_minus_trend)}
+"""
+
+            # v3.24: BB Width history (volatility squeeze/expansion)
+            bb_width_trend = historical.get('bb_width_trend', [])
+            if bb_width_trend and len(bb_width_trend) >= 2:
+                report += f"""
+BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
+{format_all_values(bb_width_trend, ".2f")}
+"""
+
+            # v3.24: SMA history for crossover detection
+            sma_history = historical.get('sma_history', {})
+            if sma_history:
+                report += "\nSMA SERIES (for crossover detection):\n"
+                for sma_key, sma_vals in sorted(sma_history.items()):
+                    if sma_vals and len(sma_vals) >= 2:
+                        report += f"{sma_key.upper()} ({len(sma_vals)} values): {format_all_values(sma_vals, ',.0f')}\n"
 
         # v3.21: Add K-line OHLCV data (让 AI 看到实际价格形态)
         kline_ohlcv = data.get('kline_ohlcv')
@@ -1494,6 +1537,7 @@ VOLUME SERIES ({len(volume_trend)} values, BTC):
         """Format sentiment data for prompts.
 
         TradingAgents v3.3: Pass raw ratios only, no interpretation.
+        v3.24: Added history series for continuous data.
         """
         if not data:
             return "SENTIMENT: Data not available"
@@ -1513,13 +1557,22 @@ VOLUME SERIES ({len(volume_trend)} values, BTC):
             neg_ratio = 0.0
         sign = '+' if net >= 0 else ''
 
-        # TradingAgents v3.3: Raw data only, AI interprets
-        return f"""
-MARKET SENTIMENT (Binance Long/Short Ratio):
-- Long Ratio: {pos_ratio:.1%}
-- Short Ratio: {neg_ratio:.1%}
-- Net: {sign}{net:.3f}
-"""
+        lines = [
+            "MARKET SENTIMENT (Binance Long/Short Ratio):",
+            f"- Long Ratio: {pos_ratio:.1%}",
+            f"- Short Ratio: {neg_ratio:.1%}",
+            f"- Net: {sign}{net:.3f}",
+        ]
+
+        # v3.24: Show history series (oldest → newest)
+        history = data.get('history', [])
+        if history and len(history) >= 2:
+            long_series = [f"{h['long']*100:.1f}%" for h in history]
+            ratio_series = [f"{h['ratio']:.3f}" for h in history]
+            lines.append(f"- Long% History: {' → '.join(long_series)}")
+            lines.append(f"- L/S Ratio History: {' → '.join(ratio_series)}")
+
+        return "\n" + "\n".join(lines) + "\n"
 
     def _format_position(self, position: Optional[Dict[str, Any]]) -> str:
         """
@@ -2052,28 +2105,37 @@ ORDER FLOW (Binance Taker Data):
             else:
                 parts.append("- Funding Rate: N/A")
 
-            # Liquidations
+            # Liquidations (v3.24: expanded to 24h with history trend)
             liq = data.get('liquidations')
             if liq:
                 history = liq.get('history', [])
                 if history:
-                    item = history[-1]
-                    long_liq_btc = float(item.get('l', 0))
-                    short_liq_btc = float(item.get('s', 0))
-                    total_btc = long_liq_btc + short_liq_btc
-
                     price_for_conversion = current_price if current_price > 0 else 88000
+
+                    # Calculate 24h totals
+                    total_long_btc = sum(float(h.get('l', 0)) for h in history)
+                    total_short_btc = sum(float(h.get('s', 0)) for h in history)
+                    total_btc = total_long_btc + total_short_btc
                     total_usd = total_btc * price_for_conversion
 
-                    parts.append(f"- Liquidations (1h): {total_btc:.4f} BTC (${total_usd:,.0f})")
+                    parts.append(f"- Liquidations (24h): {total_btc:.4f} BTC (${total_usd:,.0f})")
                     if total_btc > 0:
-                        long_ratio = long_liq_btc / total_btc
-                        parts.append(f"  - Long Liq: {long_liq_btc:.4f} BTC ({long_ratio:.0%})")
-                        parts.append(f"  - Short Liq: {short_liq_btc:.4f} BTC ({1-long_ratio:.0%})")
+                        long_ratio = total_long_btc / total_btc
+                        parts.append(f"  - Long Liq: {total_long_btc:.4f} BTC ({long_ratio:.0%})")
+                        parts.append(f"  - Short Liq: {total_short_btc:.4f} BTC ({1-long_ratio:.0%})")
+
+                    # v3.24: Show hourly history (oldest → newest) for trend
+                    if len(history) >= 3:
+                        hourly_totals = []
+                        for h in history:
+                            h_total = float(h.get('l', 0)) + float(h.get('s', 0))
+                            h_usd = h_total * price_for_conversion
+                            hourly_totals.append(f"${h_usd:,.0f}")
+                        parts.append(f"  Hourly Trend: {' → '.join(hourly_totals)}")
                 else:
-                    parts.append("- Liquidations (1h): N/A")
+                    parts.append("- Liquidations (24h): N/A")
             else:
-                parts.append("- Liquidations (1h): N/A")
+                parts.append("- Liquidations (24h): N/A")
 
             # Long/Short Ratio from Coinalyze (v3.9: removed trend label)
             ls_hist = data.get('long_short_ratio_history')
@@ -2090,11 +2152,12 @@ ORDER FLOW (Binance Taker Data):
 
         # =========================================================================
         # Section 2: Binance Derivatives (Unique Data)
+        # v3.24: Unhide full history series (previously only showed latest)
         # =========================================================================
         if binance_derivatives:
             parts.append("\nBINANCE DERIVATIVES (Top Traders & Taker):")
 
-            # Top Traders Position Ratio (v3.9: removed trend label)
+            # Top Traders Position Ratio — with full history series
             top_pos = binance_derivatives.get('top_long_short_position', {})
             latest = top_pos.get('latest')
             if latest:
@@ -2105,20 +2168,35 @@ ORDER FLOW (Binance Taker Data):
                     f"- Top Traders Position: Long {long_pct:.1f}% / Short {short_pct:.1f}% "
                     f"(Ratio: {ratio:.2f})"
                 )
+                # v3.24: Show history series
+                history = top_pos.get('data', [])
+                if history and len(history) >= 2:
+                    ratios = [f"{float(h.get('longAccount', 0.5))*100:.1f}%" for h in reversed(history)]
+                    parts.append(f"  History (Long%): {' → '.join(ratios)}")
 
-            # Taker Buy/Sell Ratio (v3.9: removed trend label)
+            # Taker Buy/Sell Ratio — with full history series
             taker = binance_derivatives.get('taker_long_short', {})
             latest = taker.get('latest')
             if latest:
                 ratio = float(latest.get('buySellRatio', 1))
                 parts.append(f"- Taker Buy/Sell Ratio: {ratio:.3f}")
+                # v3.24: Show history series
+                history = taker.get('data', [])
+                if history and len(history) >= 2:
+                    ratios = [f"{float(h.get('buySellRatio', 1)):.3f}" for h in reversed(history)]
+                    parts.append(f"  History: {' → '.join(ratios)}")
 
-            # OI from Binance (v3.9: removed trend label)
+            # OI from Binance — with full history series
             oi_hist = binance_derivatives.get('open_interest_hist', {})
             latest = oi_hist.get('latest')
             if latest:
                 oi_usd = float(latest.get('sumOpenInterestValue', 0))
                 parts.append(f"- OI (Binance): ${oi_usd:,.0f}")
+                # v3.24: Show history series
+                history = oi_hist.get('data', [])
+                if history and len(history) >= 2:
+                    oi_values = [f"${float(h.get('sumOpenInterestValue', 0))/1e9:.2f}B" for h in reversed(history)]
+                    parts.append(f"  History: {' → '.join(oi_values)}")
 
             # 24h Stats
             ticker = binance_derivatives.get('ticker_24hr')

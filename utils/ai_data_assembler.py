@@ -514,11 +514,11 @@ class AIDataAssembler:
                     )
                     parts.append(f"  - Settlement History (last {len(history)}): {rates_str}")
 
-            # Liquidations
+            # Liquidations (v3.24: 24h)
             liq = derivatives.get("liquidations")
             if liq:
                 parts.append(
-                    f"  - Liquidations (1h): Long ${liq.get('long_usd', 0):,.0f} / "
+                    f"  - Liquidations (24h): Long ${liq.get('long_usd', 0):,.0f} / "
                     f"Short ${liq.get('short_usd', 0):,.0f}"
                 )
 
@@ -589,6 +589,11 @@ class AIDataAssembler:
             )
             parts.append(f"  - Net Sentiment: {sentiment.get('net_sentiment', 0):+.3f}")
             parts.append(f"  - L/S Ratio: {sentiment.get('long_short_ratio', 1):.2f}")
+            # v3.24: Show history series
+            history = sentiment.get('history', [])
+            if history and len(history) >= 2:
+                long_series = [f"{h['long']*100:.1f}%" for h in history]
+                parts.append(f"  - Long% History: {' → '.join(long_series)}")
 
         # =========================================================================
         # 6. 数据源状态
