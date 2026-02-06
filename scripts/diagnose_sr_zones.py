@@ -631,6 +631,80 @@ def backtest_sr_detection(
         }
 
 
+def generate_mock_klines(days: int = 7, interval: str = "15m") -> list:
+    """
+    生成模拟 K 线数据用于本地测试 (无网络环境)
+
+    模拟一个典型的 BTC 价格走势:
+    - 基础价格: ~$95,000
+    - 日波动率: ~2-3%
+    - 包含趋势和震荡
+    """
+    import random
+    from datetime import datetime, timedelta
+
+    intervals_per_day = {"15m": 96, "1h": 24, "4h": 6}
+    bars_per_day = intervals_per_day.get(interval, 96)
+    total_bars = days * bars_per_day + 200
+
+    # 初始价格
+    price = 95000.0
+    klines = []
+
+    # 15分钟间隔 (毫秒)
+    interval_ms = {"15m": 15 * 60 * 1000, "1h": 60 * 60 * 1000, "4h": 4 * 60 * 60 * 1000}
+    delta_ms = interval_ms.get(interval, 15 * 60 * 1000)
+
+    start_time = int((datetime.now() - timedelta(days=days + 3)).timestamp() * 1000)
+
+    # 模拟市场周期: 上涨 -> 震荡 -> 下跌 -> 反弹
+    trend_phases = [
+        (0.0003, 0.3),   # 上涨阶段
+        (0.0, 0.4),      # 震荡阶段
+        (-0.0002, 0.35), # 下跌阶段
+        (0.0002, 0.3),   # 反弹阶段
+    ]
+
+    for i in range(total_bars):
+        # 确定当前趋势阶段
+        phase_idx = (i // (total_bars // 4)) % 4
+        drift, volatility = trend_phases[phase_idx]
+
+        # 随机波动
+        change_pct = random.gauss(drift, volatility / 100)
+
+        # 生成 OHLCV
+        open_price = price
+        high_price = price * (1 + abs(random.gauss(0, 0.3)) / 100)
+        low_price = price * (1 - abs(random.gauss(0, 0.3)) / 100)
+        close_price = price * (1 + change_pct)
+        volume = random.uniform(500, 2000)  # BTC
+
+        # 确保 high >= open/close, low <= open/close
+        high_price = max(high_price, open_price, close_price)
+        low_price = min(low_price, open_price, close_price)
+
+        kline = [
+            start_time + i * delta_ms,  # Open time
+            str(open_price),
+            str(high_price),
+            str(low_price),
+            str(close_price),
+            str(volume),
+            start_time + (i + 1) * delta_ms - 1,  # Close time
+            str(volume * price),  # Quote volume
+            random.randint(1000, 5000),  # Trades
+            str(volume * 0.45),  # Taker buy volume
+            str(volume * price * 0.45),  # Taker buy quote volume
+            "0"
+        ]
+        klines.append(kline)
+
+        price = close_price
+
+    return klines
+
+
 def backtest_sr_trading_simulation(
     days: int = 7,
     interval: str = "15m",
@@ -638,6 +712,7 @@ def backtest_sr_trading_simulation(
     sl_buffer_pct: float = 0.5,
     position_usdt: float = 1000,
     leverage: int = 10,
+    use_mock: bool = False,
 ) -> Dict[str, Any]:
     """
     完整的 S/R 交易模拟回测 (v2.0)
@@ -656,12 +731,12 @@ def backtest_sr_trading_simulation(
     - sl_buffer_pct: SL 缓冲百分比
     - position_usdt: 每笔仓位 USDT
     - leverage: 杠杆倍数
+    - use_mock: 使用模拟数据 (无网络环境)
 
     返回:
     - 完整的交易统计和分析
     """
     try:
-        import requests
         from datetime import datetime, timedelta
 
         # 计算需要多少根 K 线
@@ -673,35 +748,43 @@ def backtest_sr_trading_simulation(
         bars_per_day = intervals_per_day.get(interval, 96)
         bars_needed = days * bars_per_day + 200  # 额外用于计算
 
-        # Binance API 限制每次 1500 根，需要分批获取
-        all_klines = []
-        end_time = None
+        if use_mock:
+            # 使用模拟数据
+            print("  📊 使用模拟数据 (--mock 模式)")
+            all_klines = generate_mock_klines(days, interval)
+        else:
+            # 从 Binance API 获取真实数据
+            import requests
 
-        while len(all_klines) < bars_needed:
-            params = {
-                "symbol": "BTCUSDT",
-                "interval": interval,
-                "limit": min(1500, bars_needed - len(all_klines) + 100),
-            }
-            if end_time:
-                params["endTime"] = end_time
+            # Binance API 限制每次 1500 根，需要分批获取
+            all_klines = []
+            end_time = None
 
-            resp = requests.get(
-                "https://fapi.binance.com/fapi/v1/klines",
-                params=params,
-                timeout=30
-            )
-            klines = resp.json()
+            while len(all_klines) < bars_needed:
+                params = {
+                    "symbol": "BTCUSDT",
+                    "interval": interval,
+                    "limit": min(1500, bars_needed - len(all_klines) + 100),
+                }
+                if end_time:
+                    params["endTime"] = end_time
 
-            if not klines:
-                break
+                resp = requests.get(
+                    "https://fapi.binance.com/fapi/v1/klines",
+                    params=params,
+                    timeout=30
+                )
+                klines = resp.json()
 
-            # 插入到开头 (旧数据在前)
-            all_klines = klines + all_klines
-            end_time = klines[0][0] - 1  # 下一批的结束时间
+                if not klines:
+                    break
 
-            if len(klines) < 100:  # 没有更多数据了
-                break
+                # 插入到开头 (旧数据在前)
+                all_klines = klines + all_klines
+                end_time = klines[0][0] - 1  # 下一批的结束时间
+
+                if len(klines) < 100:  # 没有更多数据了
+                    break
 
         if len(all_klines) < 300:
             return {'success': False, 'error': f'数据不足: {len(all_klines)} bars'}
@@ -1682,6 +1765,7 @@ def main():
     parser = argparse.ArgumentParser(description="支撑阻力位全面诊断 v2.0")
     parser.add_argument("--export", action="store_true", help="导出到文件")
     parser.add_argument("--backtest", action="store_true", help="仅运行交易模拟回测")
+    parser.add_argument("--mock", action="store_true", help="使用模拟数据 (无网络环境)")
     parser.add_argument("--days", type=int, default=7, help="回测天数 (默认 7)")
     parser.add_argument("--min-rr", type=float, default=1.5, help="最小 R/R 比率 (默认 1.5)")
     parser.add_argument("--position", type=float, default=1000, help="每笔仓位 USDT (默认 1000)")
@@ -1697,6 +1781,7 @@ def main():
             min_rr_ratio=args.min_rr,
             position_usdt=args.position,
             leverage=args.leverage,
+            use_mock=args.mock,
         )
         print_backtest_results(result)
 
