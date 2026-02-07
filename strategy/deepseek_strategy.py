@@ -3249,10 +3249,28 @@ class DeepSeekAIStrategy(Strategy):
                 return
 
             if size_diff > 0:
-                # Add to position with simple market order
-                # NOTE: Bracket orders CANNOT be used for adding to existing positions
-                # They can only be used for opening new positions (entry + SL + TP linked)
+                # v4.11: Validate R/R before adding to position (same validation as new positions)
+                # Previously, adds bypassed all R/R/S/R validation, allowing entries at resistance
+                # with degraded R/R. Now we validate using current price + AI's new SL/TP.
                 order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
+                validated = self._validate_sltp_for_entry(order_side, confidence)
+
+                if validated is None:
+                    # R/R validation failed — reject the add
+                    side_cn = '多' if target_side == 'long' else '空'
+                    self.log.warning(
+                        f"🚫 加仓被拒: R/R 不满足最低要求，维持现有{side_cn}仓 ({current_qty:.4f} BTC)"
+                    )
+                    self._last_signal_status = {
+                        'executed': False,
+                        'reason': f'加仓 R/R 不足 (保持 {current_qty:.4f} BTC)',
+                        'action_taken': '维持现有仓位',
+                    }
+                    return
+
+                new_sl_price, new_tp_price, entry_price = validated
+
+                # Submit add order
                 self._submit_order(
                     side=order_side,
                     quantity=abs(size_diff),
@@ -3263,11 +3281,13 @@ class DeepSeekAIStrategy(Strategy):
                     f"({current_qty:.3f} → {target_quantity:.3f})"
                 )
 
-                # v3.18: Update SL/TP orders to match new total position size
-                # This is critical - without this, SL/TP only covers the old position size
-                self._update_sltp_quantity(
+                # v4.11: Update SL/TP prices AND quantities (not just quantities)
+                # Uses AI's new validated SL/TP based on current price
+                self._replace_sltp_orders(
                     new_total_quantity=target_quantity,
                     position_side=target_side,
+                    new_sl_price=new_sl_price,
+                    new_tp_price=new_tp_price,
                 )
 
                 # v4.9: Send scaling notification via Telegram
@@ -3293,7 +3313,7 @@ class DeepSeekAIStrategy(Strategy):
                 self._last_signal_status = {
                     'executed': True,
                     'reason': '',
-                    'action_taken': f'加仓 +{abs(size_diff):.4f} BTC',
+                    'action_taken': f'加仓 +{abs(size_diff):.4f} BTC (SL ${new_sl_price:,.0f} TP ${new_tp_price:,.0f})',
                 }
             else:
                 # Reduce position
@@ -3476,6 +3496,227 @@ class DeepSeekAIStrategy(Strategy):
                 'reason': f'禁止反转 (持有{current_cn}仓)',
                 'action_taken': '',
             }
+
+    def _validate_sltp_for_entry(
+        self,
+        side: OrderSide,
+        confidence: str,
+    ) -> Optional[Tuple[float, float, float]]:
+        """
+        v4.11: Validate SL/TP for any entry (new position OR add to position).
+
+        Extracts the R/R validation logic from _submit_bracket_order so it can be
+        reused for both opening and adding to positions. Uses current real-time price
+        + AI's latest SL/TP + S/R zones, same as the bracket order path.
+
+        Parameters
+        ----------
+        side : OrderSide
+            Order side (BUY or SELL)
+        confidence : str
+            Signal confidence level (HIGH/MEDIUM/LOW)
+
+        Returns
+        -------
+        Optional[Tuple[float, float, float]]
+            (stop_loss_price, take_profit_price, entry_price) if valid,
+            None if R/R validation fails
+        """
+        if not self.latest_signal_data or not self.latest_technical_data:
+            self.log.warning("⚠️ No signal/technical data for SL/TP validation")
+            return None
+
+        # Get current real-time price (same priority chain as _submit_bracket_order)
+        entry_price: Optional[float] = None
+
+        if self.binance_account:
+            try:
+                realtime_price = self.binance_account.get_realtime_price('BTCUSDT')
+                if realtime_price and realtime_price > 0:
+                    entry_price = realtime_price
+            except Exception:
+                pass
+
+        if entry_price is None and self.latest_price_data and self.latest_price_data.get('price'):
+            entry_price = float(self.latest_price_data['price'])
+
+        if entry_price is None and hasattr(self.indicator_manager, "recent_bars"):
+            recent_bars = self.indicator_manager.recent_bars
+            if recent_bars:
+                entry_price = float(recent_bars[-1].close)
+
+        if entry_price is None:
+            cache_bars = self.cache.bars(self.bar_type)
+            if cache_bars:
+                entry_price = float(cache_bars[-1].close)
+
+        if entry_price is None or entry_price <= 0:
+            self.log.error("❌ Cannot determine price for SL/TP validation")
+            return None
+
+        # Get S/R zones (same as _submit_bracket_order)
+        support = 0.0
+        resistance = 0.0
+
+        if hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
+            nearest_support = self.latest_sr_zones_data.get('nearest_support')
+            nearest_resistance = self.latest_sr_zones_data.get('nearest_resistance')
+            if nearest_support and hasattr(nearest_support, 'price_center'):
+                support = nearest_support.price_center
+            if nearest_resistance and hasattr(nearest_resistance, 'price_center'):
+                resistance = nearest_resistance.price_center
+        else:
+            support = self.latest_technical_data.get('support', 0.0)
+            resistance = self.latest_technical_data.get('resistance', 0.0)
+
+        # Validate AI's SL/TP with R/R check
+        multi_sl = self.latest_signal_data.get('stop_loss')
+        multi_tp = self.latest_signal_data.get('take_profit')
+
+        is_valid, validated_sl, validated_tp, validation_reason = validate_multiagent_sltp(
+            side=side.name,
+            multi_sl=multi_sl,
+            multi_tp=multi_tp,
+            entry_price=entry_price,
+        )
+
+        if is_valid:
+            stop_loss_price = validated_sl
+            tp_price = validated_tp
+            self.log.info(f"🎯 SL/TP validated for entry: {validation_reason}")
+        else:
+            # Fall back to technical analysis (same as _submit_bracket_order)
+            if multi_sl or multi_tp:
+                self.log.warning(
+                    f"⚠️ AI SL/TP invalid: {validation_reason}, "
+                    f"falling back to S/R-based technical analysis"
+                )
+
+            stop_loss_price, tp_price, calc_method = calculate_technical_sltp(
+                side=side.name,
+                entry_price=entry_price,
+                support=support,
+                resistance=resistance,
+                confidence=confidence,
+                use_support_resistance=self.sl_use_support_resistance,
+                sl_buffer_pct=self.sl_buffer_pct,
+            )
+            self.log.info(f"📍 {calc_method}")
+
+        if side == OrderSide.BUY:
+            rr = (tp_price - entry_price) / (entry_price - stop_loss_price) if entry_price > stop_loss_price else 0
+        else:
+            rr = (entry_price - tp_price) / (stop_loss_price - entry_price) if stop_loss_price > entry_price else 0
+        self.log.info(
+            f"✅ SL/TP validated: Price=${entry_price:,.2f} "
+            f"SL=${stop_loss_price:,.2f} TP=${tp_price:,.2f} R/R={rr:.2f}:1"
+        )
+
+        return (stop_loss_price, tp_price, entry_price)
+
+    def _replace_sltp_orders(
+        self,
+        new_total_quantity: float,
+        position_side: str,
+        new_sl_price: float,
+        new_tp_price: float,
+    ):
+        """
+        v4.11: Replace SL/TP orders with new prices AND quantities.
+
+        Unlike _update_sltp_quantity (which only changes quantity), this method
+        cancels all existing SL/TP and recreates them at NEW prices with the
+        correct total quantity. Used after adding to a position.
+
+        Parameters
+        ----------
+        new_total_quantity : float
+            New total position quantity
+        position_side : str
+            Position side ('long' or 'short')
+        new_sl_price : float
+            New stop loss price
+        new_tp_price : float
+            New take profit price
+        """
+        sl_confirmed = False
+        tp_confirmed = False
+        exit_side = OrderSide.SELL if position_side == 'long' else OrderSide.BUY
+        new_qty = self.instrument.make_qty(new_total_quantity)
+
+        try:
+            # Step 1: Cancel all existing SL/TP orders
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
+
+            if reduce_only_orders:
+                self.log.info(
+                    f"🗑️ Cancelling {len(reduce_only_orders)} old SL/TP orders "
+                    f"(replacing with new prices)"
+                )
+                for order in reduce_only_orders:
+                    try:
+                        self.cancel_order(order)
+                    except Exception as e:
+                        self.log.warning(f"⚠️ Failed to cancel order: {e}")
+
+            # Step 2: Create new SL at new price
+            try:
+                new_sl_order = self.order_factory.stop_market(
+                    instrument_id=self.instrument_id,
+                    order_side=exit_side,
+                    quantity=new_qty,
+                    trigger_price=self.instrument.make_price(new_sl_price),
+                    trigger_type=TriggerType.LAST_PRICE,
+                    reduce_only=True,
+                )
+                self.submit_order(new_sl_order)
+                sl_confirmed = True
+                self.log.info(
+                    f"✅ New SL @ ${new_sl_price:,.2f} qty={new_total_quantity:.4f}"
+                )
+
+                # Update trailing stop state
+                instrument_key = str(self.instrument_id)
+                if instrument_key in self.trailing_stop_state:
+                    self.trailing_stop_state[instrument_key]["sl_order_id"] = str(new_sl_order.client_order_id)
+                    self.trailing_stop_state[instrument_key]["current_sl_price"] = new_sl_price
+                    self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
+            except Exception as e:
+                self.log.error(f"❌ Failed to create new SL: {e}")
+
+            # Step 3: Create new TP at new price
+            try:
+                new_tp_order = self.order_factory.limit(
+                    instrument_id=self.instrument_id,
+                    order_side=exit_side,
+                    quantity=new_qty,
+                    price=self.instrument.make_price(new_tp_price),
+                    time_in_force=TimeInForce.GTC,
+                    reduce_only=True,
+                )
+                self.submit_order(new_tp_order)
+                tp_confirmed = True
+                self.log.info(
+                    f"✅ New TP @ ${new_tp_price:,.2f} qty={new_total_quantity:.4f}"
+                )
+
+                # Update trailing stop state TP
+                instrument_key = str(self.instrument_id)
+                if instrument_key in self.trailing_stop_state:
+                    self.trailing_stop_state[instrument_key]["current_tp_price"] = new_tp_price
+            except Exception as e:
+                self.log.error(f"❌ Failed to create new TP: {e}")
+
+        except Exception as e:
+            self.log.error(f"❌ Failed to replace SL/TP orders: {e}")
+
+        # Emergency SL if replacement failed
+        if not sl_confirmed:
+            self._submit_emergency_sl(new_total_quantity, position_side, reason="加仓后SL替换失败")
+
+        if not tp_confirmed:
+            self.log.warning("⚠️ TP replacement failed, position has SL but no TP")
 
     def _open_new_position(self, side: str, quantity: float):
         """
@@ -4272,108 +4513,35 @@ class DeepSeekAIStrategy(Strategy):
             self._submit_order(side=side, quantity=quantity, reduce_only=False)
             return
 
-        if not self.latest_signal_data or not self.latest_technical_data:
-            self.log.warning("⚠️ No signal/technical data available for SL/TP - submitting simple market order")
-            self._submit_order(side=side, quantity=quantity, reduce_only=False)
-            return
+        # v4.11: Use shared SL/TP validation (unified with add-to-position path)
+        # Previously this had ~100 lines of duplicated validation logic.
+        # Now both new positions and adds go through _validate_sltp_for_entry().
+        confidence = self.latest_signal_data.get('confidence', 'MEDIUM') if self.latest_signal_data else 'MEDIUM'
+        validated = self._validate_sltp_for_entry(side, confidence)
 
-        # Determine latest price for entry estimation
-        # v4.9: Prefer real-time Binance API price over stale bar close
-        # Bar close can be minutes old, causing R/R validation to use wrong price
-        entry_price: Optional[float] = None
-
-        # Priority 1: Real-time price from Binance REST API (most accurate)
-        if self.binance_account:
-            try:
-                realtime_price = self.binance_account.get_realtime_price('BTCUSDT')
-                if realtime_price and realtime_price > 0:
-                    entry_price = realtime_price
-                    self.log.debug(f"📊 Using Binance real-time price for bracket: ${entry_price:,.2f}")
-            except Exception as e:
-                self.log.debug(f"Real-time price fetch failed, using fallback: {e}")
-
-        # Priority 2: Latest price data from AI analysis (bar close)
-        if entry_price is None and self.latest_price_data and self.latest_price_data.get('price'):
-            entry_price = float(self.latest_price_data['price'])
-
-        # Priority 3: Recent bars
-        if entry_price is None and hasattr(self.indicator_manager, "recent_bars"):
-            recent_bars = self.indicator_manager.recent_bars
-            if recent_bars:
-                entry_price = float(recent_bars[-1].close)
-
-        # Priority 4: Cache bars
-        if entry_price is None:
-            cache_bars = self.cache.bars(self.bar_type)
-            if cache_bars:
-                entry_price = float(cache_bars[-1].close)
-
-        if entry_price is None or entry_price <= 0:
-            self.log.error("❌ Unable to determine entry price for bracket order, submitting market order instead")
-            self._submit_order(side=side, quantity=quantity, reduce_only=False)
-            return
-
-        # Get confidence and technical data
-        confidence = self.latest_signal_data.get('confidence', 'MEDIUM')
-
-        # v3.14: Use S/R Zone data (more sophisticated) instead of basic technical_data support/resistance
-        # S/R Zone Calculator aggregates: BB, SMA_50, SMA_200, Order Walls, Pivot Points
-        # Falls back to basic technical_data if S/R Zones not available
-        support = 0.0
-        resistance = 0.0
-        sr_source = "none"
-
-        if hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
-            nearest_support = self.latest_sr_zones_data.get('nearest_support')
-            nearest_resistance = self.latest_sr_zones_data.get('nearest_resistance')
-            if nearest_support and hasattr(nearest_support, 'price_center'):
-                support = nearest_support.price_center
-                sr_source = f"S/R Zone ({nearest_support.strength}, {nearest_support.level})"
-            if nearest_resistance and hasattr(nearest_resistance, 'price_center'):
-                resistance = nearest_resistance.price_center
-                sr_source = f"S/R Zone ({nearest_resistance.strength}, {nearest_resistance.level})"
-            self.log.info(f"📊 Using {sr_source}: Support=${support:,.0f}, Resistance=${resistance:,.0f}")
-        else:
-            # Fallback to basic technical data (simple high/low of recent bars)
-            support = self.latest_technical_data.get('support', 0.0)
-            resistance = self.latest_technical_data.get('resistance', 0.0)
-            if support > 0 or resistance > 0:
-                sr_source = "technical_data (basic)"
-                self.log.info(f"📊 Using {sr_source}: Support=${support:,.0f}, Resistance=${resistance:,.0f}")
-
-        # Check for MultiAgent SL/TP (from Judge decision)
-        # Note: MultiAgent returns 'stop_loss' and 'take_profit' fields directly
-        multi_sl = self.latest_signal_data.get('stop_loss')
-        multi_tp = self.latest_signal_data.get('take_profit')
-
-        # Use shared function to validate MultiAgent SL/TP (same logic as diagnose_realtime.py)
-        is_valid, validated_sl, validated_tp, validation_reason = validate_multiagent_sltp(
-            side=side.name,  # Convert OrderSide.BUY → 'BUY'
-            multi_sl=multi_sl,
-            multi_tp=multi_tp,
-            entry_price=entry_price,
-        )
-
-        if is_valid:
-            # MultiAgent SL/TP validated successfully
-            stop_loss_price = validated_sl
-            tp_price = validated_tp
-            self.log.info(f"🎯 Using MultiAgent SL/TP: {validation_reason}")
-        else:
-            # Fall back to technical analysis using shared function (v3.14: now uses S/R Zones for TP)
-            if multi_sl or multi_tp:
-                self.log.warning(f"⚠️ MultiAgent SL/TP invalid: {validation_reason}, falling back to S/R-based technical analysis")
-
-            stop_loss_price, tp_price, calc_method = calculate_technical_sltp(
-                side=side.name,  # Convert OrderSide.BUY → 'BUY'
-                entry_price=entry_price,
-                support=support,
-                resistance=resistance,
-                confidence=confidence,
-                use_support_resistance=self.sl_use_support_resistance,
-                sl_buffer_pct=self.sl_buffer_pct,
+        if validated is None:
+            # v3.18 + v4.11: Do NOT fallback to unprotected market order
+            self.log.error(
+                "❌ SL/TP validation failed for new position - order blocked "
+                "(no price data, no signal data, or R/R < minimum)"
             )
-            self.log.info(f"📍 {calc_method}")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': 'SL/TP验证失败，取消开仓',
+                'action_taken': '',
+            }
+            if self.telegram_bot and self.enable_telegram:
+                try:
+                    self.telegram_bot.send_message_sync(
+                        "🚫 开仓被阻止\n"
+                        "SL/TP验证失败 (R/R不足或无价格数据)\n"
+                        "维持 HOLD 等待下一信号"
+                    )
+                except Exception:
+                    pass
+            return
+
+        stop_loss_price, tp_price, entry_price = validated
 
         # Log SL/TP summary
         self.log.info(

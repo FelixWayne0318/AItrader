@@ -3999,12 +3999,22 @@
       "pattern_type": "import",
       "created": "2026-02-07T14:03:37.458476",
       "auto_generated": true
+    },
+    {
+      "id": "28e437a0a600",
+      "commit": "a9d380b",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(safety): emergency SL protection + OCO peer cleanup after scaling (v4.10)",
+      "pattern": "_submit_emergency_sl",
+      "pattern_type": "function_exists",
+      "created": "2026-02-07T15:25:38.410704",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-07T14:03:47.801861",
-    "count": 400,
+    "updated": "2026-02-07T15:25:48.690856",
+    "count": 401,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
