@@ -407,10 +407,10 @@ class AIInputDataValidator(DiagnosticStep):
             print(f"      OI value (BTC):  {oi.get('value', 0) if oi else 0:,.2f}")
             print(f"      Funding rate:    {fr.get('value', 0) if fr else 0:.6f} ({fr.get('value', 0)*100 if fr else 0:.4f}%)")
 
-            # v4.8: 优先显示 Binance 8h funding rate
+            # v5.1: Binance funding rate (settled + predicted)
             if self.ctx.binance_funding_rate:
                 bfr = self.ctx.binance_funding_rate
-                print(f"      [Binance 8h FR]: {bfr.get('funding_rate_pct', 0):.4f}% (主要数据源)")
+                print(f"      [Binance FR] Settled: {bfr.get('funding_rate_pct', 0):.4f}% | Predicted: {bfr.get('predicted_rate_pct', 0):.4f}%")
 
             if liq:
                 history = liq.get('history', [])

@@ -133,14 +133,15 @@ class DataFlowSummary(DiagnosticStep):
         else:
             print(f"    (数据不可用)")
 
-        # v4.8: 使用 Binance 作为 Funding Rate 主要数据源
+        # v5.1: Binance funding rate (settled + predicted)
         print()
-        print(f"  Funding Rate (Binance 8h):")
+        print(f"  Funding Rate (Binance):")
         if self.ctx.binance_funding_rate:
             fr = self.ctx.binance_funding_rate
-            fr_raw = fr.get('funding_rate', 0)
-            fr_pct = fr.get('funding_rate_pct', fr_raw * 100)
-            print(f"    Current:     {fr_pct:.4f}%")
+            settled_pct = fr.get('funding_rate_pct', 0)
+            predicted_pct = fr.get('predicted_rate_pct', 0)
+            print(f"    Settled:     {settled_pct:.4f}%")
+            print(f"    Predicted:   {predicted_pct:.4f}%")
             print(f"    Source:      binance_direct")
         else:
             print(f"    (数据不可用)")
@@ -252,16 +253,16 @@ class DataFlowSummary(DiagnosticStep):
                 if is_risk_high:
                     print(f"    ⚠️ 警告: 爆仓风险高 (<10%)")
 
-            # === v4.7 Funding Rate ===
+            # === v5.1 Funding Rate ===
             print()
-            print(f"  v4.7 资金费率影响:")
+            print(f"  资金费率影响:")
             fr_current = pos.get('funding_rate_current')
             daily_cost = pos.get('daily_funding_cost_usd')
             cumulative = pos.get('funding_rate_cumulative_usd')
             effective_pnl = pos.get('effective_pnl_after_funding')
 
             if fr_current is not None:
-                print(f"    当前费率: {fr_current*100:+.4f}%")
+                print(f"    已结算费率: {fr_current*100:+.4f}%")
             if daily_cost is not None:
                 print(f"    日资金费用: ${daily_cost:,.2f}")
             if cumulative is not None:

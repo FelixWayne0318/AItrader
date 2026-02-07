@@ -254,8 +254,8 @@ class AIDataAssembler:
             except Exception as e:
                 self.logger.warning(f"⚠️ OI parse error: {e}")
 
-        # Funding 转换 (v3.22: 完全以 Binance 为准，含预期费率和历史)
-        # 获取 Binance premiumIndex (含预期费率)
+        # Funding 转换 (v3.22→v5.1: 完全以 Binance 为准)
+        # premiumIndex.lastFundingRate = 预期费率, /fundingRate = 已结算费率
         binance_funding = None
         try:
             binance_funding = self.binance_klines.get_funding_rate()
@@ -270,9 +270,9 @@ class AIDataAssembler:
             self.logger.debug(f"⚠️ Binance funding rate history fetch error: {e}")
 
         if binance_funding:
-            # v3.22: 始终使用 Binance 作为主数据源 (我们在 Binance 交易)
-            funding_rate = binance_funding['funding_rate']
-            funding_pct = binance_funding['funding_rate_pct']
+            # v5.1: funding_rate = 已结算费率, predicted_rate = 预期费率 (from lastFundingRate)
+            funding_rate = binance_funding['funding_rate']        # 已结算
+            funding_pct = binance_funding['funding_rate_pct']     # 已结算 (%)
 
             # 构建历史趋势
             history_rates = []
@@ -301,13 +301,13 @@ class AIDataAssembler:
                     funding_trend = "STABLE"
 
             result["funding_rate"] = {
-                "value": funding_rate,
-                "current": funding_rate,
-                "current_pct": funding_pct,
+                "value": funding_rate,              # 已结算费率 (向后兼容)
+                "settled": funding_rate,             # 已结算费率 (明确语义)
+                "settled_pct": funding_pct,          # 已结算费率 (%)
                 "interpretation": self._interpret_funding(funding_rate),
                 "source": "binance_8h",
                 "period": "8h",
-                # v3.22→v3.28: 预期费率 (从 premiumIndexKlines TWAP 计算, 与币安 App 一致)
+                # v5.1: 预期费率直接来自 premiumIndex.lastFundingRate (非自算)
                 "predicted_rate": binance_funding.get('predicted_rate'),
                 "predicted_rate_pct": binance_funding.get('predicted_rate_pct'),
                 # v3.22: 下次结算时间
