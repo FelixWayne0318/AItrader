@@ -22,12 +22,12 @@
 ### 必需依赖
 
 ```bash
-pip install empyrical scipy statsmodels pandas numpy
+pip install empyrical-reloaded-reloaded scipy statsmodels pandas numpy
 ```
 
 | 库 | 版本 | 用途 | 文档 |
 |---|------|------|------|
-| **empyrical** | ≥0.5.5 | Sharpe/Sortino/Calmar/MDD/VaR | [empyrical.ml4trading.io](https://empyrical.ml4trading.io/) |
+| **empyrical-reloaded-reloaded** | ≥0.5.12 | Sharpe/Sortino/Calmar/MDD/VaR (Python 3.12+) | [empyrical-reloaded.ml4trading.io](https://empyrical-reloaded.ml4trading.io/) |
 | **scipy** | ≥1.9.0 | Bootstrap、统计检验 | [docs.scipy.org](https://docs.scipy.org/doc/scipy/reference/stats.html) |
 | **statsmodels** | ≥0.14.0 | 多重假设检验校正 | [statsmodels.org](https://www.statsmodels.org/) |
 | **pandas** | ≥2.0.0 | 时间序列处理 | [pandas.pydata.org](https://pandas.pydata.org/) |
@@ -497,12 +497,12 @@ def analyze_risk_reward_distribution(trades: List[Trade]) -> Dict:
 
 ```python
 # ============================================================
-# 推荐使用官方库: empyrical (Quantopian 开发)
-# 安装: pip install empyrical
-# 文档: https://empyrical.ml4trading.io/
+# 推荐使用官方库: empyrical-reloaded (Quantopian 开发)
+# 安装: pip install empyrical-reloaded
+# 文档: https://empyrical-reloaded.ml4trading.io/
 # ============================================================
 
-import empyrical as ep
+import empyrical-reloaded as ep
 import pandas as pd
 import numpy as np
 from typing import List, Dict
@@ -527,11 +527,11 @@ def calculate_trading_metrics(
     trading_days_per_year: int = 365,  # 加密货币 24/7
 ) -> Dict:
     """
-    计算交易绩效指标 - 使用 empyrical 官方库
+    计算交易绩效指标 - 使用 empyrical-reloaded 官方库
 
     参考:
-    - empyrical 文档: https://empyrical.ml4trading.io/
-    - Quantopian GitHub: https://github.com/quantopian/empyrical
+    - empyrical-reloaded 文档: https://empyrical-reloaded.ml4trading.io/
+    - Quantopian GitHub: https://github.com/quantopian/empyrical-reloaded
 
     Args:
         trades: 交易记录列表
@@ -547,7 +547,7 @@ def calculate_trading_metrics(
     losses = [t for t in trades if t.pnl < 0]
 
     # ============================================================
-    # 1. 基础统计 (自己计算，因为 empyrical 不提供)
+    # 1. 基础统计 (自己计算，因为 empyrical-reloaded 不提供)
     # ============================================================
     win_rate = len(wins) / n
     avg_win = sum(t.pnl for t in wins) / len(wins) if wins else 0
@@ -559,7 +559,7 @@ def calculate_trading_metrics(
     profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
 
     # ============================================================
-    # 2. 构建 pandas Series (empyrical 需要的格式)
+    # 2. 构建 pandas Series (empyrical-reloaded 需要的格式)
     # ============================================================
     returns = pd.Series(
         [t.pnl_pct / 100 for t in trades],  # 转换为小数
@@ -567,11 +567,11 @@ def calculate_trading_metrics(
     )
 
     # ============================================================
-    # 3. 使用 empyrical 官方函数 (经过验证，减少出错风险)
+    # 3. 使用 empyrical-reloaded 官方函数 (经过验证，减少出错风险)
     # ============================================================
 
     # Sharpe Ratio (年化)
-    # empyrical.sharpe_ratio(returns, risk_free=0, period='daily', annualization=None)
+    # empyrical-reloaded.sharpe_ratio(returns, risk_free=0, period='daily', annualization=None)
     sharpe_ratio = ep.sharpe_ratio(
         returns,
         risk_free=risk_free_rate / trading_days_per_year,  # 日化无风险利率
@@ -579,7 +579,7 @@ def calculate_trading_metrics(
     )
 
     # Sortino Ratio (年化)
-    # empyrical.sortino_ratio(returns, required_return=0, period='daily', annualization=None)
+    # empyrical-reloaded.sortino_ratio(returns, required_return=0, period='daily', annualization=None)
     sortino_ratio = ep.sortino_ratio(
         returns,
         required_return=risk_free_rate / trading_days_per_year,
@@ -587,25 +587,25 @@ def calculate_trading_metrics(
     )
 
     # Calmar Ratio
-    # empyrical.calmar_ratio(returns, period='daily', annualization=None)
+    # empyrical-reloaded.calmar_ratio(returns, period='daily', annualization=None)
     calmar_ratio = ep.calmar_ratio(
         returns,
         annualization=trading_days_per_year
     )
 
     # Maximum Drawdown
-    # empyrical.max_drawdown(returns)
+    # empyrical-reloaded.max_drawdown(returns)
     max_drawdown = ep.max_drawdown(returns)
 
     # 年化收益率
-    # empyrical.annual_return(returns, period='daily', annualization=None)
+    # empyrical-reloaded.annual_return(returns, period='daily', annualization=None)
     annualized_return = ep.annual_return(
         returns,
         annualization=trading_days_per_year
     )
 
     # 总收益率
-    # empyrical.cum_returns_final(returns, starting_value=0)
+    # empyrical-reloaded.cum_returns_final(returns, starting_value=0)
     total_return = ep.cum_returns_final(returns)
 
     # ============================================================
@@ -620,21 +620,21 @@ def calculate_trading_metrics(
         'avg_win': avg_win,
         'avg_loss': avg_loss,
 
-        # 风险调整收益 (年化) - 使用 empyrical 官方实现
+        # 风险调整收益 (年化) - 使用 empyrical-reloaded 官方实现
         'sharpe_ratio': sharpe_ratio if not np.isnan(sharpe_ratio) else 0,
         'sortino_ratio': sortino_ratio if not np.isnan(sortino_ratio) else 0,
         'calmar_ratio': calmar_ratio if not np.isnan(calmar_ratio) else 0,
 
-        # 风险指标 - 使用 empyrical 官方实现
-        'max_drawdown': abs(max_drawdown),  # empyrical 返回负数
+        # 风险指标 - 使用 empyrical-reloaded 官方实现
+        'max_drawdown': abs(max_drawdown),  # empyrical-reloaded 返回负数
 
-        # 收益指标 - 使用 empyrical 官方实现
+        # 收益指标 - 使用 empyrical-reloaded 官方实现
         'total_return': total_return,
         'annualized_return': annualized_return,
 
         # 元数据
         'risk_free_rate_used': risk_free_rate,
-        'library_used': 'empyrical',
+        'library_used': 'empyrical-reloaded',
     }
 
 
@@ -972,12 +972,12 @@ AI 自主判断:
 
 ```python
 # ============================================================
-# 推荐使用官方库: empyrical 或 scipy.stats
-# empyrical 提供 value_at_risk 函数
+# 推荐使用官方库: empyrical-reloaded 或 scipy.stats
+# empyrical-reloaded 提供 value_at_risk 函数
 # scipy.stats 提供统计分布函数
 # ============================================================
 
-import empyrical as ep
+import empyrical-reloaded as ep
 import numpy as np
 from scipy import stats
 from typing import List, Dict
@@ -989,10 +989,10 @@ def calculate_var_cvar(
     """
     计算 VaR (Value at Risk) 和 CVaR (Conditional VaR / Expected Shortfall)
 
-    使用 empyrical 和 scipy 官方库实现
+    使用 empyrical-reloaded 和 scipy 官方库实现
 
     参考:
-    - empyrical: https://empyrical.ml4trading.io/
+    - empyrical-reloaded: https://empyrical-reloaded.ml4trading.io/
     - scipy.stats: https://docs.scipy.org/doc/scipy/reference/stats.html
     - Artzner et al. (1999): Coherent Measures of Risk
     """
@@ -1008,7 +1008,7 @@ def calculate_var_cvar(
         alpha = 1 - conf  # 如 95% 置信度 → alpha = 0.05
 
         # ============================================================
-        # VaR: 使用 empyrical.value_at_risk 官方函数
+        # VaR: 使用 empyrical-reloaded.value_at_risk 官方函数
         # ============================================================
         var = ep.value_at_risk(returns, cutoff=alpha)
         results[f'var_{int(conf*100)}'] = abs(var)
@@ -1032,7 +1032,7 @@ def calculate_var_cvar(
 
     results['risk_level'] = risk_level
     results['sample_size'] = n
-    results['library_used'] = 'empyrical + scipy'
+    results['library_used'] = 'empyrical-reloaded + scipy'
 
     return results
 
@@ -1370,7 +1370,7 @@ def _get_decay_recommendation(severity: str) -> str:
 from scipy import stats
 import numpy as np
 from typing import List, Dict, Callable
-import empyrical as ep
+import empyrical-reloaded as ep
 
 def bootstrap_confidence_interval(
     data: np.ndarray,
@@ -1427,7 +1427,7 @@ def bootstrap_sharpe_ratio(returns: np.ndarray, confidence_level: float = 0.95) 
     """
     专门用于 Sharpe Ratio 的 Bootstrap 分析
 
-    使用 empyrical.sharpe_ratio 作为统计量
+    使用 empyrical-reloaded.sharpe_ratio 作为统计量
     """
     def sharpe_statistic(x, axis):
         # 处理 axis 参数 (scipy.bootstrap 需要)
@@ -1450,7 +1450,7 @@ def bootstrap_max_drawdown(returns: np.ndarray, confidence_level: float = 0.95) 
     """
     专门用于 Maximum Drawdown 的 Bootstrap 分析
 
-    使用 empyrical.max_drawdown 作为统计量
+    使用 empyrical-reloaded.max_drawdown 作为统计量
     """
     def mdd_statistic(x, axis):
         if axis is None:

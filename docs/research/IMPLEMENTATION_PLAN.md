@@ -38,11 +38,11 @@
 
 ### 1.2.1 需升级到官方库的现有文件 ⚠️ (v3.0.1 新增)
 
-> **原则**: 评估指标计算应使用官方库 (empyrical/scipy/statsmodels)，避免自实现出错
+> **原则**: 评估指标计算应使用官方库 (empyrical-reloaded/scipy/statsmodels)，避免自实现出错
 
 | 文件 | 当前状态 | 问题 | 目标 |
 |-----|---------|------|------|
-| `web/backend/services/performance_service.py` | 自实现 Sharpe/MDD | 未年化、无风险调整 | 改用 empyrical |
+| `web/backend/services/performance_service.py` | 自实现 Sharpe/MDD | 未年化、无风险调整 | 改用 empyrical-reloaded |
 
 #### 当前问题代码
 
@@ -66,8 +66,8 @@ sharpe_ratio = (avg_return / std_return) * (252 ** 0.5)  # 问题: 252是股票�
 #### 目标代码
 
 ```python
-# ✅ 使用 empyrical 官方库 (符合 EVALUATION_FRAMEWORK.md v3.0.1)
-import empyrical as ep
+# ✅ 使用 empyrical-reloaded 官方库 (符合 EVALUATION_FRAMEWORK.md v3.0.1)
+import empyrical-reloaded as ep
 import pandas as pd
 
 # 将 PnL 转换为收益率序列
@@ -137,12 +137,12 @@ var_95 = ep.value_at_risk(returns, cutoff=0.05)
 ### 必需依赖
 
 ```bash
-pip install empyrical scipy statsmodels pandas numpy
+pip install empyrical-reloaded scipy statsmodels pandas numpy
 ```
 
 | 库 | 版本 | 用途 | 文档 |
 |---|------|------|------|
-| **empyrical** | ≥0.5.5 | Sharpe/Sortino/Calmar/MDD/VaR | [empyrical.ml4trading.io](https://empyrical.ml4trading.io/) |
+| **empyrical-reloaded** | ≥0.5.5 | Sharpe/Sortino/Calmar/MDD/VaR | [empyrical-reloaded.ml4trading.io](https://empyrical-reloaded.ml4trading.io/) |
 | **scipy** | ≥1.9.0 | Bootstrap、统计检验 | [docs.scipy.org](https://docs.scipy.org/doc/scipy/reference/stats.html) |
 | **statsmodels** | ≥0.14.0 | 多重假设检验校正 | [statsmodels.org](https://www.statsmodels.org/) |
 | **pandas** | ≥2.0.0 | 时间序列处理 | [pandas.pydata.org](https://pandas.pydata.org/) |
@@ -418,7 +418,7 @@ def save_prediction_record(sr_zones, signal, actual_result):
 
 #### 6.1.2 风险调整收益指标 (v3.0 新增)
 
-> **使用 empyrical 官方库计算**
+> **使用 empyrical-reloaded 官方库计算**
 
 | 指标 | 最低接受 | 目标值 | 理想值 | 说明 |
 |-----|---------|-------|-------|------|
@@ -427,8 +427,8 @@ def save_prediction_record(sr_zones, signal, actual_result):
 | **Calmar Ratio** | >0.5 | >1.0 | >2.0 | 年化收益/MDD |
 
 ```python
-# 使用 empyrical 官方库计算 (不要自己实现!)
-import empyrical as ep
+# 使用 empyrical-reloaded 官方库计算 (不要自己实现!)
+import empyrical-reloaded as ep
 
 sharpe = ep.sharpe_ratio(returns, annualization=365)
 sortino = ep.sortino_ratio(returns, annualization=365)
@@ -446,7 +446,7 @@ max_dd = ep.max_drawdown(returns)
 | **CVaR_99** | <8% | <5% | 极端损失平均值 (99% 置信度) |
 
 ```python
-# 使用 empyrical 官方库计算
+# 使用 empyrical-reloaded 官方库计算
 var_95 = ep.value_at_risk(returns, cutoff=0.05)
 ```
 
@@ -754,7 +754,7 @@ reject, pvals_corrected, _, _ = multipletests(
 - v3.0.1: 新增 Section 1.2.1 - 明确列出需升级到官方库的现有文件 (performance_service.py)
 - v3.0: **重大更新** - 对齐 EVALUATION_FRAMEWORK.md v3.0.1 世界顶级量化标准
   - 样本量要求从 50 次提升到 200+ 次 (基于统计功效分析)
-  - 新增依赖库要求 (empyrical, scipy, statsmodels)
+  - 新增依赖库要求 (empyrical-reloaded, scipy, statsmodels)
   - 新增 Sortino Ratio、Calmar Ratio
   - 新增 VaR/CVaR 尾部风险评估 (Basel III/IV 标准)
   - 新增交易成本建模 (Section 6.6)
