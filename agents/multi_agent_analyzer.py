@@ -1099,10 +1099,11 @@ Note: Entry will be at CURRENT MARKET PRICE (${current_price:,.2f}), not at S/R 
    Funding rate cost:
    - Funding rate is a DIRECT COST paid every 8 hours while holding a position
    - LONG pays when rate is POSITIVE, SHORT pays when rate is NEGATIVE
-   - Daily cost = |funding_rate| x 3 (three 8h settlements per day)
-   - High funding costs erode profits — factor this into your R/R and sizing assessment
-   - Predicted rate diverging from current rate signals changing market sentiment
-   - Settlement countdown < 30min with extreme rate: expect short-term volatility
+   - "Last Settled" = the rate applied at the most recent settlement (historical fact)
+   - "Predicted" = the real-time estimated rate for the NEXT settlement (changes continuously)
+   - Daily cost estimate = |predicted_rate| x 3 (three 8h settlements per day)
+   - If predicted rate diverges significantly from settled rate: market sentiment is shifting
+   - Settlement countdown < 30min with extreme predicted rate: expect short-term volatility
 
    Liquidity and slippage:
    - Check ORDER FLOW and ORDER BOOK data for execution risk
@@ -1666,16 +1667,15 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
 
         lines.append("")
 
-        # v4.7: Funding Rate section (for perpetuals)
+        # v5.1: Funding Rate section (settled + predicted)
         lines.append("Funding Rate Impact:")
         if funding_rate_current is not None:
             fr_pct = funding_rate_current * 100
             fr_emoji = "🔴" if fr_pct > 0.01 else "🟢" if fr_pct < -0.01 else "⚪"
-            lines.append(f"  Current Rate: {fr_emoji} {fr_pct:.4f}% per 8h")
+            lines.append(f"  Last Settled Rate: {fr_emoji} {fr_pct:.4f}% per 8h")
             if daily_funding_cost is not None:
-                lines.append(f"  Daily Cost: ${daily_funding_cost:.2f}")
+                lines.append(f"  Estimated Daily Cost: ${daily_funding_cost:.2f}")
             if funding_rate_cumulative_usd is not None:
-                cum_sign = '+' if funding_rate_cumulative_usd >= 0 else ''
                 lines.append(f"  Cumulative Paid: ${funding_rate_cumulative_usd:+.2f}")
         else:
             lines.append("  Funding rate data not available")
@@ -2045,17 +2045,23 @@ ORDER FLOW (Binance Taker Data):
             else:
                 parts.append("- Open Interest: N/A")
 
-            # Funding Rate (v3.22: 完整币安数据 — 当前 + 预期 + 历史趋势)
+            # Funding Rate (v5.1: 已结算 + 预期，语义修正)
             funding = data.get('funding_rate')
             if funding:
+                # 已结算费率 (from /fapi/v1/fundingRate)
                 try:
-                    rate = float(funding.get('value', 0) or 0)
+                    settled_rate = float(funding.get('value', 0) or 0)
                 except (ValueError, TypeError):
-                    rate = 0.0
-                rate_pct = rate * 100
-                parts.append(f"- Funding Rate (last settled): {rate_pct:.4f}%")
+                    settled_rate = 0.0
+                settled_pct = settled_rate * 100
+                parts.append(f"- Last Settled Funding Rate: {settled_pct:.4f}%")
 
-                # 溢价指数 + 预期费率 (从 Mark-Index 价差实时计算)
+                # 预期费率 (from premiumIndex.lastFundingRate, 实时变化)
+                predicted_pct = funding.get('predicted_rate_pct')
+                if predicted_pct is not None:
+                    parts.append(f"- Predicted Next Funding Rate: {predicted_pct:.4f}%")
+
+                # 溢价指数 (瞬时值)
                 premium_index = funding.get('premium_index')
                 if premium_index is not None:
                     pi_pct = premium_index * 100
@@ -2065,9 +2071,6 @@ ORDER FLOW (Binance Taker Data):
                         f"- Premium Index: {pi_pct:+.4f}% "
                         f"(Mark: ${mark:,.2f}, Index: ${index:,.2f})"
                     )
-                predicted_pct = funding.get('predicted_rate_pct')
-                if predicted_pct is not None:
-                    parts.append(f"- Predicted Next Funding Rate: {predicted_pct:.4f}%")
 
                 # 下次结算倒计时
                 countdown = funding.get('next_funding_countdown_min')

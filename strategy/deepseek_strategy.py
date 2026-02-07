@@ -1531,7 +1531,7 @@ class DeepSeekAIStrategy(Strategy):
                 funding_rate = current_position.get('funding_rate_current')
                 if funding_rate is not None:
                     daily_cost = current_position.get('daily_funding_cost_usd', 0)
-                    self.log.info(f"Funding Rate: {funding_rate*100:.4f}%/8h (Daily Est: ${daily_cost:.2f})")
+                    self.log.info(f"Settled FR: {funding_rate*100:.4f}%/8h (Daily Est: ${daily_cost:.2f})")
 
             # ========== 层级决策架构 (TradingAgents v3.1) ==========
             # 设计理念: AI 负责所有交易决策，本地仅做支撑/阻力位边界检查
@@ -2100,7 +2100,7 @@ class DeepSeekAIStrategy(Strategy):
                     'cvd_trend': self.latest_order_flow_data.get('cvd_trend'),
                 }
 
-            # v5.0: Use Binance as authoritative funding rate source (not Coinalyze)
+            # v5.1: Binance funding rate (settled from /fundingRate, predicted from premiumIndex)
             derivatives_heartbeat = None
             try:
                 if self.binance_kline_client:
@@ -2123,10 +2123,10 @@ class DeepSeekAIStrategy(Strategy):
                             else:
                                 funding_trend = 'STABLE'
                         derivatives_heartbeat = {
-                            'funding_rate': binance_funding.get('funding_rate'),  # raw decimal
-                            'funding_rate_pct': binance_funding.get('funding_rate_pct'),  # percentage
-                            'predicted_rate': binance_funding.get('predicted_rate'),  # predicted raw
-                            'predicted_rate_pct': binance_funding.get('predicted_rate_pct'),  # predicted pct
+                            'funding_rate': binance_funding.get('funding_rate'),          # 已结算费率
+                            'funding_rate_pct': binance_funding.get('funding_rate_pct'),  # 已结算费率 (%)
+                            'predicted_rate': binance_funding.get('predicted_rate'),      # 预期费率 (from lastFundingRate)
+                            'predicted_rate_pct': binance_funding.get('predicted_rate_pct'),  # 预期费率 (%)
                             'next_funding_countdown_min': binance_funding.get('next_funding_countdown_min'),
                             'funding_trend': funding_trend,
                             'source': 'binance',

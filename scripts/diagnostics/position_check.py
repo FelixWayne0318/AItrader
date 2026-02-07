@@ -231,10 +231,10 @@ class PositionChecker(DiagnosticStep):
             if is_liquidation_risk_high:
                 print(f"     ⚠️ 警告: 爆仓风险高 (<10%)")
 
-        # v4.7: Display funding rate impact
+        # v5.1: Display funding rate impact (settled rate)
         if funding_rate_current is not None:
             fr_pct = funding_rate_current * 100
-            print(f"     资金费率: {fr_pct:+.4f}%")
+            print(f"     已结算费率: {fr_pct:+.4f}%")
             if daily_funding_cost_usd:
                 print(f"     日资金费用: ${daily_funding_cost_usd:,.2f}")
 
