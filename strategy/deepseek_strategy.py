@@ -849,7 +849,8 @@ class DeepSeekAIStrategy(Strategy):
                         'sr_hard_control_enabled': True,  # Always enabled in current version
                     }
                 )
-                self.telegram_bot.send_message_sync(startup_msg)
+                # Use direct send (not queue) to ensure startup notification is immediate
+                self.telegram_bot.send_message_sync(startup_msg, use_queue=False)
                 # Note: Help message removed - users can use /help command if needed
 
             except Exception as e:

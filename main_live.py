@@ -6,6 +6,7 @@ Runs the DeepSeek AI strategy on Binance Futures (BTCUSDT-PERP) with live market
 
 import os
 import sys
+import signal
 import argparse
 from pathlib import Path
 
@@ -528,6 +529,14 @@ def main():
     node.add_data_client_factory("BINANCE", BinanceLiveDataClientFactory)
     node.add_exec_client_factory("BINANCE", BinanceLiveExecClientFactory)
     print("✅ Binance factories registered")
+
+    # Register SIGTERM handler for systemctl stop graceful shutdown
+    # Converts SIGTERM to KeyboardInterrupt so NautilusTrader's on_stop() is called
+    def _sigterm_handler(signum, frame):
+        print("\n⚠️  SIGTERM received (systemctl stop)...")
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
 
     try:
         # Build the node (connects to exchange, loads instruments)
