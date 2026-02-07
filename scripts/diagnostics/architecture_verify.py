@@ -1,7 +1,7 @@
 """
 Architecture Verification Module
 
-Verifies TradingAgents v3.27.1 architecture compliance.
+Verifies TradingAgents architecture compliance.
 Performs live data completeness checks against the actual live system.
 """
 
@@ -16,9 +16,7 @@ from .base import (
 
 class TradingAgentsArchitectureVerifier(DiagnosticStep):
     """
-    Verify TradingAgents v3.27.1 architecture compliance.
-
-    v3.0.0 rewrite: Replaces static text with live data completeness verification.
+    Verify TradingAgents architecture compliance.
 
     Checks:
     - analyze() parameter completeness vs live system
@@ -28,19 +26,19 @@ class TradingAgentsArchitectureVerifier(DiagnosticStep):
     - Timing breakdown
     """
 
-    name = "TradingAgents v3.27.1 架构验证"
+    name = "TradingAgents 架构验证"
 
     def run(self) -> bool:
         print("-" * 70)
         print()
-        print_box("TradingAgents v3.27.1 架构验证", 65)
+        print_box("TradingAgents 架构验证", 65)
         print()
 
-        print("  📊 架构原则 (v3.27.1):")
+        print("  📊 架构原则:")
         print('     "Autonomy is non-negotiable" - AI 完全自主决策')
         print("     Prompts 包含纯知识描述，无 MUST/NEVER/ALWAYS 指令")
-        print("     INDICATOR_DEFINITIONS v3.27: 117 行精简版 (统一 TRENDING/RANGING/failure)")
-        print("     Risk Manager output 包含 invalidation 字段 (nof1 对齐)")
+        print("     INDICATOR_DEFINITIONS: 精简版 (统一 TRENDING/RANGING/failure)")
+        print("     Risk Manager output 包含 invalidation 字段")
         print()
 
         self._verify_data_completeness()
@@ -49,7 +47,7 @@ class TradingAgentsArchitectureVerifier(DiagnosticStep):
         self._print_timing_breakdown()
 
         print()
-        print("  ✅ TradingAgents v3.27.1 架构验证完成")
+        print("  ✅ TradingAgents 架构验证完成")
         return True
 
     def _verify_data_completeness(self) -> None:
@@ -112,7 +110,7 @@ class TradingAgentsArchitectureVerifier(DiagnosticStep):
         print()
 
     def _verify_prompt_architecture(self) -> None:
-        """Verify prompt architecture matches v3.27.1 specifications."""
+        """Verify prompt architecture matches specifications."""
         print("  📋 Prompt 架构验证:")
 
         if not self.ctx.multi_agent:
@@ -205,10 +203,7 @@ class DiagnosticSummaryBox(DiagnosticStep):
     """
     Print comprehensive diagnostic summary box.
 
-    Based on v11.16: 诊断总结 section (after [8/10])
-
     Shows:
-    - Architecture version
     - AI Signal / Final Signal / Confidence / Winning Side / Risk Level
     - Current Position
     - WOULD EXECUTE simulation
@@ -220,18 +215,12 @@ class DiagnosticSummaryBox(DiagnosticStep):
     def run(self) -> bool:
         print()
         print("=" * 70)
-        print("  诊断总结 (TradingAgents v3.27.1)")
+        print("  诊断总结 (TradingAgents 架构)")
         print("=" * 70)
         print()
 
         sd = self.ctx.signal_data
         judge = sd.get('judge_decision', {})
-
-        print("  📊 架构: TradingAgents v3.27.1")
-        print("     AI Prompts: 纯知识描述 (无 MUST/NEVER 指令)")
-        print("     INDICATOR_DEFINITIONS: v3.27 精简版 (117 行)")
-        print("     Risk Manager: invalidation 字段 (nof1 对齐)")
-        print()
 
         print(f"  📊 AI Signal: {sd.get('signal', 'N/A')}")
         print(f"  📊 Final Signal: {self.ctx.final_signal}")

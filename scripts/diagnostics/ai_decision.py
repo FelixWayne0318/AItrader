@@ -1,10 +1,10 @@
 """
 AI Decision Module
 
-Handles MultiAgent AI analysis and decision-making.
-Enhanced from v11.16 monolithic script with:
-- AI input data validation
-- AI Prompt structure verification
+Handles MultiAgent AI analysis and decision-making:
+- AI input data validation (13 categories)
+- Sequential AI call execution (6 DeepSeek API calls)
+- Prompt structure verification
 - Bull/Bear debate transcript display
 """
 
@@ -17,31 +17,10 @@ from .base import DiagnosticContext, DiagnosticStep, safe_float, print_wrapped, 
 
 class AIInputDataValidator(DiagnosticStep):
     """
-    Validate and display all data passed to MultiAgent AI.
+    Validate and display all 13 data categories passed to MultiAgent AI.
 
-    Shows exactly what data the AI receives for decision-making.
-
-    Based on v11.16: AI 输入数据验证 (传给 MultiAgent)
-
-    v2.7.3 更新 (v3.17 R/R 驱动入场):
-    - 更新: 入场验证规则改为 R/R 驱动 (移除 "1-2% within S/R" 硬性规则)
-    - 更新: R/R >= 1.5:1 是唯一入场标准
-    - 新增: R/R 与仓位大小关联说明
-
-    v2.6.0 更新:
-    - 新增: [11] S/R Zones 验证 (支撑/阻力区计算)
-    - 新增: S/R Zone 数据用于 SL/TP 回退计算
-    - 新增: 硬风控状态显示
-    - 新增: R/R 比率分析
-
-    v2.5.0 更新:
-    - 新增: [10] historical_context 验证 (EVALUATION_FRAMEWORK v3.0.1)
-    - 新增: 35-bar 趋势数据显示 (price, RSI, MACD, volume)
-    - 新增: trend_direction 和 momentum_shift 分析
-
-    v2.4.2 更新:
-    - 先获取 order_flow, derivatives, order_book 数据，再打印
-    - 确保显示的数据与实际传给 AI 的数据一致
+    Shows exactly what data the AI receives for decision-making,
+    matching the live system's analyze() call parameters.
     """
 
     name = "AI 输入数据验证 (传给 MultiAgent, 13 类数据)"
@@ -773,7 +752,9 @@ class MultiAgentAnalyzer(DiagnosticStep):
     """
     Run MultiAgent AI analysis.
 
-    Implements the TradingAgents architecture with Bull/Bear/Judge/Risk phases.
+    Implements the TradingAgents architecture with sequential DeepSeek API calls.
+    With debate_rounds=N, total API calls = 2*N (Bull/Bear) + 1 (Judge) + 1 (Risk).
+    Default debate_rounds=2 → 6 sequential API calls.
     """
 
     name = "MultiAgent 层级决策 (TradingAgents 架构)"
@@ -781,12 +762,15 @@ class MultiAgentAnalyzer(DiagnosticStep):
     def run(self) -> bool:
         print("-" * 70)
         print()
-        print_box("MultiAgent 层级决策 (4 AI Calls)", 65)
+        print_box("MultiAgent 层级决策 (顺序 AI 调用)", 65)
         print()
-        print("  📋 决策流程 (100% 匹配实盘 multi_agent.analyze()):")
-        print("     Phase 1: Bull/Bear Debate (2 AI calls)")
-        print("     Phase 2: Judge (Portfolio Manager) Decision (1 AI call)")
-        print("     Phase 3: Risk Evaluation (1 AI call)")
+        print("  📋 决策流程 (顺序执行, 100% 匹配实盘):")
+        print("     ┌─ Round 1: Bull Analyst → Bear Analyst  (2 API calls)")
+        print("     ├─ Round 2: Bull Analyst → Bear Analyst  (2 API calls)")
+        print("     ├─ Judge (Portfolio Manager) Decision    (1 API call)")
+        print("     └─ Risk Manager Evaluation               (1 API call)")
+        print("     ─────────────────────────────────────────────────────")
+        print("     合计: 2×debate_rounds + 2 次 DeepSeek 顺序调用")
         print()
 
         try:
@@ -804,13 +788,14 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 memory_file="data/trading_memory.json",  # v3.12
             )
 
+            total_calls = 2 * cfg.debate_rounds + 2  # Bull/Bear per round + Judge + Risk
             print(f"  Model: {cfg.deepseek_model}")
             print(f"  Temperature: {cfg.deepseek_temperature}")
             print(f"  Debate Rounds: {cfg.debate_rounds}")
+            print(f"  Total API Calls: {total_calls} (顺序执行)")
             print()
 
-            # ========== Data completeness check ==========
-            # Verify all 10 parameters match live system (deepseek_strategy.py:1714-1731)
+            # Data completeness check (all 11 analyze() parameters)
             params = {
                 'symbol': self.ctx.symbol,
                 'technical_report': self.ctx.technical_data,
@@ -848,7 +833,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 print(f"     {param_name:32s} {status}")
             print()
 
-            # ========== Run analysis with ALL parameters ==========
+            # Run analysis with all parameters (6 sequential API calls)
             print("  Running AI analysis...")
             t_start = time.monotonic()
 
@@ -858,16 +843,11 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 sentiment_report=self.ctx.sentiment_data,
                 current_position=self.ctx.current_position,
                 price_data=self.ctx.price_data,
-                # ========== MTF v2.1 ==========
                 order_flow_report=self.ctx.order_flow_report,
                 derivatives_report=self.ctx.derivatives_report,
-                # ========== v3.21: Binance derivatives ==========
                 binance_derivatives_report=getattr(self.ctx, 'binance_derivatives_data', None),
-                # ========== v3.7: Order book ==========
                 orderbook_report=self.ctx.orderbook_report,
-                # ========== v4.6: Account context ==========
                 account_context=self.ctx.account_context,
-                # ========== v3.0: S/R bars ==========
                 bars_data=self.ctx.sr_bars_data,
             )
 
@@ -897,7 +877,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
         print(f"     Confidence: {signal_data.get('confidence', 'N/A')}")
         print(f"     Risk Level: {signal_data.get('risk_level', 'N/A')}")
 
-        # SL/TP (v11.14: label HOLD signals)
+        # SL/TP
         sltp_suffix = " (仅供参考，HOLD 不使用)" if judge_signal == 'HOLD' else ""
         sl = safe_float(signal_data.get('stop_loss'))
         tp = safe_float(signal_data.get('take_profit'))
@@ -906,13 +886,13 @@ class MultiAgentAnalyzer(DiagnosticStep):
         if tp:
             print(f"     Take Profit: ${tp:,.2f}{sltp_suffix}")
 
-        # Judge decision details (v3.0 AI 完全自主)
+        # Judge decision details
         judge = signal_data.get('judge_decision', {})
         if judge:
             winning_side = judge.get('winning_side', 'N/A')
             print(f"     Winning Side: {winning_side}")
             print()
-            print("     📋 Judge 决策 (v3.0 AI 完全自主):")
+            print("     📋 Judge 决策 (AI 完全自主):")
             print("        - AI 自主分析 Bull/Bear 辩论")
             print("        - AI 自主判断证据强度")
             print("        - 无硬编码规则或阈值")
@@ -946,16 +926,16 @@ class MultiAgentAnalyzer(DiagnosticStep):
         reason_text = reason[:200] + "..." if len(reason) > 200 else reason
         print(f"     Reason: {reason_text}")
 
-        # v3.27: Invalidation conditions (nof1 Alpha Arena alignment)
+        # Invalidation conditions
         invalidation = signal_data.get('invalidation', 'N/A')
         if invalidation and invalidation != 'N/A':
             inv_text = invalidation[:200] + "..." if len(str(invalidation)) > 200 else str(invalidation)
             print(f"     Invalidation: {inv_text}")
 
-        # Display debate transcript (v11.16)
+        # Display debate transcript
         self._display_debate_transcript()
 
-        # Display AI Prompt structure (v11.15)
+        # Display AI Prompt structure
         self._display_prompt_structure()
 
         print()
@@ -982,7 +962,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
                         print(f"     {line[:100]}")
 
     def _display_prompt_structure(self) -> None:
-        """Display AI Prompt structure verification (v11.15)."""
+        """Display AI Prompt structure verification."""
         if not self.ctx.multi_agent:
             return
 
@@ -994,7 +974,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
             return
 
         print()
-        print_box("AI Prompt 结构验证 (v3.12 System/User + Memory)", 65)
+        print_box("AI Prompt 结构验证 (System/User + Memory)", 65)
         print()
 
         for agent_name in ["bull", "bear", "judge", "risk"]:
@@ -1008,7 +988,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
             # Check INDICATOR_DEFINITIONS in System Prompt
             has_indicator_defs = "INDICATOR REFERENCE" in system_prompt
 
-            # v11.15: Check PAST REFLECTIONS (memory) in Judge's User Prompt
+            # Check PAST REFLECTIONS (memory) in Judge's User Prompt
             has_past_memories = "PAST REFLECTIONS" in user_prompt
 
             print(f"  [{agent_name.upper()}] Prompt 结构:")
@@ -1016,7 +996,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
             print(f"     User Prompt 长度:   {len(user_prompt)} 字符")
             print(f"     INDICATOR_DEFINITIONS 在 System: {'✅ 是' if has_indicator_defs else '❌ 否'}")
 
-            # v11.15: Judge-specific check - memory system
+            # Judge-specific check - memory system
             if agent_name == "judge":
                 print(f"     PAST REFLECTIONS (记忆): {'✅ 是' if has_past_memories else '⚠️ 无历史交易'}")
 
@@ -1030,7 +1010,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 preview = user_prompt[:150].replace('\n', ' ')
                 print(f"     User 预览:   {preview}...")
 
-            # v11.15: For Judge, show memory section preview
+            # For Judge, show memory section preview
             if agent_name == "judge" and has_past_memories:
                 start_idx = user_prompt.find("PAST REFLECTIONS")
                 if start_idx != -1:
@@ -1044,11 +1024,11 @@ class MultiAgentAnalyzer(DiagnosticStep):
 
             print()
 
-        print("  📋 v3.27.1 架构要求:")
-        print("     - System Prompt: 角色定义 + INDICATOR_DEFINITIONS (v3.27 精简版)")
+        print("  📋 Prompt 架构要求:")
+        print("     - System Prompt: 角色定义 + INDICATOR_DEFINITIONS")
         print("     - User Prompt: 原始数据 + 任务指令 (纯知识，无指令性语句)")
         print("     - Judge Prompt: 包含 PAST REFLECTIONS (过去交易记忆)")
-        print("     - Risk Manager output: 包含 invalidation 字段 (v3.27)")
+        print("     - Risk Manager output: 包含 invalidation 字段")
 
 
 class SignalProcessor(DiagnosticStep):
