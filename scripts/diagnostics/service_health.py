@@ -1,8 +1,8 @@
 # scripts/diagnostics/service_health.py
 """
-服务健康检查模块 v2.4.7
+服务健康检查模块
 
-新增诊断项:
+诊断项:
 - [A] 服务运行状态检查 (systemd, memory, logs)
 - [B] API 健康检查 (响应时间, 错误率)
 - [C] 交易暂停状态检查

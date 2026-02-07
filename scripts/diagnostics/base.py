@@ -337,7 +337,7 @@ class DiagnosticContext:
 
     # Step tracking
     current_step: int = 0
-    total_steps: int = 31  # v2.7.0: 28 + 3 (v3.18 order flow simulation)
+    total_steps: int = 31  # 28 data steps + 3 order flow simulation steps
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
@@ -483,8 +483,8 @@ class DiagnosticRunner:
             self.setup_output_capture()
 
             print("=" * 70)
-            print("  实盘信号诊断工具 v3.0.0 (100% Live-Consistent)")
-            print("  基于 TradingAgents v3.27.1 架构")
+            print("  实盘信号诊断工具 (100% Live-Consistent)")
+            print("  基于 TradingAgents 架构 + R/R 硬性门槛")
             print("=" * 70)
             print()
 
