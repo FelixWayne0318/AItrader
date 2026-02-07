@@ -42,6 +42,7 @@ from utils.order_flow_processor import OrderFlowProcessor
 from utils.coinalyze_client import CoinalyzeClient
 from utils.binance_orderbook_client import BinanceOrderBookClient
 from utils.orderbook_processor import OrderBookProcessor
+from utils.binance_derivatives_client import BinanceDerivativesClient
 from strategy.trading_logic import (
     check_confidence_threshold,
     calculate_position_size,
@@ -90,6 +91,9 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     bb_std: float = 2.0
     volume_ma_period: int = 20  # Volume MA period for analysis
     support_resistance_lookback: int = 20  # Support/resistance lookback period
+
+    # v3.0: S/R Zone Calculator config (from configs/base.yaml sr_zones section)
+    sr_zones_config: Dict = None  # type: ignore  # Passed as dict to MultiAgentAnalyzer
 
     # AI configuration
     deepseek_api_key: str = ""
@@ -457,6 +461,7 @@ class DeepSeekAIStrategy(Strategy):
             debate_rounds=config.debate_rounds,
             retry_delay=config.multi_agent_retry_delay,
             json_parse_max_retries=config.multi_agent_json_parse_max_retries,
+            sr_zones_config=config.sr_zones_config,  # v3.0: S/R Zone config
         )
         self.log.info(f"✅ Multi-Agent analyzer initialized (debate_rounds={config.debate_rounds})")
 
@@ -682,6 +687,13 @@ class DeepSeekAIStrategy(Strategy):
                 self.orderbook_processor = None
                 self.log.info("Order Book disabled by config")
 
+            # ========== Binance Derivatives (v3.21: Top Traders, Taker Ratio) ==========
+            # 无需 API Key，使用公开端点
+            self.binance_derivatives_client = BinanceDerivativesClient(
+                timeout=config.order_flow_binance_timeout if hasattr(config, 'order_flow_binance_timeout') else 10,
+                logger=self.log,
+            )
+
             self.log.info("✅ Order Flow & Derivatives clients initialized")
         else:
             self.binance_kline_client = None
@@ -689,6 +701,7 @@ class DeepSeekAIStrategy(Strategy):
             self.coinalyze_client = None
             self.binance_orderbook_client = None
             self.orderbook_processor = None
+            self.binance_derivatives_client = None
             self.log.info("Order Flow disabled by config")
 
         # State tracking
@@ -1595,6 +1608,15 @@ class DeepSeekAIStrategy(Strategy):
                 except Exception as e:
                     self.log.warning(f"[历史上下文] 获取失败: {e}")
 
+                # ========== 获取 K线 OHLCV 数据 (v3.21: 给 AI 看实际价格形态) ==========
+                try:
+                    kline_ohlcv = self.indicator_manager.get_kline_data(count=20)
+                    if kline_ohlcv:
+                        ai_technical_data['kline_ohlcv'] = kline_ohlcv
+                        self.log.debug(f"[K线数据] {len(kline_ohlcv)} bars OHLCV 已加入 AI 数据")
+                except Exception as e:
+                    self.log.warning(f"[K线数据] 获取失败: {e}")
+
                 # ========== 获取订单流数据 (MTF v2.1) ==========
                 order_flow_data = None
                 if self.binance_kline_client and self.order_flow_processor:
@@ -1670,6 +1692,25 @@ class DeepSeekAIStrategy(Strategy):
                     except Exception as e:
                         self.log.warning(f"⚠️ Order book processing failed: {e}")
 
+                # ========== 获取 Binance 衍生品数据 (v3.21: Top Traders, Taker Ratio) ==========
+                binance_derivatives_data = None
+                if self.binance_derivatives_client:
+                    try:
+                        binance_derivatives_data = self.binance_derivatives_client.fetch_all()
+                        if binance_derivatives_data:
+                            top_pos = binance_derivatives_data.get('top_long_short_position', {})
+                            latest = top_pos.get('latest')
+                            if latest:
+                                ratio = float(latest.get('longShortRatio', 1))
+                                self.log.info(
+                                    f"📊 Binance Derivatives: Top Traders L/S={ratio:.2f}"
+                                )
+                    except Exception as e:
+                        self.log.warning(f"⚠️ Binance derivatives fetch failed: {e}")
+
+                # v3.0: Get extended bars for S/R Swing Point detection
+                sr_bars_data = self.indicator_manager.get_kline_data(count=120)
+
                 signal_data = self.multi_agent.analyze(
                     symbol="BTCUSDT",
                     technical_report=ai_technical_data,
@@ -1679,10 +1720,14 @@ class DeepSeekAIStrategy(Strategy):
                     # ========== MTF v2.1 新增参数 ==========
                     order_flow_report=order_flow_data,
                     derivatives_report=derivatives_data,
+                    # ========== v3.21: Binance 衍生品 (Top Traders, Taker Ratio) ==========
+                    binance_derivatives_report=binance_derivatives_data,
                     # ========== v3.7 新增参数 ==========
                     orderbook_report=orderbook_data,
                     # ========== v4.6 新增参数 ==========
                     account_context=account_context,
+                    # ========== v3.0: OHLC bars for S/R Swing Detection ==========
+                    bars_data=sr_bars_data,
                 )
 
                 # v3.8: Store S/R Zone data for heartbeat (from MultiAgentAnalyzer cache)
@@ -1948,17 +1993,37 @@ class DeepSeekAIStrategy(Strategy):
             return
 
         try:
-            # 1. 获取价格
+            # 1. 获取价格 - prefer real-time API price over cached bar close
             cached_price = getattr(self, '_cached_current_price', None)
             if cached_price is None and self.indicator_manager.recent_bars:
                 cached_price = float(self.indicator_manager.recent_bars[-1].close)
 
-            # 2. 获取 RSI
+            # Try real-time price from Binance API for more accurate display
+            realtime_price = None
+            try:
+                if hasattr(self, 'binance_account') and self.binance_account:
+                    realtime_price = self.binance_account.get_realtime_price(
+                        str(self.instrument_id)
+                    )
+            except Exception:
+                pass
+            display_price = realtime_price or cached_price
+
+            # 2. Get technical indicators (enhanced for v3.0 heartbeat)
             rsi = 0
+            technical_heartbeat = {}
             try:
                 if self.indicator_manager.is_initialized():
                     tech_data = self.indicator_manager.get_technical_data(cached_price or 0)
                     rsi = tech_data.get('rsi') or 0
+                    technical_heartbeat = {
+                        'adx': tech_data.get('adx'),
+                        'adx_regime': tech_data.get('adx_regime'),
+                        'trend_direction': tech_data.get('trend_direction'),
+                        'volume_ratio': tech_data.get('volume_ratio'),
+                        'bb_position': tech_data.get('bb_position'),
+                        'macd_histogram': tech_data.get('macd_histogram'),
+                    }
             except Exception:
                 pass
 
@@ -1986,7 +2051,7 @@ class DeepSeekAIStrategy(Strategy):
             sl_price = None
             tp_price = None
             try:
-                pos_data = self._get_current_position_data(current_price=cached_price, from_telegram=True)
+                pos_data = self._get_current_position_data(current_price=display_price, from_telegram=True)
                 # Fix: _get_current_position_data returns 'quantity' not 'size', 'avg_px' not 'entry_price'
                 if pos_data and pos_data.get('quantity', 0) != 0:
                     # Fix: side is lowercase ('long'/'short'), convert to uppercase for display
@@ -1994,11 +2059,11 @@ class DeepSeekAIStrategy(Strategy):
                     position_side = raw_side.upper() if raw_side else None
                     entry_price = pos_data.get('avg_px') or 0
                     position_size = abs(pos_data.get('quantity') or 0)
-                    if entry_price > 0 and cached_price:
+                    if entry_price > 0 and display_price:
                         if position_side == 'LONG':
-                            position_pnl_pct = ((cached_price - entry_price) / entry_price) * 100
+                            position_pnl_pct = ((display_price - entry_price) / entry_price) * 100
                         else:
-                            position_pnl_pct = ((entry_price - cached_price) / entry_price) * 100
+                            position_pnl_pct = ((entry_price - display_price) / entry_price) * 100
 
                     # v4.2: Get SL/TP from trailing_stop_state
                     instrument_key = str(self.instrument_id)
@@ -2035,14 +2100,53 @@ class DeepSeekAIStrategy(Strategy):
                     'cvd_trend': self.latest_order_flow_data.get('cvd_trend'),
                 }
 
+            # v5.0: Use Binance as authoritative funding rate source (not Coinalyze)
             derivatives_heartbeat = None
+            try:
+                if self.binance_kline_client:
+                    binance_funding = self.binance_kline_client.get_funding_rate()
+                    if binance_funding:
+                        # Also fetch history for trend calculation
+                        funding_history = None
+                        try:
+                            funding_history = self.binance_kline_client.get_funding_rate_history(limit=5)
+                        except Exception:
+                            pass
+                        # Calculate funding trend from history
+                        funding_trend = None
+                        if funding_history and len(funding_history) >= 3:
+                            rates = [float(h.get('fundingRate', 0)) for h in funding_history]
+                            if rates[-1] > rates[0] * 1.1:
+                                funding_trend = 'RISING'
+                            elif rates[-1] < rates[0] * 0.9:
+                                funding_trend = 'FALLING'
+                            else:
+                                funding_trend = 'STABLE'
+                        derivatives_heartbeat = {
+                            'funding_rate': binance_funding.get('funding_rate'),  # raw decimal
+                            'funding_rate_pct': binance_funding.get('funding_rate_pct'),  # percentage
+                            'predicted_rate': binance_funding.get('predicted_rate'),  # predicted raw
+                            'predicted_rate_pct': binance_funding.get('predicted_rate_pct'),  # predicted pct
+                            'next_funding_countdown_min': binance_funding.get('next_funding_countdown_min'),
+                            'funding_trend': funding_trend,
+                            'source': 'binance',
+                        }
+            except Exception:
+                pass
+            # Fallback: Coinalyze OI change (funding rate already from Binance above)
             if self.latest_derivatives_data and self.latest_derivatives_data.get('enabled'):
-                funding = self.latest_derivatives_data.get('funding_rate', {})
                 oi = self.latest_derivatives_data.get('open_interest', {})
-                derivatives_heartbeat = {
-                    'funding_rate': funding.get('value') if funding else None,
-                    'oi_change_pct': oi.get('change_pct') if oi else None,
-                }
+                liq = self.latest_derivatives_data.get('liquidations', {})
+                if derivatives_heartbeat is None:
+                    derivatives_heartbeat = {}
+                if oi:
+                    derivatives_heartbeat['oi_change_pct'] = oi.get('change_pct')
+                if liq:
+                    liq_buy = float(liq.get('buy', 0) or 0)
+                    liq_sell = float(liq.get('sell', 0) or 0)
+                    if liq_buy > 0 or liq_sell > 0:
+                        derivatives_heartbeat['liq_long'] = liq_buy
+                        derivatives_heartbeat['liq_short'] = liq_sell
 
             orderbook_heartbeat = None
             if self.latest_orderbook_data and self.latest_orderbook_data.get('_status', {}).get('code') == 'OK':
@@ -2050,18 +2154,34 @@ class DeepSeekAIStrategy(Strategy):
                 dynamics = self.latest_orderbook_data.get('dynamics', {})
                 orderbook_heartbeat = {
                     'weighted_obi': obi.get('weighted'),
-                    'obi_trend': dynamics.get('obi_trend'),
+                    'obi_trend': dynamics.get('trend'),  # fix: field is 'trend' not 'obi_trend'
                 }
 
             sr_zone_heartbeat = None
             if self.latest_sr_zones_data:
-                # v3.8 fix: Access SRZone objects directly, extract price_center
-                nearest_sup = self.latest_sr_zones_data.get('nearest_support')
-                nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
+                # v5.0: Pass full S/R zone data with strength/level for Telegram display
+                support_zones = self.latest_sr_zones_data.get('support_zones', [])
+                resistance_zones = self.latest_sr_zones_data.get('resistance_zones', [])
                 hard_control = self.latest_sr_zones_data.get('hard_control', {})
+
+                def _zone_to_dict(zone):
+                    """Convert SRZone object to dict for heartbeat."""
+                    return {
+                        'price': zone.price_center,
+                        'price_low': zone.price_low,
+                        'price_high': zone.price_high,
+                        'strength': getattr(zone, 'strength', 'LOW'),
+                        'level': getattr(zone, 'level', 'MINOR'),
+                        'sources': getattr(zone, 'sources', []),
+                        'touch_count': getattr(zone, 'touch_count', 0),
+                        'has_swing_point': getattr(zone, 'has_swing_point', False),
+                        'has_order_wall': getattr(zone, 'has_order_wall', False),
+                        'distance_pct': getattr(zone, 'distance_pct', 0),
+                    }
+
                 sr_zone_heartbeat = {
-                    'nearest_support': nearest_sup.price_center if nearest_sup else None,
-                    'nearest_resistance': nearest_res.price_center if nearest_res else None,
+                    'support_zones': [_zone_to_dict(z) for z in support_zones[:3]],
+                    'resistance_zones': [_zone_to_dict(z) for z in resistance_zones[:3]],
                     'block_long': hard_control.get('block_long', False),
                     'block_short': hard_control.get('block_short', False),
                 }
@@ -2082,27 +2202,34 @@ class DeepSeekAIStrategy(Strategy):
                     self._last_signal_status = signal_status_heartbeat
                     self.log.info("🔄 检测到仓位已平仓，更新信号状态")
 
-            # 10. 发送消息 (v4.2: 添加 SL/TP)
+            # 10. Get trailing stop status
+            trailing_activated = False
+            if position_side:
+                instrument_key = str(self.instrument_id)
+                ts_state = self.trailing_stop_state.get(instrument_key, {})
+                trailing_activated = ts_state.get('activated', False)
+
+            # 11. 发送消息
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
-                'price': cached_price or 0,
+                'price': display_price or 0,
                 'rsi': rsi,
                 'position_side': position_side,
                 'position_pnl_pct': position_pnl_pct,
                 'entry_price': entry_price,
                 'position_size': position_size,
-                'sl_price': sl_price,      # v4.2: Add stop loss
-                'tp_price': tp_price,      # v4.2: Add take profit
+                'sl_price': sl_price,
+                'tp_price': tp_price,
+                'trailing_activated': trailing_activated,
                 'timer_count': getattr(self, '_timer_count', 0),
                 'equity': equity,
                 'uptime_str': uptime_str,
-                # v3.6/3.7/3.8 data
                 'order_flow': order_flow_heartbeat,
                 'derivatives': derivatives_heartbeat,
                 'order_book': orderbook_heartbeat,
                 'sr_zone': sr_zone_heartbeat,
-                # v4.1 signal execution status
+                'technical': technical_heartbeat,
                 'signal_status': signal_status_heartbeat,
             })
             self.telegram_bot.send_message_sync(heartbeat_msg)

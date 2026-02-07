@@ -82,6 +82,9 @@ indicators:
   bb_period: 20
   bb_std: 2.0
 
+  # ADX (趋势强度) 配置
+  adx_period: 14
+
   # 其他
   volume_ma_period: 20
   support_resistance_lookback: 20
@@ -538,6 +541,55 @@ order_flow:
       technical: 0.25
       derivatives: 0.25
       sentiment: 0.20
+
+# =============================================================================
+# S/R Zone 配置 (Support/Resistance Zone Calculator) v3.0
+# =============================================================================
+sr_zones:
+  enabled: true                         # 启用 S/R Zone 计算
+
+  # ---------------------------------------------------------------------------
+  # Swing Point 检测 (Williams Fractal / N-bar Pivot)
+  # 参考: Chan (2022, MDPI) - swing points 改善 ML S/R 盈利能力 +65%
+  # ---------------------------------------------------------------------------
+  swing_detection:
+    enabled: true                       # 启用 Swing Point 检测
+    left_bars: 5                        # 左侧 N 根 bar (确认 swing)
+    right_bars: 5                       # 右侧 N 根 bar (确认 swing)
+    weight: 1.2                         # Swing Point 权重 (介于 BB=1.0 和 SMA_200=1.5 之间)
+    max_swing_age: 100                  # 最大回看 bar 数 (15M bar × 100 = 25 小时)
+
+  # ---------------------------------------------------------------------------
+  # 聚类配置 (将候选价位合并为 Zone)
+  # ---------------------------------------------------------------------------
+  clustering:
+    method: "distance"                  # 聚类方法: distance (当前唯一支持)
+    cluster_pct: 0.5                    # 固定聚类阈值 (价差 < 0.5% 合并)
+    use_atr_adaptive: true              # 启用 ATR 自适应聚类阈值
+    atr_cluster_multiplier: 0.5         # ATR 聚类乘数 (cluster_threshold = ATR × multiplier)
+
+  # ---------------------------------------------------------------------------
+  # Touch Count 评分
+  # 参考: Osler (2000, FRB NY) - 2-3 次触碰是 S/R 最佳强度
+  # ---------------------------------------------------------------------------
+  scoring:
+    touch_count_enabled: true           # 启用 Touch Count 评分
+    touch_threshold_atr: 0.3            # 触碰判定距离 = ATR × 0.3
+    optimal_touches: [2, 3]             # 最优触碰次数 (权重加成 +0.5)
+    decay_after_touches: 4              # 超过此次数后权重开始衰减
+
+  # ---------------------------------------------------------------------------
+  # Zone 通用配置
+  # ---------------------------------------------------------------------------
+  zone_expand_pct: 0.1                  # Zone 边界扩展 (上下各 0.1%)
+
+  # ---------------------------------------------------------------------------
+  # 硬风控 (默认禁用，由 AI 自主决策)
+  # 参考: v3.16 TradingAgents Autonomy - AI 应完全自主决策
+  # ---------------------------------------------------------------------------
+  hard_control:
+    enabled: false                      # 启用本地硬风控覆盖 (默认关闭)
+    threshold_pct: 1.0                  # 硬风控触发阈值 (距离 < 1%)
 
 # =============================================================================
 # 订单簿深度配置 (Order Book Depth) v2.0 - v3.7 新增

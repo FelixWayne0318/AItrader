@@ -3,7 +3,7 @@ Performance Analytics Service
 Calculates trading statistics, risk metrics, and performance data
 
 v3.0.1 Update: Uses official libraries for all metrics calculations
-- empyrical: Sharpe/Sortino/Calmar/MDD/VaR (Quantopian)
+- empyrical-reloaded: Sharpe/Sortino/Calmar/MDD/VaR (Python 3.12 compatible)
 - scipy: Bootstrap confidence intervals
 - statsmodels: Multiple hypothesis testing correction
 
@@ -29,7 +29,7 @@ try:
     EMPYRICAL_AVAILABLE = True
 except ImportError:
     EMPYRICAL_AVAILABLE = False
-    logging.warning("empyrical not installed. Run: pip install empyrical>=0.5.5")
+    logging.warning("empyrical not installed. Run: pip install empyrical-reloaded>=0.5.12")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

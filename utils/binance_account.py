@@ -67,6 +67,67 @@ class BinanceAccountFetcher:
         self._recv_window: int = recv_window
         self._api_timeout: float = api_timeout
 
+        # Binance server time offset (local_time + offset = binance_time)
+        self._time_offset_ms: int = 0
+        self._time_offset_synced: bool = False
+
+    def _sync_server_time(self) -> bool:
+        """
+        Synchronize local clock with Binance server time.
+
+        Calculates the offset between local time and Binance server time
+        to prevent -1021 (Timestamp outside recvWindow) errors.
+
+        Returns
+        -------
+        bool
+            True if sync succeeded
+        """
+        try:
+            url = f"{self.BASE_URL}/fapi/v1/time"
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "AItrader/1.0"
+            })
+
+            t_before = int(time.time() * 1000)
+            response = urllib.request.urlopen(req, timeout=self._api_timeout)
+            t_after = int(time.time() * 1000)
+            data = json.loads(response.read())
+
+            server_time = data.get('serverTime', 0)
+            if server_time <= 0:
+                self.logger.warning("Binance server time response invalid")
+                return False
+
+            # Use midpoint of request as local reference (accounts for network latency)
+            local_time = (t_before + t_after) // 2
+            self._time_offset_ms = server_time - local_time
+            self._time_offset_synced = True
+            self._time_offset_synced_at = time.time()
+
+            if abs(self._time_offset_ms) > 1000:
+                self.logger.warning(
+                    f"Binance time offset: {self._time_offset_ms}ms "
+                    f"(local clock is {'behind' if self._time_offset_ms > 0 else 'ahead'})"
+                )
+            else:
+                self.logger.debug(f"Binance time offset: {self._time_offset_ms}ms")
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to sync Binance server time: {e}")
+            return False
+
+    def _get_synced_timestamp(self) -> int:
+        """Get current timestamp adjusted for Binance server time offset."""
+        # Re-sync every 30 minutes (clock drift)
+        if (not self._time_offset_synced or
+                (time.time() - getattr(self, '_time_offset_synced_at', 0)) > 1800):
+            self._sync_server_time()
+
+        return int(time.time() * 1000) + self._time_offset_ms
+
     def _sign_request(self, params: Dict[str, Any]) -> str:
         """Create HMAC SHA256 signature for request."""
         query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
@@ -78,43 +139,66 @@ class BinanceAccountFetcher:
         return signature
 
     def _make_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        """Make authenticated request to Binance API."""
+        """Make authenticated request to Binance API with time sync."""
         if not self.api_key or not self.api_secret:
             self.logger.warning("Binance API credentials not configured")
             return None
 
-        try:
-            # Add timestamp
-            if params is None:
-                params = {}
-            params['timestamp'] = int(time.time() * 1000)
-            params['recvWindow'] = self._recv_window
+        max_retries = 2  # retry once on -1021
+        for attempt in range(max_retries):
+            try:
+                if params is None:
+                    params = {}
+                # Use synced timestamp instead of raw local time
+                params['timestamp'] = self._get_synced_timestamp()
+                params['recvWindow'] = self._recv_window
 
-            # Sign request
-            signature = self._sign_request(params)
-            params['signature'] = signature
+                # Sign request
+                signature = self._sign_request(params)
+                params['signature'] = signature
 
-            # Build URL
-            query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
-            url = f"{self.BASE_URL}{endpoint}?{query_string}"
+                # Build URL
+                query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+                url = f"{self.BASE_URL}{endpoint}?{query_string}"
 
-            # Make request
-            req = urllib.request.Request(url, headers={
-                "X-MBX-APIKEY": self.api_key,
-                "User-Agent": "AItrader/1.0"
-            })
+                # Make request
+                req = urllib.request.Request(url, headers={
+                    "X-MBX-APIKEY": self.api_key,
+                    "User-Agent": "AItrader/1.0"
+                })
 
-            response = urllib.request.urlopen(req, timeout=self._api_timeout)
-            data = json.loads(response.read())
-            return data
+                response = urllib.request.urlopen(req, timeout=self._api_timeout)
+                data = json.loads(response.read())
+                return data
 
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode()[:200]
-            self.logger.error(f"Binance API HTTP error {e.code}: {error_body}")
-            return None
-        except Exception as e:
-            self.logger.error(f"Binance API request failed: {e}")
-            return None
+            except urllib.error.HTTPError as e:
+                error_body = e.read().decode()[:200]
+
+                # Handle -1021: Timestamp outside recvWindow
+                if e.code == 400 and '-1021' in error_body:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(
+                            f"Binance -1021 timestamp error, re-syncing server time (attempt {attempt + 1})"
+                        )
+                        self._time_offset_synced = False
+                        self._sync_server_time()
+                        # Remove stale signature for retry
+                        params.pop('signature', None)
+                        params.pop('timestamp', None)
+                        continue
+                    else:
+                        self.logger.error(
+                            f"Binance -1021 timestamp error persists after re-sync. "
+                            f"Offset: {self._time_offset_ms}ms"
+                        )
+
+                self.logger.error(f"Binance API HTTP error {e.code}: {error_body}")
+                return None
+            except Exception as e:
+                self.logger.error(f"Binance API request failed: {e}")
+                return None
+
+        return None
 
     def get_account_info(self, use_cache: bool = True) -> Optional[Dict[str, Any]]:
         """
@@ -385,6 +469,36 @@ class BinanceAccountFetcher:
             return []
 
         return data
+
+    def get_realtime_price(self, symbol: str) -> Optional[float]:
+        """
+        Get real-time mark price from Binance Futures API.
+
+        This is the actual current price, not a cached bar close price.
+
+        Parameters
+        ----------
+        symbol : str
+            Trading symbol (e.g., 'BTCUSDT' or 'BTCUSDT-PERP.BINANCE')
+
+        Returns
+        -------
+        float or None
+            Current mark price
+        """
+        clean_symbol = symbol.replace('-PERP', '').replace('.BINANCE', '').upper()
+        try:
+            url = f"{self.BASE_URL}/fapi/v1/ticker/price?symbol={clean_symbol}"
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "AItrader/1.0"
+            })
+            response = urllib.request.urlopen(req, timeout=self._api_timeout)
+            data = json.loads(response.read())
+            price = float(data.get('price', 0))
+            return price if price > 0 else None
+        except Exception as e:
+            self.logger.debug(f"Failed to fetch realtime price for {clean_symbol}: {e}")
+            return None
 
     def get_income_history(self, income_type: Optional[str] = None, limit: int = 20) -> list:
         """

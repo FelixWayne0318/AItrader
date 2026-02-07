@@ -151,13 +151,17 @@ class CoinalyzeClient:
         self,
         symbol: str = None,
         interval: str = "1hour",
+        hours: int = 24,
     ) -> Optional[Dict]:
         """
         获取清算历史
 
+        v3.24: 从 1h 扩展到 24h，提供完整趋势
+
         Args:
             symbol: 交易对 (默认 BTCUSDT_PERP.A)
             interval: 1hour, 4hour, daily 等
+            hours: 回溯小时数 (默认 24)
 
         Returns:
             {
@@ -182,7 +186,7 @@ class CoinalyzeClient:
             params={
                 "symbols": symbol,
                 "interval": interval,
-                "from": int(time.time()) - 3600,  # 秒!
+                "from": int(time.time()) - (hours * 3600),
                 "to": int(time.time()),
             },
         )
@@ -569,7 +573,7 @@ class CoinalyzeClient:
                 total_short = sum(float(h.get("s", 0)) for h in history)
                 total_usd = (total_long + total_short) * current_price if current_price > 0 else 0
                 parts.append(
-                    f"- Liquidations (1h): Long {total_long:.4f} BTC, Short {total_short:.4f} BTC "
+                    f"- Liquidations (24h): Long {total_long:.4f} BTC, Short {total_short:.4f} BTC "
                     f"(Total: ${total_usd:,.0f})"
                 )
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-支撑阻力位全面诊断脚本 v2.0
+支撑阻力位全面诊断脚本 v3.1
 
 功能:
 1. 检查所有支撑阻力数据来源
@@ -11,12 +11,14 @@
 6. v1.1: 价格分布极值检测 (类似 Volume Profile)
 7. v1.2: S/R 检测回测验证 (验证检测准确率)
 8. v2.0: 完整交易模拟回测 (模拟 AI R/R 决策 + SL/TP 盈亏统计)
+9. v3.0: Swing Point 检测 + ATR 自适应聚类 + Touch Count 评分
+10. v3.1: 完整 S/R + SL/TP 详情, 14天默认回测, 质量分析
 
 使用方法:
-    python3 scripts/diagnose_sr_zones.py                    # 完整诊断
-    python3 scripts/diagnose_sr_zones.py --export           # 导出到文件
-    python3 scripts/diagnose_sr_zones.py --backtest         # 仅运行回测
-    python3 scripts/diagnose_sr_zones.py --backtest --days 7  # 回测7天
+    python3 scripts/diagnose_sr_zones.py                      # 完整诊断
+    python3 scripts/diagnose_sr_zones.py --export             # 导出到文件
+    python3 scripts/diagnose_sr_zones.py --backtest           # 仅运行回测 (14天)
+    python3 scripts/diagnose_sr_zones.py --backtest --days 30 # 回测30天
 """
 
 import os
@@ -143,8 +145,44 @@ def calculate_sr_zones_with_orderwall(current_price: float) -> Dict[str, Any]:
         if orderbook_data and orderbook_data.get('_status', {}).get('code') == 'OK':
             orderbook_anomalies = orderbook_data.get('anomalies', {})
 
-        # 计算 S/R Zones
-        sr_calc = SRZoneCalculator()
+        # 构建 bars_data (v3.0: Swing Point / ATR / Touch Count)
+        bars_data = []
+        for k in klines:
+            bars_data.append({
+                'open': float(k[1]),
+                'high': float(k[2]),
+                'low': float(k[3]),
+                'close': float(k[4]),
+            })
+
+        # 加载 sr_zones 配置
+        sr_cfg = {}
+        try:
+            from utils.config_manager import ConfigManager
+            cm = ConfigManager(env='production')
+            cm.load()
+            sr_cfg = cm.get('sr_zones', default={})
+        except Exception:
+            pass
+
+        swing_cfg = sr_cfg.get('swing_detection', {})
+        cluster_cfg = sr_cfg.get('clustering', {})
+        scoring_cfg = sr_cfg.get('scoring', {})
+
+        # 计算 S/R Zones (v3.0 with Swing Point + ATR + Touch Count)
+        sr_calc = SRZoneCalculator(
+            swing_detection_enabled=swing_cfg.get('enabled', True),
+            swing_left_bars=swing_cfg.get('left_bars', 5),
+            swing_right_bars=swing_cfg.get('right_bars', 5),
+            swing_weight=swing_cfg.get('weight', 1.2),
+            swing_max_age=swing_cfg.get('max_swing_age', 100),
+            use_atr_adaptive=cluster_cfg.get('use_atr_adaptive', True),
+            atr_cluster_multiplier=cluster_cfg.get('atr_cluster_multiplier', 0.5),
+            touch_count_enabled=scoring_cfg.get('touch_count_enabled', True),
+            touch_threshold_atr=scoring_cfg.get('touch_threshold_atr', 0.3),
+            optimal_touches=scoring_cfg.get('optimal_touches', [2, 3]),
+            decay_after_touches=scoring_cfg.get('decay_after_touches', 4),
+        )
         bb_data = {
             'upper': tech_data.get('bb_upper', 0),
             'lower': tech_data.get('bb_lower', 0),
@@ -160,6 +198,7 @@ def calculate_sr_zones_with_orderwall(current_price: float) -> Dict[str, Any]:
             bb_data=bb_data,
             sma_data=sma_data,
             orderbook_anomalies=orderbook_anomalies,
+            bars_data=bars_data,
         )
 
         return {
@@ -1127,11 +1166,13 @@ def backtest_sr_trading_simulation(
 
 
 def print_backtest_results(result: Dict[str, Any]) -> None:
-    """打印回测结果"""
-    print_header(f"S/R 交易模拟回测 v2.0 (v3.17 R/R 驱动)")
+    """打印回测结果 (v3.0: 完整 S/R + SL/TP 详情)"""
+    print_header(f"S/R 交易模拟回测 v3.0 (v3.17 R/R 驱动)")
 
     if not result['success']:
         print_result("回测失败", result.get('error', 'Unknown'), "error")
+        if result.get('traceback'):
+            print(f"  {result['traceback'][:300]}")
         return
 
     cfg = result['config']
@@ -1185,6 +1226,212 @@ def print_backtest_results(result: Dict[str, Any]) -> None:
     print_result("平均实际 R/R", f"{risk['avg_actual_rr']:.2f}",
                 "ok" if risk['avg_actual_rr'] > 0 else "error")
 
+    # ========== 全部交易记录 (完整 S/R + SL/TP 详情) ==========
+    all_trades = result.get('all_trades', result.get('trades', []))
+    print_section(f"全部交易记录 ({len(all_trades)} 笔, 含 S/R + SL/TP 详情)")
+
+    if all_trades:
+        # 表头
+        print("  ┌──────┬──────────────────┬───────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────┬────────┬──────────┬──────────┐")
+        print("  │  ID  │ 时间             │ 方向  │ 入场价   │ 支撑位   │ 阻力位   │  SL 价   │  TP 价   │ R/R  │ 结果   │ 出场价   │ 盈亏     │")
+        print("  ├──────┼──────────────────┼───────┼──────────┼──────────┼──────────┼──────────┼──────────┼──────┼────────┼──────────┼──────────┤")
+
+        for t in all_trades:
+            result_emoji = {"WIN": "✅", "LOSS": "❌", "TIMEOUT": "⏱️"}.get(t['result'], "?")
+            pnl_str = f"${t['pnl_usdt']:+.0f}"
+            print(f"  │ {t['id']:>4} │ {t['time']:<16} │ {t['signal']:<5} │ "
+                  f"${t['entry_price']:>7,.0f} │ ${t['support']:>7,.0f} │ ${t['resistance']:>7,.0f} │ "
+                  f"${t['sl_price']:>7,.0f} │ ${t['tp_price']:>7,.0f} │ {t['rr_ratio']:>4.1f} │ "
+                  f"{result_emoji:<2}{t['result']:<4} │ ${t['exit_price']:>7,.0f} │ {pnl_str:>8} │")
+
+        print("  └──────┴──────────────────┴───────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────┴────────┴──────────┴──────────┘")
+
+        # ========== 每笔交易的 SL/TP 距离分析 ==========
+        print()
+        print_section("SL/TP 距离分析 (每笔交易)")
+        print("  ┌──────┬───────┬────────────┬────────────┬─────────────┬─────────────┬──────────────────────┐")
+        print("  │  ID  │ 方向  │ SL距入场   │ TP距入场   │ 支撑距入场  │ 阻力距入场  │ S/R评分 (支撑/阻力)  │")
+        print("  ├──────┼───────┼────────────┼────────────┼─────────────┼─────────────┼──────────────────────┤")
+
+        for t in all_trades:
+            entry = t['entry_price']
+            sl_dist = abs(t['sl_price'] - entry) / entry * 100
+            tp_dist = abs(t['tp_price'] - entry) / entry * 100
+            sup_dist = abs(entry - t['support']) / entry * 100
+            res_dist = abs(t['resistance'] - entry) / entry * 100
+            score_str = f"{t['support_score']:.2f} / {t['resistance_score']:.2f}"
+            print(f"  │ {t['id']:>4} │ {t['signal']:<5} │ {sl_dist:>8.2f}%  │ {tp_dist:>8.2f}%  │ "
+                  f"{sup_dist:>9.2f}%   │ {res_dist:>9.2f}%   │ {score_str:>20} │")
+
+        print("  └──────┴───────┴────────────┴────────────┴─────────────┴─────────────┴──────────────────────┘")
+
+    # ========== S/R + SL/TP 质量分析 ==========
+    print_section("S/R + SL/TP 质量分析")
+
+    if all_trades:
+        # SL 距离统计
+        sl_distances = []
+        tp_distances = []
+        sup_distances = []
+        res_distances = []
+
+        for t in all_trades:
+            entry = t['entry_price']
+            sl_distances.append(abs(t['sl_price'] - entry) / entry * 100)
+            tp_distances.append(abs(t['tp_price'] - entry) / entry * 100)
+            sup_distances.append(abs(entry - t['support']) / entry * 100)
+            res_distances.append(abs(t['resistance'] - entry) / entry * 100)
+
+        avg_sl_dist = sum(sl_distances) / len(sl_distances)
+        avg_tp_dist = sum(tp_distances) / len(tp_distances)
+        avg_sup_dist = sum(sup_distances) / len(sup_distances)
+        avg_res_dist = sum(res_distances) / len(res_distances)
+        min_sl_dist = min(sl_distances)
+        max_sl_dist = max(sl_distances)
+        min_tp_dist = min(tp_distances)
+        max_tp_dist = max(tp_distances)
+
+        print("  📏 距离统计:")
+        print(f"     SL 距入场:  平均 {avg_sl_dist:.2f}%  (最小 {min_sl_dist:.2f}%, 最大 {max_sl_dist:.2f}%)")
+        print(f"     TP 距入场:  平均 {avg_tp_dist:.2f}%  (最小 {min_tp_dist:.2f}%, 最大 {max_tp_dist:.2f}%)")
+        print(f"     支撑距入场: 平均 {avg_sup_dist:.2f}%")
+        print(f"     阻力距入场: 平均 {avg_res_dist:.2f}%")
+
+        # SL 合理性评估
+        print()
+        print("  📊 SL 合理性评估:")
+        tight_sl = sum(1 for d in sl_distances if d < 0.3)
+        normal_sl = sum(1 for d in sl_distances if 0.3 <= d <= 2.0)
+        wide_sl = sum(1 for d in sl_distances if d > 2.0)
+        total = len(sl_distances)
+        print(f"     过紧 (<0.3%): {tight_sl}/{total} ({tight_sl/total*100:.0f}%)"
+              f"  {'⚠️ 容易被噪音触发' if tight_sl/total > 0.2 else ''}")
+        print(f"     正常 (0.3-2%): {normal_sl}/{total} ({normal_sl/total*100:.0f}%)"
+              f"  {'✅ 合理范围' if normal_sl/total > 0.5 else ''}")
+        print(f"     过宽 (>2%):   {wide_sl}/{total} ({wide_sl/total*100:.0f}%)"
+              f"  {'⚠️ 风险过大' if wide_sl/total > 0.3 else ''}")
+
+        # TP 合理性评估
+        print()
+        print("  📊 TP 合理性评估:")
+        tight_tp = sum(1 for d in tp_distances if d < 0.5)
+        normal_tp = sum(1 for d in tp_distances if 0.5 <= d <= 3.0)
+        ambitious_tp = sum(1 for d in tp_distances if d > 3.0)
+        print(f"     过近 (<0.5%): {tight_tp}/{total} ({tight_tp/total*100:.0f}%)"
+              f"  {'⚠️ 盈利空间不足' if tight_tp/total > 0.2 else ''}")
+        print(f"     正常 (0.5-3%): {normal_tp}/{total} ({normal_tp/total*100:.0f}%)"
+              f"  {'✅ 合理范围' if normal_tp/total > 0.5 else ''}")
+        print(f"     过远 (>3%):   {ambitious_tp}/{total} ({ambitious_tp/total*100:.0f}%)"
+              f"  {'⚠️ 难以触及, 多TIMEOUT' if ambitious_tp/total > 0.3 else ''}")
+
+        # S/R 评分与胜率相关性
+        print()
+        print("  📊 S/R 评分与胜率相关性:")
+        high_score_trades = [t for t in all_trades if t['support_score'] >= 0.5 or t['resistance_score'] >= 0.5]
+        low_score_trades = [t for t in all_trades if t['support_score'] < 0.5 and t['resistance_score'] < 0.5]
+
+        if high_score_trades:
+            high_wins = len([t for t in high_score_trades if t['result'] == 'WIN'])
+            high_wr = high_wins / len(high_score_trades) * 100
+            print(f"     高评分 (≥0.5) S/R: {len(high_score_trades)} 笔, 胜率 {high_wr:.1f}%")
+        if low_score_trades:
+            low_wins = len([t for t in low_score_trades if t['result'] == 'WIN'])
+            low_wr = low_wins / len(low_score_trades) * 100
+            print(f"     低评分 (<0.5) S/R: {len(low_score_trades)} 笔, 胜率 {low_wr:.1f}%")
+
+        if high_score_trades and low_score_trades:
+            high_wr = len([t for t in high_score_trades if t['result'] == 'WIN']) / len(high_score_trades) * 100
+            low_wr = len([t for t in low_score_trades if t['result'] == 'WIN']) / len(low_score_trades) * 100
+            if high_wr > low_wr + 5:
+                print("     ✅ S/R 评分与胜率正相关 — 高评分 S/R 更可靠")
+            elif abs(high_wr - low_wr) <= 5:
+                print("     ⚠️ S/R 评分与胜率无明显相关 — 评分系统需优化")
+            else:
+                print("     ❌ S/R 评分与胜率负相关 — 评分逻辑可能有问题")
+
+        # 按日期分组的表现 (检测趋势vs震荡)
+        print()
+        print("  📊 按日期分组表现:")
+        from collections import defaultdict
+        daily_stats = defaultdict(lambda: {'wins': 0, 'losses': 0, 'timeouts': 0, 'pnl': 0.0, 'trades': 0})
+        for t in all_trades:
+            date = t['time'][:10]
+            daily_stats[date]['trades'] += 1
+            daily_stats[date]['pnl'] += t['pnl_usdt']
+            if t['result'] == 'WIN':
+                daily_stats[date]['wins'] += 1
+            elif t['result'] == 'LOSS':
+                daily_stats[date]['losses'] += 1
+            else:
+                daily_stats[date]['timeouts'] += 1
+
+        print("  ┌────────────┬───────┬──────┬──────┬──────┬──────────┬────────┐")
+        print("  │ 日期       │ 交易  │ 胜利 │ 亏损 │ 超时 │ 盈亏     │ 胜率   │")
+        print("  ├────────────┼───────┼──────┼──────┼──────┼──────────┼────────┤")
+
+        for date in sorted(daily_stats.keys()):
+            d = daily_stats[date]
+            wr = d['wins'] / d['trades'] * 100 if d['trades'] > 0 else 0
+            pnl_str = f"${d['pnl']:+,.0f}"
+            wr_emoji = "✅" if wr >= 50 else "❌" if wr < 30 else "⚠️"
+            print(f"  │ {date} │ {d['trades']:>5} │ {d['wins']:>4} │ {d['losses']:>4} │ "
+                  f"{d['timeouts']:>4} │ {pnl_str:>8} │ {wr_emoji}{wr:>4.0f}% │")
+
+        print("  └────────────┴───────┴──────┴──────┴──────┴──────────┴────────┘")
+
+        # 识别连续亏损段
+        print()
+        print("  📊 连续亏损段分析:")
+        streak_start = None
+        streak_count = 0
+        streaks = []
+        for i, t in enumerate(all_trades):
+            if t['result'] == 'LOSS':
+                if streak_start is None:
+                    streak_start = i
+                streak_count += 1
+            else:
+                if streak_count >= 3:  # 3连续亏损以上才记录
+                    streaks.append({
+                        'start_idx': streak_start,
+                        'count': streak_count,
+                        'start_time': all_trades[streak_start]['time'],
+                        'end_time': all_trades[streak_start + streak_count - 1]['time'],
+                        'total_loss': sum(all_trades[streak_start + j]['pnl_usdt'] for j in range(streak_count)),
+                        'directions': [all_trades[streak_start + j]['signal'] for j in range(streak_count)],
+                    })
+                streak_start = None
+                streak_count = 0
+        # 检查尾部
+        if streak_count >= 3:
+            streaks.append({
+                'start_idx': streak_start,
+                'count': streak_count,
+                'start_time': all_trades[streak_start]['time'],
+                'end_time': all_trades[streak_start + streak_count - 1]['time'],
+                'total_loss': sum(all_trades[streak_start + j]['pnl_usdt'] for j in range(streak_count)),
+                'directions': [all_trades[streak_start + j]['signal'] for j in range(streak_count)],
+            })
+
+        if streaks:
+            for s in streaks:
+                dir_counts = {}
+                for d in s['directions']:
+                    dir_counts[d] = dir_counts.get(d, 0) + 1
+                dir_str = ", ".join(f"{k}×{v}" for k, v in dir_counts.items())
+                print(f"     {s['start_time']} ~ {s['end_time']}: "
+                      f"{s['count']} 连亏, 亏损 ${s['total_loss']:,.0f} ({dir_str})")
+                # 诊断原因
+                if len(dir_counts) == 1:
+                    only_dir = list(dir_counts.keys())[0]
+                    print(f"       → 全部 {only_dir}: 可能是单边行情中逆势操作")
+                elif dir_counts.get('LONG', 0) > dir_counts.get('SHORT', 0) * 2:
+                    print(f"       → LONG 为主: 可能处于下跌趋势")
+                elif dir_counts.get('SHORT', 0) > dir_counts.get('LONG', 0) * 2:
+                    print(f"       → SHORT 为主: 可能处于上涨趋势")
+        else:
+            print("     ✅ 无 3 连亏以上的情况")
+
     # 结论
     print_section("结论")
 
@@ -1205,29 +1452,25 @@ def print_backtest_results(result: Dict[str, Any]) -> None:
     print()
     print("  📊 分析:")
     if summary['win_rate'] < 40:
-        print("     • 胜率偏低 - 考虑更严格的入场条件")
+        print("     - 胜率偏低 - 考虑更严格的入场条件")
     if summary['long_win_rate'] < summary['short_win_rate'] - 10:
-        print("     • LONG 胜率明显低于 SHORT - 可能处于下跌趋势")
+        print("     - LONG 胜率明显低于 SHORT - 可能处于下跌趋势")
     elif summary['short_win_rate'] < summary['long_win_rate'] - 10:
-        print("     • SHORT 胜率明显低于 LONG - 可能处于上涨趋势")
+        print("     - SHORT 胜率明显低于 LONG - 可能处于上涨趋势")
     if risk['max_consecutive_losses'] > 5:
-        print("     • 连续亏损次数较多 - 考虑加入趋势过滤")
+        print("     - 连续亏损次数较多 - 考虑加入趋势过滤 (ADX v3.20)")
 
-    # 最近交易
-    print_section("最近交易记录 (最新 10 笔)")
-
-    trades = result['trades'][-10:]
-    print("  ┌──────┬──────────────────┬───────┬──────────┬──────────┬────────┬──────────┐")
-    print("  │ ID   │ 时间             │ 方向  │ 入场价   │ 出场价   │ 结果   │ 盈亏     │")
-    print("  ├──────┼──────────────────┼───────┼──────────┼──────────┼────────┼──────────┤")
-
-    for t in trades:
-        result_emoji = {"WIN": "✅", "LOSS": "❌", "TIMEOUT": "⏱️"}.get(t['result'], "?")
-        pnl_str = f"${t['pnl_usdt']:+.0f}"
-        print(f"  │ {t['id']:>4} │ {t['time']:<16} │ {t['signal']:<5} │ ${t['entry_price']:>7,.0f} │ "
-              f"${t['exit_price']:>7,.0f} │ {result_emoji:<2}{t['result']:<4} │ {pnl_str:>8} │")
-
-    print("  └──────┴──────────────────┴───────┴──────────┴──────────┴────────┴──────────┘")
+    if all_trades:
+        # SL/TP 优化建议
+        print()
+        print("  💡 SL/TP 优化建议:")
+        if avg_sl_dist < 0.5:
+            print(f"     - SL 平均距离 {avg_sl_dist:.2f}% 偏小, 建议增大 sl_buffer_pct (当前 {cfg['sl_buffer_pct']}%)")
+        if avg_tp_dist > 3.0:
+            print(f"     - TP 平均距离 {avg_tp_dist:.2f}% 偏大, 阻力位可能不准确或市场无法到达")
+        timeout_rate = summary['timeout_count'] / summary['total_trades'] * 100 if summary['total_trades'] > 0 else 0
+        if timeout_rate > 20:
+            print(f"     - 超时率 {timeout_rate:.0f}% 偏高, TP 可能设置过远或持仓时间不足")
 
 
 def calculate_sr_zones_without_orderwall(current_price: float) -> Dict[str, Any]:
@@ -1258,8 +1501,21 @@ def calculate_sr_zones_without_orderwall(current_price: float) -> Dict[str, Any]
         else:
             bb_upper = bb_lower = 0
 
-        # 计算 S/R Zones (无 Order Wall)
-        sr_calc = SRZoneCalculator()
+        # 构建 bars_data (v3.0: Swing Point / ATR / Touch Count)
+        bars_data = []
+        for k in klines:
+            bars_data.append({
+                'open': float(k[1]),
+                'high': float(k[2]),
+                'low': float(k[3]),
+                'close': float(k[4]),
+            })
+
+        # 计算 S/R Zones v3.0 (无 Order Wall, 含 Swing Point)
+        sr_calc = SRZoneCalculator(
+            swing_detection_enabled=True,
+            use_atr_adaptive=True,
+        )
         bb_data = {'upper': bb_upper, 'lower': bb_lower, 'middle': sma_20}
         sma_data = {'sma_50': sma_50, 'sma_200': 0}  # 简化，不计算 SMA_200
 
@@ -1268,6 +1524,7 @@ def calculate_sr_zones_without_orderwall(current_price: float) -> Dict[str, Any]
             bb_data=bb_data,
             sma_data=sma_data,
             orderbook_anomalies=None,  # 不传入 Order Wall
+            bars_data=bars_data,
         )
 
         return {
@@ -1331,6 +1588,16 @@ def check_config() -> Dict[str, Any]:
         result['sr_hard_control_enabled'] = config.get('risk', 'sr_hard_control_enabled', default=True)
         result['sr_hard_control_threshold'] = config.get('risk', 'sr_hard_control_threshold_pct', default=1.0)
 
+        # v3.0 sr_zones config
+        sr_cfg = config.get('sr_zones', default={})
+        result['sr_zones_enabled'] = sr_cfg.get('enabled', True) if sr_cfg else True
+        swing_cfg = sr_cfg.get('swing_detection', {}) if sr_cfg else {}
+        result['swing_detection_enabled'] = swing_cfg.get('enabled', True)
+        cluster_cfg = sr_cfg.get('clustering', {}) if sr_cfg else {}
+        result['atr_adaptive_enabled'] = cluster_cfg.get('use_atr_adaptive', True)
+        scoring_cfg = sr_cfg.get('scoring', {}) if sr_cfg else {}
+        result['touch_count_enabled'] = scoring_cfg.get('touch_count_enabled', True)
+
     except Exception as e:
         result['error'] = str(e)
 
@@ -1373,7 +1640,7 @@ def analyze_telegram_data_source():
 
 def run_full_diagnosis():
     """运行完整诊断"""
-    print_header("支撑阻力位全面诊断 v1.0")
+    print_header("支撑阻力位全面诊断 v3.1")
     print(f"  时间: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
     # 1. 获取当前价格
@@ -1390,6 +1657,13 @@ def run_full_diagnosis():
         print_result("S/R 硬风控启用", config.get('sr_hard_control_enabled', True),
                     "ok" if config.get('sr_hard_control_enabled') else "warn")
         print_result("硬风控阈值", f"{config.get('sr_hard_control_threshold', 1.0)}%", "info")
+        # v3.0 features
+        print_result("Swing Point 检测", config.get('swing_detection_enabled', True),
+                    "ok" if config.get('swing_detection_enabled') else "warn")
+        print_result("ATR 自适应聚类", config.get('atr_adaptive_enabled', True),
+                    "ok" if config.get('atr_adaptive_enabled') else "warn")
+        print_result("Touch Count 评分", config.get('touch_count_enabled', True),
+                    "ok" if config.get('touch_count_enabled') else "warn")
     else:
         print_result("配置错误", config['error'], "error")
 
@@ -1418,11 +1692,15 @@ def run_full_diagnosis():
 
         print_result("支撑区数量", len(sup_zones), "info")
         for i, zone in enumerate(sup_zones[:2]):
-            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]")
+            swing_tag = " [Swing]" if zone.has_swing_point else ""
+            touch_tag = f" [T:{zone.touch_count}]" if zone.touch_count > 0 else ""
+            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{swing_tag}{touch_tag}")
 
         print_result("阻力区数量", len(res_zones), "info")
         for i, zone in enumerate(res_zones[:2]):
-            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]")
+            swing_tag = " [Swing]" if zone.has_swing_point else ""
+            touch_tag = f" [T:{zone.touch_count}]" if zone.touch_count > 0 else ""
+            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{swing_tag}{touch_tag}")
 
         hard_control = result.get('hard_control', {})
         print_result("Block LONG", hard_control.get('block_long', False),
@@ -1433,7 +1711,7 @@ def run_full_diagnosis():
         print_result("计算失败", sr_no_wall.get('error', 'Unknown'), "error")
 
     print()
-    print("  📝 计算方法: BB + SMA_50 聚合 (无订单簿数据)")
+    print("  📝 计算方法: BB + SMA_50 + Swing Point + ATR聚类 + Touch Count (v3.0)")
     print("  📝 来源: utils/sr_zone_calculator.py (orderbook_anomalies=None)")
 
     # 5. 计算 S/R Zone (含 Order Wall)
@@ -1447,15 +1725,19 @@ def run_full_diagnosis():
         print_result("支撑区数量", len(sup_zones), "info")
         for i, zone in enumerate(sup_zones[:3]):
             wall_info = f" [Order Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+            swing_tag = " [Swing]" if zone.has_swing_point else ""
+            touch_tag = f" [T:{zone.touch_count}]" if zone.touch_count > 0 else ""
             src = ", ".join(zone.sources[:2]) if zone.sources else zone.source_type
-            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}%) [{zone.strength}]{wall_info}")
+            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}%) [{zone.strength}]{wall_info}{swing_tag}{touch_tag}")
             print(f"         来源: {src}")
 
         print_result("阻力区数量", len(res_zones), "info")
         for i, zone in enumerate(res_zones[:3]):
             wall_info = f" [Order Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+            swing_tag = " [Swing]" if zone.has_swing_point else ""
+            touch_tag = f" [T:{zone.touch_count}]" if zone.touch_count > 0 else ""
             src = ", ".join(zone.sources[:2]) if zone.sources else zone.source_type
-            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}%) [{zone.strength}]{wall_info}")
+            print(f"      {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}%) [{zone.strength}]{wall_info}{swing_tag}{touch_tag}")
             print(f"         来源: {src}")
 
         hard_control = result.get('hard_control', {})
@@ -1485,8 +1767,32 @@ def run_full_diagnosis():
             print(f"  Traceback: {sr_with_wall['traceback'][:200]}...")
 
     print()
-    print("  📝 计算方法: BB + SMA_50 + Order Wall 聚合")
+    print("  📝 计算方法: BB + SMA_50 + Order Wall + Swing Point + ATR聚类 + Touch Count (v3.0)")
     print("  📝 来源: utils/sr_zone_calculator.py + utils/orderbook_processor.py")
+
+    # 5.5 ADX 趋势强度 (v3.20)
+    if sr_with_wall['success'] and sr_with_wall.get('tech_data'):
+        tech = sr_with_wall['tech_data']
+        adx_val = tech.get('adx', 0)
+        di_plus = tech.get('di_plus', 0)
+        di_minus = tech.get('di_minus', 0)
+        adx_regime = tech.get('adx_regime', 'N/A')
+        adx_dir = tech.get('adx_direction', 'N/A')
+
+        print()
+        print_section("5.5 趋势强度 (ADX v3.20)")
+        adx_status = "ok" if adx_val < 25 else "warn"
+        print_result("ADX(14)", f"{adx_val:.1f} ({adx_regime})", adx_status)
+        print_result("方向", f"DI+={di_plus:.1f}, DI-={di_minus:.1f} → {adx_dir}", "info")
+
+        if adx_val < 20:
+            print_result("S/R 可靠性", "HIGH — 震荡市，S/R 反弹概率 ~70%", "ok")
+        elif adx_val < 25:
+            print_result("S/R 可靠性", "MODERATE — 弱趋势，需要确认", "warn")
+        elif adx_val < 40:
+            print_result("S/R 可靠性", "LOW — 强趋势，S/R 反弹概率 ~25%，优先顺势", "warn")
+        else:
+            print_result("S/R 可靠性", "VERY LOW — 极强趋势，避免逆势 S/R 入场", "error")
 
     # 6. 价格分布极值检测 (新方法 v2.0)
     print_section("6. 方法四: Volume Profile 风格分析 (CME 标准)")
@@ -1683,8 +1989,9 @@ def run_full_diagnosis():
         "将 Heartbeat 发送移到分析之后，使用最新数据",
         "降低 Order Wall 权重 (当前 2.0，建议 0.5-1.0)",
         "添加 Order Wall 最小 BTC 阈值 (如 > 10 BTC 才算大单)",
-        "考虑使用简单高低点作为主要支撑阻力来源",
-        "实现 Swing Point Detection (全球标准方法)",
+        "[v3.0 已实现] Swing Point Detection (Williams Fractal, Chan 2022 MDPI)",
+        "[v3.0 已实现] ATR 自适应聚类 (替代固定 0.5% 阈值)",
+        "[v3.0 已实现] Touch Count 评分 (Osler 2000, FRB NY: 2-3次最优)",
     ])
 
     for i, s in enumerate(suggestions, 1):
@@ -1734,26 +2041,30 @@ def run_full_diagnosis():
     print()
     print("  📊 方法评估 (基于 CME/IEEE 标准):")
     print()
-    print("     ┌─────────────────────────┬──────────┬──────────┬──────────┬──────────┐")
-    print("     │ 方法                    │ 稳定性   │ 实时性   │ 可靠性   │ 专业度   │")
-    print("     ├─────────────────────────┼──────────┼──────────┼──────────┼──────────┤")
-    print("     │ 简单高低点              │ ★★★★★    │ ★★★      │ ★★★      │ ★★       │")
-    print("     │ S/R Zone (BB+SMA)       │ ★★★★     │ ★★★      │ ★★★★     │ ★★★      │")
-    print("     │ Order Wall              │ ★★       │ ★★★★★    │ ★★       │ ★★★      │")
-    print("     │ Value Area (CME)        │ ★★★★★    │ ★★       │ ★★★★★    │ ★★★★★    │")
-    print("     │ HVN/LVN (Volume Profile)│ ★★★★★    │ ★★       │ ★★★★★    │ ★★★★★    │")
-    print("     └─────────────────────────┴──────────┴──────────┴──────────┴──────────┘")
+    print("     ┌──────────────────────────┬──────────┬──────────┬──────────┬──────────┐")
+    print("     │ 方法                     │ 稳定性   │ 实时性   │ 可靠性   │ 专业度   │")
+    print("     ├──────────────────────────┼──────────┼──────────┼──────────┼──────────┤")
+    print("     │ 简单高低点               │ ★★★★★    │ ★★★      │ ★★★      │ ★★       │")
+    print("     │ S/R Zone (BB+SMA)        │ ★★★★     │ ★★★      │ ★★★★     │ ★★★      │")
+    print("     │ Swing Point (v3.0)       │ ★★★★★    │ ★★★★     │ ★★★★★    │ ★★★★★    │")
+    print("     │ Order Wall               │ ★★       │ ★★★★★    │ ★★       │ ★★★      │")
+    print("     │ Value Area (CME)         │ ★★★★★    │ ★★       │ ★★★★★    │ ★★★★★    │")
+    print("     │ HVN/LVN (Volume Profile) │ ★★★★★    │ ★★       │ ★★★★★    │ ★★★★★    │")
+    print("     └──────────────────────────┴──────────┴──────────┴──────────┴──────────┘")
     print()
     print("  💡 全球标准做法:")
-    print("     1. Value Area 边界 = 主要 S/R (CME Market Profile)")
-    print("     2. HVN = 强支撑阻力 (价格在此停留时间长)")
-    print("     3. LVN = 快速穿越区 (不适合作为 S/R)")
-    print("     4. POC = 公平价格 (价格吸引点)")
+    print("     1. Swing Point (N-bar Pivot) = 最强 S/R 来源 (Chan 2022 MDPI, +65% ML利润)")
+    print("     2. ATR 自适应聚类 = 波动率感知的区域合并")
+    print("     3. Touch Count 2-3次 = 最佳强度 (Osler 2000, FRB NY)")
+    print("     4. Value Area 边界 = 主要 S/R (CME Market Profile)")
+    print("     5. HVN = 强支撑阻力 (价格在此停留时间长)")
+    print("     6. LVN = 快速穿越区 (不适合作为 S/R)")
     print()
     print("  📚 参考文献:")
+    print("     - Chan 2022 (MDPI): Support/Resistance in Algorithmic Trading")
+    print("     - Osler 2000 (FRB NY): Support/Resistance Technical Analysis")
     print("     - CME Group Market Profile User Guide")
     print("     - IEEE: Evolutionary Optimized Stock Support-Resistance")
-    print("     - MDPI: Support Resistance Levels in Algorithmic Trading")
 
     print()
     print(f"  诊断完成: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
@@ -1762,11 +2073,11 @@ def run_full_diagnosis():
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="支撑阻力位全面诊断 v2.0")
+    parser = argparse.ArgumentParser(description="支撑阻力位全面诊断 v3.1")
     parser.add_argument("--export", action="store_true", help="导出到文件")
     parser.add_argument("--backtest", action="store_true", help="仅运行交易模拟回测")
     parser.add_argument("--mock", action="store_true", help="使用模拟数据 (无网络环境)")
-    parser.add_argument("--days", type=int, default=7, help="回测天数 (默认 7)")
+    parser.add_argument("--days", type=int, default=14, help="回测天数 (默认 14)")
     parser.add_argument("--min-rr", type=float, default=1.5, help="最小 R/R 比率 (默认 1.5)")
     parser.add_argument("--position", type=float, default=1000, help="每笔仓位 USDT (默认 1000)")
     parser.add_argument("--leverage", type=int, default=10, help="杠杆倍数 (默认 10)")
@@ -1823,9 +2134,9 @@ def main():
             run_full_diagnosis()
             # 添加完整交易回测
             print()
-            print("  ⏳ 正在运行完整交易模拟回测 (7 天)...")
+            print(f"  ⏳ 正在运行完整交易模拟回测 ({args.days} 天)...")
             print()
-            result = backtest_sr_trading_simulation(days=7)
+            result = backtest_sr_trading_simulation(days=args.days)
             print_backtest_results(result)
 
         output = buffer.getvalue()
@@ -1840,9 +2151,9 @@ def main():
         run_full_diagnosis()
         # 添加完整交易回测
         print()
-        print("  ⏳ 正在运行完整交易模拟回测 (7 天)...")
+        print(f"  ⏳ 正在运行完整交易模拟回测 ({args.days} 天)...")
         print()
-        result = backtest_sr_trading_simulation(days=7)
+        result = backtest_sr_trading_simulation(days=args.days)
         print_backtest_results(result)
 
 

@@ -8,7 +8,9 @@ across all diagnostic steps.
 import io
 import os
 import sys
+import time
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -231,6 +233,16 @@ def parse_bar_interval(bar_type_str: str) -> str:
         return "15m"  # Default
 
 
+@contextmanager
+def step_timer(label: str, timings: dict):
+    """Context manager to time a step and store the result."""
+    start = time.monotonic()
+    yield
+    elapsed = time.monotonic() - start
+    timings[label] = elapsed
+    print(f"  [{elapsed:.2f}s] {label}")
+
+
 def extract_symbol(instrument_id: str) -> str:
     """
     Extract trading symbol from instrument ID.
@@ -305,13 +317,18 @@ class DiagnosticContext:
     order_flow_report: Optional[Dict] = None
     derivatives_report: Optional[Dict] = None
     orderbook_report: Optional[Dict] = None  # v3.7: Order book depth data
+    binance_derivatives_data: Optional[Dict] = None  # v3.21: Binance Top Traders, Taker Ratio
     binance_funding_rate: Optional[Dict] = None  # v4.8: Binance 8h funding rate (主要数据源)
     sr_zones_data: Optional[Dict] = None  # v2.6.0: S/R Zone Calculator data
+    sr_bars_data: Optional[List] = None  # v3.0: 120 bars for S/R Swing Detection
 
     # AI decision data
     multi_agent: Any = None
     signal_data: Dict = field(default_factory=dict)
     final_signal: str = "HOLD"
+
+    # Timing data (v3.0.0 diagnostic)
+    step_timings: Dict = field(default_factory=dict)
 
     # Output buffer for export
     output_buffer: io.StringIO = field(default_factory=io.StringIO)
@@ -465,8 +482,8 @@ class DiagnosticRunner:
             self.setup_output_capture()
 
             print("=" * 70)
-            print("  实盘信号诊断工具 v2.7.0 (v3.18 订单流程模拟)")
-            print("  基于 TradingAgents v3.12 架构")
+            print("  实盘信号诊断工具 v3.0.0 (100% Live-Consistent)")
+            print("  基于 TradingAgents v3.27.1 架构")
             print("=" * 70)
             print()
 
