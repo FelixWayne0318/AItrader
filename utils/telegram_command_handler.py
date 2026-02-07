@@ -1,21 +1,28 @@
 """
-Telegram Command Handler v3.0 — Redesigned Command System
+Telegram Command Handler v3.1 — Enhanced Command System
 
 Minimal slash commands + menu-driven interaction.
 
-Registered in "/" menu (5 commands):
-  /menu   — 操作面板 (primary entry point)
-  /s      — 快速状态
-  /p      — 快速查看持仓
-  /close  — 平仓 (PIN required)
-  /help   — 帮助
+Registered in "/" menu (9 commands):
+  /menu    — 操作面板 (primary entry point)
+  /s       — 快速状态
+  /p       — 快速查看持仓 (含 SL/TP, ROE, 仓位价值, 保证金)
+  /b       — 账户余额
+  /a       — 技术面
+  /fa      — 立即分析
+  /profit  — 盈亏分析
+  /close   — 平仓 (PIN required)
+  /help    — 帮助
 
-Legacy commands still work when typed:
-  /status, /position, /orders, /history, /risk, /daily, /weekly
-  /pause, /resume
+All commands (typed):
+  Query: /status, /position, /balance, /orders, /history, /risk,
+         /daily, /weekly, /analyze, /config, /version, /logs, /profit
+  Control (PIN): /pause, /resume, /close, /force_analysis,
+         /partial_close, /set_leverage, /toggle, /set,
+         /modify_sl, /modify_tp, /reload_config, /restart
 
 Security (v2.0, preserved):
-- PIN verification for control commands (pause, resume, close)
+- PIN verification for control commands
 - Audit logging for all operations
 - Rate limiting
 """
@@ -73,6 +80,7 @@ QUERY_COMMANDS = {
     'analyze':  'analyze',
     'config':   'config',
     'version':  'version',
+    'profit':   'profit',
 }
 
 # Query commands that accept arguments
@@ -92,6 +100,9 @@ CONTROL_COMMANDS_WITH_ARGS = {
     'set':            ('set_param', lambda args: {'param': args[0] if args else '', 'value': args[1] if len(args) > 1 else None}),
     'restart':        ('restart', None),
     'update':         ('restart', None),  # alias for restart
+    'modify_sl':      ('modify_sl', lambda args: {'price': args[0] if args else None}),
+    'modify_tp':      ('modify_tp', lambda args: {'price': args[0] if args else None}),
+    'reload_config':  ('reload_config', None),
 }
 
 # PIN confirmation messages (Chinese)
@@ -106,6 +117,9 @@ PIN_MESSAGES = {
     'set':            '修改参数',
     'restart':        '重启服务',
     'update':         '更新+重启',
+    'modify_sl':      '修改止损',
+    'modify_tp':      '修改止盈',
+    'reload_config':  '重载配置',
 }
 
 # Menu callback_data -> strategy command mapping
@@ -122,12 +136,14 @@ CALLBACK_MAP = {
     'q_analyze':   'analyze',
     'q_config':    'config',
     'q_version':   'version',
+    'q_profit':    'profit',
     # Control
     'c_pause':     'pause',
     'c_resume':    'resume',
     'c_close':     'close',
     'c_fa':        'force_analysis',
     'c_restart':   'restart',
+    'c_reload':    'reload_config',
 }
 
 
@@ -347,11 +363,11 @@ class TelegramCommandHandler:
                 InlineKeyboardButton("📋 订单", callback_data='q_orders'),
                 InlineKeyboardButton("⚠️ 风险", callback_data='q_risk'),
             ],
-            # Row 3: Reports
+            # Row 3: Reports & Analytics
             [
                 InlineKeyboardButton("📅 日报", callback_data='q_daily'),
                 InlineKeyboardButton("📆 周报", callback_data='q_weekly'),
-                InlineKeyboardButton("📈 历史", callback_data='q_history'),
+                InlineKeyboardButton("💹 盈亏", callback_data='q_profit'),
             ],
             # Row 4: Trading control
             [
@@ -363,9 +379,11 @@ class TelegramCommandHandler:
             [
                 InlineKeyboardButton("🔴 平仓", callback_data='c_close'),
                 InlineKeyboardButton("🔁 重启", callback_data='c_restart'),
+                InlineKeyboardButton("🔃 重载配置", callback_data='c_reload'),
             ],
             # Row 6: System
             [
+                InlineKeyboardButton("📈 历史", callback_data='q_history'),
                 InlineKeyboardButton("⚙️ 配置", callback_data='q_config'),
                 InlineKeyboardButton("ℹ️ 版本", callback_data='q_version'),
             ],
@@ -574,14 +592,17 @@ class TelegramCommandHandler:
             "  `/status` `/position` `/balance`\n"
             "  `/orders` `/risk` `/analyze`\n"
             "  `/daily` `/weekly` `/history`\n"
-            "  `/config` `/version` `/logs`\n\n"
+            "  `/profit` `/config` `/version` `/logs`\n\n"
             "*控制* (需 PIN):\n"
             "  `/pause` `/resume` `/close`\n"
             "  `/force_analysis` — 立即触发 AI 分析\n"
             "  `/partial_close 50` — 部分平仓 50%\n"
+            "  `/modify_sl 95000` — 修改止损价\n"
+            "  `/modify_tp 105000` — 修改止盈价\n"
             "  `/set_leverage 10` — 修改杠杆\n"
             "  `/toggle trailing` — 功能开关\n"
             "  `/set min_confidence HIGH` — 修改参数\n"
+            "  `/reload_config` — 重载 YAML 配置\n"
             "  `/restart` — 重启服务\n\n"
             "💡 推荐使用 /menu 按钮操作\n"
         )
@@ -744,6 +765,7 @@ class TelegramCommandHandler:
                 BotCommand("b", "账户余额"),
                 BotCommand("a", "技术面"),
                 BotCommand("fa", "立即分析"),
+                BotCommand("profit", "盈亏分析"),
                 BotCommand("close", "平仓"),
                 BotCommand("help", "帮助"),
             ]
