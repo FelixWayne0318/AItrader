@@ -2087,10 +2087,12 @@ class DeepSeekAIStrategy(Strategy):
             except Exception:
                 pass
 
-            # 7. 获取上次信号
+            # 7. 获取上次信号 (heartbeat runs BEFORE AI analysis, so this is previous cycle's result)
             last_signal = getattr(self, 'last_signal', None) or {}
             signal = last_signal.get('signal') or 'PENDING'
             confidence = last_signal.get('confidence') or 'N/A'
+            # Mark signal as stale (from previous cycle) so Telegram can label it correctly
+            signal_is_stale = signal != 'PENDING'  # PENDING = no previous analysis yet
 
             # 8. 组装 v3.6/3.7/3.8 数据 (如果可用)
             order_flow_heartbeat = None
@@ -2213,6 +2215,7 @@ class DeepSeekAIStrategy(Strategy):
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
+                'signal_is_stale': signal_is_stale,
                 'price': display_price or 0,
                 'rsi': rsi,
                 'position_side': position_side,

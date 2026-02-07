@@ -62,6 +62,7 @@ def _get_trading_logic_config() -> Dict[str, Any]:
             'min_tp_distance_pct': config.get('trading_logic', 'min_tp_distance_pct', default=0.005),
             'default_sl_pct': config.get('trading_logic', 'default_sl_pct', default=0.02),
             'default_tp_pct': config.get('trading_logic', 'default_tp_pct', default=0.03),
+            'min_rr_ratio': config.get('trading_logic', 'min_rr_ratio', default=1.5),
             'tp_pct_by_confidence': config.get('trading_logic', 'tp_pct_by_confidence', default={
                 'high': 0.03,
                 'medium': 0.02,
@@ -85,6 +86,11 @@ def get_min_sl_distance_pct() -> float:
 def get_min_tp_distance_pct() -> float:
     """获取最小止盈距离百分比"""
     return _get_trading_logic_config()['min_tp_distance_pct']
+
+
+def get_min_rr_ratio() -> float:
+    """获取最小风险收益比 (R/R)"""
+    return _get_trading_logic_config()['min_rr_ratio']
 
 
 def get_default_sl_pct() -> float:
@@ -746,6 +752,7 @@ def validate_multiagent_sltp(
     - BUY/LONG: SL must be below entry, TP must be above entry
     - SELL/SHORT: SL must be above entry, TP must be below entry
     - Both must have minimum distance from entry
+    - R/R ratio must meet minimum threshold (default 1.5:1)
 
     Parameters
     ----------
@@ -792,7 +799,19 @@ def validate_multiagent_sltp(
         if multi_tp <= entry_price:
             return False, None, None, f"BUY TP (${multi_tp:,.2f}) must be > entry (${entry_price:,.2f})"
 
-        # TP can be close (smaller profit target is acceptable)
+        # R/R hard gate: reject if risk/reward ratio below minimum
+        risk = entry_price - multi_sl
+        reward = multi_tp - entry_price
+        if risk > 0:
+            rr_ratio = reward / risk
+            min_rr = get_min_rr_ratio()
+            if rr_ratio < min_rr:
+                return False, None, None, (
+                    f"R/R {rr_ratio:.2f}:1 < {min_rr}:1 minimum "
+                    f"(SL ${multi_sl:,.2f}, TP ${multi_tp:,.2f}). "
+                    f"Will use S/R-based technical analysis instead."
+                )
+
         if tp_distance < min_tp:
             return True, multi_sl, multi_tp, f"Valid with note: TP close to entry ({tp_distance*100:.2f}%)"
         return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
@@ -804,7 +823,19 @@ def validate_multiagent_sltp(
         if multi_tp >= entry_price:
             return False, None, None, f"SELL TP (${multi_tp:,.2f}) must be < entry (${entry_price:,.2f})"
 
-        # TP can be close (smaller profit target is acceptable)
+        # R/R hard gate: reject if risk/reward ratio below minimum
+        risk = multi_sl - entry_price
+        reward = entry_price - multi_tp
+        if risk > 0:
+            rr_ratio = reward / risk
+            min_rr = get_min_rr_ratio()
+            if rr_ratio < min_rr:
+                return False, None, None, (
+                    f"R/R {rr_ratio:.2f}:1 < {min_rr}:1 minimum "
+                    f"(SL ${multi_sl:,.2f}, TP ${multi_tp:,.2f}). "
+                    f"Will use S/R-based technical analysis instead."
+                )
+
         if tp_distance < min_tp:
             return True, multi_sl, multi_tp, f"Valid with note: TP close to entry ({tp_distance*100:.2f}%)"
         return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"

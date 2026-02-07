@@ -492,6 +492,7 @@ class ErrorRecoveryChecker(DiagnosticStep):
         print()
         print("  [4] SL/TP 验证失败恢复:")
         print("     ✅ validate_multiagent_sltp 失败 → 回退到 calculate_technical_sltp")
+        print("        (包括: SL 方向错误, 距离不足, R/R < 1.5:1)")
         print("     ✅ 技术 SL/TP 计算失败 → 使用默认 2% SL, confidence-based TP")
 
         # Network error recovery

@@ -685,7 +685,9 @@ class TelegramBot:
 
         # ======= SIGNAL SECTION =======
         sig_icon = self._signal_icon(signal)
-        msg += f"\n🤖 *{sig_icon} {signal}* ({confidence})"
+        signal_is_stale = heartbeat_data.get('signal_is_stale', False)
+        stale_label = " (上次)" if signal_is_stale else ""
+        msg += f"\n🤖 *{sig_icon} {signal}* ({confidence}){stale_label}"
 
         # Signal execution status
         if signal_status:

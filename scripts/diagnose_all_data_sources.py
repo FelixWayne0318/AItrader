@@ -213,10 +213,10 @@ def main():
 ┌────────────────────────┬─────────────────────────────┬─────────────────────────────┬────────────┐
 │ 数据类型               │ Binance                      │ Coinalyze                   │ 当前使用   │
 ├────────────────────────┼─────────────────────────────┼─────────────────────────────┼────────────┤
-│ 资金费率 (当前)         │ /premiumIndex               │ /funding-rate               │ Coinalyze  │
-│                        │ lastFundingRate              │ value                       │            │
+│ 资金费率 (预期)         │ /premiumIndex               │ /funding-rate               │ Binance ✅ │
+│                        │ lastFundingRate (=predicted) │ value                       │            │
 ├────────────────────────┼─────────────────────────────┼─────────────────────────────┼────────────┤
-│ 资金费率 (历史)         │ /fundingRate                │ /funding-rate-history       │ ❌ 都没用   │
+│ 资金费率 (已结算)       │ /fundingRate                │ /funding-rate-history       │ Binance ✅ │
 ├────────────────────────┼─────────────────────────────┼─────────────────────────────┼────────────┤
 │ OI (历史)              │ /openInterestHist           │ /open-interest-history      │ ❌ 都没用   │
 │                        │ sumOpenInterest              │ history[].o/h/l/c           │            │

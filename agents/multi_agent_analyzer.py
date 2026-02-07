@@ -231,6 +231,9 @@ class MultiAgentAnalyzer:
         # Track last prompts for diagnosis (v11.4)
         self.last_prompts: Dict[str, Dict[str, str]] = {}
 
+        # Full call trace: every AI API call with input/output/timing
+        self.call_trace: List[Dict[str, Any]] = []
+
         # Retry configuration (same as DeepSeekAnalyzer)
         self.max_retries = 2
         self.retry_delay = 1.0
@@ -271,6 +274,7 @@ class MultiAgentAnalyzer:
         self,
         messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
+        trace_label: str = "",
     ) -> str:
         """
         Call DeepSeek API with retry logic for robustness.
@@ -297,12 +301,29 @@ class MultiAgentAnalyzer:
 
         for attempt in range(self.max_retries + 1):
             try:
+                t0 = time.monotonic()
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     temperature=temp,
                 )
-                return response.choices[0].message.content
+                elapsed = time.monotonic() - t0
+                content = response.choices[0].message.content
+                # Record call trace for diagnostics
+                usage = response.usage
+                self.call_trace.append({
+                    "label": trace_label or f"call_{len(self.call_trace)+1}",
+                    "messages": messages,
+                    "temperature": temp,
+                    "response": content,
+                    "elapsed_sec": round(elapsed, 2),
+                    "tokens": {
+                        "prompt": usage.prompt_tokens if usage else 0,
+                        "completion": usage.completion_tokens if usage else 0,
+                        "total": usage.total_tokens if usage else 0,
+                    } if usage else {},
+                })
+                return content
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries:
@@ -321,6 +342,7 @@ class MultiAgentAnalyzer:
         messages: List[Dict[str, str]],
         temperature: float,
         max_json_retries: int = 2,
+        trace_label: str = "",
     ) -> Optional[Dict[str, Any]]:
         """
         Call API and extract JSON, with retry on parse failure.
@@ -341,7 +363,7 @@ class MultiAgentAnalyzer:
         """
         for retry_attempt in range(max_json_retries + 1):
             try:
-                result = self._call_api_with_retry(messages=messages, temperature=temperature)
+                result = self._call_api_with_retry(messages=messages, temperature=temperature, trace_label=trace_label)
                 self.logger.debug(f"API response (attempt {retry_attempt + 1}): {result}")
 
                 # Extract JSON from response
@@ -395,11 +417,11 @@ class MultiAgentAnalyzer:
         Run multi-agent analysis with Bull/Bear debate.
 
         TradingAgents Architecture (Judge-based decision):
-        - Phase 1: Bull/Bear debate (2 AI calls)
+        - Phase 1: Bull/Bear debate (2 × debate_rounds AI calls, sequential)
         - Phase 2: Judge decision (1 AI call with optimized prompt)
         - Phase 3: Risk evaluation (1 AI call)
 
-        Total: 4 AI calls (complete TradingAgents framework)
+        Total: 2×debate_rounds + 2 AI calls (default debate_rounds=2 → 6 calls)
 
         Reference: https://github.com/TauricResearch/TradingAgents (UCLA/MIT paper)
 
@@ -454,6 +476,9 @@ class MultiAgentAnalyzer:
         try:
             self.logger.info("Starting multi-agent analysis (TradingAgents architecture)...")
 
+            # Clear call trace for this analysis cycle
+            self.call_trace = []
+
             # Format reports for prompts
             tech_summary = self._format_technical_report(technical_report)
             sent_summary = self._format_sentiment_report(sentiment_report)
@@ -488,7 +513,7 @@ class MultiAgentAnalyzer:
             if not sr_zones_summary:
                 sr_zones_summary = sr_zones.get('ai_report', '') if sr_zones else ''
 
-            # Phase 1: Bull/Bear Debate (2 AI calls)
+            # Phase 1: Bull/Bear Debate (2 × debate_rounds AI calls, sequential)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
             debate_history = ""
             bull_argument = ""
@@ -508,6 +533,7 @@ class MultiAgentAnalyzer:
                     sr_zones_report=sr_zones_summary,           # v3.8
                     history=debate_history,
                     bear_argument=bear_argument,
+                    trace_label=f"Bull R{round_num + 1}",
                 )
                 debate_history += f"\n\n=== ROUND {round_num + 1} ===\n\nBULL ANALYST:\n{bull_argument}"
 
@@ -522,6 +548,7 @@ class MultiAgentAnalyzer:
                     sr_zones_report=sr_zones_summary,           # v3.8
                     history=debate_history,
                     bull_argument=bull_argument,
+                    trace_label=f"Bear R{round_num + 1}",
                 )
                 debate_history += f"\n\nBEAR ANALYST:\n{bear_argument}"
 
@@ -583,6 +610,7 @@ class MultiAgentAnalyzer:
         sr_zones_report: str,        # v3.8
         history: str,
         bear_argument: str,
+        trace_label: str = "Bull",
     ) -> str:
         """
         Generate bull analyst's argument.
@@ -646,7 +674,7 @@ Focus on evidence from the data, not assumptions."""
         return self._call_api_with_retry([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
-        ])
+        ], trace_label=trace_label)
 
     def _get_bear_argument(
         self,
@@ -659,6 +687,7 @@ Focus on evidence from the data, not assumptions."""
         sr_zones_report: str,        # v3.8
         history: str,
         bull_argument: str,
+        trace_label: str = "Bear",
     ) -> str:
         """
         Generate bear analyst's argument.
@@ -722,7 +751,7 @@ Focus on risks and bearish signals in the data."""
         return self._call_api_with_retry([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
-        ])
+        ], trace_label=trace_label)
 
     def _get_judge_decision(
         self,
@@ -794,6 +823,7 @@ applied the correct regime-specific interpretation of the data."""
             ],
             temperature=0.3,  # Slightly higher for more nuanced judgment
             max_json_retries=2,
+            trace_label="Judge",
         )
 
         if decision:
@@ -1166,6 +1196,7 @@ Make your own assessment — do not blindly follow the Judge's recommendation.""
             ],
             temperature=0.2,
             max_json_retries=2,
+            trace_label="Risk Manager",
         )
 
         if decision:
@@ -1957,6 +1988,19 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
             }
         """
         return self.last_prompts
+
+    def get_call_trace(self) -> List[Dict[str, Any]]:
+        """
+        Return the full call trace for the last analysis cycle.
+
+        Each entry contains:
+        - messages: List[Dict] (system + user prompts sent to API)
+        - temperature: float
+        - response: str (full API response)
+        - elapsed_sec: float
+        - tokens: Dict with prompt/completion/total counts
+        """
+        return self.call_trace
 
     def _format_order_flow_report(self, data: Optional[Dict[str, Any]]) -> str:
         """

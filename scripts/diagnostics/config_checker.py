@@ -22,7 +22,7 @@ class CriticalConfigChecker(DiagnosticStep):
     Validates:
     - main_live.py: load_all and reconciliation settings
     - deepseek_strategy.py: SL/TP field names
-    - trading_logic.py: MIN_SL_DISTANCE_PCT
+    - trading_logic.py: get_min_sl_distance_pct(), get_min_rr_ratio()
     - patches: Binance enum patches
     """
 
@@ -193,7 +193,7 @@ class CriticalConfigChecker(DiagnosticStep):
         issues: List[str],
         warnings: List[str]
     ) -> None:
-        """Check trading_logic.py MIN_SL_DISTANCE_PCT."""
+        """Check trading_logic.py SL/TP validation functions and R/R gate."""
         trading_logic_path = project_root / "strategy" / "trading_logic.py"
 
         if not trading_logic_path.exists():
@@ -202,20 +202,30 @@ class CriticalConfigChecker(DiagnosticStep):
         with open(trading_logic_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        min_sl_match = re.search(
-            r'MIN_SL_DISTANCE_PCT\s*=\s*([\d.]+)', content
-        )
-        if not min_sl_match:
+        # Check SL distance function exists
+        if 'def get_min_sl_distance_pct' not in content:
             warnings.append(
-                "trading_logic.py: 未找到 MIN_SL_DISTANCE_PCT\n"
+                "trading_logic.py: 未找到 get_min_sl_distance_pct() 函数\n"
                 "   → SL 距离验证可能不生效"
             )
-        else:
-            min_sl_pct = float(min_sl_match.group(1))
-            if min_sl_pct < 0.01:
-                warnings.append(
-                    f"trading_logic.py: MIN_SL_DISTANCE_PCT={min_sl_pct}\n"
-                    f"   → 建议至少设置为 0.01 (1%)"
+
+        # Check R/R hard gate function exists
+        if 'def get_min_rr_ratio' not in content:
+            issues.append(
+                "trading_logic.py: 未找到 get_min_rr_ratio() 函数\n"
+                "   → R/R 硬性门槛未实现，AI 可能返回极低 R/R 的 SL/TP"
+            )
+
+        # Check validate_multiagent_sltp contains R/R check
+        if 'def validate_multiagent_sltp' in content:
+            # Find the function body
+            func_start = content.index('def validate_multiagent_sltp')
+            # Look for rr_ratio check within reasonable range
+            func_body = content[func_start:func_start + 3000]
+            if 'rr_ratio' not in func_body or 'get_min_rr_ratio' not in func_body:
+                issues.append(
+                    "trading_logic.py: validate_multiagent_sltp() 缺少 R/R 硬性门槛\n"
+                    "   → AI 返回低 R/R (如 0.1:1) 时无法拦截"
                 )
 
         # Check multi_agent_analyzer.py imports
@@ -225,13 +235,12 @@ class CriticalConfigChecker(DiagnosticStep):
                 analyzer_content = f.read()
 
             has_import = "from strategy.trading_logic import" in analyzer_content
-            has_constant = "MIN_SL_DISTANCE_PCT" in analyzer_content
             has_getter = "get_min_sl_distance_pct" in analyzer_content
 
-            if not (has_import and (has_constant or has_getter)):
+            if not (has_import and has_getter):
                 warnings.append(
-                    "multi_agent_analyzer.py: 未从 trading_logic 导入 SL 验证函数/常量\n"
-                    "   → 应导入 get_min_sl_distance_pct() 或 MIN_SL_DISTANCE_PCT"
+                    "multi_agent_analyzer.py: 未从 trading_logic 导入 SL 验证函数\n"
+                    "   → 应导入 get_min_sl_distance_pct()"
                 )
 
     def _check_patches(
