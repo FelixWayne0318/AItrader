@@ -64,7 +64,7 @@ class V47IntegrationDiagnostic:
         'liquidation_buffer_pct': '爆仓缓冲%',
         'is_liquidation_risk_high': '是否高爆仓风险',
         # v4.7 资金费率字段 (CRITICAL)
-        'funding_rate_current': '当前资金费率',
+        'funding_rate_current': '已结算资金费率',
         'daily_funding_cost_usd': '日资金费成本',
         'funding_rate_cumulative_usd': '累计资金费',
         'effective_pnl_after_funding': '扣费后盈亏',
