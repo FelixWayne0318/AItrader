@@ -283,6 +283,10 @@ network:
     max_limit: 1500               # Binance K线最大获取数量
     timeout: 10                   # 请求超时 (秒)
 
+  # OCO 订单管理
+  oco_manager:
+    socket_timeout: 5             # WebSocket 超时 (秒)
+
   # Telegram
   telegram:
     startup_delay: 5              # 启动延迟 (秒)
