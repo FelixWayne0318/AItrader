@@ -644,6 +644,18 @@ Environment=AUTO_CONFIRM=true
       - 靠近阻力 → SHORT R/R 好
       - 中间位置 → 两边 R/R 都差 → HOLD
     - 文件：`agents/multi_agent_analyzer.py:950-979`
+    - **重要**: R/R >= 1.5:1 由 `validate_multiagent_sltp()` 硬性执行，不仅仅是 AI prompt 建议
+
+20. **R/R 硬性门槛 + Heartbeat 信号标签修复** - **关键修复**
+    - **问题 1**: R/R >= 1.5:1 仅在 AI prompt 中存在，`validate_multiagent_sltp()` 未强制执行
+      - 根因：AI 返回结构正确但 R/R 极低的 SL/TP (如 0.1:1) 时直接通过验证
+      - 修复：在 `validate_multiagent_sltp()` 中添加 R/R 硬性门槛检查
+      - 配置：`configs/base.yaml: trading_logic.min_rr_ratio: 1.5`
+      - 当 R/R < 1.5:1 时，拒绝 AI SL/TP，回退到 `calculate_technical_sltp()` (已有 R/R 调整)
+    - **问题 2**: Heartbeat 显示的信号来自上一个分析周期，但未标注
+      - 根因：`_send_heartbeat_notification()` 在 AI 分析之前运行，读取 `self.last_signal`
+      - 修复：信号后添加 "(上次)" 标签，避免用户误以为是当前周期结果
+    - 文件：`strategy/trading_logic.py`, `strategy/deepseek_strategy.py`, `utils/telegram_bot.py`
 
 ## 常见错误避免
 
@@ -671,6 +683,7 @@ Environment=AUTO_CONFIRM=true
 - ❌ **Bracket 订单失败时回退到无保护 MARKET 单** → ✅ **发送 CRITICAL 告警，保持 HOLD** (v3.18)
 - ❌ **反转交易直接平仓后开仓** → ✅ **使用 `_pending_reversal` 两阶段提交** (v3.18)
 - ❌ **加仓后不更新 SL/TP 数量** → ✅ **调用 `_update_sltp_quantity()` 更新订单** (v3.18)
+- ❌ **仅在 AI prompt 中要求 R/R >= 1.5:1** → ✅ **`validate_multiagent_sltp()` 硬性执行 R/R 门槛** (回退到技术分析)
 
 ## 文件结构
 

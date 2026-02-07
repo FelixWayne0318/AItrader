@@ -358,8 +358,8 @@ class DataFlowSummary(DiagnosticStep):
         print_box("MTF 过滤状态")
         print()
 
-        print(f"  架构: TradingAgents v3.27.1 - Pure Knowledge Prompts + R/R 驱动入场")
-        print(f"  入场标准: R/R >= 1.5:1 (唯一入场标准)")
+        print(f"  架构: TradingAgents - Pure Knowledge Prompts + R/R 驱动入场")
+        print(f"  入场标准: R/R >= 1.5:1 硬性门槛 (validate_multiagent_sltp 强制执行)")
         print(f"  AI 决策: 纯知识描述 prompts (无 MUST/NEVER/ALWAYS 指令)")
         print(f"  输出格式: 包含 invalidation 字段 (nof1 对齐)")
         print()

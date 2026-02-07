@@ -28,6 +28,7 @@ trading_logic:
   min_tp_distance_pct: 0.005      # 最小止盈距离 0.5%
   default_sl_pct: 0.02            # 默认止损 2%
   default_tp_pct: 0.03            # 默认止盈 3%
+  min_rr_ratio: 1.5               # 最小风险收益比 (R/R < 1.5:1 拒绝 AI SL/TP，回退到技术分析)
 
   # 按信心级别的止盈配置
   tp_pct_by_confidence:

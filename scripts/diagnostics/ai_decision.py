@@ -1240,9 +1240,11 @@ class OrderSimulator(DiagnosticStep):
         use_sr = getattr(cfg, 'sl_use_support_resistance', True)
         sl_buffer = getattr(cfg, 'sl_buffer_pct', 0.005)  # v3.15.1: 0.5% buffer for real S/R breakout
 
-        print("  📋 v3.17 入场验证规则 (R/R 驱动):")
-        print("     - R/R >= 1.5:1 是唯一入场标准 (移除距离硬性规则)")
-        print("     - 最小止损距离: 1% (技术要求，非入场标准)")
+        from strategy.trading_logic import get_min_rr_ratio
+        min_rr = get_min_rr_ratio()
+        print("  📋 入场验证规则 (R/R 驱动):")
+        print(f"     - R/R >= {min_rr}:1 硬性门槛 (validate_multiagent_sltp 强制执行)")
+        print("     - 最小止损距离: 1% (技术要求)")
         print(f"     - S/R 突破缓冲: {sl_buffer*100:.1f}% (确认真正突破)")
         print()
 
@@ -1256,7 +1258,7 @@ class OrderSimulator(DiagnosticStep):
             print(f"     验证结果: {'✅ 通过' if is_valid else '❌ 失败'} - {reason}")
 
             if not is_valid:
-                print("     ⚠️ AI SL/TP 验证失败 (v3.15: 距离<1% 或方向错误)，回退到 S/R Zone 技术分析")
+                print("     ⚠️ AI SL/TP 验证失败，回退到 S/R Zone 技术分析")
                 final_sl, final_tp, calc_method = calculate_technical_sltp(
                     side=signal,
                     entry_price=self.ctx.current_price,
@@ -1303,21 +1305,21 @@ class OrderSimulator(DiagnosticStep):
             rr_ratio = tp_pct / sl_pct if sl_pct > 0 else 0
 
             print()
-            print("  📊 风险/收益分析 (v3.17 R/R 驱动):")
+            print("  📊 风险/收益分析:")
             print(f"     止损距离: {sl_pct:.2f}%")
             print(f"     止盈距离: {tp_pct:.2f}%")
             print(f"     R/R 比率: {rr_ratio:.2f}:1")
 
-            # v3.17: R/R-based position sizing guidance
+            # R/R-based position sizing guidance
             if rr_ratio >= 2.5:
                 rr_status = "✅ 优秀 (建议 80-100% 仓位)"
             elif rr_ratio >= 2.0:
                 rr_status = "✅ 良好 (建议 50-80% 仓位)"
             elif rr_ratio >= 1.5:
-                rr_status = "⚠️ 可接受 (建议 30-50% 仓位)"
+                rr_status = "✅ 可接受 (建议 30-50% 仓位)"
             else:
-                rr_status = "❌ 不达标 (建议 HOLD)"
-            print(f"     v3.17 评估: {rr_status}")
+                rr_status = f"❌ 不达标 (< {min_rr}:1 硬性门槛，已被 validate_multiagent_sltp 拦截)"
+            print(f"     评估: {rr_status}")
 
             print(f"     最大亏损: ${quantity * self.ctx.current_price * sl_pct / 100:,.2f}")
             print(f"     最大盈利: ${quantity * self.ctx.current_price * tp_pct / 100:,.2f}")
