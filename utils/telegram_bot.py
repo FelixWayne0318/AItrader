@@ -446,8 +446,9 @@ class TelegramBot:
         block_long = sr_zone.get('block_long', False)
         block_short = sr_zone.get('block_short', False)
 
-        # Derivatives (Binance funding rate + trend)
+        # Derivatives (Binance funding rate + predicted + trend)
         funding_rate_pct = derivatives.get('funding_rate_pct')
+        predicted_rate_pct = derivatives.get('predicted_rate_pct')
         next_funding_min = derivatives.get('next_funding_countdown_min')
         funding_trend = derivatives.get('funding_trend')
         liq_long = derivatives.get('liq_long')
@@ -570,11 +571,15 @@ class TelegramBot:
                     flow_parts.append(f"买入 {buy_ratio*100:.0f}% {br_icon}")
                 if funding_rate_pct is not None:
                     fr_icon = '🔴' if funding_rate_pct > 0.01 else '🟢' if funding_rate_pct < -0.01 else '⚪'
-                    fr_str = f"费率 {funding_rate_pct:.4f}% {fr_icon}"
+                    fr_str = f"当前 {funding_rate_pct:.4f}% {fr_icon}"
                     if funding_trend:
                         ft_icon = '📈' if funding_trend == 'RISING' else '📉' if funding_trend == 'FALLING' else '➖'
                         fr_str += f" {ft_icon}"
                     flow_parts.append(fr_str)
+                    # 预期费率 (predicted)
+                    if predicted_rate_pct is not None:
+                        pr_icon = '🔴' if predicted_rate_pct > 0.01 else '🟢' if predicted_rate_pct < -0.01 else '⚪'
+                        flow_parts.append(f"预期 {predicted_rate_pct:.4f}% {pr_icon}")
                 elif funding_rate is not None:
                     fr = self._funding_display(funding_rate)
                     flow_parts.append(f"费率 {fr:.4f}%")
@@ -602,11 +607,15 @@ class TelegramBot:
                     msg += f"  CVD   {c_icon} {cvd_trend}\n"
                 if funding_rate_pct is not None:
                     fr_icon = '🔴' if funding_rate_pct > 0.01 else '🟢' if funding_rate_pct < -0.01 else '⚪'
-                    fr_line = f"  费率  {fr_icon} {funding_rate_pct:.4f}%"
+                    fr_line = f"  当前  {fr_icon} {funding_rate_pct:.4f}%"
                     if funding_trend:
                         ft_icon = '📈' if funding_trend == 'RISING' else '📉' if funding_trend == 'FALLING' else '➖'
                         fr_line += f" {ft_icon}"
                     msg += fr_line + "\n"
+                    # 预期费率 (predicted from premiumIndexKlines TWAP)
+                    if predicted_rate_pct is not None:
+                        pr_icon = '🔴' if predicted_rate_pct > 0.01 else '🟢' if predicted_rate_pct < -0.01 else '⚪'
+                        msg += f"  预期  {pr_icon} {predicted_rate_pct:.4f}%\n"
                     if next_funding_min is not None:
                         hours = next_funding_min // 60
                         mins = next_funding_min % 60

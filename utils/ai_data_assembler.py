@@ -307,7 +307,7 @@ class AIDataAssembler:
                 "interpretation": self._interpret_funding(funding_rate),
                 "source": "binance_8h",
                 "period": "8h",
-                # v3.22: 预期费率 (从 mark-index 价差计算)
+                # v3.22→v3.28: 预期费率 (从 premiumIndexKlines TWAP 计算, 与币安 App 一致)
                 "predicted_rate": binance_funding.get('predicted_rate'),
                 "predicted_rate_pct": binance_funding.get('predicted_rate_pct'),
                 # v3.22: 下次结算时间
