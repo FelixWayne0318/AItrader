@@ -575,6 +575,7 @@ class DeepSeekAIStrategy(Strategy):
         
         # Strategy control state for remote commands
         self.is_trading_paused = False
+        self._force_analysis_requested = False
         self.strategy_start_time = None
 
         # Sentiment data fetcher
@@ -5048,6 +5049,28 @@ class DeepSeekAIStrategy(Strategy):
                 return self._cmd_daily_summary()
             elif command == 'weekly_summary':
                 return self._cmd_weekly_summary()
+            elif command == 'balance':
+                return self._cmd_balance()
+            elif command == 'analyze':
+                return self._cmd_analyze()
+            elif command == 'config':
+                return self._cmd_config()
+            elif command == 'version':
+                return self._cmd_version()
+            elif command == 'logs':
+                return self._cmd_logs(args)
+            elif command == 'force_analysis':
+                return self._cmd_force_analysis()
+            elif command == 'partial_close':
+                return self._cmd_partial_close(args)
+            elif command == 'set_leverage':
+                return self._cmd_set_leverage(args)
+            elif command == 'toggle':
+                return self._cmd_toggle(args)
+            elif command == 'set_param':
+                return self._cmd_set_param(args)
+            elif command == 'restart':
+                return self._cmd_restart()
             else:
                 return {
                     'success': False,
@@ -5682,6 +5705,528 @@ class DeepSeekAIStrategy(Strategy):
                 'success': False,
                 'error': str(e)
             }
+
+    # ===== New Commands v3.0 =====
+
+    def _cmd_balance(self) -> Dict[str, Any]:
+        """Handle /balance command - detailed account balance."""
+        try:
+            with self._state_lock:
+                cached_price = self._cached_current_price
+
+            real_balance = self.binance_account.get_balance()
+            total_balance = real_balance.get('total_balance', 0)
+            available_balance = real_balance.get('available_balance', 0)
+            unrealized_pnl = real_balance.get('unrealized_pnl', 0)
+
+            account_context = self._get_account_context(cached_price) if cached_price > 0 else {}
+
+            msg = "💰 *账户余额*\n━━━━━━━━━━━━━━━━━━\n\n"
+
+            if total_balance > 0:
+                msg += f"*总余额*: ${total_balance:,.2f}\n"
+                msg += f"*可用余额*: ${available_balance:,.2f}\n"
+                used = total_balance - available_balance
+                msg += f"*已用保证金*: ${used:,.2f}\n"
+                if unrealized_pnl != 0:
+                    pnl_icon = "📈" if unrealized_pnl >= 0 else "📉"
+                    msg += f"*未实现盈亏*: {pnl_icon} ${unrealized_pnl:+,.2f}\n"
+                msg += f"\n*杠杆*: {self.leverage}x\n"
+
+                # Capacity
+                max_pos_ratio = self.position_config.get('max_position_ratio', 0.3)
+                max_pos_value = total_balance * max_pos_ratio * self.leverage
+                current_pos_value = account_context.get('current_position_value', 0)
+                remaining = max_pos_value - current_pos_value
+
+                msg += f"*最大仓位*: ${max_pos_value:,.0f}\n"
+                if current_pos_value > 0:
+                    msg += f"*当前仓位*: ${current_pos_value:,.0f}\n"
+                    msg += f"*剩余容量*: ${remaining:,.0f}\n"
+
+                used_pct = account_context.get('used_margin_pct', 0)
+                if used_pct > 0:
+                    cap_icon = '🔴' if used_pct > 80 else '🟡' if used_pct > 60 else '🟢'
+                    msg += f"\n*保证金使用率*: {cap_icon} {used_pct:.1f}%\n"
+
+                can_add = account_context.get('can_add_position_safely')
+                if can_add is not None:
+                    msg += f"*可安全加仓*: {'✅ 是' if can_add else '⚠️ 否'}\n"
+            else:
+                msg += f"⚠️ 无法获取实时余额\n配置余额: ${self.equity:,.2f}\n"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_analyze(self) -> Dict[str, Any]:
+        """Handle /analyze command - current technical indicator snapshot."""
+        try:
+            with self._state_lock:
+                cached_price = self._cached_current_price
+
+            msg = "📊 *技术面快照*\n━━━━━━━━━━━━━━━━━━\n\n"
+            msg += f"*BTC*: ${cached_price:,.2f}\n\n"
+
+            # Get cached indicator data (thread-safe)
+            last_signal = getattr(self, 'last_signal', None)
+            latest_sentiment = getattr(self, 'latest_sentiment_data', None)
+            last_heartbeat = getattr(self, '_last_heartbeat_data', None)
+
+            # Technical from last heartbeat (cached, thread-safe)
+            if last_heartbeat:
+                tech = last_heartbeat.get('technical', {})
+                rsi = last_heartbeat.get('rsi', 0)
+                if rsi:
+                    rsi_label = '超买' if rsi > 70 else '超卖' if rsi < 30 else '正常'
+                    msg += f"*RSI*: {rsi:.1f} ({rsi_label})\n"
+                if tech.get('macd_histogram') is not None:
+                    m = tech['macd_histogram']
+                    m_icon = '📈' if m > 0 else '📉'
+                    msg += f"*MACD*: {m_icon} {m:+.2f}\n"
+                if tech.get('trend_direction'):
+                    trend_map = {'BULLISH': '🟢 上涨', 'BEARISH': '🔴 下跌', 'NEUTRAL': '⚪ 震荡'}
+                    msg += f"*趋势*: {trend_map.get(tech['trend_direction'], tech['trend_direction'])}\n"
+                    if tech.get('adx'):
+                        msg += f"*ADX*: {tech['adx']:.0f} ({tech.get('adx_regime', '')})\n"
+                if tech.get('bb_position') is not None:
+                    bb = tech['bb_position'] * 100
+                    msg += f"*布林带位置*: {bb:.0f}%\n"
+                if tech.get('volume_ratio') is not None:
+                    vr = tech['volume_ratio']
+                    v_icon = '🔥' if vr > 1.5 else '📊'
+                    msg += f"*量比*: {v_icon} {vr:.1f}x\n"
+
+                # Order flow
+                of = last_heartbeat.get('order_flow', {})
+                if of.get('buy_ratio') is not None:
+                    br = of['buy_ratio'] * 100
+                    msg += f"\n*买入占比*: {br:.0f}%\n"
+                if of.get('cvd_trend'):
+                    c_icon = '📈' if of['cvd_trend'] == 'RISING' else '📉'
+                    msg += f"*CVD趋势*: {c_icon} {of['cvd_trend']}\n"
+
+                # Derivatives
+                deriv = last_heartbeat.get('derivatives', {})
+                fr = deriv.get('funding_rate_pct')
+                if fr is not None:
+                    msg += f"\n*已结算费率*: {fr:.4f}%\n"
+                pr = deriv.get('predicted_rate_pct')
+                if pr is not None:
+                    msg += f"*预期费率*: {pr:.4f}%\n"
+                oi = deriv.get('oi_change_pct')
+                if oi is not None:
+                    msg += f"*OI变化*: {oi:+.1f}%\n"
+            else:
+                msg += "⚠️ 暂无技术数据 (等待第一次分析)\n"
+
+            # Sentiment
+            if latest_sentiment and latest_sentiment.get('long_short_ratio'):
+                ls = latest_sentiment['long_short_ratio']
+                msg += f"\n*多空比*: {ls:.2f}\n"
+
+            # Last signal
+            if last_signal:
+                sig = last_signal.get('signal', 'N/A')
+                conf = last_signal.get('confidence', 'N/A')
+                sig_icon = {'LONG': '🟢', 'SHORT': '🔴', 'HOLD': '⚪'}.get(sig, '❓')
+                msg += f"\n*上次信号*: {sig_icon} {sig} ({conf})\n"
+                reason = last_signal.get('reasoning', '')
+                if reason:
+                    msg += f"_原因: {reason[:100]}{'...' if len(reason) > 100 else ''}_\n"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_config(self) -> Dict[str, Any]:
+        """Handle /config command - show current strategy configuration."""
+        try:
+            msg = "⚙️ *当前配置*\n━━━━━━━━━━━━━━━━━━\n\n"
+
+            # Trading
+            msg += "*交易*:\n"
+            msg += f"  品种: {self.instrument_id}\n"
+            msg += f"  杠杆: {self.leverage}x\n"
+            msg += f"  最低信心: {self.min_confidence}\n"
+            msg += f"  允许反转: {'✅' if self.allow_reversals else '❌'}\n"
+            msg += f"  暂停状态: {'⏸️ 是' if self.is_trading_paused else '▶️ 否'}\n"
+
+            # Position
+            msg += f"\n*仓位管理*:\n"
+            method = self.position_config.get('method', 'ai_controlled')
+            msg += f"  方法: {method}\n"
+            msg += f"  最大比例: {self.position_config.get('max_position_ratio', 0.3)*100:.0f}%\n"
+
+            # Risk
+            msg += f"\n*风险管理*:\n"
+            msg += f"  自动SL/TP: {'✅' if self.enable_auto_sl_tp else '❌'}\n"
+            msg += f"  Bracket订单: {'✅' if self.enable_oco else '❌'}\n"
+            msg += f"  移动止损: {'✅' if self.enable_trailing_stop else '❌'}\n"
+            if self.enable_trailing_stop:
+                msg += f"    激活: {getattr(self, 'trailing_activation_pct', 0)*100:.1f}%\n"
+                msg += f"    距离: {getattr(self, 'trailing_distance_pct', 0)*100:.1f}%\n"
+
+            # Features
+            msg += f"\n*功能模块*:\n"
+            msg += f"  多时间框架: {'✅' if self.mtf_enabled else '❌'}\n"
+            msg += f"  情绪数据: {'✅' if self.sentiment_enabled else '❌'}\n"
+            msg += f"  Telegram: {'✅' if self.enable_telegram else '❌'}\n"
+
+            # AI
+            msg += f"\n*AI设置*:\n"
+            msg += f"  模型: {getattr(self.config, 'deepseek_model', 'deepseek-chat')}\n"
+            msg += f"  温度: {getattr(self.config, 'deepseek_temperature', 0.3)}\n"
+            msg += f"  辩论轮数: {getattr(self.config, 'debate_rounds', 2)}\n"
+
+            # Timer
+            timer_sec = getattr(self.config, 'timer_interval_sec', 900)
+            msg += f"\n*定时器*: {timer_sec}s ({timer_sec//60}分钟)\n"
+            msg += f"*分析次数*: {getattr(self, 'timer_count', 0)}\n"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_version(self) -> Dict[str, Any]:
+        """Handle /version command - bot version and system info."""
+        try:
+            from datetime import datetime
+            import platform
+            import sys
+
+            uptime_str = "N/A"
+            if self.strategy_start_time:
+                uptime_delta = datetime.utcnow() - self.strategy_start_time
+                days = uptime_delta.days
+                hours = (uptime_delta.total_seconds() % 86400) // 3600
+                minutes = (uptime_delta.total_seconds() % 3600) // 60
+                if days > 0:
+                    uptime_str = f"{days}d {int(hours)}h {int(minutes)}m"
+                else:
+                    uptime_str = f"{int(hours)}h {int(minutes)}m"
+
+            msg = "🤖 *系统信息*\n━━━━━━━━━━━━━━━━━━\n\n"
+            msg += f"*品种*: {self.instrument_id}\n"
+            msg += f"*运行时间*: {uptime_str}\n"
+            msg += f"*分析次数*: {getattr(self, 'timer_count', 0)}\n"
+            msg += f"*交易次数*: {len(getattr(self, 'trade_history', []))}\n\n"
+            msg += f"*Python*: {sys.version.split()[0]}\n"
+            msg += f"*系统*: {platform.system()} {platform.release()}\n"
+            msg += f"*NautilusTrader*: 1.221.0\n"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_logs(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /logs command - show recent log lines."""
+        try:
+            import os
+
+            lines_count = args.get('lines', 20)
+            if lines_count > 50:
+                lines_count = 50
+
+            # Try common log file locations
+            log_paths = [
+                'logs/nautilus_trader.log',
+                'logs/trading.log',
+                '/tmp/nautilus_trader.log',
+            ]
+
+            log_content = None
+            used_path = None
+
+            for path in log_paths:
+                if os.path.exists(path):
+                    with open(path, 'r', errors='replace') as f:
+                        all_lines = f.readlines()
+                        log_content = all_lines[-lines_count:]
+                        used_path = path
+                    break
+
+            if log_content:
+                msg = f"📋 *最近 {len(log_content)} 行日志*\n"
+                msg += f"📁 `{used_path}`\n\n"
+                msg += "```\n"
+                for line in log_content:
+                    # Truncate long lines
+                    clean = line.rstrip()[:120]
+                    msg += clean + "\n"
+                msg += "```"
+
+                if len(msg) > 4000:
+                    msg = msg[:3990] + "...```"
+            else:
+                # Fallback: use journalctl if no log file found
+                msg = "📋 *日志*\n\n"
+                msg += "⚠️ 未找到日志文件\n"
+                msg += "可在服务器运行: `journalctl -u nautilus-trader -n 20`\n"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_force_analysis(self) -> Dict[str, Any]:
+        """Handle /force_analysis command - trigger immediate AI analysis."""
+        try:
+            if self.is_trading_paused:
+                return {
+                    'success': False,
+                    'error': '交易已暂停，无法触发分析。请先 /resume'
+                }
+
+            # Set a flag for on_timer to pick up
+            self._force_analysis_requested = True
+            self.log.info("🔄 Force analysis requested via Telegram")
+
+            return {
+                'success': True,
+                'message': "🔄 *立即分析*\n\n"
+                          "已请求立即触发 AI 分析。\n"
+                          "⏳ 分析将在下一个定时器周期执行 (最多 15 秒)..."
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_partial_close(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /partial_close command - close percentage of position."""
+        try:
+            from nautilus_trader.model.enums import OrderSide
+
+            pct = args.get('percent', 50)
+            if pct <= 0 or pct > 100:
+                return {'success': False, 'error': '百分比必须在 1-100 之间'}
+
+            pos_data = self._get_current_position_data(from_telegram=True)
+
+            if not pos_data or pos_data.get('quantity', 0) == 0:
+                return {
+                    'success': True,
+                    'message': "ℹ️ *无持仓*\n\n当前没有需要平仓的仓位。"
+                }
+
+            full_qty = pos_data['quantity']
+            close_qty = full_qty * (pct / 100)
+            side_str = pos_data['side'].upper()
+
+            # Round to instrument precision
+            close_qty = round(close_qty, 3)
+            if close_qty < self.position_config.get('min_trade_amount', 0.001):
+                return {
+                    'success': False,
+                    'error': f'平仓数量 {close_qty:.4f} 低于最小交易量'
+                }
+
+            close_side = OrderSide.SELL if side_str == 'LONG' else OrderSide.BUY
+
+            # Cancel SL/TP orders if closing more than 50%
+            if pct > 50:
+                try:
+                    open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                    if open_orders:
+                        self.log.info(f"🗑️ Cancelling {len(open_orders)} orders before partial close ({pct}%)")
+                        self.cancel_all_orders(self.instrument_id)
+                except Exception as e:
+                    self.log.warning(f"Failed to cancel orders before partial close: {e}")
+
+            self._submit_order(
+                side=close_side,
+                quantity=close_qty,
+                reduce_only=True,
+            )
+
+            self.log.info(f"📉 Partial close ({pct}%) by Telegram: {close_qty:.4f} BTC")
+
+            return {
+                'success': True,
+                'message': f"📉 *部分平仓 {pct}%*\n\n"
+                          f"方向: {side_str}\n"
+                          f"平仓: {close_qty:.4f} / {full_qty:.4f} BTC\n"
+                          f"剩余: {full_qty - close_qty:.4f} BTC\n\n"
+                          f"⏳ 订单已提交..."
+            }
+        except Exception as e:
+            self.log.error(f"Error in partial close: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_set_leverage(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /set_leverage command - change leverage."""
+        try:
+            new_leverage = args.get('value')
+            if new_leverage is None:
+                return {'success': False, 'error': '请指定杠杆倍数，例如: /set_leverage 10'}
+
+            new_leverage = int(new_leverage)
+            if new_leverage < 1 or new_leverage > 125:
+                return {'success': False, 'error': '杠杆倍数必须在 1-125 之间'}
+
+            # Check if has open position
+            pos_data = self._get_current_position_data(from_telegram=True)
+            if pos_data and pos_data.get('quantity', 0) != 0:
+                return {
+                    'success': False,
+                    'error': '有持仓时不能修改杠杆。请先平仓。'
+                }
+
+            old_leverage = self.leverage
+
+            self.leverage = new_leverage
+            self.log.info(f"⚙️ Leverage changed via Telegram: {old_leverage}x → {new_leverage}x")
+
+            return {
+                'success': True,
+                'message': f"⚙️ *杠杆已修改*\n\n"
+                          f"{old_leverage}x → *{new_leverage}x*\n\n"
+                          f"⚠️ 新杠杆将在下次开仓时生效"
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_toggle(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /toggle command - toggle feature on/off."""
+        try:
+            feature = args.get('feature', '').lower()
+
+            toggleable = {
+                'trailing': ('enable_trailing_stop', '移动止损'),
+                'sentiment': ('sentiment_enabled', '情绪数据'),
+                'mtf': ('mtf_enabled', '多时间框架'),
+                'auto_sltp': ('enable_auto_sl_tp', '自动止损止盈'),
+                'reversal': ('allow_reversals', '允许反转'),
+            }
+
+            if not feature or feature not in toggleable:
+                msg = "🔧 *可切换功能*\n\n"
+                for key, (attr, name) in toggleable.items():
+                    current = getattr(self, attr, False)
+                    icon = '✅' if current else '❌'
+                    msg += f"  `{key}` — {name} {icon}\n"
+                msg += f"\n用法: `/toggle trailing`"
+                return {'success': True, 'message': msg}
+
+            attr_name, feature_name = toggleable[feature]
+            current_value = getattr(self, attr_name, False)
+            new_value = not current_value
+            setattr(self, attr_name, new_value)
+
+            icon = '✅' if new_value else '❌'
+            action = '开启' if new_value else '关闭'
+            self.log.info(f"🔧 Feature toggled via Telegram: {feature_name} → {action}")
+
+            return {
+                'success': True,
+                'message': f"🔧 *{feature_name}* — {icon} {action}\n"
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_set_param(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /set command - modify runtime parameters."""
+        try:
+            param = args.get('param', '').lower()
+            value = args.get('value')
+
+            settable = {
+                'min_confidence': {
+                    'attr': 'min_confidence',
+                    'name': '最低信心',
+                    'valid': ['LOW', 'MEDIUM', 'HIGH'],
+                    'type': 'str',
+                },
+                'trailing_activation': {
+                    'attr': 'trailing_activation_pct',
+                    'name': '移动止损激活',
+                    'range': (0.005, 0.05),
+                    'type': 'float',
+                    'display': lambda v: f"{v*100:.1f}%",
+                },
+                'trailing_distance': {
+                    'attr': 'trailing_distance_pct',
+                    'name': '移动止损距离',
+                    'range': (0.002, 0.03),
+                    'type': 'float',
+                    'display': lambda v: f"{v*100:.1f}%",
+                },
+            }
+
+            if not param or param not in settable:
+                msg = "⚙️ *可修改参数*\n\n"
+                for key, info in settable.items():
+                    current = getattr(self, info['attr'], 'N/A')
+                    display_fn = info.get('display', str)
+                    msg += f"  `{key}` — {info['name']}: {display_fn(current)}\n"
+                    if 'valid' in info:
+                        msg += f"    可选: {', '.join(info['valid'])}\n"
+                    if 'range' in info:
+                        lo, hi = info['range']
+                        msg += f"    范围: {lo} - {hi}\n"
+                msg += f"\n用法: `/set min_confidence HIGH`"
+                return {'success': True, 'message': msg}
+
+            if value is None:
+                return {'success': False, 'error': f'请指定值，例如: /set {param} VALUE'}
+
+            info = settable[param]
+            old_value = getattr(self, info['attr'], None)
+
+            if info['type'] == 'str':
+                value = str(value).upper()
+                if 'valid' in info and value not in info['valid']:
+                    return {'success': False, 'error': f"无效值: {value}。可选: {', '.join(info['valid'])}"}
+                setattr(self, info['attr'], value)
+            elif info['type'] == 'float':
+                try:
+                    value = float(value)
+                except ValueError:
+                    return {'success': False, 'error': f'无效数值: {value}'}
+                if 'range' in info:
+                    lo, hi = info['range']
+                    if value < lo or value > hi:
+                        return {'success': False, 'error': f'超出范围: {lo} - {hi}'}
+                setattr(self, info['attr'], value)
+
+            display_fn = info.get('display', str)
+            self.log.info(f"⚙️ Param changed via Telegram: {info['name']} {display_fn(old_value)} → {display_fn(value)}")
+
+            return {
+                'success': True,
+                'message': f"⚙️ *{info['name']}*\n\n"
+                          f"{display_fn(old_value)} → *{display_fn(value)}*\n"
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_restart(self) -> Dict[str, Any]:
+        """Handle /restart command - schedule service restart."""
+        try:
+            import subprocess
+
+            self.log.warning("🔄 Service restart requested via Telegram")
+
+            # Send notification before restart
+            if self.telegram_bot:
+                self.telegram_bot.send_message_sync(
+                    "🔄 *正在重启服务...*\n\n⏳ 预计 30 秒后恢复",
+                    use_queue=False,
+                )
+
+            # Use systemctl to restart (runs in background)
+            subprocess.Popen(
+                ['sudo', 'systemctl', 'restart', 'nautilus-trader'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            return {
+                'success': True,
+                'message': "🔄 *重启已触发*\n\n"
+                          "服务正在重启，预计 30 秒后恢复。\n"
+                          "请稍后使用 /s 检查状态。"
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
 
     def _check_scheduled_summaries(self):
         """

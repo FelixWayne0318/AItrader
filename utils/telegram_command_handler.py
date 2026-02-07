@@ -69,30 +69,65 @@ QUERY_COMMANDS = {
     'risk':     'risk',
     'daily':    'daily_summary',
     'weekly':   'weekly_summary',
+    'balance':  'balance',
+    'analyze':  'analyze',
+    'config':   'config',
+    'version':  'version',
+}
+
+# Query commands that accept arguments
+QUERY_COMMANDS_WITH_ARGS = {
+    'logs': ('logs', lambda args: {'lines': int(args[0]) if args else 20}),
 }
 
 # Control commands that require PIN verification
 CONTROL_COMMANDS = {'pause', 'resume', 'close'}
 
+# Control commands with arguments (require PIN)
+CONTROL_COMMANDS_WITH_ARGS = {
+    'force_analysis': ('force_analysis', None),
+    'partial_close':  ('partial_close', lambda args: {'percent': int(args[0]) if args else 50}),
+    'set_leverage':   ('set_leverage', lambda args: {'value': args[0] if args else None}),
+    'toggle':         ('toggle', lambda args: {'feature': args[0] if args else ''}),
+    'set':            ('set_param', lambda args: {'param': args[0] if args else '', 'value': args[1] if len(args) > 1 else None}),
+    'restart':        ('restart', None),
+    'update':         ('restart', None),  # alias for restart
+}
+
 # PIN confirmation messages (Chinese)
 PIN_MESSAGES = {
-    'pause':  '暂停交易',
-    'resume': '恢复交易',
-    'close':  '平仓',
+    'pause':          '暂停交易',
+    'resume':         '恢复交易',
+    'close':          '平仓',
+    'force_analysis': '立即分析',
+    'partial_close':  '部分平仓',
+    'set_leverage':   '修改杠杆',
+    'toggle':         '功能开关',
+    'set':            '修改参数',
+    'restart':        '重启服务',
+    'update':         '更新+重启',
 }
 
 # Menu callback_data -> strategy command mapping
 CALLBACK_MAP = {
-    'q_status':   'status',
-    'q_position': 'position',
-    'q_orders':   'orders',
-    'q_history':  'history',
-    'q_risk':     'risk',
-    'q_daily':    'daily_summary',
-    'q_weekly':   'weekly_summary',
-    'c_pause':    'pause',
-    'c_resume':   'resume',
-    'c_close':    'close',
+    # Query
+    'q_status':    'status',
+    'q_position':  'position',
+    'q_orders':    'orders',
+    'q_history':   'history',
+    'q_risk':      'risk',
+    'q_daily':     'daily_summary',
+    'q_weekly':    'weekly_summary',
+    'q_balance':   'balance',
+    'q_analyze':   'analyze',
+    'q_config':    'config',
+    'q_version':   'version',
+    # Control
+    'c_pause':     'pause',
+    'c_resume':    'resume',
+    'c_close':     'close',
+    'c_fa':        'force_analysis',
+    'c_restart':   'restart',
 }
 
 
@@ -244,10 +279,11 @@ class TelegramCommandHandler:
 
         if entered_pin == pending['pin']:
             command = pending['command']
+            cmd_args = pending.get('args', [])
             del self._pending_pins[chat_id]
             if self.audit_logger:
                 self.audit_logger.log_2fa(user_id=chat_id, event="success", command=command)
-            return {'valid': True, 'command': command, 'error': None}
+            return {'valid': True, 'command': command, 'error': None, 'args': cmd_args}
 
         return {'valid': False, 'command': pending['command'], 'error': 'invalid_pin'}
 
@@ -299,25 +335,39 @@ class TelegramCommandHandler:
     def _menu_keyboard():
         """Build the main menu inline keyboard."""
         return InlineKeyboardMarkup([
+            # Row 1: Core info
             [
                 InlineKeyboardButton("📊 状态", callback_data='q_status'),
                 InlineKeyboardButton("💰 持仓", callback_data='q_position'),
-                InlineKeyboardButton("📋 订单", callback_data='q_orders'),
+                InlineKeyboardButton("💵 余额", callback_data='q_balance'),
             ],
+            # Row 2: Market data
             [
+                InlineKeyboardButton("📈 技术面", callback_data='q_analyze'),
+                InlineKeyboardButton("📋 订单", callback_data='q_orders'),
                 InlineKeyboardButton("⚠️ 风险", callback_data='q_risk'),
-                InlineKeyboardButton("📈 历史", callback_data='q_history'),
             ],
+            # Row 3: Reports
             [
                 InlineKeyboardButton("📅 日报", callback_data='q_daily'),
                 InlineKeyboardButton("📆 周报", callback_data='q_weekly'),
+                InlineKeyboardButton("📈 历史", callback_data='q_history'),
             ],
+            # Row 4: Trading control
             [
                 InlineKeyboardButton("⏸️ 暂停", callback_data='c_pause'),
                 InlineKeyboardButton("▶️ 恢复", callback_data='c_resume'),
+                InlineKeyboardButton("🔄 分析", callback_data='c_fa'),
             ],
+            # Row 5: Dangerous operations
             [
                 InlineKeyboardButton("🔴 平仓", callback_data='c_close'),
+                InlineKeyboardButton("🔁 重启", callback_data='c_restart'),
+            ],
+            # Row 6: System
+            [
+                InlineKeyboardButton("⚙️ 配置", callback_data='q_config'),
+                InlineKeyboardButton("ℹ️ 版本", callback_data='q_version'),
             ],
         ])
 
@@ -359,8 +409,23 @@ class TelegramCommandHandler:
 
     async def _dispatch_control(self, update, chat_id: str, command: str):
         """Execute a control command (after PIN verification or PIN disabled)."""
+        await self._dispatch_control_with_args(update, chat_id, command, [])
+
+    async def _dispatch_control_with_args(self, update, chat_id: str, command: str, cmd_args: list):
+        """Execute a control command with arguments."""
         try:
-            result = self.strategy_callback(command, {})
+            # Map command to strategy callback name and parse args
+            if command in CONTROL_COMMANDS:
+                strategy_cmd = command
+                args = {}
+            elif command in CONTROL_COMMANDS_WITH_ARGS:
+                strategy_cmd, args_parser = CONTROL_COMMANDS_WITH_ARGS[command]
+                args = args_parser(cmd_args) if args_parser and cmd_args else {}
+            else:
+                strategy_cmd = command
+                args = {}
+
+            result = self.strategy_callback(strategy_cmd, args)
 
             if result.get('success'):
                 self._audit_command(chat_id, f'/{command}', 'success')
@@ -386,6 +451,34 @@ class TelegramCommandHandler:
         strategy_cmd = QUERY_COMMANDS.get(command_name, command_name)
         await self._dispatch_query(update, strategy_cmd)
 
+    async def _handle_query_with_args(self, update: Update, context: ContextTypes.DEFAULT_TYPE, command_name: str):
+        """Handler for query commands that accept arguments."""
+        if not self._is_authorized(update):
+            await self._send_response(update, "❌ Unauthorized")
+            return
+
+        self.logger.info(f"Received /{command_name} command with args: {context.args}")
+
+        cmd_info = QUERY_COMMANDS_WITH_ARGS.get(command_name)
+        if not cmd_info:
+            await self._send_response(update, "❌ Unknown command")
+            return
+
+        strategy_cmd, args_parser = cmd_info
+        args = args_parser(context.args) if args_parser and context.args else {}
+
+        try:
+            result = self.strategy_callback(strategy_cmd, args)
+            if result.get('success'):
+                message = result.get('message', '无数据')
+                if len(message) > 4000:
+                    message = message[:4000] + "..."
+            else:
+                message = f"❌ {result.get('error', 'Unknown error')}"
+            await self._send_response(update, message)
+        except Exception as e:
+            await self._send_response(update, f"❌ {str(e)}")
+
     async def _handle_control(self, update: Update, context: ContextTypes.DEFAULT_TYPE, command_name: str):
         """Generic handler for control slash commands with PIN flow."""
         chat_id = str(update.effective_chat.id)
@@ -398,7 +491,10 @@ class TelegramCommandHandler:
             await self._send_response(update, "⚠️ 请求过于频繁，请稍后再试")
             return
 
-        self.logger.info(f"Received /{command_name} command")
+        self.logger.info(f"Received /{command_name} command with args: {getattr(context, 'args', [])}")
+
+        # Store args for after PIN verification
+        cmd_args = getattr(context, 'args', []) or []
 
         if self.enable_pin:
             # For close, include position info in PIN prompt
@@ -423,6 +519,8 @@ class TelegramCommandHandler:
                     pass
 
             pin = self._request_pin(chat_id, command_name)
+            # Store args with PIN for later retrieval
+            self._pending_pins[chat_id]['args'] = cmd_args
             pin_msg = PIN_MESSAGES.get(command_name, command_name)
             await self._send_response(
                 update,
@@ -434,7 +532,7 @@ class TelegramCommandHandler:
             return
 
         # PIN disabled — execute directly
-        await self._dispatch_control(update, chat_id, command_name)
+        await self._dispatch_control_with_args(update, chat_id, command_name, cmd_args)
 
     async def cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show interactive inline keyboard menu."""
@@ -457,20 +555,22 @@ class TelegramCommandHandler:
         help_msg = (
             "🤖 *交易机器人*\n\n"
             "*快捷命令*:\n"
-            "• `/s` — 快速状态\n"
-            "• `/p` — 快速持仓\n"
-            "• `/menu` — 操作面板\n"
-            "• `/close` — 平仓\n\n"
-            "*完整命令*:\n"
-            "• `/status` — 系统状态\n"
-            "• `/position` — 当前持仓\n"
-            "• `/orders` — 查看挂单\n"
-            "• `/history` — 交易记录\n"
-            "• `/risk` — 风险指标\n"
-            "• `/daily` — 日报\n"
-            "• `/weekly` — 周报\n"
-            "• `/pause` — 暂停交易\n"
-            "• `/resume` — 恢复交易\n\n"
+            "  `/s` 状态 | `/p` 持仓 | `/b` 余额\n"
+            "  `/a` 技术面 | `/v` 版本 | `/l` 日志\n"
+            "  `/fa` 立即分析 | `/pc` 部分平仓\n\n"
+            "*查询*:\n"
+            "  `/status` `/position` `/balance`\n"
+            "  `/orders` `/risk` `/analyze`\n"
+            "  `/daily` `/weekly` `/history`\n"
+            "  `/config` `/version` `/logs`\n\n"
+            "*控制* (需 PIN):\n"
+            "  `/pause` `/resume` `/close`\n"
+            "  `/force_analysis` — 立即触发 AI 分析\n"
+            "  `/partial_close 50` — 部分平仓 50%\n"
+            "  `/set_leverage 10` — 修改杠杆\n"
+            "  `/toggle trailing` — 功能开关\n"
+            "  `/set min_confidence HIGH` — 修改参数\n"
+            "  `/restart` — 重启服务\n\n"
             "💡 推荐使用 /menu 按钮操作\n"
         )
         await self._send_response(update, help_msg)
@@ -565,7 +665,7 @@ class TelegramCommandHandler:
                 )
                 return
 
-            # Pause/Resume from menu: execute with audit (no PIN for menu buttons)
+            # Pause/Resume/ForceAnalysis/Restart from menu: execute with audit
             try:
                 result = self.strategy_callback(strategy_cmd, {})
                 if result.get('success'):
@@ -603,8 +703,9 @@ class TelegramCommandHandler:
 
         if result['valid']:
             command = result['command']
+            cmd_args = result.get('args', [])
             self.logger.info(f"PIN verified for: {command}")
-            await self._dispatch_control(update, chat_id, command)
+            await self._dispatch_control_with_args(update, chat_id, command, cmd_args)
         else:
             error = result['error']
             if error == 'pin_expired':
@@ -628,6 +729,9 @@ class TelegramCommandHandler:
                 BotCommand("menu", "操作面板"),
                 BotCommand("s", "快速状态"),
                 BotCommand("p", "查看持仓"),
+                BotCommand("b", "账户余额"),
+                BotCommand("a", "技术面"),
+                BotCommand("fa", "立即分析"),
                 BotCommand("close", "平仓"),
                 BotCommand("help", "帮助"),
             ]
@@ -698,18 +802,50 @@ class TelegramCommandHandler:
                 self.application.add_handler(
                     CommandHandler("p", lambda u, c: self._handle_query(u, c, 'position'))
                 )
+                self.application.add_handler(
+                    CommandHandler("b", lambda u, c: self._handle_query(u, c, 'balance'))
+                )
+                self.application.add_handler(
+                    CommandHandler("a", lambda u, c: self._handle_query(u, c, 'analyze'))
+                )
+                self.application.add_handler(
+                    CommandHandler("v", lambda u, c: self._handle_query(u, c, 'version'))
+                )
 
-                # Legacy query commands (still work when typed, not in "/" menu)
+                # Query commands (no PIN)
                 for cmd_name in QUERY_COMMANDS:
                     self.application.add_handler(
                         CommandHandler(cmd_name, lambda u, c, n=cmd_name: self._handle_query(u, c, n))
                     )
 
-                # Control commands
+                # Query commands with args
+                for cmd_name in QUERY_COMMANDS_WITH_ARGS:
+                    self.application.add_handler(
+                        CommandHandler(cmd_name, lambda u, c, n=cmd_name: self._handle_query_with_args(u, c, n))
+                    )
+                # Shortcut: /l = logs
+                self.application.add_handler(
+                    CommandHandler("l", lambda u, c: self._handle_query_with_args(u, c, 'logs'))
+                )
+
+                # Control commands (PIN required)
                 for cmd_name in CONTROL_COMMANDS:
                     self.application.add_handler(
                         CommandHandler(cmd_name, lambda u, c, n=cmd_name: self._handle_control(u, c, n))
                     )
+
+                # Control commands with args (PIN required)
+                for cmd_name in CONTROL_COMMANDS_WITH_ARGS:
+                    self.application.add_handler(
+                        CommandHandler(cmd_name, lambda u, c, n=cmd_name: self._handle_control(u, c, n))
+                    )
+                # Shortcuts: /fa = force_analysis, /pc = partial_close
+                self.application.add_handler(
+                    CommandHandler("fa", lambda u, c: self._handle_control(u, c, 'force_analysis'))
+                )
+                self.application.add_handler(
+                    CommandHandler("pc", lambda u, c: self._handle_control(u, c, 'partial_close'))
+                )
 
                 # UI commands
                 self.application.add_handler(CommandHandler("help", self.cmd_help))

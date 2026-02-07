@@ -1316,29 +1316,49 @@ python3 scripts/diagnose_orderbook.py --symbol ETHUSDT --limit 50 --volatility 0
 
 ### Telegram 命令 (v3.0 重设计)
 
-**"/" 菜单显示** (5 个快捷命令):
+**"/" 菜单显示** (8 个快捷命令):
 
 | 命令 | 说明 |
 |------|------|
 | `/menu` | 操作面板 (推荐入口) |
 | `/s` | 快速状态 |
 | `/p` | 快速查看持仓 |
+| `/b` | 账户余额 |
+| `/a` | 技术面快照 |
+| `/fa` | 立即触发 AI 分析 |
 | `/close` | 平仓 (需 PIN) |
 | `/help` | 帮助 |
 
-**完整命令** (可直接输入，不在 "/" 菜单中):
+**查询命令** (无需 PIN):
 
-| 命令 | 说明 | 类型 |
+| 命令 | 快捷 | 说明 |
 |------|------|------|
-| `/status` | 系统状态 | 查询 |
-| `/position` | 当前持仓 | 查询 |
-| `/orders` | 查看挂单 | 查询 |
-| `/history` | 交易记录 | 查询 |
-| `/risk` | 风险指标 | 查询 |
-| `/daily` | 日报 | 查询 |
-| `/weekly` | 周报 | 查询 |
-| `/pause` | 暂停交易 | 控制 (需 PIN) |
-| `/resume` | 恢复交易 | 控制 (需 PIN) |
+| `/status` | `/s` | 系统状态 |
+| `/position` | `/p` | 当前持仓 |
+| `/balance` | `/b` | 账户余额、保证金、容量 |
+| `/analyze` | `/a` | 技术指标快照 (RSI/MACD/BB) |
+| `/orders` | — | 查看挂单 |
+| `/history` | — | 交易记录 |
+| `/risk` | — | 风险指标 |
+| `/daily` | — | 日报 |
+| `/weekly` | — | 周报 |
+| `/config` | — | 当前策略配置 |
+| `/version` | `/v` | 版本号+运行时间 |
+| `/logs` | `/l` | 最近日志 (20行) |
+
+**控制命令** (需 PIN):
+
+| 命令 | 快捷 | 说明 |
+|------|------|------|
+| `/pause` | — | 暂停交易 |
+| `/resume` | — | 恢复交易 |
+| `/close` | — | 全部平仓 |
+| `/force_analysis` | `/fa` | 立即触发 AI 分析 |
+| `/partial_close 50` | `/pc 50` | 部分平仓 (指定百分比) |
+| `/set_leverage 10` | — | 修改杠杆倍数 |
+| `/toggle trailing` | — | 功能开关 (trailing/sentiment/mtf/auto\_sltp/reversal) |
+| `/set min_confidence HIGH` | — | 修改运行时参数 |
+| `/restart` | — | 重启交易服务 |
 
 **菜单交互**: `/menu` 显示 inline keyboard，点击按钮后显示结果 + "返回菜单" 按钮。
 
