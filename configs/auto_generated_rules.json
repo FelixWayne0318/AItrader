@@ -3939,12 +3939,62 @@
       "pattern_type": "contains",
       "created": "2026-02-07T06:52:33.269071",
       "auto_generated": true
+    },
+    {
+      "id": "1494c1486bdb",
+      "commit": "2848b1e",
+      "file": "utils/telegram_command_handler.py",
+      "message": "fix(telegram): add error handling to cmd_menu + global error handler",
+      "pattern": "self.logger.info(f\"✅ Bot commands registered ({len(commands)} commands): {[c.command for c in commands]}\")",
+      "pattern_type": "contains",
+      "created": "2026-02-07T13:05:42.139418",
+      "auto_generated": true
+    },
+    {
+      "id": "ea6af891e157",
+      "commit": "1af3da8",
+      "file": "main_live.py",
+      "message": "fix(telegram): send initializing notification before instrument loading",
+      "pattern": "import requests",
+      "pattern_type": "import",
+      "created": "2026-02-07T13:05:42.201096",
+      "auto_generated": true
+    },
+    {
+      "id": "5dc0b3e7903d",
+      "commit": "1af3da8",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(telegram): send initializing notification before instrument loading",
+      "pattern": "# This ensures user gets notified even if instrument loading fails/takes long",
+      "pattern_type": "contains",
+      "created": "2026-02-07T13:05:42.235163",
+      "auto_generated": true
+    },
+    {
+      "id": "f623335fdfd1",
+      "commit": "26b616c",
+      "file": "main_live.py",
+      "message": "fix(telegram): ensure startup/shutdown notifications are reliably sent",
+      "pattern": "import signal",
+      "pattern_type": "import",
+      "created": "2026-02-07T13:05:42.275720",
+      "auto_generated": true
+    },
+    {
+      "id": "6592c0f25de0",
+      "commit": "26b616c",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(telegram): ensure startup/shutdown notifications are reliably sent",
+      "pattern": "self.telegram_bot.send_message_sync(startup_msg, use_queue=False)",
+      "pattern_type": "contains",
+      "created": "2026-02-07T13:05:42.302094",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-07T06:52:40.978242",
-    "count": 394,
+    "updated": "2026-02-07T13:05:51.360664",
+    "count": 399,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
