@@ -112,8 +112,6 @@ ai:
   # 信号处理
   signal:
     history_count: 30             # 信号历史队列大小 (原 maxlen=30)
-    skip_on_divergence: true      # [LEGACY] AI 分歧时跳过交易
-    use_confidence_fusion: true   # [LEGACY] 不再使用
 
 # =============================================================================
 # 情绪数据
@@ -284,11 +282,6 @@ network:
   bar_persistence:
     max_limit: 1500               # Binance K线最大获取数量
     timeout: 10                   # 请求超时 (秒)
-
-  # OCO 订单管理 (Redis)
-  oco_manager:
-    socket_timeout: 5             # Redis socket 超时 (秒)
-    socket_connect_timeout: 5     # Redis 连接超时 (秒)
 
   # Telegram
   telegram:

@@ -14,7 +14,6 @@ v3.0 Redesign (2026-02):
 
 import asyncio
 import logging
-import concurrent.futures
 from typing import Optional, Dict, Any
 from datetime import datetime
 

@@ -7,8 +7,6 @@ Runs the DeepSeek AI strategy on Binance Futures (BTCUSDT-PERP) with live market
 import os
 import sys
 import argparse
-import yaml
-from decimal import Decimal
 from pathlib import Path
 
 # =============================================================================
@@ -56,34 +54,6 @@ else:
     load_dotenv()  # Try default locations
     print("[CONFIG] Warning: No .env file found, using system environment")
 
-
-def load_yaml_config() -> dict:
-    """
-    Load strategy configuration from YAML file.
-
-    Returns
-    -------
-    dict
-        Configuration dictionary from YAML, or empty dict if loading fails
-    """
-    config_path = Path(__file__).parent / "configs" / "strategy_config.yaml"
-    if not config_path.exists():
-        print(f"[CONFIG] Warning: {config_path} not found, using defaults")
-        return {}
-
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
-            if config is None:
-                print(f"[CONFIG] Warning: {config_path} is empty, using defaults")
-                return {}
-            return config
-    except yaml.YAMLError as e:
-        print(f"[CONFIG] Error parsing YAML config: {e}")
-        raise
-    except Exception as e:
-        print(f"[CONFIG] Error loading config file: {e}")
-        raise
 
 
 def _strip_env_comment(value: str) -> str:
@@ -262,12 +232,6 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         # OCO (from ConfigManager)
         enable_oco=config_manager.get('risk', 'oco', 'enabled', default=True),
 
-        # [LEGACY - 不再使用] Multi-Agent Divergence Handling
-        # 保留用于向后兼容，但不再生效
-        # Support both old (strategy.risk.*) and new (ai.signal.*) paths via PATH_ALIASES
-        skip_on_divergence=config_manager.get('ai', 'signal', 'skip_on_divergence', default=True),
-        use_confidence_fusion=config_manager.get('ai', 'signal', 'use_confidence_fusion', default=True),
-
         # Execution
         position_adjustment_threshold=config_manager.get('execution', 'position_adjustment_threshold', default=0.001),
 
@@ -316,8 +280,6 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         network_binance_balance_cache_ttl=config_manager.get('network', 'binance', 'balance_cache_ttl', default=5.0),
         network_bar_persistence_max_limit=config_manager.get('network', 'bar_persistence', 'max_limit', default=1500),
         network_bar_persistence_timeout=config_manager.get('network', 'bar_persistence', 'timeout', default=10.0),
-        network_oco_manager_socket_timeout=config_manager.get('network', 'oco_manager', 'socket_timeout', default=5.0),
-        network_oco_manager_socket_connect_timeout=config_manager.get('network', 'oco_manager', 'socket_connect_timeout', default=5.0),
         sentiment_timeout=config_manager.get('sentiment', 'timeout', default=10.0),
 
         # Multi-Timeframe Configuration (v3.3: removed unused filter configs)

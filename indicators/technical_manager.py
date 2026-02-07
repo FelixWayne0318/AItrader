@@ -5,7 +5,6 @@ Manages all technical indicators using NautilusTrader's built-in indicators.
 """
 
 from typing import Dict, Any, List
-from decimal import Decimal
 
 # Use Cython indicators (not Rust PyO3) to avoid thread safety panics
 # Reference: https://github.com/Patrick-code-Bot/nautilus_AItrader

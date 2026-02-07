@@ -15,8 +15,7 @@ Reference: TradingAgents (UCLA/MIT) - https://github.com/TauricResearch/TradingA
 import os
 import asyncio
 import threading
-from decimal import Decimal
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, Tuple
 
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
@@ -25,7 +24,6 @@ from nautilus_trader.model.enums import OrderSide, TimeInForce, PositionSide, Pr
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.position import Position
-from nautilus_trader.model.orders import MarketOrder
 from datetime import datetime, timedelta
 
 import sys
@@ -44,13 +42,10 @@ from utils.binance_orderbook_client import BinanceOrderBookClient
 from utils.orderbook_processor import OrderBookProcessor
 from utils.binance_derivatives_client import BinanceDerivativesClient
 from strategy.trading_logic import (
-    check_confidence_threshold,
     calculate_position_size,
     validate_multiagent_sltp,
     calculate_technical_sltp,
-    # process_signals removed - Hierarchical architecture uses MultiAgent Judge as final decision maker
 )
-# OCOManager no longer needed - using NautilusTrader's built-in bracket orders
 
 
 class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
@@ -119,12 +114,6 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     rsi_extreme_threshold_lower: float = 30.0  # 与 strategy_config.yaml 一致
     rsi_extreme_multiplier: float = 0.7
 
-    # [LEGACY - 不再使用] Multi-Agent Divergence Handling
-    # 层级决策架构中，Judge决策即最终决策，不存在信号合并/冲突
-    # 以下选项保留用于向后兼容，但不再生效
-    skip_on_divergence: bool = True  # [LEGACY] 不再使用
-    use_confidence_fusion: bool = True  # [LEGACY] 不再使用
-    
     # Stop Loss & Take Profit
     enable_auto_sl_tp: bool = True
     sl_use_support_resistance: bool = True
@@ -197,8 +186,6 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     network_binance_balance_cache_ttl: float = 5.0
     network_bar_persistence_max_limit: int = 1500
     network_bar_persistence_timeout: float = 10.0
-    network_oco_manager_socket_timeout: float = 5.0
-    network_oco_manager_socket_connect_timeout: float = 5.0
     network_instrument_discovery_max_retries: int = 60  # Instrument 加载最大重试次数
     network_instrument_discovery_retry_interval: float = 1.0  # Instrument 加载重试间隔 (秒)
     network_binance_api_timeout: float = 10.0  # Binance API 超时 (秒)
@@ -282,10 +269,6 @@ class DeepSeekAIStrategy(Strategy):
         self.rsi_extreme_lower = config.rsi_extreme_threshold_lower
         self.rsi_extreme_mult = config.rsi_extreme_multiplier
 
-        # Multi-Agent Divergence Handling
-        self.skip_on_divergence = config.skip_on_divergence
-        self.use_confidence_fusion = config.use_confidence_fusion
-
         # Stop Loss & Take Profit
         self.enable_auto_sl_tp = config.enable_auto_sl_tp
         self.sl_use_support_resistance = config.sl_use_support_resistance
@@ -309,9 +292,8 @@ class DeepSeekAIStrategy(Strategy):
 
         # OCO (One-Cancels-the-Other) - Now handled by NautilusTrader's bracket orders
         # No need for manual OCO manager anymore
-        self.enable_oco = config.enable_oco  # Keep for config compatibility
-        self.oco_manager = None  # Deprecated: bracket orders handle OCO automatically
-        
+        self.enable_oco = config.enable_oco
+
         # Trailing Stop Loss
         self.enable_trailing_stop = config.enable_trailing_stop
         self.trailing_activation_pct = config.trailing_activation_pct
