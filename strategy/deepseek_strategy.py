@@ -1587,8 +1587,14 @@ class DeepSeekAIStrategy(Strategy):
                                 'sma_200': trend_layer_data.get('sma_200', 0),
                                 'macd': trend_layer_data.get('macd', 0),
                                 'macd_signal': trend_layer_data.get('macd_signal', 0),
+                                # v3.25: 增加 1D RSI + ADX 供 AI 宏观分析
+                                'rsi': trend_layer_data.get('rsi', 0),
+                                'adx': trend_layer_data.get('adx', 0),
+                                'di_plus': trend_layer_data.get('di_plus', 0),
+                                'di_minus': trend_layer_data.get('di_minus', 0),
+                                'adx_regime': trend_layer_data.get('adx_regime', 'UNKNOWN'),
                             }
-                            self.log.info(f"[MTF] AI 分析使用 1D 趋势层数据: SMA_200=${ai_technical_data['mtf_trend_layer']['sma_200']:,.2f}")
+                            self.log.info(f"[MTF] AI 分析使用 1D 趋势层数据: SMA_200=${ai_technical_data['mtf_trend_layer']['sma_200']:,.2f}, RSI={ai_technical_data['mtf_trend_layer']['rsi']:.1f}, ADX={ai_technical_data['mtf_trend_layer']['adx']:.1f}")
                     except Exception as e:
                         self.log.warning(f"[MTF] 获取趋势层数据失败: {e}")
 
