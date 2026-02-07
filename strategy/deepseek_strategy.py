@@ -3497,6 +3497,143 @@ class DeepSeekAIStrategy(Strategy):
             'action_taken': f'开{side_cn}仓 {quantity:.4f} BTC',
         }
 
+    def _validate_and_adjust_rr_post_fill(
+        self,
+        instrument_key: str,
+        fill_price: float,
+        side: str,
+    ):
+        """
+        v4.9: Post-fill R/R validation and TP adjustment.
+
+        Problem: SL/TP are calculated using estimated price (bar close), but MARKET order
+        fills at a different price (slippage). This can degrade R/R below the 1.5:1 minimum.
+
+        Solution: After fill, recalculate R/R with actual fill price. If below minimum,
+        cancel existing TP and submit a new one that restores R/R >= min_rr_ratio.
+
+        Parameters
+        ----------
+        instrument_key : str
+            Instrument key in trailing_stop_state
+        fill_price : float
+            Actual fill price from PositionOpened event
+        side : str
+            Position side ('LONG' or 'SHORT')
+        """
+        try:
+            from strategy.trading_logic import get_min_rr_ratio
+
+            state = self.trailing_stop_state.get(instrument_key)
+            if not state:
+                return
+
+            sl_price = state.get("current_sl_price")
+            tp_price = state.get("current_tp_price")
+
+            if not sl_price or not tp_price or fill_price <= 0:
+                return
+
+            is_long = side.upper() == 'LONG'
+            min_rr = get_min_rr_ratio()
+
+            # Calculate R/R with actual fill price
+            if is_long:
+                risk = fill_price - sl_price
+                reward = tp_price - fill_price
+            else:
+                risk = sl_price - fill_price
+                reward = fill_price - tp_price
+
+            if risk <= 0:
+                self.log.warning(
+                    f"⚠️ Post-fill R/R check: SL on wrong side "
+                    f"(fill=${fill_price:,.2f}, SL=${sl_price:,.2f}, side={side})"
+                )
+                return
+
+            actual_rr = reward / risk
+
+            if actual_rr >= min_rr:
+                self.log.info(
+                    f"✅ Post-fill R/R check: {actual_rr:.2f}:1 >= {min_rr}:1 "
+                    f"(fill=${fill_price:,.2f})"
+                )
+                return
+
+            # R/R below minimum — need to adjust TP
+            self.log.warning(
+                f"⚠️ Post-fill R/R degraded: {actual_rr:.2f}:1 < {min_rr}:1 "
+                f"(estimated entry vs fill=${fill_price:,.2f}, diff=${fill_price - state.get('entry_price', fill_price):+.2f})"
+            )
+
+            # Calculate new TP to restore R/R
+            if is_long:
+                new_tp = fill_price + (risk * min_rr)
+            else:
+                new_tp = fill_price - (risk * min_rr)
+
+            self.log.info(
+                f"🔄 Adjusting TP: ${tp_price:,.2f} → ${new_tp:,.2f} "
+                f"(restoring R/R to {min_rr}:1)"
+            )
+
+            # Find and cancel existing TP order, submit new one
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            tp_cancelled = False
+
+            for order in open_orders:
+                if order.is_reduce_only and order.order_type == OrderType.LIMIT:
+                    try:
+                        self.cancel_order(order)
+                        tp_cancelled = True
+                        self.log.debug(f"🗑️ Cancelled old TP: {str(order.client_order_id)[:8]}")
+                    except Exception as e:
+                        self.log.warning(f"Failed to cancel old TP: {e}")
+
+            # Submit adjusted TP order
+            tp_side = OrderSide.SELL if is_long else OrderSide.BUY
+            quantity = state.get("quantity", 0)
+            if quantity > 0:
+                new_tp_order = self.order_factory.limit(
+                    instrument_id=self.instrument_id,
+                    order_side=tp_side,
+                    quantity=self.instrument.make_qty(quantity),
+                    price=self.instrument.make_price(new_tp),
+                    time_in_force=TimeInForce.GTC,
+                    reduce_only=True,
+                )
+                self.submit_order(new_tp_order)
+
+                # Update trailing stop state
+                state["current_tp_price"] = new_tp
+
+                self.log.info(
+                    f"✅ TP adjusted post-fill: ${tp_price:,.2f} → ${new_tp:,.2f} "
+                    f"(R/R restored to {min_rr}:1)"
+                )
+
+                # Send Telegram alert
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        alert_msg = (
+                            f"🔄 *TP 自动调整 (成交后)*\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"原因: 实际成交价 ${fill_price:,.2f} 导致 R/R 降至 {actual_rr:.2f}:1\n"
+                            f"旧 TP: ${tp_price:,.2f}\n"
+                            f"新 TP: ${new_tp:,.2f}\n"
+                            f"R/R: {actual_rr:.2f}:1 → {min_rr}:1\n"
+                            f"SL: ${sl_price:,.2f} (不变)"
+                        )
+                        self.telegram_bot.send_message_sync(alert_msg)
+                    except Exception:
+                        pass
+            else:
+                self.log.warning("⚠️ Cannot adjust TP: quantity unknown")
+
+        except Exception as e:
+            self.log.error(f"❌ Post-fill R/R validation failed: {e}")
+
     def _update_sltp_quantity(self, new_total_quantity: float, position_side: str):
         """
         v3.18: Update SL/TP order quantities after adding to position.
@@ -3932,16 +4069,31 @@ class DeepSeekAIStrategy(Strategy):
             return
 
         # Determine latest price for entry estimation
+        # v4.9: Prefer real-time Binance API price over stale bar close
+        # Bar close can be minutes old, causing R/R validation to use wrong price
         entry_price: Optional[float] = None
 
-        if self.latest_price_data and self.latest_price_data.get('price'):
+        # Priority 1: Real-time price from Binance REST API (most accurate)
+        if self.binance_account:
+            try:
+                realtime_price = self.binance_account.get_realtime_price('BTCUSDT')
+                if realtime_price and realtime_price > 0:
+                    entry_price = realtime_price
+                    self.log.debug(f"📊 Using Binance real-time price for bracket: ${entry_price:,.2f}")
+            except Exception as e:
+                self.log.debug(f"Real-time price fetch failed, using fallback: {e}")
+
+        # Priority 2: Latest price data from AI analysis (bar close)
+        if entry_price is None and self.latest_price_data and self.latest_price_data.get('price'):
             entry_price = float(self.latest_price_data['price'])
 
+        # Priority 3: Recent bars
         if entry_price is None and hasattr(self.indicator_manager, "recent_bars"):
             recent_bars = self.indicator_manager.recent_bars
             if recent_bars:
                 entry_price = float(recent_bars[-1].close)
 
+        # Priority 4: Cache bars
         if entry_price is None:
             cache_bars = self.cache.bars(self.bar_type)
             if cache_bars:
@@ -4187,6 +4339,15 @@ class DeepSeekAIStrategy(Strategy):
 
                 self.log.debug(
                     f"📊 Updated trailing stop state with actual entry price: ${entry_price:,.2f}"
+                )
+
+                # v4.9: Post-fill R/R validation
+                # SL/TP were calculated using estimated price, but MARKET fill may be different.
+                # If fill price degraded R/R below minimum, adjust TP upward to restore.
+                self._validate_and_adjust_rr_post_fill(
+                    instrument_key=instrument_key,
+                    fill_price=entry_price,
+                    side=event.side.name,
                 )
             else:
                 # Fallback: initialize if not already set (shouldn't happen with bracket orders)
