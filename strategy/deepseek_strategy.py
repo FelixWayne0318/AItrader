@@ -3361,6 +3361,15 @@ class DeepSeekAIStrategy(Strategy):
                     except Exception as e:
                         self.log.debug(f"Failed to send scaling notification: {e}")
 
+                # v4.10: Recreate SL/TP for remaining position after reduce
+                # All SL/TP were cancelled above, so we must recreate from trailing_stop_state
+                remaining_qty = fresh_qty - actual_reduce
+                if remaining_qty > 0.0001:
+                    self._recreate_sltp_after_reduce(remaining_qty, target_side)
+                    self.log.info(
+                        f"📝 Recreated SL/TP for remaining {remaining_qty:.4f} BTC"
+                    )
+
                 # v4.1: Update signal status - reducing position
                 self._last_signal_status = {
                     'executed': True,
@@ -3636,7 +3645,7 @@ class DeepSeekAIStrategy(Strategy):
 
     def _update_sltp_quantity(self, new_total_quantity: float, position_side: str):
         """
-        v3.18: Update SL/TP order quantities after adding to position.
+        v3.18/v4.10: Update SL/TP order quantities after adding to position.
 
         When adding to an existing position, the SL/TP orders still have the old quantity.
         This method updates them to match the new total position size.
@@ -3644,6 +3653,7 @@ class DeepSeekAIStrategy(Strategy):
         Strategy:
         1. Try to modify existing orders using NautilusTrader's modify_order
         2. If modify fails (not supported), cancel and recreate SL/TP
+        3. v4.10: VERIFY SL/TP exist after update - if missing, submit emergency SL
 
         Parameters
         ----------
@@ -3652,6 +3662,9 @@ class DeepSeekAIStrategy(Strategy):
         position_side : str
             Position side ('long' or 'short')
         """
+        sl_confirmed = False
+        tp_confirmed = False
+
         try:
             open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
             reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
@@ -3661,135 +3674,331 @@ class DeepSeekAIStrategy(Strategy):
                     f"⚠️ No SL/TP orders found to update after adding to position. "
                     f"Position may not be fully protected."
                 )
-                return
-
-            self.log.info(
-                f"📝 Updating {len(reduce_only_orders)} SL/TP orders to new quantity: "
-                f"{new_total_quantity:.4f} BTC"
-            )
-
-            new_qty = self.instrument.make_qty(new_total_quantity)
-            updated_count = 0
-            failed_orders = []
-
-            for order in reduce_only_orders:
-                try:
-                    # Try to modify the order quantity
-                    self.modify_order(order, new_qty)
-                    updated_count += 1
-                    self.log.debug(
-                        f"✅ Modified order {str(order.client_order_id)[:8]}... "
-                        f"to quantity {new_total_quantity:.4f}"
-                    )
-                except Exception as modify_error:
-                    self.log.warning(
-                        f"⚠️ Failed to modify order {str(order.client_order_id)[:8]}...: {modify_error}"
-                    )
-                    failed_orders.append(order)
-
-            # Handle failed modifications by cancel and recreate
-            if failed_orders:
+                # Fall through to verification step below
+            else:
                 self.log.info(
-                    f"🔄 {len(failed_orders)} orders couldn't be modified, will cancel and recreate"
+                    f"📝 Updating {len(reduce_only_orders)} SL/TP orders to new quantity: "
+                    f"{new_total_quantity:.4f} BTC"
                 )
 
-                # Collect order details before cancelling
-                sl_orders_to_recreate = []
-                tp_orders_to_recreate = []
+                new_qty = self.instrument.make_qty(new_total_quantity)
+                updated_count = 0
+                failed_orders = []
 
-                for order in failed_orders:
+                for order in reduce_only_orders:
                     try:
-                        # Determine if this is SL or TP based on order type
+                        # Try to modify the order quantity
+                        self.modify_order(order, new_qty)
+                        updated_count += 1
                         if order.order_type == OrderType.STOP_MARKET:
-                            trigger_price = float(order.trigger_price) if hasattr(order, 'trigger_price') else None
-                            if trigger_price:
-                                sl_orders_to_recreate.append({
-                                    'trigger_price': trigger_price,
-                                    'side': order.side,
-                                })
+                            sl_confirmed = True
                         elif order.order_type == OrderType.LIMIT:
-                            limit_price = float(order.price) if hasattr(order, 'price') else None
-                            if limit_price:
-                                tp_orders_to_recreate.append({
-                                    'price': limit_price,
-                                    'side': order.side,
-                                })
-
-                        # Cancel the old order
-                        self.cancel_order(order)
-                        self.log.debug(f"🗑️ Cancelled old order {str(order.client_order_id)[:8]}...")
-                    except Exception as cancel_error:
-                        self.log.error(f"❌ Failed to cancel order: {cancel_error}")
-
-                # Recreate SL orders with new quantity
-                for sl_info in sl_orders_to_recreate:
-                    try:
-                        new_sl_order = self.order_factory.stop_market(
-                            instrument_id=self.instrument_id,
-                            order_side=sl_info['side'],
-                            quantity=new_qty,
-                            trigger_price=self.instrument.make_price(sl_info['trigger_price']),
-                            trigger_type=TriggerType.LAST_PRICE,
-                            reduce_only=True,
+                            tp_confirmed = True
+                        self.log.debug(
+                            f"✅ Modified order {str(order.client_order_id)[:8]}... "
+                            f"to quantity {new_total_quantity:.4f}"
                         )
-                        self.submit_order(new_sl_order)
-                        updated_count += 1
-                        self.log.info(
-                            f"✅ Recreated SL order @ ${sl_info['trigger_price']:,.2f} "
-                            f"with qty {new_total_quantity:.4f}"
+                    except Exception as modify_error:
+                        self.log.warning(
+                            f"⚠️ Failed to modify order {str(order.client_order_id)[:8]}...: {modify_error}"
                         )
+                        failed_orders.append(order)
 
-                        # Update trailing stop state if needed
-                        instrument_key = str(self.instrument_id)
-                        if instrument_key in self.trailing_stop_state:
-                            self.trailing_stop_state[instrument_key]["sl_order_id"] = str(new_sl_order.client_order_id)
-                            self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
-                    except Exception as recreate_error:
-                        self.log.error(f"❌ Failed to recreate SL order: {recreate_error}")
+                # Handle failed modifications by cancel and recreate
+                if failed_orders:
+                    self.log.info(
+                        f"🔄 {len(failed_orders)} orders couldn't be modified, will cancel and recreate"
+                    )
 
-                # Recreate TP orders with new quantity
-                for tp_info in tp_orders_to_recreate:
-                    try:
-                        new_tp_order = self.order_factory.limit(
-                            instrument_id=self.instrument_id,
-                            order_side=tp_info['side'],
-                            quantity=new_qty,
-                            price=self.instrument.make_price(tp_info['price']),
-                            time_in_force=TimeInForce.GTC,
-                            reduce_only=True,
-                        )
-                        self.submit_order(new_tp_order)
-                        updated_count += 1
-                        self.log.info(
-                            f"✅ Recreated TP order @ ${tp_info['price']:,.2f} "
-                            f"with qty {new_total_quantity:.4f}"
-                        )
-                    except Exception as recreate_error:
-                        self.log.error(f"❌ Failed to recreate TP order: {recreate_error}")
+                    # Collect order details before cancelling
+                    sl_orders_to_recreate = []
+                    tp_orders_to_recreate = []
 
-            if updated_count > 0:
-                self.log.info(
-                    f"✅ Updated {updated_count} SL/TP orders to match new position size"
-                )
+                    for order in failed_orders:
+                        try:
+                            # Determine if this is SL or TP based on order type
+                            if order.order_type == OrderType.STOP_MARKET:
+                                trigger_price = float(order.trigger_price) if hasattr(order, 'trigger_price') else None
+                                if trigger_price:
+                                    sl_orders_to_recreate.append({
+                                        'trigger_price': trigger_price,
+                                        'side': order.side,
+                                    })
+                            elif order.order_type == OrderType.LIMIT:
+                                limit_price = float(order.price) if hasattr(order, 'price') else None
+                                if limit_price:
+                                    tp_orders_to_recreate.append({
+                                        'price': limit_price,
+                                        'side': order.side,
+                                    })
 
-                # Update trailing stop state quantity
-                instrument_key = str(self.instrument_id)
-                if instrument_key in self.trailing_stop_state:
-                    self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
+                            # Cancel the old order
+                            self.cancel_order(order)
+                            self.log.debug(f"🗑️ Cancelled old order {str(order.client_order_id)[:8]}...")
+                        except Exception as cancel_error:
+                            self.log.error(f"❌ Failed to cancel order: {cancel_error}")
+
+                    # Recreate SL orders with new quantity
+                    for sl_info in sl_orders_to_recreate:
+                        try:
+                            new_sl_order = self.order_factory.stop_market(
+                                instrument_id=self.instrument_id,
+                                order_side=sl_info['side'],
+                                quantity=new_qty,
+                                trigger_price=self.instrument.make_price(sl_info['trigger_price']),
+                                trigger_type=TriggerType.LAST_PRICE,
+                                reduce_only=True,
+                            )
+                            self.submit_order(new_sl_order)
+                            sl_confirmed = True
+                            updated_count += 1
+                            self.log.info(
+                                f"✅ Recreated SL order @ ${sl_info['trigger_price']:,.2f} "
+                                f"with qty {new_total_quantity:.4f}"
+                            )
+
+                            # Update trailing stop state if needed
+                            instrument_key = str(self.instrument_id)
+                            if instrument_key in self.trailing_stop_state:
+                                self.trailing_stop_state[instrument_key]["sl_order_id"] = str(new_sl_order.client_order_id)
+                                self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
+                        except Exception as recreate_error:
+                            self.log.error(f"❌ Failed to recreate SL order: {recreate_error}")
+
+                    # Recreate TP orders with new quantity
+                    for tp_info in tp_orders_to_recreate:
+                        try:
+                            new_tp_order = self.order_factory.limit(
+                                instrument_id=self.instrument_id,
+                                order_side=tp_info['side'],
+                                quantity=new_qty,
+                                price=self.instrument.make_price(tp_info['price']),
+                                time_in_force=TimeInForce.GTC,
+                                reduce_only=True,
+                            )
+                            self.submit_order(new_tp_order)
+                            tp_confirmed = True
+                            updated_count += 1
+                            self.log.info(
+                                f"✅ Recreated TP order @ ${tp_info['price']:,.2f} "
+                                f"with qty {new_total_quantity:.4f}"
+                            )
+                        except Exception as recreate_error:
+                            self.log.error(f"❌ Failed to recreate TP order: {recreate_error}")
+
+                if updated_count > 0:
+                    self.log.info(
+                        f"✅ Updated {updated_count} SL/TP orders to match new position size"
+                    )
+
+                    # Update trailing stop state quantity
+                    instrument_key = str(self.instrument_id)
+                    if instrument_key in self.trailing_stop_state:
+                        self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
 
         except Exception as e:
             self.log.error(f"❌ Failed to update SL/TP quantities: {e}")
-            # Send warning - position may be partially protected
+
+        # ===== v4.10: CRITICAL - Verify SL exists after update =====
+        # If SL was not confirmed (modify failed AND recreate failed), position is UNPROTECTED.
+        # Submit emergency SL using default 2% stop loss.
+        if not sl_confirmed:
+            self._submit_emergency_sl(new_total_quantity, position_side, reason="加仓后SL更新失败")
+
+        # Send warning if TP is missing (less critical than SL)
+        if not tp_confirmed:
+            self.log.warning(
+                f"⚠️ TP order not confirmed after scaling. "
+                f"Position has SL protection but no TP."
+            )
             if self.telegram_bot and self.enable_telegram:
                 try:
                     alert_msg = self.telegram_bot.format_error_alert({
                         'level': 'WARNING',
-                        'message': f"加仓后更新SL/TP失败，仓位可能未完全保护",
-                        'context': f"新仓位: {new_total_quantity:.4f} BTC, 错误: {str(e)[:50]}",
+                        'message': f"加仓后TP更新失败，仓位仅有SL保护",
+                        'context': f"仓位: {new_total_quantity:.4f} BTC {position_side}",
                     })
                     self.telegram_bot.send_message_sync(alert_msg)
                 except Exception:
                     pass
+
+    def _submit_emergency_sl(self, quantity: float, position_side: str, reason: str):
+        """
+        v4.10: Submit emergency stop loss when normal SL is missing.
+
+        This is a safety net - if SL update/recreate fails during scaling,
+        we MUST have a stop loss to prevent unlimited losses.
+
+        Uses 2% default stop loss from current price.
+
+        Parameters
+        ----------
+        quantity : float
+            Position quantity in BTC
+        position_side : str
+            Position side ('long' or 'short')
+        reason : str
+            Why emergency SL is needed (for logging/alert)
+        """
+        try:
+            # Get current price for emergency SL calculation
+            current_price = None
+            if self.binance_account:
+                try:
+                    current_price = self.binance_account.get_realtime_price('BTCUSDT')
+                except Exception:
+                    pass
+
+            if not current_price:
+                with self._state_lock:
+                    current_price = self._cached_current_price
+
+            if not current_price or current_price <= 0:
+                self.log.error(
+                    f"🚨 CRITICAL: Cannot submit emergency SL - no price available! "
+                    f"Position {quantity:.4f} BTC {position_side} is UNPROTECTED!"
+                )
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        self.telegram_bot.send_message_sync(
+                            f"🚨 CRITICAL: 无法提交紧急止损 - 无法获取价格!\n"
+                            f"仓位 {quantity:.4f} BTC {position_side} 处于无保护状态!\n"
+                            f"原因: {reason}\n"
+                            f"请立即手动设置止损!"
+                        )
+                    except Exception:
+                        pass
+                return
+
+            # Calculate emergency SL: 2% from current price
+            emergency_sl_pct = 0.02
+            if position_side == 'long':
+                sl_price = current_price * (1 - emergency_sl_pct)
+                exit_side = OrderSide.SELL
+            else:
+                sl_price = current_price * (1 + emergency_sl_pct)
+                exit_side = OrderSide.BUY
+
+            new_qty = self.instrument.make_qty(quantity)
+            emergency_sl = self.order_factory.stop_market(
+                instrument_id=self.instrument_id,
+                order_side=exit_side,
+                quantity=new_qty,
+                trigger_price=self.instrument.make_price(sl_price),
+                trigger_type=TriggerType.LAST_PRICE,
+                reduce_only=True,
+            )
+            self.submit_order(emergency_sl)
+
+            # Update trailing stop state
+            instrument_key = str(self.instrument_id)
+            if instrument_key in self.trailing_stop_state:
+                self.trailing_stop_state[instrument_key]["sl_order_id"] = str(emergency_sl.client_order_id)
+                self.trailing_stop_state[instrument_key]["current_sl_price"] = sl_price
+                self.trailing_stop_state[instrument_key]["quantity"] = quantity
+
+            self.log.warning(
+                f"🚨 Emergency SL submitted @ ${sl_price:,.2f} (2% from ${current_price:,.2f})\n"
+                f"   Reason: {reason}\n"
+                f"   Quantity: {quantity:.4f} BTC {position_side}"
+            )
+
+            # Send CRITICAL Telegram alert
+            if self.telegram_bot and self.enable_telegram:
+                try:
+                    self.telegram_bot.send_message_sync(
+                        f"🚨 紧急止损已设置\n\n"
+                        f"原因: {reason}\n"
+                        f"仓位: {quantity:.4f} BTC {position_side.upper()}\n"
+                        f"紧急SL: ${sl_price:,.2f} (距当前价 2%)\n"
+                        f"当前价: ${current_price:,.2f}\n\n"
+                        f"⚠️ 这是安全回退止损，请检查是否需要调整"
+                    )
+                except Exception:
+                    pass
+
+        except Exception as e:
+            self.log.error(f"🚨 CRITICAL: Emergency SL submission failed: {e}")
+            if self.telegram_bot and self.enable_telegram:
+                try:
+                    self.telegram_bot.send_message_sync(
+                        f"🚨 CRITICAL: 紧急止损提交失败!\n"
+                        f"仓位 {quantity:.4f} BTC {position_side} 处于无保护状态!\n"
+                        f"错误: {str(e)[:100]}\n"
+                        f"请立即手动设置止损!"
+                    )
+                except Exception:
+                    pass
+
+    def _recreate_sltp_after_reduce(self, remaining_qty: float, position_side: str):
+        """
+        v4.10: Recreate SL/TP orders after reducing position.
+
+        After a reduce, all SL/TP were cancelled. This recreates them for the
+        remaining position using stored trailing_stop_state prices.
+        Falls back to emergency SL if state is unavailable.
+
+        Parameters
+        ----------
+        remaining_qty : float
+            Remaining position quantity after reduce
+        position_side : str
+            Position side ('long' or 'short')
+        """
+        try:
+            instrument_key = str(self.instrument_id)
+            state = self.trailing_stop_state.get(instrument_key)
+
+            sl_price = state.get("current_sl_price") if state else None
+            tp_price = state.get("current_tp_price") if state else None
+            exit_side = OrderSide.SELL if position_side == 'long' else OrderSide.BUY
+            new_qty = self.instrument.make_qty(remaining_qty)
+            sl_submitted = False
+
+            # Recreate SL
+            if sl_price and sl_price > 0:
+                try:
+                    new_sl = self.order_factory.stop_market(
+                        instrument_id=self.instrument_id,
+                        order_side=exit_side,
+                        quantity=new_qty,
+                        trigger_price=self.instrument.make_price(sl_price),
+                        trigger_type=TriggerType.LAST_PRICE,
+                        reduce_only=True,
+                    )
+                    self.submit_order(new_sl)
+                    sl_submitted = True
+                    self.log.info(f"✅ Recreated SL @ ${sl_price:,.2f} for {remaining_qty:.4f} BTC")
+
+                    if state:
+                        state["sl_order_id"] = str(new_sl.client_order_id)
+                        state["quantity"] = remaining_qty
+                except Exception as e:
+                    self.log.error(f"❌ Failed to recreate SL: {e}")
+
+            # Recreate TP
+            if tp_price and tp_price > 0:
+                try:
+                    new_tp = self.order_factory.limit(
+                        instrument_id=self.instrument_id,
+                        order_side=exit_side,
+                        quantity=new_qty,
+                        price=self.instrument.make_price(tp_price),
+                        time_in_force=TimeInForce.GTC,
+                        reduce_only=True,
+                    )
+                    self.submit_order(new_tp)
+                    self.log.info(f"✅ Recreated TP @ ${tp_price:,.2f} for {remaining_qty:.4f} BTC")
+                except Exception as e:
+                    self.log.error(f"❌ Failed to recreate TP: {e}")
+
+            # If SL failed, use emergency SL
+            if not sl_submitted:
+                self._submit_emergency_sl(remaining_qty, position_side, reason="减仓后SL重建失败")
+
+        except Exception as e:
+            self.log.error(f"❌ Failed to recreate SL/TP after reduce: {e}")
+            self._submit_emergency_sl(remaining_qty, position_side, reason=f"减仓后SL/TP重建异常: {str(e)[:50]}")
 
     def _close_position_only(self, current_position: Dict[str, Any]):
         """
@@ -4267,8 +4476,10 @@ class DeepSeekAIStrategy(Strategy):
         """
         Handle order filled events.
 
-        Note: OCO logic is now handled automatically by NautilusTrader's bracket orders.
-        We no longer need to manually cancel peer orders.
+        v4.10: When a reduce_only (SL/TP) order fills, immediately cancel its peer.
+        Original bracket OCO is handled by NautilusTrader, but after _update_sltp_quantity
+        cancel+recreate, standalone SL/TP orders lose OCO linkage.
+        This ensures the peer order is cleaned up immediately, not 15 minutes later.
         """
         filled_order_id = str(event.client_order_id)
 
@@ -4277,6 +4488,29 @@ class DeepSeekAIStrategy(Strategy):
             f"{event.last_qty} @ {event.last_px} "
             f"(ID: {filled_order_id[:8]}...)"
         )
+
+        # v4.10: Immediate OCO peer cleanup for standalone SL/TP orders
+        # After _update_sltp_quantity cancel+recreate, SL and TP are independent.
+        # When one fills, we must cancel the other immediately.
+        try:
+            filled_order = self.cache.order(event.client_order_id)
+            if filled_order and filled_order.is_reduce_only:
+                # This was a SL or TP fill - cancel any remaining reduce_only orders
+                open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                peer_orders = [o for o in open_orders
+                               if o.is_reduce_only and o.client_order_id != event.client_order_id]
+                if peer_orders:
+                    for peer in peer_orders:
+                        try:
+                            self.cancel_order(peer)
+                            self.log.info(
+                                f"🔗 Cancelled OCO peer order {str(peer.client_order_id)[:8]}... "
+                                f"(type: {peer.order_type.name}) after {filled_order.order_type.name} fill"
+                            )
+                        except Exception as e:
+                            self.log.warning(f"⚠️ Failed to cancel OCO peer: {e}")
+        except Exception as e:
+            self.log.debug(f"OCO peer cleanup check: {e}")
 
         # v4.0: Order fill notification is now combined with position notification
         # See on_position_opened for unified trade execution message
