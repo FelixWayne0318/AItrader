@@ -702,6 +702,23 @@ class DeepSeekAIStrategy(Strategy):
         from datetime import datetime
         self._start_time = datetime.now()
 
+        # Send immediate "initializing" notification BEFORE instrument loading
+        # This ensures user gets notified even if instrument loading fails/takes long
+        if (self.telegram_bot and self.enable_telegram and
+            getattr(self, 'telegram_notify_startup', True)):
+            try:
+                safe_id = self.telegram_bot.escape_markdown(str(self.instrument_id))
+                init_msg = (
+                    f"🔄 *Strategy Initializing*\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"📊 {safe_id}\n"
+                    f"⏳ Loading instruments...\n"
+                    f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                )
+                self.telegram_bot.send_message_sync(init_msg, use_queue=False)
+            except Exception as e:
+                self.log.warning(f"Failed to send init notification: {e}")
+
         # Load instrument with retry mechanism
         # The instrument may not be immediately available as the data client
         # loads instruments asynchronously from Binance

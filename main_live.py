@@ -454,6 +454,41 @@ def parse_args():
     return parser.parse_args()
 
 
+def _send_shutdown_telegram(config_manager):
+    """
+    Fallback shutdown notification via direct HTTP call to Telegram API.
+
+    This runs in the finally block of main() to guarantee the user is notified
+    even if NautilusTrader's on_stop() was never called (e.g., SIGTERM killed
+    the event loop before strategy cleanup).
+    """
+    try:
+        import requests
+        from datetime import datetime
+
+        enabled = config_manager.get('telegram', 'enabled', default=False)
+        token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+        chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
+
+        if not enabled or not token or not chat_id:
+            return
+
+        msg = (
+            "🛑 *Service Stopped*\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📋 Process exiting\n"
+            f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        )
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={'chat_id': chat_id, 'text': msg, 'parse_mode': 'Markdown'},
+            timeout=10,
+        )
+        print("📱 Sent shutdown notification to Telegram")
+    except Exception as e:
+        print(f"⚠️  Failed to send shutdown notification: {e}")
+
+
 def main():
     """
     Main entry point for live trading.
@@ -563,6 +598,10 @@ def main():
         print("\n🛑 Cleaning up resources...")
         node.dispose()
         print("✅ Resources cleaned up")
+
+        # Fallback shutdown notification via direct Telegram API
+        # Strategy's on_stop() may not be called if SIGTERM kills the event loop
+        _send_shutdown_telegram(config_manager)
 
         print("\n" + "=" * 70)
         print("Trading session ended")
