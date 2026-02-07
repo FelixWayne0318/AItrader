@@ -125,8 +125,20 @@ Daily holding cost = rate × 3 settlements (every 8h).
   |Rate| < 0.03%: Normal (0.01-0.03% in bull markets is standard, not bearish).
   > +0.05%: Crowded longs. > +0.10%: Extreme, reversal probability rises.
   < -0.03%: Bearish pressure. < -0.10%: Extreme panic, bounce probability rises.
-  Predicted vs current divergence = expect shift at next settlement.
+  Predicted vs settled difference > 0.01% = notable shift in market sentiment.
+  Predicted vs settled sign reversal (e.g., +0.01% → -0.01%) = significant positioning change.
+  Settlement countdown < 30min with extreme predicted rate: expect short-term volatility.
+  History: Persistent same-sign rates (>3 settlements) = established positioning.
+  Reversal from extreme = positioning unwind, expect opposite-side volatility.
 ⚠️ Funding alone without OI/price context = premature contrarian trades.
+
+--- PREMIUM INDEX ---
+Premium Index = (Mark Price - Index Price) / Index Price.
+  Positive = futures trading above spot = long premium (bulls paying to hold).
+  Negative = futures below spot = short premium (bears paying to hold).
+  Predicts next funding rate direction. Premium > 0.05% = expect positive funding.
+  Sharp premium spike = aggressive leveraged positioning, often precedes mean-reversion.
+⚠️ Premium Index is instantaneous — confirm with funding trend before acting.
 
 --- OPEN INTEREST (4-Quadrant Matrix) ---
   Price ↑ + OI ↑ = New longs entering → BULLISH CONFIRMATION
