@@ -1358,6 +1358,11 @@ class TelegramBot:
         return (
             "🤖 *Commands*\n"
             "━━━━━━━━━━━━━━━━━━\n"
+            "\n⚡ *Quick*\n"
+            "  /s — Status\n"
+            "  /p — Position\n"
+            "  /menu — Control panel\n"
+            "  /close — Close position\n"
             "\n📊 *Query*\n"
             "  /status — Strategy status\n"
             "  /position — Current position\n"
@@ -1369,10 +1374,6 @@ class TelegramBot:
             "\n⚙️ *Control*\n"
             "  /pause — Pause trading\n"
             "  /resume — Resume trading\n"
-            "  /close — Close position\n"
-            "\n📋 *Other*\n"
-            "  /menu — Button menu\n"
-            "  /help — This help\n"
         )
 
 

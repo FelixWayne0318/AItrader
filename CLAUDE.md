@@ -725,7 +725,7 @@ Environment=AUTO_CONFIRM=true
 │   ├── deepseek_client.py    # DeepSeek AI 客户端
 │   ├── sentiment_client.py   # Binance 多空比
 │   ├── telegram_bot.py       # Telegram 通知
-│   ├── telegram_command_handler.py # Telegram 命令处理
+│   ├── telegram_command_handler.py # Telegram 命令处理 (v3.0 重设计)
 │   ├── binance_account.py    # Binance 账户工具
 │   ├── bar_persistence.py    # K线数据持久化
 │   └── oco_manager.py        # OCO 订单管理
@@ -1314,19 +1314,33 @@ python3 scripts/diagnose_orderbook.py --symbol ETHUSDT --limit 50 --volatility 0
 4. **启用**: `configs/base.yaml` 中设置 `order_book.enabled: true`
 5. **监控**: 观察数据质量和性能影响
 
-### Telegram 命令
+### Telegram 命令 (v3.0 重设计)
+
+**"/" 菜单显示** (5 个快捷命令):
 
 | 命令 | 说明 |
 |------|------|
-| `/menu` | 显示交互按钮菜单 |
-| `/status` | 查看系统状态和真实余额 |
-| `/position` | 查看当前持仓 |
-| `/orders` | 查看挂单 |
-| `/history` | 最近交易记录 |
-| `/risk` | 风险指标 |
-| `/pause` | 暂停交易 |
-| `/resume` | 恢复交易 |
-| `/close` | 平仓 |
+| `/menu` | 操作面板 (推荐入口) |
+| `/s` | 快速状态 |
+| `/p` | 快速查看持仓 |
+| `/close` | 平仓 (需 PIN) |
+| `/help` | 帮助 |
+
+**完整命令** (可直接输入，不在 "/" 菜单中):
+
+| 命令 | 说明 | 类型 |
+|------|------|------|
+| `/status` | 系统状态 | 查询 |
+| `/position` | 当前持仓 | 查询 |
+| `/orders` | 查看挂单 | 查询 |
+| `/history` | 交易记录 | 查询 |
+| `/risk` | 风险指标 | 查询 |
+| `/daily` | 日报 | 查询 |
+| `/weekly` | 周报 | 查询 |
+| `/pause` | 暂停交易 | 控制 (需 PIN) |
+| `/resume` | 恢复交易 | 控制 (需 PIN) |
+
+**菜单交互**: `/menu` 显示 inline keyboard，点击按钮后显示结果 + "返回菜单" 按钮。
 
 ### 修改配置
 
