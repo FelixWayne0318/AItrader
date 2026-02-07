@@ -857,6 +857,13 @@ class MultiAgentAnalyzer(DiagnosticStep):
 
             self.ctx.signal_data = signal_data
 
+            # Display call trace summary
+            self._display_call_trace_summary()
+
+            # Save full call trace to context for log export
+            if hasattr(self.ctx.multi_agent, 'get_call_trace'):
+                self.ctx.ai_call_trace = self.ctx.multi_agent.get_call_trace()
+
             # Display results
             self._display_results(signal_data)
 
@@ -867,6 +874,39 @@ class MultiAgentAnalyzer(DiagnosticStep):
             import traceback
             traceback.print_exc()
             return False
+
+    def _display_call_trace_summary(self) -> None:
+        """Display a summary table of all AI API calls with timing and tokens."""
+        if not hasattr(self.ctx.multi_agent, 'get_call_trace'):
+            return
+
+        trace = self.ctx.multi_agent.get_call_trace()
+        if not trace:
+            return
+
+        print()
+        print_box(f"AI API 调用追踪 ({len(trace)} 次顺序调用)", 65)
+        print()
+        print(f"  {'#':<4} {'Agent':<16} {'耗时':>6} {'Tokens':>10} {'Prompt':>8} {'Reply':>8}")
+        print(f"  {'─'*4} {'─'*16} {'─'*6} {'─'*10} {'─'*8} {'─'*8}")
+
+        total_time = 0
+        total_tokens = 0
+        for i, call in enumerate(trace, 1):
+            label = call.get('label', f'call_{i}')
+            elapsed = call.get('elapsed_sec', 0)
+            tokens = call.get('tokens', {})
+            prompt_tk = tokens.get('prompt', 0)
+            completion_tk = tokens.get('completion', 0)
+            total_tk = tokens.get('total', 0)
+            total_time += elapsed
+            total_tokens += total_tk
+            print(f"  {i:<4} {label:<16} {elapsed:>5.1f}s {total_tk:>10,} {prompt_tk:>8,} {completion_tk:>8,}")
+
+        print(f"  {'─'*4} {'─'*16} {'─'*6} {'─'*10} {'─'*8} {'─'*8}")
+        print(f"  {'':4} {'TOTAL':<16} {total_time:>5.1f}s {total_tokens:>10,}")
+        print()
+        print(f"  💡 完整 AI 输入/输出已保存到独立日志文件 (--export 模式)")
 
     def _display_results(self, signal_data: Dict) -> None:
         """Display analysis results."""
