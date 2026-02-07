@@ -779,15 +779,14 @@ class DeepSeekAIStrategy(Strategy):
         self.subscribe_bars(self.bar_type)
         self.log.info(f"Subscribed to {self.bar_type}")
 
-        # v3.16: Subscribe to trade ticks for OrderEmulator
-        # This is CRITICAL for emulated SL/TP orders to trigger properly.
-        # Without real-time price data, the emulator only sees bar close prices (every 15 min).
-        # With trade ticks, the emulator can detect SL/TP triggers in real-time.
+        # v4.12: Subscribe to trade ticks for real-time price caching
+        # Used by: _cached_current_price (Telegram commands), trailing stop price tracking
+        # Note: No longer needed for OrderEmulator (v4.12 removed SL/TP emulation)
         try:
             self.subscribe_trade_ticks(self.instrument_id)
-            self.log.info(f"Subscribed to trade ticks for {self.instrument_id} (OrderEmulator support)")
+            self.log.info(f"Subscribed to trade ticks for {self.instrument_id} (price caching)")
         except Exception as e:
-            self.log.warning(f"Failed to subscribe to trade ticks: {e} - SL/TP emulation may be delayed")
+            self.log.warning(f"Failed to subscribe to trade ticks: {e}")
 
         # Multi-Timeframe subscriptions (v3.2.9)
         if self.mtf_enabled and self.mtf_manager:
@@ -873,6 +872,78 @@ class DeepSeekAIStrategy(Strategy):
             except Exception as e:
                 self.log.warning(f"Failed to send Telegram startup notification: {e}")
 
+        # v4.12: Check for existing positions that need SL/TP protection
+        # After process crash/restart, Binance position may exist but SL/TP orders
+        # could have been lost (pre-v4.12 emulated orders) or missed during shutdown.
+        self._recover_sltp_on_start()
+
+    def _recover_sltp_on_start(self):
+        """
+        v4.12: Recover SL/TP protection for existing positions on startup.
+
+        Checks if there's an open position on Binance without SL/TP orders.
+        If found, creates emergency SL to protect the position immediately.
+        """
+        try:
+            position_data = self._get_current_position_data(
+                current_price=0, from_telegram=False
+            )
+            if not position_data or position_data.get('quantity', 0) == 0:
+                self.log.info("✅ No open position on startup — no SL/TP recovery needed")
+                return
+
+            quantity = position_data['quantity']
+            side = position_data.get('side', 'long')
+
+            # Check if SL/TP orders already exist on Binance
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
+
+            has_sl = any(
+                str(o.order_type) == 'STOP_MARKET' or 'STOP' in str(o.order_type)
+                for o in reduce_only_orders
+            )
+
+            if has_sl:
+                self.log.info(
+                    f"✅ Position {side} {quantity:.4f} BTC has SL protection "
+                    f"({len(reduce_only_orders)} protective orders found)"
+                )
+                # Restore trailing_stop_state from existing orders
+                instrument_key = str(self.instrument_id)
+                if instrument_key not in self.trailing_stop_state:
+                    for o in reduce_only_orders:
+                        if 'STOP' in str(o.order_type):
+                            sl_price = float(o.trigger_price) if hasattr(o, 'trigger_price') else 0
+                            self.trailing_stop_state[instrument_key] = {
+                                "entry_price": float(position_data.get('entry_price', 0)),
+                                "highest_price": None,
+                                "lowest_price": None,
+                                "current_sl_price": sl_price,
+                                "current_tp_price": 0,
+                                "sl_order_id": str(o.client_order_id),
+                                "activated": False,
+                                "side": side.upper(),
+                                "quantity": quantity,
+                            }
+                            self.log.info(f"📌 Restored trailing_stop_state from Binance SL @ ${sl_price:,.0f}")
+                            break
+                return
+
+            # No SL found — position is UNPROTECTED!
+            self.log.warning(
+                f"🚨 Position {side} {quantity:.4f} BTC has NO SL/TP protection! "
+                f"Creating emergency SL..."
+            )
+            self._submit_emergency_sl(
+                quantity=quantity,
+                position_side=side,
+                reason="启动时检测到无保护仓位",
+            )
+
+        except Exception as e:
+            self.log.error(f"❌ Failed to recover SL/TP on start: {e}")
+
     def on_stop(self):
         """Actions to be performed on strategy stop."""
         self.log.info("Stopping DeepSeek AI Strategy...")
@@ -907,8 +978,25 @@ class DeepSeekAIStrategy(Strategy):
             except Exception as e:
                 self.log.warning(f"Error stopping Telegram queue: {e}")
 
-        # Cancel any pending orders
-        self.cancel_all_orders(self.instrument_id)
+        # v4.12: Only cancel non-protective orders — keep SL/TP on Binance
+        # Previously: cancel_all_orders() removed SL/TP, leaving position unprotected on restart.
+        # Now: SL/TP (reduce_only orders) stay on Binance, protecting the position even when bot is off.
+        try:
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            for order in open_orders:
+                if not order.is_reduce_only:
+                    self.cancel_order(order)
+                    self.log.info(f"🗑️ Cancelled non-protective order on shutdown: {order.client_order_id}")
+            protective_count = sum(1 for o in open_orders if o.is_reduce_only)
+            if protective_count > 0:
+                self.log.info(f"🛡️ Kept {protective_count} SL/TP orders on Binance for position protection")
+        except Exception as e:
+            self.log.warning(f"Error during selective order cleanup: {e}")
+            # Fallback: cancel all if selective fails (safety)
+            try:
+                self.cancel_all_orders(self.instrument_id)
+            except Exception:
+                pass
 
         # Unsubscribe from data
         self.unsubscribe_bars(self.bar_type)
@@ -1819,6 +1907,9 @@ class DeepSeekAIStrategy(Strategy):
             if self.enable_trailing_stop:
                 self._update_trailing_stops(price_data['price'])
 
+            # v4.12: Dynamic SL/TP update based on current S/R zones
+            if self.enable_auto_sl_tp:
+                self._dynamic_sltp_update()
 
         finally:
             # 🔒 Fix I38: Always release lock when on_timer exits
@@ -4173,11 +4264,12 @@ class DeepSeekAIStrategy(Strategy):
 
     def _recreate_sltp_after_reduce(self, remaining_qty: float, position_side: str):
         """
-        v4.10: Recreate SL/TP orders after reducing position.
+        v4.12: Recreate SL/TP orders after reducing position.
 
-        After a reduce, all SL/TP were cancelled. This recreates them for the
-        remaining position using stored trailing_stop_state prices.
-        Falls back to emergency SL if state is unavailable.
+        After a reduce, all SL/TP were cancelled. This recalculates SL/TP using
+        current S/R zones (via _validate_sltp_for_entry), with a safety rule:
+        new SL must be at least as protective as the old SL.
+        Falls back to emergency SL if recalculation fails.
 
         Parameters
         ----------
@@ -4189,12 +4281,45 @@ class DeepSeekAIStrategy(Strategy):
         try:
             instrument_key = str(self.instrument_id)
             state = self.trailing_stop_state.get(instrument_key)
-
-            sl_price = state.get("current_sl_price") if state else None
-            tp_price = state.get("current_tp_price") if state else None
+            old_sl_price = state.get("current_sl_price") if state else None
             exit_side = OrderSide.SELL if position_side == 'long' else OrderSide.BUY
+            entry_side = OrderSide.BUY if position_side == 'long' else OrderSide.SELL
             new_qty = self.instrument.make_qty(remaining_qty)
             sl_submitted = False
+
+            # v4.12: Recalculate SL/TP using current S/R zones
+            confidence = self.latest_signal_data.get('confidence', 'MEDIUM') if self.latest_signal_data else 'MEDIUM'
+            validated = self._validate_sltp_for_entry(entry_side, confidence)
+
+            if validated:
+                new_sl_price, new_tp_price, entry_price = validated
+
+                # Safety rule: SL can only move in favorable direction
+                # LONG: new SL >= old SL (higher is more protective)
+                # SHORT: new SL <= old SL (lower is more protective)
+                if old_sl_price and old_sl_price > 0:
+                    if position_side == 'long':
+                        final_sl = max(new_sl_price, old_sl_price)
+                    else:
+                        final_sl = min(new_sl_price, old_sl_price)
+                    if final_sl != new_sl_price:
+                        self.log.info(
+                            f"🛡️ SL kept at more protective level: "
+                            f"${final_sl:,.2f} (old) vs ${new_sl_price:,.2f} (new S/R)"
+                        )
+                    new_sl_price = final_sl
+
+                sl_price = new_sl_price
+                tp_price = new_tp_price
+                self.log.info(
+                    f"📊 Reduce recalc: SL=${sl_price:,.2f} TP=${tp_price:,.2f} "
+                    f"(based on current S/R zones)"
+                )
+            else:
+                # Fallback to old prices if recalculation fails
+                sl_price = old_sl_price
+                tp_price = state.get("current_tp_price") if state else None
+                self.log.warning("⚠️ SL/TP recalculation failed, using previous prices")
 
             # Recreate SL
             if sl_price and sl_price > 0:
@@ -4213,6 +4338,7 @@ class DeepSeekAIStrategy(Strategy):
 
                     if state:
                         state["sl_order_id"] = str(new_sl.client_order_id)
+                        state["current_sl_price"] = sl_price
                         state["quantity"] = remaining_qty
                 except Exception as e:
                     self.log.error(f"❌ Failed to recreate SL: {e}")
@@ -4230,6 +4356,9 @@ class DeepSeekAIStrategy(Strategy):
                     )
                     self.submit_order(new_tp)
                     self.log.info(f"✅ Recreated TP @ ${tp_price:,.2f} for {remaining_qty:.4f} BTC")
+
+                    if state:
+                        state["current_tp_price"] = tp_price
                 except Exception as e:
                     self.log.error(f"❌ Failed to recreate TP: {e}")
 
@@ -4240,6 +4369,91 @@ class DeepSeekAIStrategy(Strategy):
         except Exception as e:
             self.log.error(f"❌ Failed to recreate SL/TP after reduce: {e}")
             self._submit_emergency_sl(remaining_qty, position_side, reason=f"减仓后SL/TP重建异常: {str(e)[:50]}")
+
+    def _dynamic_sltp_update(self):
+        """
+        v4.12: Dynamically update SL/TP based on current S/R zones.
+
+        Called every on_timer cycle (15 min). When a position exists, recalculates
+        SL/TP using the latest support/resistance zones.
+
+        Safety rules:
+        - SL only moves in favorable direction (LONG: up, SHORT: down)
+        - TP can move both ways but must maintain R/R >= 1.5:1
+        - Trailing stop coexists: final SL = max(trailing SL, dynamic SL)
+        - Skipped if no position or no S/R data available
+        """
+        try:
+            current_position = self._get_current_position_data()
+            if not current_position:
+                return
+
+            position_side = current_position.get('side', '').lower()
+            quantity = abs(float(current_position.get('quantity', 0)))
+            if quantity <= 0 or position_side not in ('long', 'short'):
+                return
+
+            instrument_key = str(self.instrument_id)
+            state = self.trailing_stop_state.get(instrument_key)
+            if not state:
+                return
+
+            old_sl = state.get("current_sl_price")
+            old_tp = state.get("current_tp_price")
+            if not old_sl or old_sl <= 0:
+                return  # No existing SL to update (emergency SL handles this)
+
+            # Recalculate SL/TP from current S/R zones
+            entry_side = OrderSide.BUY if position_side == 'long' else OrderSide.SELL
+            confidence = self.latest_signal_data.get('confidence', 'MEDIUM') if self.latest_signal_data else 'MEDIUM'
+            validated = self._validate_sltp_for_entry(entry_side, confidence)
+            if not validated:
+                return  # No S/R data available, skip this cycle
+
+            new_sl, new_tp, current_price = validated
+
+            # Safety: SL only moves in favorable direction
+            if position_side == 'long':
+                final_sl = max(new_sl, old_sl)
+            else:
+                final_sl = min(new_sl, old_sl)
+
+            # Trailing stop coexistence: use whichever is more protective
+            if self.enable_trailing_stop and state.get("trailing_active"):
+                trailing_sl = state.get("current_sl_price", 0)
+                if position_side == 'long':
+                    final_sl = max(final_sl, trailing_sl)
+                else:
+                    final_sl = min(final_sl, trailing_sl)
+
+            final_tp = new_tp  # TP can move both ways (R/R already validated)
+
+            # Check if update is needed (avoid unnecessary cancel+recreate)
+            sl_changed = abs(final_sl - old_sl) / old_sl > 0.001  # > 0.1% change
+            tp_changed = old_tp and old_tp > 0 and abs(final_tp - old_tp) / old_tp > 0.001
+
+            if not sl_changed and not tp_changed:
+                self.log.debug("📊 Dynamic SL/TP: no significant change, skipping update")
+                return
+
+            # Log the update
+            changes = []
+            if sl_changed:
+                changes.append(f"SL: ${old_sl:,.2f}→${final_sl:,.2f}")
+            if tp_changed:
+                changes.append(f"TP: ${old_tp:,.2f}→${final_tp:,.2f}")
+            self.log.info(f"🔄 Dynamic SL/TP update: {', '.join(changes)}")
+
+            # Use _replace_sltp_orders for atomic cancel+recreate
+            self._replace_sltp_orders(
+                new_total_quantity=quantity,
+                position_side=position_side,
+                new_sl_price=final_sl,
+                new_tp_price=final_tp,
+            )
+
+        except Exception as e:
+            self.log.warning(f"⚠️ Dynamic SL/TP update failed (position still protected): {e}")
 
     def _close_position_only(self, current_position: Dict[str, Any]):
         """
@@ -4554,10 +4768,12 @@ class DeepSeekAIStrategy(Strategy):
         )
 
         try:
-            # Create bracket order using OrderFactory
-            # This automatically creates entry + SL + TP with OTO/OCO linkage
-            # IMPORTANT: Use emulation_trigger to enable order emulation for Binance compatibility
-            # Binance doesn't support native OCO+OTO orders, so NautilusTrader will emulate them
+            # v4.12: Create bracket order WITHOUT emulation - SL/TP go directly to Binance
+            # Previously used emulation_trigger=TriggerType.DEFAULT which kept SL/TP in local
+            # OrderEmulator memory. This meant: (1) Binance shows no pending orders, (2) process
+            # crash = SL/TP lost = position unprotected, (3) mixed emulated/venue state after scaling.
+            # Now: OTO handled by ExecutionEngine (children released after entry fills),
+            # OCO managed manually in on_order_filled() (cancel peer when one fills).
             bracket_order_list = self.order_factory.bracket(
                 instrument_id=self.instrument_id,
                 order_side=side,
@@ -4565,7 +4781,7 @@ class DeepSeekAIStrategy(Strategy):
                 sl_trigger_price=self.instrument.make_price(stop_loss_price),
                 tp_price=self.instrument.make_price(tp_price),
                 time_in_force=TimeInForce.GTC,
-                emulation_trigger=TriggerType.DEFAULT,  # Enable order emulation
+                # emulation_trigger omitted → defaults to NO_TRIGGER → sent to Binance
             )
 
             # Submit the bracket order list
@@ -4644,10 +4860,10 @@ class DeepSeekAIStrategy(Strategy):
         """
         Handle order filled events.
 
-        v4.10: When a reduce_only (SL/TP) order fills, immediately cancel its peer.
-        Original bracket OCO is handled by NautilusTrader, but after _update_sltp_quantity
-        cancel+recreate, standalone SL/TP orders lose OCO linkage.
-        This ensures the peer order is cleaned up immediately, not 15 minutes later.
+        v4.12: ALL SL/TP OCO management is handled here (not by OrderEmulator).
+        Since v4.12 removed emulation (SL/TP sent directly to Binance), there is no
+        automatic OCO linkage. When SL fills → cancel TP, when TP fills → cancel SL.
+        This applies to ALL scenarios: bracket, add, reduce, trailing stop.
         """
         filled_order_id = str(event.client_order_id)
 
