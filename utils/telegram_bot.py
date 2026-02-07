@@ -446,9 +446,8 @@ class TelegramBot:
         block_long = sr_zone.get('block_long', False)
         block_short = sr_zone.get('block_short', False)
 
-        # Derivatives (v5.0: Binance funding rate with predicted rate + trend)
+        # Derivatives (Binance funding rate + trend)
         funding_rate_pct = derivatives.get('funding_rate_pct')
-        predicted_rate_pct = derivatives.get('predicted_rate_pct')
         next_funding_min = derivatives.get('next_funding_countdown_min')
         funding_trend = derivatives.get('funding_trend')
         liq_long = derivatives.get('liq_long')
@@ -604,8 +603,6 @@ class TelegramBot:
                 if funding_rate_pct is not None:
                     fr_icon = '🔴' if funding_rate_pct > 0.01 else '🟢' if funding_rate_pct < -0.01 else '⚪'
                     fr_line = f"  费率  {fr_icon} {funding_rate_pct:.4f}%"
-                    if predicted_rate_pct is not None:
-                        fr_line += f" (预测 {predicted_rate_pct:.4f}%)"
                     if funding_trend:
                         ft_icon = '📈' if funding_trend == 'RISING' else '📉' if funding_trend == 'FALLING' else '➖'
                         fr_line += f" {ft_icon}"

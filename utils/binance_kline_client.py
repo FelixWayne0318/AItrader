@@ -102,13 +102,12 @@ class BinanceKlineClient:
 
     def get_funding_rate(self, symbol: str = "BTCUSDT") -> Optional[Dict[str, Any]]:
         """
-        获取 Binance 完整的资金费率数据 (v3.22: 增强版)
+        获取 Binance 资金费率数据
 
-        从 premiumIndex 提取所有字段，并计算预期资金费率。
-
-        币安资金费率公式:
-            Funding Rate = Premium Index + clamp(Interest Rate - Premium Index, ±0.05%)
-            Premium Index = (Mark Price - Index Price) / Index Price
+        从 premiumIndex 提取数据。注意:
+        - lastFundingRate: 上次已结算费率 (8小时一次)
+        - 币安不提供预期资金费率的 REST API
+        - 溢价指数仅为瞬时值，不等于平均溢价
 
         Returns
         -------
@@ -117,14 +116,12 @@ class BinanceKlineClient:
                 "symbol": "BTCUSDT",
                 "funding_rate": 0.0001,           # 上次结算费率 (原始值)
                 "funding_rate_pct": 0.01,         # 上次结算费率 (百分比)
-                "predicted_rate": 0.00015,        # 预期下次费率 (原始值)
-                "predicted_rate_pct": 0.015,      # 预期下次费率 (百分比)
                 "next_funding_time": 1234567890000,
                 "next_funding_countdown_min": 180, # 距下次结算分钟数
                 "mark_price": 98000.0,
                 "index_price": 97950.0,
-                "interest_rate": 0.0001,          # 基础利率
-                "premium_index": 0.00051,         # 当前溢价指数
+                "interest_rate": 0.0001,
+                "premium_index": 0.00051,         # 当前瞬时溢价指数
                 "source": "binance_direct",
             }
         """
@@ -144,17 +141,10 @@ class BinanceKlineClient:
                 interest_rate = float(data.get('interestRate', 0))
                 next_funding_time = data.get('nextFundingTime', 0)
 
-                # 计算当前溢价指数 (Premium Index)
+                # 瞬时溢价指数 (仅供参考，不等于平均溢价)
                 premium_index = 0.0
                 if index_price > 0:
                     premium_index = (mark_price - index_price) / index_price
-
-                # 计算预期资金费率 (Predicted Funding Rate)
-                # 公式: FR = Premium Index + clamp(Interest Rate - Premium Index, ±0.05%)
-                clamp_limit = 0.0005  # ±0.05%
-                diff = interest_rate - premium_index
-                clamped_diff = max(-clamp_limit, min(clamp_limit, diff))
-                predicted_rate = premium_index + clamped_diff
 
                 # 计算距下次结算的分钟数
                 countdown_min = None
@@ -168,8 +158,6 @@ class BinanceKlineClient:
                     "symbol": data.get('symbol'),
                     "funding_rate": funding_rate,
                     "funding_rate_pct": round(funding_rate * 100, 4),
-                    "predicted_rate": predicted_rate,
-                    "predicted_rate_pct": round(predicted_rate * 100, 4),
                     "next_funding_time": next_funding_time,
                     "next_funding_countdown_min": countdown_min,
                     "mark_price": mark_price,

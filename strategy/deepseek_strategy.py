@@ -2125,7 +2125,6 @@ class DeepSeekAIStrategy(Strategy):
                         derivatives_heartbeat = {
                             'funding_rate': binance_funding.get('funding_rate'),  # raw decimal
                             'funding_rate_pct': binance_funding.get('funding_rate_pct'),  # percentage
-                            'predicted_rate_pct': binance_funding.get('predicted_rate_pct'),
                             'next_funding_countdown_min': binance_funding.get('next_funding_countdown_min'),
                             'funding_trend': funding_trend,
                             'source': 'binance',
