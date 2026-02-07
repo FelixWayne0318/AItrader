@@ -16,6 +16,10 @@ ExecStartPre=/bin/sleep 2
 
 ExecStart=/home/linuxuser/nautilus_AItrader/venv/bin/python main_live.py
 
+# Graceful shutdown: send SIGTERM, wait 30s for Telegram notification + cleanup
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
 # Auto-restart on failure
 Restart=on-failure
 RestartSec=10

@@ -15,8 +15,7 @@ Reference: TradingAgents (UCLA/MIT) - https://github.com/TauricResearch/TradingA
 import os
 import asyncio
 import threading
-from decimal import Decimal
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, Tuple
 
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
@@ -25,7 +24,6 @@ from nautilus_trader.model.enums import OrderSide, TimeInForce, PositionSide, Pr
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.position import Position
-from nautilus_trader.model.orders import MarketOrder
 from datetime import datetime, timedelta
 
 import sys
@@ -44,13 +42,10 @@ from utils.binance_orderbook_client import BinanceOrderBookClient
 from utils.orderbook_processor import OrderBookProcessor
 from utils.binance_derivatives_client import BinanceDerivativesClient
 from strategy.trading_logic import (
-    check_confidence_threshold,
     calculate_position_size,
     validate_multiagent_sltp,
     calculate_technical_sltp,
-    # process_signals removed - Hierarchical architecture uses MultiAgent Judge as final decision maker
 )
-# OCOManager no longer needed - using NautilusTrader's built-in bracket orders
 
 
 class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
@@ -119,12 +114,6 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     rsi_extreme_threshold_lower: float = 30.0  # 与 strategy_config.yaml 一致
     rsi_extreme_multiplier: float = 0.7
 
-    # [LEGACY - 不再使用] Multi-Agent Divergence Handling
-    # 层级决策架构中，Judge决策即最终决策，不存在信号合并/冲突
-    # 以下选项保留用于向后兼容，但不再生效
-    skip_on_divergence: bool = True  # [LEGACY] 不再使用
-    use_confidence_fusion: bool = True  # [LEGACY] 不再使用
-    
     # Stop Loss & Take Profit
     enable_auto_sl_tp: bool = True
     sl_use_support_resistance: bool = True
@@ -197,8 +186,6 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     network_binance_balance_cache_ttl: float = 5.0
     network_bar_persistence_max_limit: int = 1500
     network_bar_persistence_timeout: float = 10.0
-    network_oco_manager_socket_timeout: float = 5.0
-    network_oco_manager_socket_connect_timeout: float = 5.0
     network_instrument_discovery_max_retries: int = 60  # Instrument 加载最大重试次数
     network_instrument_discovery_retry_interval: float = 1.0  # Instrument 加载重试间隔 (秒)
     network_binance_api_timeout: float = 10.0  # Binance API 超时 (秒)
@@ -282,10 +269,6 @@ class DeepSeekAIStrategy(Strategy):
         self.rsi_extreme_lower = config.rsi_extreme_threshold_lower
         self.rsi_extreme_mult = config.rsi_extreme_multiplier
 
-        # Multi-Agent Divergence Handling
-        self.skip_on_divergence = config.skip_on_divergence
-        self.use_confidence_fusion = config.use_confidence_fusion
-
         # Stop Loss & Take Profit
         self.enable_auto_sl_tp = config.enable_auto_sl_tp
         self.sl_use_support_resistance = config.sl_use_support_resistance
@@ -309,9 +292,8 @@ class DeepSeekAIStrategy(Strategy):
 
         # OCO (One-Cancels-the-Other) - Now handled by NautilusTrader's bracket orders
         # No need for manual OCO manager anymore
-        self.enable_oco = config.enable_oco  # Keep for config compatibility
-        self.oco_manager = None  # Deprecated: bracket orders handle OCO automatically
-        
+        self.enable_oco = config.enable_oco
+
         # Trailing Stop Loss
         self.enable_trailing_stop = config.enable_trailing_stop
         self.trailing_activation_pct = config.trailing_activation_pct
@@ -593,6 +575,7 @@ class DeepSeekAIStrategy(Strategy):
         
         # Strategy control state for remote commands
         self.is_trading_paused = False
+        self._force_analysis_requested = False
         self.strategy_start_time = None
 
         # Sentiment data fetcher
@@ -718,6 +701,23 @@ class DeepSeekAIStrategy(Strategy):
         # v2.2: 记录启动时间 (用于心跳消息显示运行时长)
         from datetime import datetime
         self._start_time = datetime.now()
+
+        # Send immediate "initializing" notification BEFORE instrument loading
+        # This ensures user gets notified even if instrument loading fails/takes long
+        if (self.telegram_bot and self.enable_telegram and
+            getattr(self, 'telegram_notify_startup', True)):
+            try:
+                safe_id = self.telegram_bot.escape_markdown(str(self.instrument_id))
+                init_msg = (
+                    f"🔄 *Strategy Initializing*\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"📊 {safe_id}\n"
+                    f"⏳ Loading instruments...\n"
+                    f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                )
+                self.telegram_bot.send_message_sync(init_msg, use_queue=False)
+            except Exception as e:
+                self.log.warning(f"Failed to send init notification: {e}")
 
         # Load instrument with retry mechanism
         # The instrument may not be immediately available as the data client
@@ -866,7 +866,8 @@ class DeepSeekAIStrategy(Strategy):
                         'sr_hard_control_enabled': True,  # Always enabled in current version
                     }
                 )
-                self.telegram_bot.send_message_sync(startup_msg)
+                # Use direct send (not queue) to ensure startup notification is immediate
+                self.telegram_bot.send_message_sync(startup_msg, use_queue=False)
                 # Note: Help message removed - users can use /help command if needed
 
             except Exception as e:
@@ -1586,8 +1587,14 @@ class DeepSeekAIStrategy(Strategy):
                                 'sma_200': trend_layer_data.get('sma_200', 0),
                                 'macd': trend_layer_data.get('macd', 0),
                                 'macd_signal': trend_layer_data.get('macd_signal', 0),
+                                # v3.25: 增加 1D RSI + ADX 供 AI 宏观分析
+                                'rsi': trend_layer_data.get('rsi', 0),
+                                'adx': trend_layer_data.get('adx', 0),
+                                'di_plus': trend_layer_data.get('di_plus', 0),
+                                'di_minus': trend_layer_data.get('di_minus', 0),
+                                'adx_regime': trend_layer_data.get('adx_regime', 'UNKNOWN'),
                             }
-                            self.log.info(f"[MTF] AI 分析使用 1D 趋势层数据: SMA_200=${ai_technical_data['mtf_trend_layer']['sma_200']:,.2f}")
+                            self.log.info(f"[MTF] AI 分析使用 1D 趋势层数据: SMA_200=${ai_technical_data['mtf_trend_layer']['sma_200']:,.2f}, RSI={ai_technical_data['mtf_trend_layer']['rsi']:.1f}, ADX={ai_technical_data['mtf_trend_layer']['adx']:.1f}")
                     except Exception as e:
                         self.log.warning(f"[MTF] 获取趋势层数据失败: {e}")
 
@@ -3263,6 +3270,25 @@ class DeepSeekAIStrategy(Strategy):
                     position_side=target_side,
                 )
 
+                # v4.9: Send scaling notification via Telegram
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        with self._state_lock:
+                            cached_price = self._cached_current_price
+                        current_pos = self._get_current_position_data(current_price=cached_price, from_telegram=False)
+                        scaling_msg = self.telegram_bot.format_scaling_notification({
+                            'action': 'ADD',
+                            'side': target_side,
+                            'old_qty': current_qty,
+                            'new_qty': target_quantity,
+                            'change_qty': abs(size_diff),
+                            'current_price': cached_price,
+                            'unrealized_pnl': current_pos.get('unrealized_pnl') if current_pos else None,
+                        })
+                        self.telegram_bot.send_message_sync(scaling_msg)
+                    except Exception as e:
+                        self.log.debug(f"Failed to send scaling notification: {e}")
+
                 # v4.1: Update signal status - adding to position
                 self._last_signal_status = {
                     'executed': True,
@@ -3317,6 +3343,24 @@ class DeepSeekAIStrategy(Strategy):
                     f"📉 Reducing {target_side} position: {abs(size_diff):.3f} BTC "
                     f"({current_qty:.3f} → {target_quantity:.3f})"
                 )
+
+                # v4.9: Send scaling notification via Telegram
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        with self._state_lock:
+                            cached_price = self._cached_current_price
+                        scaling_msg = self.telegram_bot.format_scaling_notification({
+                            'action': 'REDUCE',
+                            'side': target_side,
+                            'old_qty': current_qty,
+                            'new_qty': target_quantity,
+                            'change_qty': actual_reduce,
+                            'current_price': cached_price,
+                        })
+                        self.telegram_bot.send_message_sync(scaling_msg)
+                    except Exception as e:
+                        self.log.debug(f"Failed to send scaling notification: {e}")
+
                 # v4.1: Update signal status - reducing position
                 self._last_signal_status = {
                     'executed': True,
@@ -3452,6 +3496,143 @@ class DeepSeekAIStrategy(Strategy):
             'reason': '',
             'action_taken': f'开{side_cn}仓 {quantity:.4f} BTC',
         }
+
+    def _validate_and_adjust_rr_post_fill(
+        self,
+        instrument_key: str,
+        fill_price: float,
+        side: str,
+    ):
+        """
+        v4.9: Post-fill R/R validation and TP adjustment.
+
+        Problem: SL/TP are calculated using estimated price (bar close), but MARKET order
+        fills at a different price (slippage). This can degrade R/R below the 1.5:1 minimum.
+
+        Solution: After fill, recalculate R/R with actual fill price. If below minimum,
+        cancel existing TP and submit a new one that restores R/R >= min_rr_ratio.
+
+        Parameters
+        ----------
+        instrument_key : str
+            Instrument key in trailing_stop_state
+        fill_price : float
+            Actual fill price from PositionOpened event
+        side : str
+            Position side ('LONG' or 'SHORT')
+        """
+        try:
+            from strategy.trading_logic import get_min_rr_ratio
+
+            state = self.trailing_stop_state.get(instrument_key)
+            if not state:
+                return
+
+            sl_price = state.get("current_sl_price")
+            tp_price = state.get("current_tp_price")
+
+            if not sl_price or not tp_price or fill_price <= 0:
+                return
+
+            is_long = side.upper() == 'LONG'
+            min_rr = get_min_rr_ratio()
+
+            # Calculate R/R with actual fill price
+            if is_long:
+                risk = fill_price - sl_price
+                reward = tp_price - fill_price
+            else:
+                risk = sl_price - fill_price
+                reward = fill_price - tp_price
+
+            if risk <= 0:
+                self.log.warning(
+                    f"⚠️ Post-fill R/R check: SL on wrong side "
+                    f"(fill=${fill_price:,.2f}, SL=${sl_price:,.2f}, side={side})"
+                )
+                return
+
+            actual_rr = reward / risk
+
+            if actual_rr >= min_rr:
+                self.log.info(
+                    f"✅ Post-fill R/R check: {actual_rr:.2f}:1 >= {min_rr}:1 "
+                    f"(fill=${fill_price:,.2f})"
+                )
+                return
+
+            # R/R below minimum — need to adjust TP
+            self.log.warning(
+                f"⚠️ Post-fill R/R degraded: {actual_rr:.2f}:1 < {min_rr}:1 "
+                f"(estimated entry vs fill=${fill_price:,.2f}, diff=${fill_price - state.get('entry_price', fill_price):+.2f})"
+            )
+
+            # Calculate new TP to restore R/R
+            if is_long:
+                new_tp = fill_price + (risk * min_rr)
+            else:
+                new_tp = fill_price - (risk * min_rr)
+
+            self.log.info(
+                f"🔄 Adjusting TP: ${tp_price:,.2f} → ${new_tp:,.2f} "
+                f"(restoring R/R to {min_rr}:1)"
+            )
+
+            # Find and cancel existing TP order, submit new one
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            tp_cancelled = False
+
+            for order in open_orders:
+                if order.is_reduce_only and order.order_type == OrderType.LIMIT:
+                    try:
+                        self.cancel_order(order)
+                        tp_cancelled = True
+                        self.log.debug(f"🗑️ Cancelled old TP: {str(order.client_order_id)[:8]}")
+                    except Exception as e:
+                        self.log.warning(f"Failed to cancel old TP: {e}")
+
+            # Submit adjusted TP order
+            tp_side = OrderSide.SELL if is_long else OrderSide.BUY
+            quantity = state.get("quantity", 0)
+            if quantity > 0:
+                new_tp_order = self.order_factory.limit(
+                    instrument_id=self.instrument_id,
+                    order_side=tp_side,
+                    quantity=self.instrument.make_qty(quantity),
+                    price=self.instrument.make_price(new_tp),
+                    time_in_force=TimeInForce.GTC,
+                    reduce_only=True,
+                )
+                self.submit_order(new_tp_order)
+
+                # Update trailing stop state
+                state["current_tp_price"] = new_tp
+
+                self.log.info(
+                    f"✅ TP adjusted post-fill: ${tp_price:,.2f} → ${new_tp:,.2f} "
+                    f"(R/R restored to {min_rr}:1)"
+                )
+
+                # Send Telegram alert
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        alert_msg = (
+                            f"🔄 *TP 自动调整 (成交后)*\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"原因: 实际成交价 ${fill_price:,.2f} 导致 R/R 降至 {actual_rr:.2f}:1\n"
+                            f"旧 TP: ${tp_price:,.2f}\n"
+                            f"新 TP: ${new_tp:,.2f}\n"
+                            f"R/R: {actual_rr:.2f}:1 → {min_rr}:1\n"
+                            f"SL: ${sl_price:,.2f} (不变)"
+                        )
+                        self.telegram_bot.send_message_sync(alert_msg)
+                    except Exception:
+                        pass
+            else:
+                self.log.warning("⚠️ Cannot adjust TP: quantity unknown")
+
+        except Exception as e:
+            self.log.error(f"❌ Post-fill R/R validation failed: {e}")
 
     def _update_sltp_quantity(self, new_total_quantity: float, position_side: str):
         """
@@ -3888,16 +4069,31 @@ class DeepSeekAIStrategy(Strategy):
             return
 
         # Determine latest price for entry estimation
+        # v4.9: Prefer real-time Binance API price over stale bar close
+        # Bar close can be minutes old, causing R/R validation to use wrong price
         entry_price: Optional[float] = None
 
-        if self.latest_price_data and self.latest_price_data.get('price'):
+        # Priority 1: Real-time price from Binance REST API (most accurate)
+        if self.binance_account:
+            try:
+                realtime_price = self.binance_account.get_realtime_price('BTCUSDT')
+                if realtime_price and realtime_price > 0:
+                    entry_price = realtime_price
+                    self.log.debug(f"📊 Using Binance real-time price for bracket: ${entry_price:,.2f}")
+            except Exception as e:
+                self.log.debug(f"Real-time price fetch failed, using fallback: {e}")
+
+        # Priority 2: Latest price data from AI analysis (bar close)
+        if entry_price is None and self.latest_price_data and self.latest_price_data.get('price'):
             entry_price = float(self.latest_price_data['price'])
 
+        # Priority 3: Recent bars
         if entry_price is None and hasattr(self.indicator_manager, "recent_bars"):
             recent_bars = self.indicator_manager.recent_bars
             if recent_bars:
                 entry_price = float(recent_bars[-1].close)
 
+        # Priority 4: Cache bars
         if entry_price is None:
             cache_bars = self.cache.bars(self.bar_type)
             if cache_bars:
@@ -4143,6 +4339,15 @@ class DeepSeekAIStrategy(Strategy):
 
                 self.log.debug(
                     f"📊 Updated trailing stop state with actual entry price: ${entry_price:,.2f}"
+                )
+
+                # v4.9: Post-fill R/R validation
+                # SL/TP were calculated using estimated price, but MARKET fill may be different.
+                # If fill price degraded R/R below minimum, adjust TP upward to restore.
+                self._validate_and_adjust_rr_post_fill(
+                    instrument_key=instrument_key,
+                    fill_price=entry_price,
+                    side=event.side.name,
                 )
             else:
                 # Fallback: initialize if not already set (shouldn't happen with bracket orders)
@@ -5066,6 +5271,36 @@ class DeepSeekAIStrategy(Strategy):
                 return self._cmd_daily_summary()
             elif command == 'weekly_summary':
                 return self._cmd_weekly_summary()
+            elif command == 'balance':
+                return self._cmd_balance()
+            elif command == 'analyze':
+                return self._cmd_analyze()
+            elif command == 'config':
+                return self._cmd_config()
+            elif command == 'version':
+                return self._cmd_version()
+            elif command == 'logs':
+                return self._cmd_logs(args)
+            elif command == 'force_analysis':
+                return self._cmd_force_analysis()
+            elif command == 'partial_close':
+                return self._cmd_partial_close(args)
+            elif command == 'set_leverage':
+                return self._cmd_set_leverage(args)
+            elif command == 'toggle':
+                return self._cmd_toggle(args)
+            elif command == 'set_param':
+                return self._cmd_set_param(args)
+            elif command == 'restart':
+                return self._cmd_restart()
+            elif command == 'modify_sl':
+                return self._cmd_modify_sl(args)
+            elif command == 'modify_tp':
+                return self._cmd_modify_tp(args)
+            elif command == 'profit':
+                return self._cmd_profit()
+            elif command == 'reload_config':
+                return self._cmd_reload_config()
             else:
                 return {
                     'success': False,
@@ -5153,7 +5388,7 @@ class DeepSeekAIStrategy(Strategy):
             }
     
     def _cmd_position(self) -> Dict[str, Any]:
-        """Handle /position command."""
+        """Handle /position command — comprehensive position display."""
         try:
             # Get current price from thread-safe cache FIRST
             # IMPORTANT: Do NOT access indicator_manager here - it's called from
@@ -5173,16 +5408,31 @@ class DeepSeekAIStrategy(Strategy):
                 current_price = cached_price if cached_price > 0 else current_position['avg_px']
 
                 entry_price = current_position['avg_px']
+                quantity = current_position['quantity']
+                side = current_position['side'].upper()
                 pnl = current_position['unrealized_pnl']
-                pnl_pct = (pnl / (entry_price * current_position['quantity'])) * 100 if entry_price > 0 else 0
+                pnl_pct = (pnl / (entry_price * quantity)) * 100 if entry_price > 0 else 0
+
+                # Notional value (position size in USD)
+                notional_value = quantity * current_price
+
+                # ROE = P&L / initial margin (considers leverage)
+                leverage = getattr(self, 'leverage', 1)
+                initial_margin = notional_value / leverage if leverage > 0 else notional_value
+                roe_pct = (pnl / initial_margin) * 100 if initial_margin > 0 else 0
 
                 position_info.update({
-                    'side': current_position['side'].upper(),
-                    'quantity': current_position['quantity'],
+                    'side': side,
+                    'quantity': quantity,
                     'entry_price': entry_price,
                     'current_price': current_price,
                     'unrealized_pnl': pnl,
                     'pnl_pct': pnl_pct,
+                    # v4.9: Position value + leverage + ROE
+                    'notional_value': notional_value,
+                    'leverage': leverage,
+                    'roe_pct': roe_pct,
+                    'initial_margin': initial_margin,
                     # v4.7: Liquidation Risk Fields (CRITICAL)
                     'liquidation_price': current_position.get('liquidation_price'),
                     'liquidation_buffer_pct': current_position.get('liquidation_buffer_pct'),
@@ -5199,9 +5449,41 @@ class DeepSeekAIStrategy(Strategy):
                     'duration_minutes': current_position.get('duration_minutes'),
                     'entry_confidence': current_position.get('entry_confidence'),
                 })
-            
+
+                # v4.9: Fetch SL/TP from Binance open orders (thread-safe, uses REST API)
+                try:
+                    if self.binance_account:
+                        sltp = self.binance_account.get_sl_tp_from_orders(
+                            symbol='BTCUSDT',
+                            position_side=side.lower(),
+                        )
+                        position_info['sl_price'] = sltp.get('sl_price')
+                        position_info['tp_price'] = sltp.get('tp_price')
+                except Exception as e:
+                    self.log.debug(f"Failed to fetch SL/TP from orders: {e}")
+
+                # v4.9: Fetch margin data from Binance (thread-safe)
+                try:
+                    if self.binance_account:
+                        balance_data = self.binance_account.get_balance()
+                        if balance_data:
+                            position_info['available_balance'] = balance_data.get('available_balance', 0)
+                            position_info['margin_balance'] = balance_data.get('margin_balance', 0)
+                            total = balance_data.get('total_balance', 0)
+                            if total > 0:
+                                position_info['margin_used_pct'] = ((total - balance_data.get('available_balance', 0)) / total) * 100
+                except Exception as e:
+                    self.log.debug(f"Failed to fetch balance data: {e}")
+
+                # v4.9: Trailing stop status
+                trailing_state = getattr(self, 'trailing_stop_state', {})
+                if trailing_state.get('active'):
+                    position_info['trailing_active'] = True
+                    position_info['trailing_sl'] = trailing_state.get('current_sl', 0)
+                    position_info['trailing_peak'] = trailing_state.get('peak_price', 0)
+
             message = self.telegram_bot.format_position_response(position_info) if self.telegram_bot else "Position unavailable"
-            
+
             return {
                 'success': True,
                 'message': message
@@ -5700,6 +5982,786 @@ class DeepSeekAIStrategy(Strategy):
                 'success': False,
                 'error': str(e)
             }
+
+    # ===== New Commands v3.0 =====
+
+    def _cmd_balance(self) -> Dict[str, Any]:
+        """Handle /balance command - detailed account balance."""
+        try:
+            with self._state_lock:
+                cached_price = self._cached_current_price
+
+            real_balance = self.binance_account.get_balance()
+            total_balance = real_balance.get('total_balance', 0)
+            available_balance = real_balance.get('available_balance', 0)
+            unrealized_pnl = real_balance.get('unrealized_pnl', 0)
+
+            account_context = self._get_account_context(cached_price) if cached_price > 0 else {}
+
+            msg = "💰 *账户余额*\n━━━━━━━━━━━━━━━━━━\n\n"
+
+            if total_balance > 0:
+                msg += f"*总余额*: ${total_balance:,.2f}\n"
+                msg += f"*可用余额*: ${available_balance:,.2f}\n"
+                used = total_balance - available_balance
+                msg += f"*已用保证金*: ${used:,.2f}\n"
+                if unrealized_pnl != 0:
+                    pnl_icon = "📈" if unrealized_pnl >= 0 else "📉"
+                    msg += f"*未实现盈亏*: {pnl_icon} ${unrealized_pnl:+,.2f}\n"
+                msg += f"\n*杠杆*: {self.leverage}x\n"
+
+                # Capacity
+                max_pos_ratio = self.position_config.get('max_position_ratio', 0.3)
+                max_pos_value = total_balance * max_pos_ratio * self.leverage
+                current_pos_value = account_context.get('current_position_value', 0)
+                remaining = max_pos_value - current_pos_value
+
+                msg += f"*最大仓位*: ${max_pos_value:,.0f}\n"
+                if current_pos_value > 0:
+                    msg += f"*当前仓位*: ${current_pos_value:,.0f}\n"
+                    msg += f"*剩余容量*: ${remaining:,.0f}\n"
+
+                used_pct = account_context.get('used_margin_pct', 0)
+                if used_pct > 0:
+                    cap_icon = '🔴' if used_pct > 80 else '🟡' if used_pct > 60 else '🟢'
+                    msg += f"\n*保证金使用率*: {cap_icon} {used_pct:.1f}%\n"
+
+                can_add = account_context.get('can_add_position_safely')
+                if can_add is not None:
+                    msg += f"*可安全加仓*: {'✅ 是' if can_add else '⚠️ 否'}\n"
+            else:
+                msg += f"⚠️ 无法获取实时余额\n配置余额: ${self.equity:,.2f}\n"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_analyze(self) -> Dict[str, Any]:
+        """Handle /analyze command - current technical indicator snapshot."""
+        try:
+            with self._state_lock:
+                cached_price = self._cached_current_price
+
+            msg = "📊 *技术面快照*\n━━━━━━━━━━━━━━━━━━\n\n"
+            msg += f"*BTC*: ${cached_price:,.2f}\n\n"
+
+            # Get cached indicator data (thread-safe)
+            last_signal = getattr(self, 'last_signal', None)
+            latest_sentiment = getattr(self, 'latest_sentiment_data', None)
+            last_heartbeat = getattr(self, '_last_heartbeat_data', None)
+
+            # Technical from last heartbeat (cached, thread-safe)
+            if last_heartbeat:
+                tech = last_heartbeat.get('technical', {})
+                rsi = last_heartbeat.get('rsi', 0)
+                if rsi:
+                    rsi_label = '超买' if rsi > 70 else '超卖' if rsi < 30 else '正常'
+                    msg += f"*RSI*: {rsi:.1f} ({rsi_label})\n"
+                if tech.get('macd_histogram') is not None:
+                    m = tech['macd_histogram']
+                    m_icon = '📈' if m > 0 else '📉'
+                    msg += f"*MACD*: {m_icon} {m:+.2f}\n"
+                if tech.get('trend_direction'):
+                    trend_map = {'BULLISH': '🟢 上涨', 'BEARISH': '🔴 下跌', 'NEUTRAL': '⚪ 震荡'}
+                    msg += f"*趋势*: {trend_map.get(tech['trend_direction'], tech['trend_direction'])}\n"
+                    if tech.get('adx'):
+                        msg += f"*ADX*: {tech['adx']:.0f} ({tech.get('adx_regime', '')})\n"
+                if tech.get('bb_position') is not None:
+                    bb = tech['bb_position'] * 100
+                    msg += f"*布林带位置*: {bb:.0f}%\n"
+                if tech.get('volume_ratio') is not None:
+                    vr = tech['volume_ratio']
+                    v_icon = '🔥' if vr > 1.5 else '📊'
+                    msg += f"*量比*: {v_icon} {vr:.1f}x\n"
+
+                # Order flow
+                of = last_heartbeat.get('order_flow', {})
+                if of.get('buy_ratio') is not None:
+                    br = of['buy_ratio'] * 100
+                    msg += f"\n*买入占比*: {br:.0f}%\n"
+                if of.get('cvd_trend'):
+                    c_icon = '📈' if of['cvd_trend'] == 'RISING' else '📉'
+                    msg += f"*CVD趋势*: {c_icon} {of['cvd_trend']}\n"
+
+                # Derivatives
+                deriv = last_heartbeat.get('derivatives', {})
+                fr = deriv.get('funding_rate_pct')
+                if fr is not None:
+                    msg += f"\n*已结算费率*: {fr:.4f}%\n"
+                pr = deriv.get('predicted_rate_pct')
+                if pr is not None:
+                    msg += f"*预期费率*: {pr:.4f}%\n"
+                oi = deriv.get('oi_change_pct')
+                if oi is not None:
+                    msg += f"*OI变化*: {oi:+.1f}%\n"
+            else:
+                msg += "⚠️ 暂无技术数据 (等待第一次分析)\n"
+
+            # Sentiment
+            if latest_sentiment and latest_sentiment.get('long_short_ratio'):
+                ls = latest_sentiment['long_short_ratio']
+                msg += f"\n*多空比*: {ls:.2f}\n"
+
+            # Last signal
+            if last_signal:
+                sig = last_signal.get('signal', 'N/A')
+                conf = last_signal.get('confidence', 'N/A')
+                sig_icon = {'LONG': '🟢', 'SHORT': '🔴', 'HOLD': '⚪'}.get(sig, '❓')
+                msg += f"\n*上次信号*: {sig_icon} {sig} ({conf})\n"
+                reason = last_signal.get('reasoning', '')
+                if reason:
+                    msg += f"_原因: {reason[:100]}{'...' if len(reason) > 100 else ''}_\n"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_config(self) -> Dict[str, Any]:
+        """Handle /config command - show current strategy configuration."""
+        try:
+            msg = "⚙️ *当前配置*\n━━━━━━━━━━━━━━━━━━\n\n"
+
+            # Trading
+            msg += "*交易*:\n"
+            msg += f"  品种: {self.instrument_id}\n"
+            msg += f"  杠杆: {self.leverage}x\n"
+            msg += f"  最低信心: {self.min_confidence}\n"
+            msg += f"  允许反转: {'✅' if self.allow_reversals else '❌'}\n"
+            msg += f"  暂停状态: {'⏸️ 是' if self.is_trading_paused else '▶️ 否'}\n"
+
+            # Position
+            msg += f"\n*仓位管理*:\n"
+            method = self.position_config.get('method', 'ai_controlled')
+            msg += f"  方法: {method}\n"
+            msg += f"  最大比例: {self.position_config.get('max_position_ratio', 0.3)*100:.0f}%\n"
+
+            # Risk
+            msg += f"\n*风险管理*:\n"
+            msg += f"  自动SL/TP: {'✅' if self.enable_auto_sl_tp else '❌'}\n"
+            msg += f"  Bracket订单: {'✅' if self.enable_oco else '❌'}\n"
+            msg += f"  移动止损: {'✅' if self.enable_trailing_stop else '❌'}\n"
+            if self.enable_trailing_stop:
+                msg += f"    激活: {getattr(self, 'trailing_activation_pct', 0)*100:.1f}%\n"
+                msg += f"    距离: {getattr(self, 'trailing_distance_pct', 0)*100:.1f}%\n"
+
+            # Features
+            msg += f"\n*功能模块*:\n"
+            msg += f"  多时间框架: {'✅' if self.mtf_enabled else '❌'}\n"
+            msg += f"  情绪数据: {'✅' if self.sentiment_enabled else '❌'}\n"
+            msg += f"  Telegram: {'✅' if self.enable_telegram else '❌'}\n"
+
+            # AI
+            msg += f"\n*AI设置*:\n"
+            msg += f"  模型: {getattr(self.config, 'deepseek_model', 'deepseek-chat')}\n"
+            msg += f"  温度: {getattr(self.config, 'deepseek_temperature', 0.3)}\n"
+            msg += f"  辩论轮数: {getattr(self.config, 'debate_rounds', 2)}\n"
+
+            # Timer
+            timer_sec = getattr(self.config, 'timer_interval_sec', 900)
+            msg += f"\n*定时器*: {timer_sec}s ({timer_sec//60}分钟)\n"
+            msg += f"*分析次数*: {getattr(self, 'timer_count', 0)}\n"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_version(self) -> Dict[str, Any]:
+        """Handle /version command - bot version and system info."""
+        try:
+            from datetime import datetime
+            import platform
+            import sys
+
+            uptime_str = "N/A"
+            if self.strategy_start_time:
+                uptime_delta = datetime.utcnow() - self.strategy_start_time
+                days = uptime_delta.days
+                hours = (uptime_delta.total_seconds() % 86400) // 3600
+                minutes = (uptime_delta.total_seconds() % 3600) // 60
+                if days > 0:
+                    uptime_str = f"{days}d {int(hours)}h {int(minutes)}m"
+                else:
+                    uptime_str = f"{int(hours)}h {int(minutes)}m"
+
+            msg = "🤖 *系统信息*\n━━━━━━━━━━━━━━━━━━\n\n"
+            msg += f"*品种*: {self.instrument_id}\n"
+            msg += f"*运行时间*: {uptime_str}\n"
+            msg += f"*分析次数*: {getattr(self, 'timer_count', 0)}\n"
+            msg += f"*交易次数*: {len(getattr(self, 'trade_history', []))}\n\n"
+            msg += f"*Python*: {sys.version.split()[0]}\n"
+            msg += f"*系统*: {platform.system()} {platform.release()}\n"
+            msg += f"*NautilusTrader*: 1.221.0\n"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_logs(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /logs command - show recent log lines."""
+        try:
+            import os
+
+            lines_count = args.get('lines', 20)
+            if lines_count > 50:
+                lines_count = 50
+
+            # Try common log file locations
+            log_paths = [
+                'logs/nautilus_trader.log',
+                'logs/trading.log',
+                '/tmp/nautilus_trader.log',
+            ]
+
+            log_content = None
+            used_path = None
+
+            for path in log_paths:
+                if os.path.exists(path):
+                    with open(path, 'r', errors='replace') as f:
+                        all_lines = f.readlines()
+                        log_content = all_lines[-lines_count:]
+                        used_path = path
+                    break
+
+            if log_content:
+                msg = f"📋 *最近 {len(log_content)} 行日志*\n"
+                msg += f"📁 `{used_path}`\n\n"
+                msg += "```\n"
+                for line in log_content:
+                    # Truncate long lines
+                    clean = line.rstrip()[:120]
+                    msg += clean + "\n"
+                msg += "```"
+
+                if len(msg) > 4000:
+                    msg = msg[:3990] + "...```"
+            else:
+                # Fallback: use journalctl if no log file found
+                msg = "📋 *日志*\n\n"
+                msg += "⚠️ 未找到日志文件\n"
+                msg += "可在服务器运行: `journalctl -u nautilus-trader -n 20`\n"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_force_analysis(self) -> Dict[str, Any]:
+        """Handle /force_analysis command - trigger immediate AI analysis."""
+        try:
+            if self.is_trading_paused:
+                return {
+                    'success': False,
+                    'error': '交易已暂停，无法触发分析。请先 /resume'
+                }
+
+            # Set a flag for on_timer to pick up
+            self._force_analysis_requested = True
+            self.log.info("🔄 Force analysis requested via Telegram")
+
+            return {
+                'success': True,
+                'message': "🔄 *立即分析*\n\n"
+                          "已请求立即触发 AI 分析。\n"
+                          "⏳ 分析将在下一个定时器周期执行 (最多 15 秒)..."
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_partial_close(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /partial_close command - close percentage of position."""
+        try:
+            from nautilus_trader.model.enums import OrderSide
+
+            pct = args.get('percent', 50)
+            if pct <= 0 or pct > 100:
+                return {'success': False, 'error': '百分比必须在 1-100 之间'}
+
+            pos_data = self._get_current_position_data(from_telegram=True)
+
+            if not pos_data or pos_data.get('quantity', 0) == 0:
+                return {
+                    'success': True,
+                    'message': "ℹ️ *无持仓*\n\n当前没有需要平仓的仓位。"
+                }
+
+            full_qty = pos_data['quantity']
+            close_qty = full_qty * (pct / 100)
+            side_str = pos_data['side'].upper()
+
+            # Round to instrument precision
+            close_qty = round(close_qty, 3)
+            if close_qty < self.position_config.get('min_trade_amount', 0.001):
+                return {
+                    'success': False,
+                    'error': f'平仓数量 {close_qty:.4f} 低于最小交易量'
+                }
+
+            close_side = OrderSide.SELL if side_str == 'LONG' else OrderSide.BUY
+
+            # Cancel SL/TP orders if closing more than 50%
+            if pct > 50:
+                try:
+                    open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                    if open_orders:
+                        self.log.info(f"🗑️ Cancelling {len(open_orders)} orders before partial close ({pct}%)")
+                        self.cancel_all_orders(self.instrument_id)
+                except Exception as e:
+                    self.log.warning(f"Failed to cancel orders before partial close: {e}")
+
+            self._submit_order(
+                side=close_side,
+                quantity=close_qty,
+                reduce_only=True,
+            )
+
+            self.log.info(f"📉 Partial close ({pct}%) by Telegram: {close_qty:.4f} BTC")
+
+            return {
+                'success': True,
+                'message': f"📉 *部分平仓 {pct}%*\n\n"
+                          f"方向: {side_str}\n"
+                          f"平仓: {close_qty:.4f} / {full_qty:.4f} BTC\n"
+                          f"剩余: {full_qty - close_qty:.4f} BTC\n\n"
+                          f"⏳ 订单已提交..."
+            }
+        except Exception as e:
+            self.log.error(f"Error in partial close: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_set_leverage(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /set_leverage command - change leverage."""
+        try:
+            new_leverage = args.get('value')
+            if new_leverage is None:
+                return {'success': False, 'error': '请指定杠杆倍数，例如: /set_leverage 10'}
+
+            new_leverage = int(new_leverage)
+            if new_leverage < 1 or new_leverage > 125:
+                return {'success': False, 'error': '杠杆倍数必须在 1-125 之间'}
+
+            # Check if has open position
+            pos_data = self._get_current_position_data(from_telegram=True)
+            if pos_data and pos_data.get('quantity', 0) != 0:
+                return {
+                    'success': False,
+                    'error': '有持仓时不能修改杠杆。请先平仓。'
+                }
+
+            old_leverage = self.leverage
+
+            self.leverage = new_leverage
+            self.log.info(f"⚙️ Leverage changed via Telegram: {old_leverage}x → {new_leverage}x")
+
+            return {
+                'success': True,
+                'message': f"⚙️ *杠杆已修改*\n\n"
+                          f"{old_leverage}x → *{new_leverage}x*\n\n"
+                          f"⚠️ 新杠杆将在下次开仓时生效"
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_toggle(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /toggle command - toggle feature on/off."""
+        try:
+            feature = args.get('feature', '').lower()
+
+            toggleable = {
+                'trailing': ('enable_trailing_stop', '移动止损'),
+                'sentiment': ('sentiment_enabled', '情绪数据'),
+                'mtf': ('mtf_enabled', '多时间框架'),
+                'auto_sltp': ('enable_auto_sl_tp', '自动止损止盈'),
+                'reversal': ('allow_reversals', '允许反转'),
+            }
+
+            if not feature or feature not in toggleable:
+                msg = "🔧 *可切换功能*\n\n"
+                for key, (attr, name) in toggleable.items():
+                    current = getattr(self, attr, False)
+                    icon = '✅' if current else '❌'
+                    msg += f"  `{key}` — {name} {icon}\n"
+                msg += f"\n用法: `/toggle trailing`"
+                return {'success': True, 'message': msg}
+
+            attr_name, feature_name = toggleable[feature]
+            current_value = getattr(self, attr_name, False)
+            new_value = not current_value
+            setattr(self, attr_name, new_value)
+
+            icon = '✅' if new_value else '❌'
+            action = '开启' if new_value else '关闭'
+            self.log.info(f"🔧 Feature toggled via Telegram: {feature_name} → {action}")
+
+            return {
+                'success': True,
+                'message': f"🔧 *{feature_name}* — {icon} {action}\n"
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_set_param(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /set command - modify runtime parameters."""
+        try:
+            param = args.get('param', '').lower()
+            value = args.get('value')
+
+            settable = {
+                'min_confidence': {
+                    'attr': 'min_confidence',
+                    'name': '最低信心',
+                    'valid': ['LOW', 'MEDIUM', 'HIGH'],
+                    'type': 'str',
+                },
+                'trailing_activation': {
+                    'attr': 'trailing_activation_pct',
+                    'name': '移动止损激活',
+                    'range': (0.005, 0.05),
+                    'type': 'float',
+                    'display': lambda v: f"{v*100:.1f}%",
+                },
+                'trailing_distance': {
+                    'attr': 'trailing_distance_pct',
+                    'name': '移动止损距离',
+                    'range': (0.002, 0.03),
+                    'type': 'float',
+                    'display': lambda v: f"{v*100:.1f}%",
+                },
+            }
+
+            if not param or param not in settable:
+                msg = "⚙️ *可修改参数*\n\n"
+                for key, info in settable.items():
+                    current = getattr(self, info['attr'], 'N/A')
+                    display_fn = info.get('display', str)
+                    msg += f"  `{key}` — {info['name']}: {display_fn(current)}\n"
+                    if 'valid' in info:
+                        msg += f"    可选: {', '.join(info['valid'])}\n"
+                    if 'range' in info:
+                        lo, hi = info['range']
+                        msg += f"    范围: {lo} - {hi}\n"
+                msg += f"\n用法: `/set min_confidence HIGH`"
+                return {'success': True, 'message': msg}
+
+            if value is None:
+                return {'success': False, 'error': f'请指定值，例如: /set {param} VALUE'}
+
+            info = settable[param]
+            old_value = getattr(self, info['attr'], None)
+
+            if info['type'] == 'str':
+                value = str(value).upper()
+                if 'valid' in info and value not in info['valid']:
+                    return {'success': False, 'error': f"无效值: {value}。可选: {', '.join(info['valid'])}"}
+                setattr(self, info['attr'], value)
+            elif info['type'] == 'float':
+                try:
+                    value = float(value)
+                except ValueError:
+                    return {'success': False, 'error': f'无效数值: {value}'}
+                if 'range' in info:
+                    lo, hi = info['range']
+                    if value < lo or value > hi:
+                        return {'success': False, 'error': f'超出范围: {lo} - {hi}'}
+                setattr(self, info['attr'], value)
+
+            display_fn = info.get('display', str)
+            self.log.info(f"⚙️ Param changed via Telegram: {info['name']} {display_fn(old_value)} → {display_fn(value)}")
+
+            return {
+                'success': True,
+                'message': f"⚙️ *{info['name']}*\n\n"
+                          f"{display_fn(old_value)} → *{display_fn(value)}*\n"
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_restart(self) -> Dict[str, Any]:
+        """Handle /restart command - schedule service restart."""
+        try:
+            import subprocess
+
+            self.log.warning("🔄 Service restart requested via Telegram")
+
+            # Send notification before restart
+            if self.telegram_bot:
+                self.telegram_bot.send_message_sync(
+                    "🔄 *正在重启服务...*\n\n⏳ 预计 30 秒后恢复",
+                    use_queue=False,
+                )
+
+            # Use systemctl to restart (runs in background)
+            subprocess.Popen(
+                ['sudo', 'systemctl', 'restart', 'nautilus-trader'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            return {
+                'success': True,
+                'message': "🔄 *重启已触发*\n\n"
+                          "服务正在重启，预计 30 秒后恢复。\n"
+                          "请稍后使用 /s 检查状态。"
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_modify_sl(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /modify_sl command - modify stop loss price."""
+        try:
+            new_price = args.get('price')
+            if new_price is None:
+                return {'success': False, 'error': '请指定止损价格，例如: /modify_sl 95000'}
+
+            new_price = float(new_price)
+            if new_price <= 0:
+                return {'success': False, 'error': '价格必须大于 0'}
+
+            pos_data = self._get_current_position_data(from_telegram=True)
+            if not pos_data or pos_data.get('quantity', 0) == 0:
+                return {'success': True, 'message': "ℹ️ *无持仓*\n\n当前没有持仓，无法修改止损。"}
+
+            side = pos_data['side'].upper()
+            entry_price = pos_data['avg_px']
+            quantity = pos_data['quantity']
+
+            # Validate SL price direction
+            if side == 'LONG' and new_price >= entry_price:
+                return {'success': False, 'error': f'多头止损必须低于入场价 ${entry_price:,.2f}'}
+            if side == 'SHORT' and new_price <= entry_price:
+                return {'success': False, 'error': f'空头止损必须高于入场价 ${entry_price:,.2f}'}
+
+            # Find and cancel existing SL order
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            sl_cancelled = False
+            for order in open_orders:
+                if order.is_reduce_only and order.order_type == OrderType.STOP_MARKET:
+                    try:
+                        self.cancel_order(order)
+                        sl_cancelled = True
+                        self.log.info(f"🗑️ Cancelled old SL order: {str(order.client_order_id)[:8]}")
+                    except Exception as e:
+                        self.log.warning(f"Failed to cancel old SL: {e}")
+
+            # Create new SL order
+            sl_side = OrderSide.SELL if side == 'LONG' else OrderSide.BUY
+            new_qty = self.instrument.make_qty(quantity)
+            new_sl_order = self.order_factory.stop_market(
+                instrument_id=self.instrument_id,
+                order_side=sl_side,
+                quantity=new_qty,
+                trigger_price=self.instrument.make_price(new_price),
+                trigger_type=TriggerType.LAST_PRICE,
+                reduce_only=True,
+            )
+            self.submit_order(new_sl_order)
+
+            # Update trailing stop state
+            instrument_key = str(self.instrument_id)
+            if instrument_key in self.trailing_stop_state:
+                self.trailing_stop_state[instrument_key]["sl_order_id"] = str(new_sl_order.client_order_id)
+                self.trailing_stop_state[instrument_key]["current_sl"] = new_price
+
+            self.log.info(f"✅ SL modified via Telegram: ${new_price:,.2f}")
+
+            return {
+                'success': True,
+                'message': f"✅ *止损已修改*\n\n"
+                          f"🛑 新止损: ${new_price:,.2f}\n"
+                          f"{'已替换' if sl_cancelled else '⚠️ 未找到旧SL，已创建新SL'}\n\n"
+                          f"仓位: {side} {quantity:.4f} BTC\n"
+                          f"入场价: ${entry_price:,.2f}"
+            }
+        except Exception as e:
+            self.log.error(f"Error modifying SL: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_modify_tp(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle /modify_tp command - modify take profit price."""
+        try:
+            new_price = args.get('price')
+            if new_price is None:
+                return {'success': False, 'error': '请指定止盈价格，例如: /modify_tp 105000'}
+
+            new_price = float(new_price)
+            if new_price <= 0:
+                return {'success': False, 'error': '价格必须大于 0'}
+
+            pos_data = self._get_current_position_data(from_telegram=True)
+            if not pos_data or pos_data.get('quantity', 0) == 0:
+                return {'success': True, 'message': "ℹ️ *无持仓*\n\n当前没有持仓，无法修改止盈。"}
+
+            side = pos_data['side'].upper()
+            entry_price = pos_data['avg_px']
+            quantity = pos_data['quantity']
+
+            # Validate TP price direction
+            if side == 'LONG' and new_price <= entry_price:
+                return {'success': False, 'error': f'多头止盈必须高于入场价 ${entry_price:,.2f}'}
+            if side == 'SHORT' and new_price >= entry_price:
+                return {'success': False, 'error': f'空头止盈必须低于入场价 ${entry_price:,.2f}'}
+
+            # Find and cancel existing TP order
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            tp_cancelled = False
+            for order in open_orders:
+                if order.is_reduce_only and order.order_type == OrderType.LIMIT:
+                    try:
+                        self.cancel_order(order)
+                        tp_cancelled = True
+                        self.log.info(f"🗑️ Cancelled old TP order: {str(order.client_order_id)[:8]}")
+                    except Exception as e:
+                        self.log.warning(f"Failed to cancel old TP: {e}")
+
+            # Create new TP order (limit, reduce-only)
+            tp_side = OrderSide.SELL if side == 'LONG' else OrderSide.BUY
+            new_qty = self.instrument.make_qty(quantity)
+            new_tp_order = self.order_factory.limit(
+                instrument_id=self.instrument_id,
+                order_side=tp_side,
+                quantity=new_qty,
+                price=self.instrument.make_price(new_price),
+                time_in_force=TimeInForce.GTC,
+                reduce_only=True,
+            )
+            self.submit_order(new_tp_order)
+
+            self.log.info(f"✅ TP modified via Telegram: ${new_price:,.2f}")
+
+            return {
+                'success': True,
+                'message': f"✅ *止盈已修改*\n\n"
+                          f"🎯 新止盈: ${new_price:,.2f}\n"
+                          f"{'已替换' if tp_cancelled else '⚠️ 未找到旧TP，已创建新TP'}\n\n"
+                          f"仓位: {side} {quantity:.4f} BTC\n"
+                          f"入场价: ${entry_price:,.2f}"
+            }
+        except Exception as e:
+            self.log.error(f"Error modifying TP: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_profit(self) -> Dict[str, Any]:
+        """Handle /profit command - show P&L analytics from Binance."""
+        try:
+            if not self.binance_account:
+                return {'success': False, 'error': 'Binance 账户未连接'}
+
+            msg = "💹 *P&L Analytics*\n"
+            msg += "━━━━━━━━━━━━━━━━━━\n"
+
+            # Current position P&L
+            pos_data = self._get_current_position_data(from_telegram=True)
+            if pos_data:
+                side = pos_data['side'].upper()
+                pnl = pos_data.get('unrealized_pnl', 0)
+                pnl_icon = '🟢' if pnl >= 0 else '🔴'
+                msg += f"\n📊 *Current Position*\n"
+                msg += f"  {side}: {pnl_icon} ${pnl:,.2f}\n"
+            else:
+                msg += f"\n📊 *Current Position*: None\n"
+
+            # Recent realized P&L
+            try:
+                realized = self.binance_account.get_income_history(income_type='REALIZED_PNL', limit=20)
+                if realized:
+                    total_realized = sum(float(r.get('income', 0)) for r in realized)
+                    wins = sum(1 for r in realized if float(r.get('income', 0)) > 0)
+                    losses = sum(1 for r in realized if float(r.get('income', 0)) < 0)
+                    total_trades = wins + losses
+                    win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+                    r_icon = '🟢' if total_realized >= 0 else '🔴'
+
+                    msg += f"\n📈 *Recent Realized* (last {len(realized)})\n"
+                    msg += f"  Total: {r_icon} ${total_realized:,.2f}\n"
+                    msg += f"  Wins: {wins} | Losses: {losses}\n"
+                    msg += f"  Win Rate: {win_rate:.0f}%\n"
+            except Exception as e:
+                self.log.debug(f"Failed to fetch realized PnL: {e}")
+
+            # Funding fees
+            try:
+                funding = self.binance_account.get_income_history(income_type='FUNDING_FEE', limit=20)
+                if funding:
+                    total_funding = sum(float(f.get('income', 0)) for f in funding)
+                    f_icon = '🟢' if total_funding >= 0 else '🔴'
+                    msg += f"\n💰 *Funding Fees* (last {len(funding)})\n"
+                    msg += f"  Total: {f_icon} ${total_funding:,.2f}\n"
+            except Exception as e:
+                self.log.debug(f"Failed to fetch funding fees: {e}")
+
+            # Commission
+            try:
+                commission = self.binance_account.get_income_history(income_type='COMMISSION', limit=20)
+                if commission:
+                    total_comm = sum(float(c.get('income', 0)) for c in commission)
+                    msg += f"\n🏷️ *Commissions* (last {len(commission)})\n"
+                    msg += f"  Total: ${total_comm:,.2f}\n"
+            except Exception as e:
+                self.log.debug(f"Failed to fetch commissions: {e}")
+
+            # Balance summary
+            try:
+                balance = self.binance_account.get_balance()
+                if balance and not balance.get('error'):
+                    msg += f"\n💳 *Balance*\n"
+                    msg += f"  Total: ${balance.get('total_balance', 0):,.2f}\n"
+                    msg += f"  Available: ${balance.get('available_balance', 0):,.2f}\n"
+                    msg += f"  Unrealized: ${balance.get('unrealized_pnl', 0):,.2f}\n"
+            except Exception as e:
+                self.log.debug(f"Failed to fetch balance: {e}")
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _cmd_reload_config(self) -> Dict[str, Any]:
+        """Handle /reload_config command - reload YAML config without restart."""
+        try:
+            from utils.config_manager import ConfigManager
+
+            # Reload configuration
+            config_mgr = ConfigManager(env=getattr(self, '_config_env', 'production'))
+            config_mgr.load()
+
+            # Update key runtime parameters
+            updated = []
+
+            # Trading logic params
+            new_min_rr = config_mgr.get('trading_logic', 'min_rr_ratio', default=1.5)
+            if hasattr(self, 'min_rr_ratio') and self.min_rr_ratio != new_min_rr:
+                self.min_rr_ratio = new_min_rr
+                updated.append(f"min_rr_ratio: {new_min_rr}")
+
+            # Position sizing
+            new_max_pos = config_mgr.get('position', 'max_position_ratio', default=0.30)
+            if hasattr(self, 'max_position_ratio') and self.max_position_ratio != new_max_pos:
+                self.max_position_ratio = new_max_pos
+                updated.append(f"max_position_ratio: {new_max_pos}")
+
+            # Risk params
+            new_min_conf = config_mgr.get('risk', 'min_confidence_to_trade', default='MEDIUM')
+            if hasattr(self, 'min_confidence_to_trade') and self.min_confidence_to_trade != new_min_conf:
+                self.min_confidence_to_trade = new_min_conf
+                updated.append(f"min_confidence: {new_min_conf}")
+
+            # AI params
+            new_temp = config_mgr.get('ai', 'deepseek', 'temperature', default=0.3)
+            if hasattr(self, 'multi_agent') and self.multi_agent:
+                if hasattr(self.multi_agent, 'temperature') and self.multi_agent.temperature != new_temp:
+                    self.multi_agent.temperature = new_temp
+                    updated.append(f"ai_temperature: {new_temp}")
+
+            self.log.info(f"⚙️ Config reloaded via Telegram, {len(updated)} params updated")
+
+            if updated:
+                changes = "\n".join(f"  - {u}" for u in updated)
+                msg = f"✅ *配置已重载*\n\n更新参数:\n{changes}"
+            else:
+                msg = "✅ *配置已重载*\n\n所有参数未变化。"
+
+            return {'success': True, 'message': msg}
+        except Exception as e:
+            self.log.error(f"Error reloading config: {e}")
+            return {'success': False, 'error': str(e)}
 
     def _check_scheduled_summaries(self):
         """

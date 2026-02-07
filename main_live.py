@@ -6,9 +6,8 @@ Runs the DeepSeek AI strategy on Binance Futures (BTCUSDT-PERP) with live market
 
 import os
 import sys
+import signal
 import argparse
-import yaml
-from decimal import Decimal
 from pathlib import Path
 
 # =============================================================================
@@ -56,34 +55,6 @@ else:
     load_dotenv()  # Try default locations
     print("[CONFIG] Warning: No .env file found, using system environment")
 
-
-def load_yaml_config() -> dict:
-    """
-    Load strategy configuration from YAML file.
-
-    Returns
-    -------
-    dict
-        Configuration dictionary from YAML, or empty dict if loading fails
-    """
-    config_path = Path(__file__).parent / "configs" / "strategy_config.yaml"
-    if not config_path.exists():
-        print(f"[CONFIG] Warning: {config_path} not found, using defaults")
-        return {}
-
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
-            if config is None:
-                print(f"[CONFIG] Warning: {config_path} is empty, using defaults")
-                return {}
-            return config
-    except yaml.YAMLError as e:
-        print(f"[CONFIG] Error parsing YAML config: {e}")
-        raise
-    except Exception as e:
-        print(f"[CONFIG] Error loading config file: {e}")
-        raise
 
 
 def _strip_env_comment(value: str) -> str:
@@ -262,12 +233,6 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         # OCO (from ConfigManager)
         enable_oco=config_manager.get('risk', 'oco', 'enabled', default=True),
 
-        # [LEGACY - 不再使用] Multi-Agent Divergence Handling
-        # 保留用于向后兼容，但不再生效
-        # Support both old (strategy.risk.*) and new (ai.signal.*) paths via PATH_ALIASES
-        skip_on_divergence=config_manager.get('ai', 'signal', 'skip_on_divergence', default=True),
-        use_confidence_fusion=config_manager.get('ai', 'signal', 'use_confidence_fusion', default=True),
-
         # Execution
         position_adjustment_threshold=config_manager.get('execution', 'position_adjustment_threshold', default=0.001),
 
@@ -316,8 +281,6 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         network_binance_balance_cache_ttl=config_manager.get('network', 'binance', 'balance_cache_ttl', default=5.0),
         network_bar_persistence_max_limit=config_manager.get('network', 'bar_persistence', 'max_limit', default=1500),
         network_bar_persistence_timeout=config_manager.get('network', 'bar_persistence', 'timeout', default=10.0),
-        network_oco_manager_socket_timeout=config_manager.get('network', 'oco_manager', 'socket_timeout', default=5.0),
-        network_oco_manager_socket_connect_timeout=config_manager.get('network', 'oco_manager', 'socket_connect_timeout', default=5.0),
         sentiment_timeout=config_manager.get('sentiment', 'timeout', default=10.0),
 
         # Multi-Timeframe Configuration (v3.3: removed unused filter configs)
@@ -491,6 +454,41 @@ def parse_args():
     return parser.parse_args()
 
 
+def _send_shutdown_telegram(config_manager):
+    """
+    Fallback shutdown notification via direct HTTP call to Telegram API.
+
+    This runs in the finally block of main() to guarantee the user is notified
+    even if NautilusTrader's on_stop() was never called (e.g., SIGTERM killed
+    the event loop before strategy cleanup).
+    """
+    try:
+        import requests
+        from datetime import datetime
+
+        enabled = config_manager.get('telegram', 'enabled', default=False)
+        token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+        chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
+
+        if not enabled or not token or not chat_id:
+            return
+
+        msg = (
+            "🛑 *Service Stopped*\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📋 Process exiting\n"
+            f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        )
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={'chat_id': chat_id, 'text': msg, 'parse_mode': 'Markdown'},
+            timeout=10,
+        )
+        print("📱 Sent shutdown notification to Telegram")
+    except Exception as e:
+        print(f"⚠️  Failed to send shutdown notification: {e}")
+
+
 def main():
     """
     Main entry point for live trading.
@@ -567,6 +565,14 @@ def main():
     node.add_exec_client_factory("BINANCE", BinanceLiveExecClientFactory)
     print("✅ Binance factories registered")
 
+    # Register SIGTERM handler for systemctl stop graceful shutdown
+    # Converts SIGTERM to KeyboardInterrupt so NautilusTrader's on_stop() is called
+    def _sigterm_handler(signum, frame):
+        print("\n⚠️  SIGTERM received (systemctl stop)...")
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
     try:
         # Build the node (connects to exchange, loads instruments)
         node.build()
@@ -592,6 +598,10 @@ def main():
         print("\n🛑 Cleaning up resources...")
         node.dispose()
         print("✅ Resources cleaned up")
+
+        # Fallback shutdown notification via direct Telegram API
+        # Strategy's on_stop() may not be called if SIGTERM kills the event loop
+        _send_shutdown_telegram(config_manager)
 
         print("\n" + "=" * 70)
         print("Trading session ended")

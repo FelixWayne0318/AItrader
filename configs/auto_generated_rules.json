@@ -3679,12 +3679,322 @@
       "pattern_type": "contains",
       "created": "2026-02-06T23:52:49.537674",
       "auto_generated": true
+    },
+    {
+      "id": "08d53d78c7f0",
+      "commit": "b1bd611",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix(diagnostics): sync diagnostic scripts with latest system code",
+      "pattern": "total_steps: int = 31  # 28 data steps + 3 order flow simulation steps",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:32.686413",
+      "auto_generated": true
+    },
+    {
+      "id": "bb08aba049d8",
+      "commit": "b1bd611",
+      "file": "scripts/diagnostics/config_checker.py",
+      "message": "fix(diagnostics): sync diagnostic scripts with latest system code",
+      "pattern": "if 'def get_min_sl_distance_pct' not in content:",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:32.701514",
+      "auto_generated": true
+    },
+    {
+      "id": "3365f9652603",
+      "commit": "b1bd611",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "fix(diagnostics): sync diagnostic scripts with latest system code",
+      "pattern": "print(\"        (包括: SL 方向错误, 距离不足, R/R < 1.5:1)\")",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:32.716167",
+      "auto_generated": true
+    },
+    {
+      "id": "4694e54e8908",
+      "commit": "b6847cf",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix(trading): add R/R hard gate in validate_multiagent_sltp + heartbeat signal label",
+      "pattern": "from strategy.trading_logic import get_min_rr_ratio",
+      "pattern_type": "import",
+      "created": "2026-02-07T06:52:32.763237",
+      "auto_generated": true
+    },
+    {
+      "id": "6e15ed6d0d72",
+      "commit": "b6847cf",
+      "file": "scripts/diagnostics/order_flow_simulation.py",
+      "message": "fix(trading): add R/R hard gate in validate_multiagent_sltp + heartbeat signal label",
+      "pattern": "print(\"  │    │   └─ R/R >= 1.5:1 硬性门槛                             │\")",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:32.779837",
+      "auto_generated": true
+    },
+    {
+      "id": "246b60e3eef1",
+      "commit": "b6847cf",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "fix(trading): add R/R hard gate in validate_multiagent_sltp + heartbeat signal label",
+      "pattern": "print(f\"  入场标准: R/R >= 1.5:1 硬性门槛 (validate_multiagent_sltp 强制执行)\")",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:32.795604",
+      "auto_generated": true
+    },
+    {
+      "id": "d6cad2dbca6c",
+      "commit": "b6847cf",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(trading): add R/R hard gate in validate_multiagent_sltp + heartbeat signal label",
+      "pattern": "signal_is_stale = signal != 'PENDING'  # PENDING = no previous analysis yet",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:32.823363",
+      "auto_generated": true
+    },
+    {
+      "id": "642e937c79e7",
+      "commit": "b6847cf",
+      "file": "strategy/trading_logic.py",
+      "message": "fix(trading): add R/R hard gate in validate_multiagent_sltp + heartbeat signal label",
+      "pattern": "get_min_rr_ratio",
+      "pattern_type": "function_exists",
+      "created": "2026-02-07T06:52:32.840649",
+      "auto_generated": true
+    },
+    {
+      "id": "2a653dbfae9f",
+      "commit": "b6847cf",
+      "file": "utils/telegram_bot.py",
+      "message": "fix(trading): add R/R hard gate in validate_multiagent_sltp + heartbeat signal label",
+      "pattern": "signal_is_stale = heartbeat_data.get('signal_is_stale', False)",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:32.859149",
+      "auto_generated": true
+    },
+    {
+      "id": "d59e70206280",
+      "commit": "7d5ed09",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "feat(diagnostics): add full AI call trace logging with per-call I/O export",
+      "pattern": "get_call_trace",
+      "pattern_type": "function_exists",
+      "created": "2026-02-07T06:52:32.895317",
+      "auto_generated": true
+    },
+    {
+      "id": "71ea61902fd6",
+      "commit": "7d5ed09",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "feat(diagnostics): add full AI call trace logging with per-call I/O export",
+      "pattern": "_display_call_trace_summary",
+      "pattern_type": "function_exists",
+      "created": "2026-02-07T06:52:32.913816",
+      "auto_generated": true
+    },
+    {
+      "id": "2870af8be520",
+      "commit": "7d5ed09",
+      "file": "scripts/diagnostics/base.py",
+      "message": "feat(diagnostics): add full AI call trace logging with per-call I/O export",
+      "pattern": "_export_ai_call_trace",
+      "pattern_type": "function_exists",
+      "created": "2026-02-07T06:52:32.931549",
+      "auto_generated": true
+    },
+    {
+      "id": "f98a9e9c199a",
+      "commit": "6902b8a",
+      "file": "scripts/diagnose_all_data_sources.py",
+      "message": "fix(funding-rate): update remaining diagnostic script labels",
+      "pattern": "│                        │ lastFundingRate (=predicted) │ value                       │            │",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:32.963022",
+      "auto_generated": true
+    },
+    {
+      "id": "1ba799a5dd5c",
+      "commit": "6902b8a",
+      "file": "scripts/diagnose_v47_integration.py",
+      "message": "fix(funding-rate): update remaining diagnostic script labels",
+      "pattern": "'funding_rate_current': '已结算资金费率',",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:32.982051",
+      "auto_generated": true
+    },
+    {
+      "id": "8f77c564e11e",
+      "commit": "ad95b94",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix(funding-rate): correct semantics - lastFundingRate is predicted, not settled",
+      "pattern": "settled_rate = float(funding.get('value', 0) or 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.013599",
+      "auto_generated": true
+    },
+    {
+      "id": "42fbfdad0d18",
+      "commit": "ad95b94",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix(funding-rate): correct semantics - lastFundingRate is predicted, not settled",
+      "pattern": "print(f\"      [Binance FR] Settled: {bfr.get('funding_rate_pct', 0):.4f}% | Predicted: {bfr.get('predicted_rate_pct', 0):.4f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.030216",
+      "auto_generated": true
+    },
+    {
+      "id": "24ac8903f8c2",
+      "commit": "ad95b94",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "fix(funding-rate): correct semantics - lastFundingRate is predicted, not settled",
+      "pattern": "print(f\"        ✅ Settled FR: {binance_fr.get('funding_rate_pct', 0):.4f}% | Predicted FR: {binance_fr.get('predicted_rate_pct', 0):.4f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.046019",
+      "auto_generated": true
+    },
+    {
+      "id": "9442a465eb2a",
+      "commit": "ad95b94",
+      "file": "scripts/diagnostics/position_check.py",
+      "message": "fix(funding-rate): correct semantics - lastFundingRate is predicted, not settled",
+      "pattern": "print(f\"     已结算费率: {fr_pct:+.4f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.068735",
+      "auto_generated": true
+    },
+    {
+      "id": "919f118a1164",
+      "commit": "ad95b94",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "fix(funding-rate): correct semantics - lastFundingRate is predicted, not settled",
+      "pattern": "settled_pct = fr.get('funding_rate_pct', 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.083587",
+      "auto_generated": true
+    },
+    {
+      "id": "206d49931bfa",
+      "commit": "ad95b94",
+      "file": "scripts/test_funding_rate.py",
+      "message": "fix(funding-rate): correct semantics - lastFundingRate is predicted, not settled",
+      "pattern": "import sys",
+      "pattern_type": "import",
+      "created": "2026-02-07T06:52:33.098851",
+      "auto_generated": true
+    },
+    {
+      "id": "3ad2b6fab886",
+      "commit": "ad95b94",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(funding-rate): correct semantics - lastFundingRate is predicted, not settled",
+      "pattern": "'funding_rate': binance_funding.get('funding_rate'),          # 已结算费率",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.120666",
+      "auto_generated": true
+    },
+    {
+      "id": "ddd66b21e0d8",
+      "commit": "ad95b94",
+      "file": "utils/ai_data_assembler.py",
+      "message": "fix(funding-rate): correct semantics - lastFundingRate is predicted, not settled",
+      "pattern": "funding_pct = binance_funding['funding_rate_pct']     # 已结算 (%)",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.136414",
+      "auto_generated": true
+    },
+    {
+      "id": "c7b080d44153",
+      "commit": "ad95b94",
+      "file": "utils/binance_kline_client.py",
+      "message": "fix(funding-rate): correct semantics - lastFundingRate is predicted, not settled",
+      "pattern": "if response.status_code != 200:",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.152199",
+      "auto_generated": true
+    },
+    {
+      "id": "868e1dc055a6",
+      "commit": "ad95b94",
+      "file": "utils/telegram_bot.py",
+      "message": "fix(funding-rate): correct semantics - lastFundingRate is predicted, not settled",
+      "pattern": "funding_rate_pct = derivatives.get('funding_rate_pct')       # 已结算费率",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.169118",
+      "auto_generated": true
+    },
+    {
+      "id": "60835c3d0f66",
+      "commit": "fad776f",
+      "file": "utils/binance_kline_client.py",
+      "message": "fix(funding): Remove inaccurate local predicted funding rate calculation",
+      "pattern": "\"premium_index\": 0.00051,         # 当前瞬时溢价指数",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.219739",
+      "auto_generated": true
+    },
+    {
+      "id": "730e866c2e9b",
+      "commit": "bde23ed",
+      "file": "web/backend/services/performance_service.py",
+      "message": "fix(deps): Replace empyrical with empyrical-reloaded for Python 3.12+ compatibility",
+      "pattern": "logging.warning(\"empyrical not installed. Run: pip install empyrical-reloaded>=0.5.12\")",
+      "pattern_type": "contains",
+      "created": "2026-02-07T06:52:33.269071",
+      "auto_generated": true
+    },
+    {
+      "id": "1494c1486bdb",
+      "commit": "2848b1e",
+      "file": "utils/telegram_command_handler.py",
+      "message": "fix(telegram): add error handling to cmd_menu + global error handler",
+      "pattern": "self.logger.info(f\"✅ Bot commands registered ({len(commands)} commands): {[c.command for c in commands]}\")",
+      "pattern_type": "contains",
+      "created": "2026-02-07T13:05:42.139418",
+      "auto_generated": true
+    },
+    {
+      "id": "ea6af891e157",
+      "commit": "1af3da8",
+      "file": "main_live.py",
+      "message": "fix(telegram): send initializing notification before instrument loading",
+      "pattern": "import requests",
+      "pattern_type": "import",
+      "created": "2026-02-07T13:05:42.201096",
+      "auto_generated": true
+    },
+    {
+      "id": "5dc0b3e7903d",
+      "commit": "1af3da8",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(telegram): send initializing notification before instrument loading",
+      "pattern": "# This ensures user gets notified even if instrument loading fails/takes long",
+      "pattern_type": "contains",
+      "created": "2026-02-07T13:05:42.235163",
+      "auto_generated": true
+    },
+    {
+      "id": "f623335fdfd1",
+      "commit": "26b616c",
+      "file": "main_live.py",
+      "message": "fix(telegram): ensure startup/shutdown notifications are reliably sent",
+      "pattern": "import signal",
+      "pattern_type": "import",
+      "created": "2026-02-07T13:05:42.275720",
+      "auto_generated": true
+    },
+    {
+      "id": "6592c0f25de0",
+      "commit": "26b616c",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(telegram): ensure startup/shutdown notifications are reliably sent",
+      "pattern": "self.telegram_bot.send_message_sync(startup_msg, use_queue=False)",
+      "pattern_type": "contains",
+      "created": "2026-02-07T13:05:42.302094",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-06T23:52:49.562015",
-    "count": 368,
+    "updated": "2026-02-07T13:05:51.360664",
+    "count": 399,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }

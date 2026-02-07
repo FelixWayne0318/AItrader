@@ -14,7 +14,6 @@ v3.0 Redesign (2026-02):
 
 import asyncio
 import logging
-import concurrent.futures
 from typing import Optional, Dict, Any
 from datetime import datetime
 
@@ -1256,12 +1255,12 @@ class TelegramBot:
 
     def format_position_response(self, position_info: Dict[str, Any]) -> str:
         """
-        Format position information response for /position command.
+        Format comprehensive position information for /position command.
 
         Parameters
         ----------
         position_info : dict
-            Position information
+            Position information including v4.9 enhanced fields
         """
         if not position_info.get('has_position', False):
             return "ℹ️ *No Position*\n\nNo active positions."
@@ -1270,24 +1269,64 @@ class TelegramBot:
         side_emoji = '🟢' if side == 'LONG' else '🔴' if side == 'SHORT' else '⚪'
         side_cn = '多' if side == 'LONG' else '空' if side == 'SHORT' else side
 
-        msg = f"{side_emoji} *Current Position — {side_cn}*\n"
+        msg = f"{side_emoji} *Position — {side_cn}*\n"
         msg += "━━━━━━━━━━━━━━━━━━\n"
-        msg += f"*Qty*: {position_info.get('quantity', 0):.4f} BTC\n"
-        msg += f"*Entry*: ${position_info.get('entry_price', 0):,.2f}\n"
-        msg += f"*Current*: ${position_info.get('current_price', 0):,.2f}\n"
 
+        # Core position info
+        quantity = position_info.get('quantity', 0)
+        entry_price = position_info.get('entry_price', 0)
+        current_price = position_info.get('current_price', 0)
+        leverage = position_info.get('leverage')
+        notional = position_info.get('notional_value')
+
+        msg += f"*Qty*: {quantity:.4f} BTC\n"
+        msg += f"*Entry*: ${entry_price:,.2f}\n"
+        msg += f"*Current*: ${current_price:,.2f}\n"
+
+        # v4.9: Notional value + leverage
+        if notional:
+            msg += f"*Value*: ${notional:,.2f}"
+            if leverage:
+                msg += f" ({leverage}x)"
+            msg += "\n"
+
+        # P&L section
         pnl = position_info.get('unrealized_pnl', 0)
         pnl_pct = position_info.get('pnl_pct', 0)
+        roe_pct = position_info.get('roe_pct')
         pnl_icon = self._pnl_icon(pnl)
-        msg += f"\n*P&L*: {pnl_icon} ${pnl:,.2f} ({pnl_pct:+.2f}%)\n"
+        msg += f"\n{pnl_icon} *P&L*: ${pnl:,.2f} ({pnl_pct:+.2f}%)\n"
+        if roe_pct is not None:
+            roe_icon = self._pnl_icon(roe_pct)
+            msg += f"{roe_icon} *ROE*: {roe_pct:+.2f}%\n"
 
-        # SL/TP
+        # SL/TP with R/R ratio
         sl_price = position_info.get('sl_price')
         tp_price = position_info.get('tp_price')
-        if sl_price:
-            msg += f"\n🛑 *SL*: ${sl_price:,.2f}\n"
-        if tp_price:
-            msg += f"🎯 *TP*: ${tp_price:,.2f}\n"
+        if sl_price or tp_price:
+            msg += f"\n🎯 *SL/TP*\n"
+            if sl_price:
+                sl_dist = abs(current_price - sl_price) / current_price * 100 if current_price > 0 else 0
+                msg += f"  🛑 SL: ${sl_price:,.2f} (-{sl_dist:.1f}%)\n"
+            if tp_price:
+                tp_dist = abs(tp_price - current_price) / current_price * 100 if current_price > 0 else 0
+                msg += f"  🎯 TP: ${tp_price:,.2f} (+{tp_dist:.1f}%)\n"
+            # R/R ratio
+            if sl_price and tp_price and current_price > 0:
+                risk = abs(current_price - sl_price)
+                reward = abs(tp_price - current_price)
+                if risk > 0:
+                    rr = reward / risk
+                    msg += f"  📐 R/R: 1:{rr:.1f}\n"
+
+        # v4.9: Trailing stop
+        if position_info.get('trailing_active'):
+            trailing_sl = position_info.get('trailing_sl', 0)
+            trailing_peak = position_info.get('trailing_peak', 0)
+            msg += f"\n📈 *Trailing Stop*\n"
+            msg += f"  SL: ${trailing_sl:,.2f}\n"
+            if trailing_peak > 0:
+                msg += f"  Peak: ${trailing_peak:,.2f}\n"
 
         # Liquidation risk
         liq_price = position_info.get('liquidation_price')
@@ -1301,6 +1340,20 @@ class TelegramBot:
                 risk_icon = '🔴' if is_liq_risk_high else '🟢'
                 msg += f"  Buffer: {risk_icon} {liq_buffer:.1f}%\n"
 
+        # v4.9: Margin info
+        margin_used = position_info.get('margin_used_pct')
+        available = position_info.get('available_balance')
+        initial_margin = position_info.get('initial_margin')
+        if margin_used is not None or available is not None:
+            msg += f"\n💳 *Margin*\n"
+            if initial_margin:
+                msg += f"  Used: ${initial_margin:,.2f}\n"
+            if available is not None:
+                msg += f"  Available: ${available:,.2f}\n"
+            if margin_used is not None:
+                cap_icon = '🔴' if margin_used > 80 else '🟡' if margin_used > 60 else '🟢'
+                msg += f"  Capacity: {cap_icon} {margin_used:.1f}% used\n"
+
         # Funding rate
         funding_rate = position_info.get('funding_rate_current')
         daily_cost = position_info.get('daily_funding_cost_usd')
@@ -1311,7 +1364,7 @@ class TelegramBot:
             msg += f"\n💰 *Funding*\n"
             fr_pct = funding_rate * 100
             fr_icon = '🔴' if fr_pct > 0.01 else '🟢' if fr_pct < -0.01 else '⚪'
-            msg += f"  已结算: {fr_icon} {fr_pct:.4f}%/8h\n"
+            msg += f"  Rate: {fr_icon} {fr_pct:.4f}%/8h\n"
             if daily_cost is not None:
                 msg += f"  Daily: ${daily_cost:.2f}\n"
             if cumulative_funding is not None and cumulative_funding != 0:
@@ -1333,12 +1386,57 @@ class TelegramBot:
         # Duration and confidence
         duration = position_info.get('duration_minutes')
         confidence = position_info.get('entry_confidence')
-        if duration is not None:
-            hours = duration // 60
-            mins = duration % 60
-            msg += f"\n⏱ Duration: {int(hours)}h {int(mins)}m\n"
-        if confidence:
-            msg += f"📊 Confidence: {confidence}\n"
+        if duration is not None or confidence:
+            msg += "\n"
+            if duration is not None:
+                hours = duration // 60
+                mins = duration % 60
+                msg += f"⏱ Duration: {int(hours)}h {int(mins)}m\n"
+            if confidence:
+                msg += f"📊 Confidence: {confidence}\n"
+
+        return msg
+
+    def format_scaling_notification(self, scaling_info: Dict[str, Any]) -> str:
+        """
+        Format position scaling (add/reduce) notification.
+
+        Parameters
+        ----------
+        scaling_info : dict
+            Scaling information with action, side, qty changes, etc.
+        """
+        action = scaling_info.get('action', 'SCALE')
+        side = scaling_info.get('side', 'UNKNOWN')
+        side_cn = '多' if side.upper() == 'LONG' else '空' if side.upper() == 'SHORT' else side
+
+        if action == 'ADD':
+            emoji = '📈'
+            action_cn = '加仓'
+        else:
+            emoji = '📉'
+            action_cn = '减仓'
+
+        old_qty = scaling_info.get('old_qty', 0)
+        new_qty = scaling_info.get('new_qty', 0)
+        change_qty = scaling_info.get('change_qty', 0)
+        current_price = scaling_info.get('current_price', 0)
+
+        msg = f"{emoji} *{action_cn} — {side_cn}*\n"
+        msg += "━━━━━━━━━━━━━━━━━━\n"
+        msg += f"变化: {'+' if action == 'ADD' else '-'}{abs(change_qty):.4f} BTC\n"
+        msg += f"仓位: {old_qty:.4f} → {new_qty:.4f} BTC\n"
+
+        if current_price > 0:
+            new_notional = new_qty * current_price
+            msg += f"价格: ${current_price:,.2f}\n"
+            msg += f"仓位价值: ${new_notional:,.2f}\n"
+
+        # P&L if available
+        pnl = scaling_info.get('unrealized_pnl')
+        if pnl is not None:
+            pnl_icon = self._pnl_icon(pnl)
+            msg += f"P&L: {pnl_icon} ${pnl:,.2f}\n"
 
         return msg
 
@@ -1359,21 +1457,21 @@ class TelegramBot:
         return (
             "🤖 *Commands*\n"
             "━━━━━━━━━━━━━━━━━━\n"
+            "\n⚡ *Quick*\n"
+            "  /s Status | /p Position | /b Balance\n"
+            "  /a Analyze | /v Version | /l Logs\n"
+            "  /fa Force AI | /pc Partial close\n"
             "\n📊 *Query*\n"
-            "  /status — Strategy status\n"
-            "  /position — Current position\n"
-            "  /orders — Open orders\n"
-            "  /history — Trade history\n"
-            "  /risk — Risk metrics\n"
-            "  /daily — Daily report\n"
-            "  /weekly — Weekly report\n"
-            "\n⚙️ *Control*\n"
-            "  /pause — Pause trading\n"
-            "  /resume — Resume trading\n"
-            "  /close — Close position\n"
-            "\n📋 *Other*\n"
-            "  /menu — Button menu\n"
-            "  /help — This help\n"
+            "  /status /position /balance\n"
+            "  /orders /risk /analyze\n"
+            "  /daily /weekly /history\n"
+            "  /config /version /logs\n"
+            "\n⚙️ *Control* (PIN)\n"
+            "  /pause /resume /close\n"
+            "  /force\\_analysis /partial\\_close\n"
+            "  /set\\_leverage /toggle /set\n"
+            "  /restart\n"
+            "\n💡 /menu for button panel\n"
         )
 
 

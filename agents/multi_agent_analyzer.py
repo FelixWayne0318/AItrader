@@ -125,8 +125,20 @@ Daily holding cost = rate × 3 settlements (every 8h).
   |Rate| < 0.03%: Normal (0.01-0.03% in bull markets is standard, not bearish).
   > +0.05%: Crowded longs. > +0.10%: Extreme, reversal probability rises.
   < -0.03%: Bearish pressure. < -0.10%: Extreme panic, bounce probability rises.
-  Predicted vs current divergence = expect shift at next settlement.
+  Predicted vs settled difference > 0.01% = notable shift in market sentiment.
+  Predicted vs settled sign reversal (e.g., +0.01% → -0.01%) = significant positioning change.
+  Settlement countdown < 30min with extreme predicted rate: expect short-term volatility.
+  History: Persistent same-sign rates (>3 settlements) = established positioning.
+  Reversal from extreme = positioning unwind, expect opposite-side volatility.
 ⚠️ Funding alone without OI/price context = premature contrarian trades.
+
+--- PREMIUM INDEX ---
+Premium Index = (Mark Price - Index Price) / Index Price.
+  Positive = futures trading above spot = long premium (bulls paying to hold).
+  Negative = futures below spot = short premium (bears paying to hold).
+  Predicts next funding rate direction. Premium > 0.05% = expect positive funding.
+  Sharp premium spike = aggressive leveraged positioning, often precedes mean-reversion.
+⚠️ Premium Index is instantaneous — confirm with funding trend before acting.
 
 --- OPEN INTEREST (4-Quadrant Matrix) ---
   Price ↑ + OI ↑ = New longs entering → BULLISH CONFIRMATION
@@ -1433,6 +1445,13 @@ BOLLINGER BANDS (4H):
                 val = mtf_trend.get(key)
                 return float(val) if val is not None else default
 
+            # v3.25: 增加 1D RSI + ADX
+            trend_rsi = trend_safe_get('rsi')
+            trend_adx = trend_safe_get('adx')
+            trend_di_plus = trend_safe_get('di_plus')
+            trend_di_minus = trend_safe_get('di_minus')
+            trend_adx_regime = mtf_trend.get('adx_regime', 'UNKNOWN')
+
             report += f"""
 === MARKET DATA (1D Timeframe - Macro Trend) ===
 
@@ -1441,6 +1460,8 @@ TREND INDICATORS (1D):
 - Price vs SMA_200: {'+' if data.get('price', 0) > trend_safe_get('sma_200') else ''}{((data.get('price', 0) / trend_safe_get('sma_200') - 1) * 100) if trend_safe_get('sma_200') > 0 else 0:.2f}%
 - MACD: {trend_safe_get('macd'):.4f}
 - MACD Signal: {trend_safe_get('macd_signal'):.4f}
+- RSI(14): {trend_rsi:.1f}
+- ADX(14): {trend_adx:.1f} ({trend_adx_regime}) | DI+ {trend_di_plus:.1f} / DI- {trend_di_minus:.1f}
 """
 
         # Add historical context if available (EVALUATION_FRAMEWORK v3.0.1)
