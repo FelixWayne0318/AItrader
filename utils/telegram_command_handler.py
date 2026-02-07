@@ -540,11 +540,23 @@ class TelegramCommandHandler:
             await self._send_response(update, "❌ Unauthorized")
             return
 
-        await update.message.reply_text(
-            "🤖 *交易控制面板*\n\n点击按钮执行操作：",
-            reply_markup=self._menu_keyboard(),
-            parse_mode='Markdown'
-        )
+        try:
+            await update.message.reply_text(
+                "🤖 *交易控制面板*\n\n点击按钮执行操作：",
+                reply_markup=self._menu_keyboard(),
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            self.logger.error(f"cmd_menu error: {e}")
+            # Fallback: send plain text without keyboard
+            try:
+                await update.message.reply_text(
+                    "🤖 交易控制面板\n\n点击按钮执行操作：",
+                    reply_markup=self._menu_keyboard(),
+                )
+            except Exception as e2:
+                self.logger.error(f"cmd_menu fallback error: {e2}")
+                await self._send_response(update, f"❌ Menu error: {e2}")
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show help with quick commands."""
@@ -739,11 +751,15 @@ class TelegramCommandHandler:
             # Clear all scopes
             await self.application.bot.set_my_commands([], scope=BotCommandScopeDefault())
             await self.application.bot.set_my_commands([], scope=BotCommandScopeAllGroupChats())
-            self.logger.info("Cleared old bot commands")
+            self.logger.info("Cleared old bot commands from all scopes")
 
             # Register for private chats only
             await self.application.bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
-            self.logger.info("Bot commands registered (5 commands)")
+            self.logger.info(f"✅ Bot commands registered ({len(commands)} commands): {[c.command for c in commands]}")
+
+            # Also register for default scope (ensures "/" menu appears everywhere)
+            await self.application.bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+            self.logger.info("✅ Bot commands also registered in default scope")
 
             return True
 
@@ -851,9 +867,15 @@ class TelegramCommandHandler:
                 self.application.add_handler(CommandHandler("help", self.cmd_help))
                 self.application.add_handler(CommandHandler("start", self.cmd_help))
                 self.application.add_handler(CommandHandler("menu", self.cmd_menu))
+                self.logger.info("Registered /menu, /help, /start handlers")
 
                 # Inline keyboard callback handler
                 self.application.add_handler(CallbackQueryHandler(self.handle_callback))
+
+                # Error handler - log unhandled exceptions
+                async def _error_handler(update, context):
+                    self.logger.error(f"Telegram handler error: {context.error}", exc_info=context.error)
+                self.application.add_error_handler(_error_handler)
 
                 # PIN verification text handler (must come after command handlers)
                 if self.enable_pin and MessageHandler and filters:
