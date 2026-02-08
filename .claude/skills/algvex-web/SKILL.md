@@ -38,7 +38,7 @@ Web interface for AItrader trading system at algvex.com.
 | **Domain** | algvex.com |
 | **Server** | 139.180.157.152 |
 | **Frontend** | Next.js 14 + TypeScript |
-| **Backend** | FastAPI + Python 3.11 |
+| **Backend** | FastAPI + Python 3.12 |
 | **Database** | SQLite |
 | **Auth** | Google OAuth |
 | **Install Path** | /home/linuxuser/algvex |

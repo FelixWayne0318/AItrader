@@ -40,7 +40,7 @@ AlgVex is a web interface for the AItrader trading system, featuring:
 |-------|------------|
 | Frontend | Next.js 14, TypeScript, Tailwind CSS, shadcn/ui |
 | Charts | TradingView Lightweight Charts |
-| Backend | FastAPI, Python 3.11, SQLAlchemy |
+| Backend | FastAPI, Python 3.12, SQLAlchemy |
 | Database | SQLite (async) |
 | Auth | Google OAuth (via AuthLib) |
 | Proxy | Caddy (auto HTTPS) |
@@ -114,13 +114,13 @@ chmod +x setup.sh
 1. **Install Dependencies**
    ```bash
    sudo apt update
-   sudo apt install python3.11 python3.11-venv nodejs npm caddy
+   sudo apt install python3.12 python3.12-venv nodejs npm caddy
    ```
 
 2. **Setup Backend**
    ```bash
    cd /home/linuxuser/algvex/backend
-   python3.11 -m venv venv
+   python3.12 -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
    cp .env.example .env

@@ -7,7 +7,7 @@
 ## Prerequisites Check
 
 ```bash
-✅ Python 3.11+
+✅ Python 3.12+
 ✅ Binance Futures account with API key
 ✅ DeepSeek API key
 ✅ $500+ USDT in Futures wallet
@@ -26,7 +26,7 @@ git clone <repo-url> nautilus_deepseek
 cd nautilus_deepseek
 
 # Create venv
-python3.11 -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate
 
 # Install dependencies
@@ -735,7 +735,7 @@ Before going live:
 
 ```bash
 # 1. Install (2 min)
-python3.11 -m venv venv && source venv/bin/activate
+python3.12 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
 # 2. Configure (1 min)
