@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Bracket Order 下单能力检测 v4
-根据 v3 发现:
-  - algoType="CONDITIONAL" 是正确值 (NT L1130 确认)
-  - 参数名需要用 triggerPrice 而不是 stopPrice
-本版本测试完整的 SL + TP 下单流程
+Bracket Order 深层诊断 v5
+不再测试 API 参数 — 直接分析 NT 内部的订单路由链：
+1. _submit_order_list 是否拦截含 STOP_MARKET 的 linked orders?
+2. _submit_order 如何 dispatch 不同 order type?
+3. 单独提交 SL/TP (非 bracket) 是否可行?
 """
 import os
 import sys
@@ -67,163 +67,143 @@ def cleanup(qty):
         print(f"  Cleanup: {e}")
 
 
+def dump_method(cls, method_name, max_lines=80):
+    """从类或其父类中找到并打印方法源码"""
+    for klass in cls.__mro__:
+        if klass.__name__ == "object":
+            continue
+        try:
+            src = inspect.getsource(klass)
+            lines = src.split("\n")
+            in_method = False
+            method_indent = 0
+            method_lines = []
+            for i, line in enumerate(lines):
+                if method_name in line and ("def " in line or "async def " in line):
+                    in_method = True
+                    method_indent = len(line) - len(line.lstrip())
+                    method_lines = [f"  [{klass.__name__}]"]
+                    method_lines.append(f"    L{i}: {line.rstrip()}")
+                    continue
+                if in_method:
+                    if line.strip() == "" or line.strip().startswith("#") or line.strip().startswith('"""') or line.strip().startswith("'"):
+                        method_lines.append(f"    L{i}: {line.rstrip()}")
+                    else:
+                        curr_indent = len(line) - len(line.lstrip()) if line.strip() else 999
+                        if curr_indent <= method_indent and line.strip():
+                            break
+                        method_lines.append(f"    L{i}: {line.rstrip()}")
+                    if len(method_lines) > max_lines:
+                        method_lines.append(f"    ... (truncated at {max_lines} lines)")
+                        break
+            if method_lines:
+                for ml in method_lines:
+                    print(ml)
+                return True
+        except (TypeError, OSError):
+            continue
+    print(f"  NOT FOUND in any parent class")
+    return False
+
+
 def main():
-    print("=" * 60)
-    print("  Bracket Order Test v4 - Correct Algo API Parameters")
-    print("=" * 60)
+    print("=" * 70)
+    print("  Bracket Order Deep Diagnosis v5 - NT Internal Routing")
+    print("=" * 70)
 
     qty = "0.002"
 
-    # === 1. Dump PostParameters + execution routing ===
-    print("\n[1/4] NT PostParameters + Execution Routing\n")
+    # ================================================================
+    # PART 1: NT 内部订单路由链分析
+    # ================================================================
+    print("\n" + "=" * 70)
+    print("  PART 1: NT Internal Order Routing Chain")
+    print("=" * 70)
 
     try:
-        import nautilus_trader.adapters.binance.futures.http.account as acct_mod
-
-        # Get PostParameters from BinanceFuturesAlgoOrderHttp
-        for name, obj in inspect.getmembers(acct_mod, inspect.isclass):
-            if name == "BinanceFuturesAlgoOrderHttp":
-                for inner_name, inner_obj in inspect.getmembers(obj, inspect.isclass):
-                    if "Post" in inner_name:
-                        src = inspect.getsource(inner_obj)
-                        print(f"  === {name}.{inner_name} ===")
-                        for line in src.split("\n"):
-                            print(f"    {line}")
-                        print()
-
-        # Find how execution client submits stop market orders
-        print("  === Execution Client: _submit_stop_market / _submit_algo ===")
         from nautilus_trader.adapters.binance.futures.execution import BinanceFuturesExecutionClient
-        exec_src = inspect.getsource(BinanceFuturesExecutionClient)
 
-        # Search for algo-related methods
-        keywords = ["_submit_stop_market", "_submit_algo", "_submit_take_profit", "algo_order", "algoOrder"]
-        for kw in keywords:
-            if kw.lower() in exec_src.lower():
-                print(f"  Found '{kw}' in execution client")
+        # 1a. _submit_order_list - 这是 bracket 的入口
+        print("\n[1a] _submit_order_list (bracket 入口):")
+        dump_method(BinanceFuturesExecutionClient, "_submit_order_list")
 
-        # Print all method signatures that mention algo or stop
-        lines = exec_src.split("\n")
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith("async def ") or stripped.startswith("def "):
-                if any(k in stripped.lower() for k in ["algo", "stop", "take_profit", "conditional"]):
-                    print(f"    L{i}: {stripped[:120]}")
+        # 1b. _submit_order - 单个订单 dispatch
+        print("\n[1b] _submit_order (单订单 dispatch):")
+        dump_method(BinanceFuturesExecutionClient, "_submit_order", max_lines=100)
 
-        # Dump the full _submit_stop_market_order or similar
-        print("\n  === Full method: _submit_stop_market_order ===")
-        in_method = False
-        method_indent = 0
-        method_lines = []
-        for i, line in enumerate(lines):
-            if "_submit_stop_market_order" in line and ("def " in line or "async def " in line):
-                in_method = True
-                method_indent = len(line) - len(line.lstrip())
-                method_lines = []
-            if in_method:
-                method_lines.append(f"    L{i}: {line}")
-                # Detect method end (next method at same indent level)
-                if len(method_lines) > 2:
-                    curr_stripped = line.strip()
-                    if curr_stripped and not curr_stripped.startswith("#") and not curr_stripped.startswith('"""'):
-                        curr_indent = len(line) - len(line.lstrip())
-                        if curr_indent <= method_indent and ("def " in curr_stripped or "class " in curr_stripped):
-                            method_lines.pop()  # Remove the next method's line
-                            break
-                if len(method_lines) > 60:
-                    method_lines.append("    ... (truncated at 60 lines)")
-                    break
-        if method_lines:
-            for ml in method_lines:
-                print(ml)
-        else:
-            # Try parent class
-            print("    Not found in BinanceFuturesExecutionClient")
-            print("    Searching parent classes...")
-            for base_cls in BinanceFuturesExecutionClient.__mro__:
-                base_name = base_cls.__name__
-                if base_name in ("object",):
-                    continue
-                try:
-                    base_src = inspect.getsource(base_cls)
-                    if "_submit_stop_market" in base_src:
-                        print(f"    Found in: {base_name}")
-                        base_lines = base_src.split("\n")
-                        in_m = False
-                        for j, bl in enumerate(base_lines):
-                            if "_submit_stop_market" in bl and ("def " in bl or "async def " in bl):
-                                in_m = True
-                            if in_m:
-                                print(f"      L{j}: {bl}")
-                                if len([x for x in range(j) if in_m]) > 60:
-                                    break
-                                if in_m and j > 0:
-                                    bs = bl.strip()
-                                    if bs.startswith("def ") or bs.startswith("async def "):
-                                        if "_submit_stop_market" not in bs:
-                                            break
-                except:
-                    pass
+        # 1c. _submit_stop_market_order - SL 路由
+        print("\n[1c] _submit_stop_market_order (SL 路由到 algo?):")
+        dump_method(BinanceFuturesExecutionClient, "_submit_stop_market_order")
 
-        # Also find how order list / bracket submits
-        print("\n  === Full method: _submit_order_list ===")
-        in_method = False
-        method_lines = []
-        for i, line in enumerate(lines):
-            if "_submit_order_list" in line and ("def " in line or "async def " in line):
-                in_method = True
-                method_indent = len(line) - len(line.lstrip())
-                method_lines = []
-            if in_method:
-                method_lines.append(f"    L{i}: {line}")
-                if len(method_lines) > 2:
-                    curr_stripped = line.strip()
-                    if curr_stripped and not curr_stripped.startswith("#") and not curr_stripped.startswith('"""'):
-                        curr_indent = len(line) - len(line.lstrip())
-                        if curr_indent <= method_indent and ("def " in curr_stripped or "class " in curr_stripped):
-                            method_lines.pop()
-                            break
-                if len(method_lines) > 80:
-                    method_lines.append("    ... (truncated at 80 lines)")
-                    break
-        if method_lines:
-            for ml in method_lines:
-                print(ml)
-        else:
-            print("    Not found - searching parent classes...")
-            for base_cls in BinanceFuturesExecutionClient.__mro__:
-                try:
-                    base_src = inspect.getsource(base_cls)
-                    if "_submit_order_list" in base_src:
-                        print(f"    Found in: {base_cls.__name__}")
-                        break
-                except:
-                    pass
+        # 1d. _submit_take_profit_market_order - TP 路由
+        print("\n[1d] _submit_take_profit_market_order (TP 路由到 algo?):")
+        dump_method(BinanceFuturesExecutionClient, "_submit_take_profit_market_order")
+
+        # 1e. _submit_limit_order - bracket 的 TP 是 LIMIT
+        print("\n[1e] _submit_limit_order (bracket TP 通常是 LIMIT):")
+        dump_method(BinanceFuturesExecutionClient, "_submit_limit_order")
+
+        # 1f. new_algo_order - 实际调用 algo endpoint
+        print("\n[1f] new_algo_order (实际调用 /fapi/v1/algoOrder):")
+        dump_method(BinanceFuturesExecutionClient, "new_algo_order")
+
+        # 1g. 搜索 "UNSUPPORTED_OCO" 或 "deny" 关键字
+        print("\n[1g] Search for order denial / OCO rejection logic:")
+        for klass in BinanceFuturesExecutionClient.__mro__:
+            if klass.__name__ == "object":
+                continue
+            try:
+                src = inspect.getsource(klass)
+                for i, line in enumerate(src.split("\n")):
+                    low = line.lower()
+                    if any(k in low for k in ["unsupported", "deny", "reject", "_deny_order"]):
+                        if "def " in line or "deny" in low or "unsupported" in low:
+                            print(f"    [{klass.__name__} L{i}]: {line.strip()[:120]}")
+            except (TypeError, OSError):
+                continue
+
+        # 1h. 检查 linked_order_ids 处理
+        print("\n[1h] Search for linked_order_ids handling:")
+        for klass in BinanceFuturesExecutionClient.__mro__:
+            if klass.__name__ == "object":
+                continue
+            try:
+                src = inspect.getsource(klass)
+                for i, line in enumerate(src.split("\n")):
+                    if "linked_order" in line.lower():
+                        print(f"    [{klass.__name__} L{i}]: {line.strip()[:120]}")
+            except (TypeError, OSError):
+                continue
 
     except Exception as e:
         print(f"  Error: {e}")
         import traceback
         traceback.print_exc()
 
-    # === 2. Get price ===
-    print("\n\n[2/4] Market State")
+    # ================================================================
+    # PART 2: 验证 Algo API (正确参数)
+    # ================================================================
+    print("\n\n" + "=" * 70)
+    print("  PART 2: Direct Algo API Test (algoType=CONDITIONAL + triggerPrice)")
+    print("=" * 70)
+
     r = requests.get(f"{BASE}/fapi/v1/ticker/price",
                      params={"symbol": "BTCUSDT"}, timeout=5)
     price = float(r.json()["price"])
-    print(f"  Price: ${price:,.2f}")
+    print(f"\n  Price: ${price:,.2f}")
 
     r = api_get("/fapi/v2/positionRisk", {"symbol": "BTCUSDT"})
     has_pos = any(float(p.get("positionAmt", 0)) != 0 for p in r.json())
     if has_pos:
-        print("  HAS POSITION - aborting")
+        print("  HAS POSITION - aborting Part 2")
         return
     print("  No position")
 
     sl_price = str(round(price * 0.98, 2))
     tp_price = str(round(price * 1.03, 2))
 
-    # === 3. Entry ===
-    print(f"\n[3/4] Entry Order")
+    # Entry
+    print(f"\n  [Entry] MARKET BUY {qty} BTC")
     r1 = api_post("/fapi/v1/order", {
         "symbol": "BTCUSDT", "side": "BUY",
         "type": "MARKET", "quantity": qty,
@@ -233,12 +213,8 @@ def main():
         return
     print(f"  OK Entry: orderId={r1.json()['orderId']}")
 
-    # === 4. Test SL + TP via Algo Order API ===
-    print(f"\n[4/4] Algo Order API Tests (algoType=CONDITIONAL, triggerPrice)")
-    print(f"  SL triggerPrice={sl_price}, TP triggerPrice={tp_price}")
-
-    # --- Test A: SL via STOP_MARKET ---
-    print("\n  --- Test A: STOP_MARKET (SL) ---")
+    # SL via Algo
+    print(f"\n  [SL] STOP_MARKET via algoOrder (triggerPrice={sl_price})")
     r_sl = api_post("/fapi/v1/algoOrder", {
         "symbol": "BTCUSDT",
         "side": "SELL",
@@ -249,63 +225,12 @@ def main():
         "reduceOnly": "true",
     })
     if r_sl.status_code == 200:
-        sl_data = r_sl.json()
-        print(f"  OK SL: algoId={sl_data.get('algoId', '?')}, status={sl_data.get('algoStatus', '?')}")
+        print(f"  OK SL: {r_sl.json()}")
     else:
-        err = r_sl.json()
-        print(f"  XX SL: {err.get('code','')} {err.get('msg','')}")
-        # Try alternative parameter names
-        print("\n  --- Test A2: with stopPrice instead ---")
-        r_sl2 = api_post("/fapi/v1/algoOrder", {
-            "symbol": "BTCUSDT",
-            "side": "SELL",
-            "type": "STOP_MARKET",
-            "algoType": "CONDITIONAL",
-            "stopPrice": sl_price,
-            "quantity": qty,
-            "reduceOnly": "true",
-        })
-        if r_sl2.status_code == 200:
-            print(f"  OK SL (stopPrice): {r_sl2.json()}")
-        else:
-            print(f"  XX SL (stopPrice): {r_sl2.json().get('code','')} {r_sl2.json().get('msg','')}")
+        print(f"  XX SL: {r_sl.json()}")
 
-        print("\n  --- Test A3: with both triggerPrice + stopPrice ---")
-        r_sl3 = api_post("/fapi/v1/algoOrder", {
-            "symbol": "BTCUSDT",
-            "side": "SELL",
-            "type": "STOP_MARKET",
-            "algoType": "CONDITIONAL",
-            "triggerPrice": sl_price,
-            "stopPrice": sl_price,
-            "quantity": qty,
-            "reduceOnly": "true",
-        })
-        if r_sl3.status_code == 200:
-            print(f"  OK SL (both): {r_sl3.json()}")
-        else:
-            print(f"  XX SL (both): {r_sl3.json().get('code','')} {r_sl3.json().get('msg','')}")
-
-        print("\n  --- Test A4: STOP type (limit-style) ---")
-        limit_sl_price = str(round(price * 0.979, 2))
-        r_sl4 = api_post("/fapi/v1/algoOrder", {
-            "symbol": "BTCUSDT",
-            "side": "SELL",
-            "type": "STOP",
-            "algoType": "CONDITIONAL",
-            "triggerPrice": sl_price,
-            "price": limit_sl_price,
-            "quantity": qty,
-            "reduceOnly": "true",
-            "timeInForce": "GTC",
-        })
-        if r_sl4.status_code == 200:
-            print(f"  OK SL (STOP): {r_sl4.json()}")
-        else:
-            print(f"  XX SL (STOP): {r_sl4.json().get('code','')} {r_sl4.json().get('msg','')}")
-
-    # --- Test B: TP via TAKE_PROFIT_MARKET ---
-    print("\n  --- Test B: TAKE_PROFIT_MARKET (TP) ---")
+    # TP via Algo
+    print(f"\n  [TP] TAKE_PROFIT_MARKET via algoOrder (triggerPrice={tp_price})")
     r_tp = api_post("/fapi/v1/algoOrder", {
         "symbol": "BTCUSDT",
         "side": "SELL",
@@ -316,47 +241,71 @@ def main():
         "reduceOnly": "true",
     })
     if r_tp.status_code == 200:
-        tp_data = r_tp.json()
-        print(f"  OK TP: algoId={tp_data.get('algoId', '?')}, status={tp_data.get('algoStatus', '?')}")
+        print(f"  OK TP: {r_tp.json()}")
     else:
-        err = r_tp.json()
-        print(f"  XX TP: {err.get('code','')} {err.get('msg','')}")
+        print(f"  XX TP: {r_tp.json()}")
 
-    # --- Check open algo orders ---
-    print("\n  --- Open Algo Orders ---")
-    r_open = api_get("/fapi/v1/openAlgoOrders")
-    if r_open.status_code == 200:
-        orders = r_open.json()
-        if isinstance(orders, list):
-            print(f"  Total open algo orders: {len(orders)}")
-            for o in orders:
-                print(f"    algoId={o.get('algoId')}, type={o.get('orderType')}, "
-                      f"side={o.get('side')}, trigger={o.get('triggerPrice')}, "
-                      f"status={o.get('algoStatus')}")
-        else:
-            print(f"  Response: {orders}")
+    # TP via regular LIMIT (this is what bracket() actually creates)
+    print(f"\n  [TP-alt] LIMIT via regular /fapi/v1/order")
+    r_tp2 = api_post("/fapi/v1/order", {
+        "symbol": "BTCUSDT",
+        "side": "SELL",
+        "type": "LIMIT",
+        "price": tp_price,
+        "quantity": qty,
+        "reduceOnly": "true",
+        "timeInForce": "GTC",
+    })
+    if r_tp2.status_code == 200:
+        print(f"  OK TP-LIMIT: orderId={r_tp2.json()['orderId']}")
     else:
-        print(f"  XX: {r_open.json()}")
+        print(f"  XX TP-LIMIT: {r_tp2.json()}")
+
+    # Check all open orders
+    print(f"\n  [Check] Open orders:")
+    r_regular = api_get("/fapi/v1/openOrders", {"symbol": "BTCUSDT"})
+    r_algo = api_get("/fapi/v1/openAlgoOrders")
+    if r_regular.status_code == 200:
+        reg_orders = r_regular.json()
+        print(f"    Regular orders: {len(reg_orders)}")
+        for o in reg_orders:
+            print(f"      {o.get('type')} {o.get('side')} qty={o.get('origQty')} price={o.get('price')} stop={o.get('stopPrice')}")
+    if r_algo.status_code == 200:
+        algo_orders = r_algo.json()
+        if isinstance(algo_orders, list):
+            print(f"    Algo orders: {len(algo_orders)}")
+            for o in algo_orders:
+                print(f"      {o.get('orderType')} {o.get('side')} qty={o.get('quantity')} trigger={o.get('triggerPrice')}")
 
     # Cleanup
-    print("\n  --- Cleanup ---")
+    print(f"\n  --- Cleanup ---")
     cleanup(qty)
 
-    # Summary
+    # ================================================================
+    # SUMMARY
+    # ================================================================
     sl_ok = r_sl.status_code == 200
     tp_ok = r_tp.status_code == 200
-    print("\n" + "=" * 60)
-    print(f"  RESULT:")
-    print(f"    SL (STOP_MARKET):       {'OK' if sl_ok else 'FAILED'}")
-    print(f"    TP (TAKE_PROFIT_MARKET): {'OK' if tp_ok else 'FAILED'}")
-    if sl_ok and tp_ok:
-        print("\n  Bracket Order via Algo API: FULLY WORKING!")
-        print("  NT 1.222.0 should handle this correctly internally.")
-    elif sl_ok or tp_ok:
-        print("\n  PARTIAL: One order type works, need to investigate the other")
-    else:
-        print("\n  BOTH FAILED: Need to check NT internal routing")
-    print("=" * 60)
+    tp2_ok = r_tp2.status_code == 200
+
+    print("\n" + "=" * 70)
+    print("  SUMMARY")
+    print("=" * 70)
+    print(f"  Algo SL  (STOP_MARKET):        {'OK' if sl_ok else 'FAILED'}")
+    print(f"  Algo TP  (TAKE_PROFIT_MARKET): {'OK' if tp_ok else 'FAILED'}")
+    print(f"  Regular TP (LIMIT):            {'OK' if tp2_ok else 'FAILED'}")
+    print()
+    if sl_ok:
+        print("  Algo API WORKS with correct params!")
+        print("  If NT bracket orders still fail, the issue is in NT's")
+        print("  _submit_order_list() not routing to algo endpoint.")
+        print()
+        print("  FIX: Stop using bracket orders. Submit individually:")
+        print("    1. MARKET entry → on_order_filled()")
+        print("    2. → STOP_MARKET SL (will route to algo)")
+        print("    3. → LIMIT TP (regular endpoint)")
+        print("    4. Manual OCO: cancel peer when one fills")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
