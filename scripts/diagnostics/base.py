@@ -331,13 +331,18 @@ class DiagnosticContext:
     # Timing data (v3.0.0 diagnostic)
     step_timings: Dict = field(default_factory=dict)
 
+    # v4.12: Code integrity & math verification results
+    code_integrity_results: List = field(default_factory=list)
+    math_verification_results: List = field(default_factory=list)
+    step_results: List = field(default_factory=list)  # (id, pass, desc) tuples
+
     # Output buffer for export
     output_buffer: io.StringIO = field(default_factory=io.StringIO)
     original_stdout: Any = None
 
     # Step tracking
     current_step: int = 0
-    total_steps: int = 31  # 28 data steps + 3 order flow simulation steps
+    total_steps: int = 33  # 28 data steps + 3 order flow + code_integrity + math_verify
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 

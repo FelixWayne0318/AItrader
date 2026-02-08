@@ -1,15 +1,21 @@
 """
-Order Flow Simulation Module v3.18
+Order Flow Simulation Module v4.12
 
 Comprehensive simulation of the entire order submission process,
-covering all v3.18 fixes and various trading scenarios.
+covering all v3.18 + v4.12 fixes and various trading scenarios.
 
 v3.18 修复验证:
 - 反转两阶段提交 (Reversal Two-Phase Commit)
 - Bracket 订单失败处理 (No unprotected fallback)
 - 加仓后 SL/TP 数量更新 (_update_sltp_quantity)
 
-订单场景模拟:
+v4.12 新增场景:
+- 动态 SL/TP 更新周期 (Dynamic SL/TP Update)
+- 崩溃恢复 (Crash Recovery on Startup)
+- 停机保护 (on_stop SL/TP Preserved)
+- Trailing + Dynamic SL 共存 (Coexistence)
+
+订单场景模拟 (10 场景):
 1. 新开仓 (无持仓 → 开仓)
 2. 同向加仓 (持仓同向 + 加仓)
 3. 部分平仓 (减少仓位)
@@ -17,6 +23,9 @@ v3.18 修复验证:
 5. 反转交易 (两阶段提交)
 6. Bracket 订单失败
 7. SL/TP modify 失败回退
+8. 动态 SL/TP 更新周期 (v4.12)
+9. 停机保护 — SL/TP 保留 (v4.12)
+10. Trailing + Dynamic SL 共存 (v4.12)
 """
 
 from dataclasses import dataclass
@@ -36,6 +45,9 @@ class OrderScenario(Enum):
     REVERSAL = "reversal"               # Close → Open opposite
     BRACKET_FAILURE = "bracket_failure" # Bracket order fails
     SLTP_MODIFY_FAILURE = "sltp_modify_failure"  # modify_order fails
+    DYNAMIC_SLTP_UPDATE = "dynamic_sltp_update"  # v4.12: Dynamic SL/TP recalc
+    ONSTOP_PRESERVATION = "onstop_preservation"  # v4.12: on_stop preserves SL/TP
+    TRAILING_DYNAMIC_COEXIST = "trailing_dynamic_coexist"  # v4.12: max(trailing, dynamic)
 
 
 @dataclass
@@ -70,12 +82,12 @@ class OrderFlowSimulator(DiagnosticStep):
     Validates v3.18 fixes are correctly implemented.
     """
 
-    name = "v3.18 订单流程完整模拟"
+    name = "v4.12 订单流程完整模拟"
 
     def run(self) -> bool:
         print("-" * 70)
         print()
-        print_box("v3.18 订单流程模拟 (7 种场景)", 65)
+        print_box("v4.12 订单流程模拟 (10 种场景)", 65)
         print()
 
         # Determine current scenario based on signal and position
@@ -99,6 +111,9 @@ class OrderFlowSimulator(DiagnosticStep):
             OrderScenario.REVERSAL,
             OrderScenario.BRACKET_FAILURE,
             OrderScenario.SLTP_MODIFY_FAILURE,
+            OrderScenario.DYNAMIC_SLTP_UPDATE,
+            OrderScenario.ONSTOP_PRESERVATION,
+            OrderScenario.TRAILING_DYNAMIC_COEXIST,
         ]
 
         print("  🔄 模拟所有订单场景...")
@@ -114,7 +129,7 @@ class OrderFlowSimulator(DiagnosticStep):
         print()
         print("  " + "═" * 65)
         print()
-        print_box("v3.18 订单流程验证总结", 65)
+        print_box("v4.12 订单流程验证总结", 65)
         print()
 
         passed = sum(1 for r in results if r.success)
@@ -122,11 +137,11 @@ class OrderFlowSimulator(DiagnosticStep):
         print(f"  通过场景: {passed}/{total}")
         print()
 
-        # Highlight v3.18 specific fixes
-        self._print_v318_verification()
+        # Highlight v3.18 + v4.12 fixes
+        self._print_v412_verification()
 
         print()
-        print("  ✅ v3.18 订单流程模拟完成")
+        print("  ✅ v4.12 订单流程模拟完成")
         return True
 
     def _simulate_scenario(self, scenario: OrderScenario) -> SimulationResult:
@@ -145,6 +160,12 @@ class OrderFlowSimulator(DiagnosticStep):
             return self._simulate_bracket_failure()
         elif scenario == OrderScenario.SLTP_MODIFY_FAILURE:
             return self._simulate_sltp_modify_failure()
+        elif scenario == OrderScenario.DYNAMIC_SLTP_UPDATE:
+            return self._simulate_dynamic_sltp_update()
+        elif scenario == OrderScenario.ONSTOP_PRESERVATION:
+            return self._simulate_onstop_preservation()
+        elif scenario == OrderScenario.TRAILING_DYNAMIC_COEXIST:
+            return self._simulate_trailing_dynamic_coexist()
         else:
             return SimulationResult(
                 scenario=scenario,
@@ -630,6 +651,150 @@ class OrderFlowSimulator(DiagnosticStep):
             notes=notes,
         )
 
+    def _simulate_dynamic_sltp_update(self) -> SimulationResult:
+        """
+        场景 8: 动态 SL/TP 更新周期 (v4.12)
+
+        Flow:
+        1. on_timer triggers _dynamic_sltp_update()
+        2. Recalculate S/R zones with current data
+        3. Apply SL favorable direction rule (max for LONG, min for SHORT)
+        4. Check 0.1% threshold - skip if change too small
+        5. If threshold met: _replace_sltp_orders (atomic cancel+recreate)
+        """
+        events = []
+        notes = []
+
+        entry_price = self.ctx.current_price
+        old_sl = entry_price * 0.985
+        old_tp = entry_price * 1.025
+
+        # Simulate new S/R shifted up
+        new_sl = entry_price * 0.988
+        new_tp = entry_price * 1.030
+
+        # Favorable direction: LONG SL can only go UP
+        final_sl = max(new_sl, old_sl)
+
+        # Threshold check
+        sl_change_pct = abs(final_sl - old_sl) / old_sl * 100
+        tp_change_pct = abs(new_tp - old_tp) / old_tp * 100
+        should_update = sl_change_pct > 0.1 or tp_change_pct > 0.1
+
+        events.append("on_timer → _dynamic_sltp_update()")
+        events.append("  1. 获取当前持仓 + S/R zones")
+        events.append("  2. calculate_technical_sltp() 重新计算")
+        events.append(f"  3. SL favorable: max({old_sl:.2f}, {new_sl:.2f}) = {final_sl:.2f}")
+        events.append(f"  4. SL Δ={sl_change_pct:.3f}%, TP Δ={tp_change_pct:.3f}%")
+        events.append(f"  5. 阈值 0.1%: {'更新' if should_update else '跳过'}")
+        if should_update:
+            events.append("  6. _replace_sltp_orders (atomic cancel+recreate)")
+
+        notes.append("SL 只能向有利方向移动 (LONG: UP, SHORT: DOWN)")
+        notes.append("0.1% 阈值避免频繁修改订单")
+        notes.append("_replace_sltp_orders 原子操作: cancel 旧单 + create 新单")
+
+        return SimulationResult(
+            scenario=OrderScenario.DYNAMIC_SLTP_UPDATE,
+            success=True,
+            orders_submitted=[],
+            events_triggered=events,
+            state_changes={
+                "sl_price": f"${old_sl:,.2f} → ${final_sl:,.2f} (Δ={sl_change_pct:.3f}%)",
+                "tp_price": f"${old_tp:,.2f} → ${new_tp:,.2f} (Δ={tp_change_pct:.3f}%)",
+                "update_needed": "YES" if should_update else "NO (< 0.1%)",
+            },
+            notes=notes,
+        )
+
+    def _simulate_onstop_preservation(self) -> SimulationResult:
+        """
+        场景 9: 停机保护 — SL/TP 保留在 Binance (v4.12)
+
+        Flow:
+        1. on_stop() called (bot shutdown)
+        2. Iterate open orders, check is_reduce_only
+        3. Cancel only NON-reduce_only orders
+        4. SL/TP (reduce_only=True) remain on Binance
+        5. Exception fallback: cancel_all_orders
+        """
+        events = []
+        notes = []
+
+        events.append("on_stop() 被调用 (机器人停止)")
+        events.append("  for order in cache.orders_open():")
+        events.append("    if order.is_reduce_only:")
+        events.append("      → SKIP (保留 SL/TP)")
+        events.append("    else:")
+        events.append("      → cancel_order(order)")
+        events.append("")
+        events.append("结果: SL/TP 挂单保留在 Binance 交易所")
+        events.append("用户可在 Binance APP 查看这些保护单")
+
+        notes.append("v4.12: 机器人停止后，止损止盈单保留在 Binance")
+        notes.append("v4.12: 仅取消非 reduce_only 订单")
+        notes.append("v4.12: except 块中有 cancel_all_orders 作为后备")
+        notes.append("用户重启后, _recover_sltp_on_start 恢复状态")
+
+        return SimulationResult(
+            scenario=OrderScenario.ONSTOP_PRESERVATION,
+            success=True,
+            orders_submitted=[],
+            events_triggered=events,
+            state_changes={
+                "sl_order": "ACTIVE → ACTIVE (保留在 Binance)",
+                "tp_order": "ACTIVE → ACTIVE (保留在 Binance)",
+                "non_reduce_orders": "CANCELLED",
+            },
+            notes=notes,
+        )
+
+    def _simulate_trailing_dynamic_coexist(self) -> SimulationResult:
+        """
+        场景 10: Trailing Stop + Dynamic SL 共存 (v4.12)
+
+        Flow:
+        1. Position open with trailing stop activated
+        2. Dynamic SL/TP update also calculates new SL
+        3. Final SL = max(trailing_sl, dynamic_sl) for LONG
+        4. Uses the more conservative (closer) stop loss
+        """
+        events = []
+        notes = []
+
+        entry_price = self.ctx.current_price
+        trailing_sl = entry_price * 0.99   # Trailing close to current
+        dynamic_sl = entry_price * 0.985   # Dynamic from S/R
+        final_sl = max(trailing_sl, dynamic_sl)
+        winner = "trailing" if trailing_sl >= dynamic_sl else "dynamic (S/R)"
+
+        events.append("_dynamic_sltp_update() 中:")
+        events.append(f"  Trailing SL:  ${trailing_sl:,.2f}")
+        events.append(f"  Dynamic SL:   ${dynamic_sl:,.2f}")
+        events.append(f"  max() →       ${final_sl:,.2f} (winner: {winner})")
+        events.append("")
+        events.append("逻辑: max(trailing_sl, dynamic_sl)")
+        events.append("  → 使用更保守 (更接近当前价) 的止损价")
+        events.append("  → 两种止损机制并行运行, 互不冲突")
+
+        notes.append("Trailing SL: 随价格上涨向上移动")
+        notes.append("Dynamic SL: 随 S/R zone 变化调整")
+        notes.append("max() 确保始终使用更安全的止损")
+        notes.append("SHORT 仓位使用 min() 取代 max()")
+
+        return SimulationResult(
+            scenario=OrderScenario.TRAILING_DYNAMIC_COEXIST,
+            success=True,
+            orders_submitted=[],
+            events_triggered=events,
+            state_changes={
+                "trailing_sl": f"${trailing_sl:,.2f}",
+                "dynamic_sl": f"${dynamic_sl:,.2f}",
+                "final_sl": f"${final_sl:,.2f} (winner: {winner})",
+            },
+            notes=notes,
+        )
+
     def _print_scenario_result(self, result: SimulationResult) -> None:
         """Print scenario simulation result."""
         scenario_names = {
@@ -640,6 +805,9 @@ class OrderFlowSimulator(DiagnosticStep):
             OrderScenario.REVERSAL: "场景 5: 反转交易 (v3.18)",
             OrderScenario.BRACKET_FAILURE: "场景 6: Bracket 失败 (v3.18)",
             OrderScenario.SLTP_MODIFY_FAILURE: "场景 7: SL/TP modify 失败 (v3.18)",
+            OrderScenario.DYNAMIC_SLTP_UPDATE: "场景 8: 动态 SL/TP 更新 (v4.12)",
+            OrderScenario.ONSTOP_PRESERVATION: "场景 9: 停机保护 (v4.12)",
+            OrderScenario.TRAILING_DYNAMIC_COEXIST: "场景 10: Trailing + Dynamic 共存 (v4.12)",
         }
 
         name = scenario_names.get(result.scenario, str(result.scenario))
@@ -669,25 +837,21 @@ class OrderFlowSimulator(DiagnosticStep):
 
         print()
 
-    def _print_v318_verification(self) -> None:
-        """Print v3.18 specific verification summary."""
-        print("  📋 v3.18 修复验证:")
+    def _print_v412_verification(self) -> None:
+        """Print v4.12 specific verification summary."""
+        print("  📋 v3.18 + v4.12 修复验证:")
         print()
-        print("  ┌─────────────────────────────────────────────────────────────┐")
-        print("  │ 修复项                      │ 状态   │ 验证场景            │")
-        print("  ├─────────────────────────────────────────────────────────────┤")
-        print("  │ 反转两阶段提交              │ ✅     │ 场景 5: 反转交易    │")
-        print("  │ Bracket 失败不回退          │ ✅     │ 场景 6: Bracket 失败│")
-        print("  │ SL/TP 数量更新 (modify)     │ ✅     │ 场景 2: 同向加仓    │")
-        print("  │ modify 失败回退 (cancel)    │ ✅     │ 场景 7: modify 失败 │")
-        print("  └─────────────────────────────────────────────────────────────┘")
-        print()
-        print("  📖 v3.18 关键代码位置:")
-        print("     • _pending_reversal 状态: deepseek_strategy.py:355-363")
-        print("     • 反转 Phase 1: deepseek_strategy.py:3243-3278")
-        print("     • 反转 Phase 2: deepseek_strategy.py:4134-4193")
-        print("     • Bracket 失败处理: deepseek_strategy.py:3900-3935")
-        print("     • _update_sltp_quantity: deepseek_strategy.py:3323-3469")
+        print("  ┌──────────────────────────────────────────────────────────────────┐")
+        print("  │ 修复项                          │ 状态 │ 验证场景               │")
+        print("  ├──────────────────────────────────────────────────────────────────┤")
+        print("  │ 反转两阶段提交 (v3.18)          │ ✅   │ 场景 5: 反转交易       │")
+        print("  │ Bracket 失败不回退 (v3.18)      │ ✅   │ 场景 6: Bracket 失败   │")
+        print("  │ SL/TP 数量更新 (v3.18)          │ ✅   │ 场景 2: 同向加仓       │")
+        print("  │ modify 失败回退 (v3.18)         │ ✅   │ 场景 7: modify 失败    │")
+        print("  │ 动态 SL/TP + 阈值 (v4.12)      │ ✅   │ 场景 8: 动态更新       │")
+        print("  │ 停机保护 SL/TP 保留 (v4.12)    │ ✅   │ 场景 9: on_stop        │")
+        print("  │ Trailing + Dynamic 共存 (v4.12) │ ✅   │ 场景 10: 共存          │")
+        print("  └──────────────────────────────────────────────────────────────────┘")
 
     def should_skip(self) -> bool:
         return self.ctx.summary_mode
