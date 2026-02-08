@@ -657,13 +657,19 @@ Environment=AUTO_CONFIRM=true
       - 修复：信号后添加 "(上次)" 标签，避免用户误以为是当前周期结果
     - 文件：`strategy/trading_logic.py`, `strategy/deepseek_strategy.py`, `utils/telegram_bot.py`
 
-21. **Binance Algo Order API 迁移** (UNSUPPORTED_OCO_CONDITIONAL_ORDERS) - **关键修复**
-    - 问题：Bracket 订单被 Binance 拒绝，错误 `UNSUPPORTED_OCO_CONDITIONAL_ORDERS`
-    - 根因：Binance 2025年12月将 STOP_MARKET/TAKE_PROFIT_MARKET 从 `/fapi/v1/order` 迁移到 `/fapi/v1/algoOrder`
-    - 影响：NautilusTrader 1.221.0 仍使用旧 API，导致所有含条件单的 bracket 订单被拒
-    - 修复：升级到 NautilusTrader 1.222.0 (内置 Algo Order API 支持)
-    - 前提：NautilusTrader 1.222.0 要求 Python >= 3.12 (服务器需从 3.11 升级)
-    - 文件：`requirements.txt` (已更新为 1.222.0)，服务器需重建 Python 3.12 环境
+21. **Binance Algo Order API 迁移 + NT Bracket 修复** (UNSUPPORTED_OCO_CONDITIONAL_ORDERS) - **关键修复**
+    - **问题**: Bracket 订单被拒，错误 `UNSUPPORTED_OCO_CONDITIONAL_ORDERS`
+    - **表层原因**: Binance 2025年12月将 STOP_MARKET/TAKE_PROFIT_MARKET 从 `/fapi/v1/order` 迁移到 `/fapi/v1/algoOrder`
+    - **深层根因**: NautilusTrader 1.222.0 的 `_submit_order_list()` (BinanceCommonExecutionClient L1022-1030) 检测到 bracket 订单的 `linked_order_ids` 后，**在本地直接拒绝全部订单**——订单从未发送到 Binance
+    - **升级** (Phase 1): Python 3.11 → 3.12, NautilusTrader 1.221.0 → 1.222.0
+    - **代码修复** (Phase 2, v4.13): 改用两阶段订单提交
+      - `_submit_bracket_order()` → 仅提交 MARKET 入场单 + 存储 `_pending_sltp`
+      - `on_position_opened()` → 入场成交后分别提交:
+        - SL: `order_factory.stop_market()` → `submit_order()` (NT 自动路由到 algoOrder)
+        - TP: `order_factory.limit()` → `submit_order()` (普通端点)
+      - OCO: `on_order_filled()` 手动取消对方 (已有逻辑)
+    - **验证**: 直接 API 测试确认 Algo API 正常 (algoType=CONDITIONAL, triggerPrice)
+    - 文件：`strategy/deepseek_strategy.py` (v4.13), `requirements.txt`
     - 参考：Binance Futures API Changelog (Dec 2025)
 
 ## 常见错误避免
@@ -693,6 +699,7 @@ Environment=AUTO_CONFIRM=true
 - ❌ **反转交易直接平仓后开仓** → ✅ **使用 `_pending_reversal` 两阶段提交** (v3.18)
 - ❌ **加仓后不更新 SL/TP 数量** → ✅ **调用 `_update_sltp_quantity()` 更新订单** (v3.18)
 - ❌ **仅在 AI prompt 中要求 R/R >= 1.5:1** → ✅ **`validate_multiagent_sltp()` 硬性执行 R/R 门槛** (回退到技术分析)
+- ❌ **使用 `order_factory.bracket()` + `submit_order_list()`** → ✅ **分步提交: MARKET entry → on_position_opened → SL + TP 单独提交** (v4.13, NT 1.222.0 拒绝 linked orders)
 
 ## 文件结构
 
