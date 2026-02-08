@@ -124,8 +124,8 @@ if command -v python3 &> /dev/null; then
     PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}' | cut -d'.' -f1,2)
     PY_MAJOR=$(echo $PY_VERSION | cut -d'.' -f1)
     PY_MINOR=$(echo $PY_VERSION | cut -d'.' -f2)
-    if [ "$PY_MAJOR" -lt 3 ] || ([ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 11 ]); then
-        print_warning "Python 版本过低: $PY_VERSION (需要 3.11+)"
+    if [ "$PY_MAJOR" -lt 3 ] || ([ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 12 ]); then
+        print_warning "Python 版本过低: $PY_VERSION (需要 3.12+)"
     else
         print_success "Python 版本: $PY_VERSION"
     fi
@@ -173,20 +173,20 @@ fi
 # 安装基础依赖
 sudo $PKG_MANAGER install -y -qq curl git software-properties-common build-essential
 
-# Python 3.11+ (AItrader 和 Web 都需要)
-if ! command -v python3.11 &> /dev/null; then
-    print_warning "安装 Python 3.11..."
+# Python 3.12+ (AItrader 需要 NautilusTrader 1.222.0, Web 也需要)
+if ! command -v python3.12 &> /dev/null; then
+    print_warning "安装 Python 3.12..."
     if [ "$PKG_MANAGER" = "apt-get" ]; then
         sudo add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || true
         sudo apt-get update -qq
-        sudo apt-get install -y -qq python3.11 python3.11-venv python3.11-dev
+        sudo apt-get install -y -qq python3.12 python3.12-venv python3.12-dev
     fi
 fi
-print_success "Python 3.11 已就绪"
+print_success "Python 3.12 已就绪"
 
 # 确保 python3 命令可用 (创建符号链接如果不存在)
 if ! command -v python3 &> /dev/null; then
-    sudo ln -sf /usr/bin/python3.11 /usr/bin/python3
+    sudo ln -sf /usr/bin/python3.12 /usr/bin/python3
 fi
 
 # Node.js 18+ (Web 需要)
@@ -398,7 +398,7 @@ if $INSTALL_WEB; then
     STEP=$((STEP + 1))
 
     cd "${WEB_DIR}/backend"
-    python3.11 -m venv venv
+    python3.12 -m venv venv
     source venv/bin/activate
     pip install --upgrade pip -q
     pip install -r requirements.txt -q

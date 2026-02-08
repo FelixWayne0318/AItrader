@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Setup script for DeepSeek AI Trading Strategy
-# Supports Ubuntu 22.04+ with Python 3.11
+# Supports Ubuntu 22.04+ with Python 3.12+
 
 set -e  # Exit on error
 
@@ -51,44 +51,44 @@ fi
 echo "Detected OS: $OS $OS_VERSION"
 
 # =============================================================================
-# Step 1: Ensure Python 3.11+ is installed
+# Step 1: Ensure Python 3.12+ is installed (NautilusTrader 1.222.0 requires >= 3.12)
 # =============================================================================
 echo ""
-echo "Step 1: Checking Python 3.11..."
+echo "Step 1: Checking Python 3.12+..."
 
-install_python311_ubuntu() {
-    echo "Installing Python 3.11 via deadsnakes PPA..."
+install_python312_ubuntu() {
+    echo "Installing Python 3.12 via deadsnakes PPA..."
     sudo add-apt-repository ppa:deadsnakes/ppa -y
     sudo apt update
-    sudo apt install python3.11 python3.11-venv python3.11-dev -y
+    sudo apt install python3.12 python3.12-venv python3.12-dev -y
 }
 
-# Check if Python 3.11 is available
-if command -v python3.11 &> /dev/null; then
-    PYTHON_CMD="python3.11"
-    echo "Python 3.11 found: $(python3.11 --version)"
+# Check if Python 3.12 is available
+if command -v python3.12 &> /dev/null; then
+    PYTHON_CMD="python3.12"
+    echo "Python 3.12 found: $(python3.12 --version)"
 elif command -v python3 &> /dev/null; then
     py_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    if [[ "$py_version" == "3.11" ]] || [[ "$py_version" == "3.12" ]] || [[ "$py_version" == "3.13" ]]; then
+    if [[ "$py_version" == "3.12" ]] || [[ "$py_version" == "3.13" ]] || [[ "$py_version" == "3.14" ]]; then
         PYTHON_CMD="python3"
         echo "Python $py_version found (compatible)"
     else
-        echo "Python $py_version found but 3.11+ required"
+        echo "Python $py_version found but 3.12+ required"
         if [[ "$OS" == "ubuntu" ]]; then
-            install_python311_ubuntu
-            PYTHON_CMD="python3.11"
+            install_python312_ubuntu
+            PYTHON_CMD="python3.12"
         else
-            echo "Please install Python 3.11+ manually"
+            echo "Please install Python 3.12+ manually"
             exit 1
         fi
     fi
 else
     echo "Python 3 not found"
     if [[ "$OS" == "ubuntu" ]]; then
-        install_python311_ubuntu
-        PYTHON_CMD="python3.11"
+        install_python312_ubuntu
+        PYTHON_CMD="python3.12"
     else
-        echo "Please install Python 3.11+ manually"
+        echo "Please install Python 3.12+ manually"
         exit 1
     fi
 fi
