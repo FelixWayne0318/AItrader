@@ -1259,10 +1259,12 @@ class TelegramBot:
         msg += "━━━━━━━━━━━━━━━━━━\n"
         msg += f"*Status*: {status_text}\n"
         msg += f"*Pair*: {self.escape_markdown(str(status_info.get('instrument_id', 'N/A')))}\n"
-        msg += f"*Price*: ${status_info.get('current_price', 0):,.2f}\n"
-        msg += f"*Balance*: ${status_info.get('equity', 0):,.2f}\n"
+        current_price = status_info.get('current_price') or 0
+        equity = status_info.get('equity') or 0
+        msg += f"*Price*: ${current_price:,.2f}\n"
+        msg += f"*Balance*: ${equity:,.2f}\n"
 
-        pnl = status_info.get('unrealized_pnl', 0)
+        pnl = status_info.get('unrealized_pnl') or 0
         pnl_icon = self._pnl_icon(pnl)
         msg += f"*Unrealized P&L*: {pnl_icon} ${pnl:,.2f}\n"
 
@@ -1271,7 +1273,6 @@ class TelegramBot:
         sl_price = status_info.get('sl_price')
         tp_price = status_info.get('tp_price')
         trailing_active = status_info.get('trailing_active', False)
-        current_price = status_info.get('current_price', 0)
 
         if position_side and (sl_price or tp_price):
             side_emoji = '🟢' if position_side == 'LONG' else '🔴'
