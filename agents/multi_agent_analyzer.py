@@ -631,51 +631,65 @@ class MultiAgentAnalyzer:
         TradingAgents v3.3: Indicator definitions in system prompt (like TradingAgents)
         v3.8: Added S/R zones report
         """
-        # User prompt: Only data and task (no indicator definitions)
-        prompt = f"""AVAILABLE DATA:
-
+        # User prompt: Segmented data with clear markers + Chinese task instructions
+        prompt = f"""## 📊 MARKET DATA (Technical Indicators)
 {technical_report}
 
+## 📈 ORDER FLOW (Taker Data)
 {order_flow_report}
 
+## 📉 DERIVATIVES (Funding / OI / Liquidations)
 {derivatives_report}
 
+## 📖 ORDER BOOK DEPTH
 {orderbook_report}
 
+## 🔑 SUPPORT / RESISTANCE ZONES
 {sr_zones_report}
 
+## 💬 SENTIMENT (Long/Short Ratio)
 {sentiment_report}
 
+## 🗣️ DEBATE CONTEXT
 Previous Debate:
 {history if history else "This is the opening argument."}
 
 Last Bear Argument:
 {bear_argument if bear_argument else "No bear argument yet - make your opening case."}
 
-TASK:
-1. FIRST: Identify the current MARKET REGIME using the indicator manual
-   (trending/ranging/squeeze) — this determines how to read all indicators
-2. Identify BULLISH signals with specific numbers from the data
-3. Apply the CORRECT indicator interpretation for the current regime
-   (e.g., RSI 30 means different things in trends vs ranges)
-4. Present 2-3 compelling reasons for going LONG
-5. If bear made arguments, counter them with evidence
-6. Entry is at CURRENT MARKET PRICE — assess if current price offers
-   favorable R:R ratio based on S/R zones and market structure
-7. State what would INVALIDATE your bullish thesis
+## 🎯 【分析任务 — 请严格按步骤执行】
 
-Deliver your argument (2-3 paragraphs):"""
+**第一步：判断 MARKET REGIME**
+用指标手册判断当前市场状态 (TRENDING / RANGING / SQUEEZE)
+— 这决定了后续所有指标的解读方式。
+
+**第二步：识别看多信号**
+从上方数据中找出具体的 BULLISH 信号，附带数值。
+必须使用当前 regime 对应的解读规则 (例如 RSI 30 在趋势市场 vs 震荡市场含义不同)。
+
+**第三步：构建论点**
+提出 2-3 个有说服力的做多理由。
+如果 Bear 已有论点，用数据反驳。
+
+**第四步：评估入场条件**
+入场价为当前市场价 — 基于 S/R zones 和市场结构评估 R:R 比。
+
+**第五步：陈述失效条件**
+什么情况下你的看多论点会被推翻？
+
+请用 2-3 段落交付你的论点："""
 
         # System prompt: Role + Indicator manual (v3.25: regime-aware)
-        system_prompt = f"""You are a professional Bull Analyst for {symbol}.
-Your role is to analyze raw market data and build the strongest possible case for going LONG.
+        # v3.28: Chinese instructions for better DeepSeek instruction-following
+        system_prompt = f"""你是 {symbol} 的专业多头分析师 (Bull Analyst)。
+你的职责是分析原始市场数据，构建最强有力的做多论据。
 
 {INDICATOR_DEFINITIONS}
 
-CRITICAL: You MUST first identify the market regime (Step 1 in the manual),
-then interpret all indicators using the CORRECT regime-specific rules.
-Using ranging-market logic in a trending market (or vice versa) is a fatal error.
-Focus on evidence from the data, not assumptions."""
+【关键规则 — 必须遵守】
+⚠️ 你必须先判断 market regime (指标手册第一步)，然后用对应 regime 的规则解读所有指标。
+⚠️ 在趋势市场使用震荡市场逻辑 (或反之) 是致命错误。
+⚠️ 只基于数据中的证据，不做无根据的假设。"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["bull"] = {
@@ -708,51 +722,65 @@ Focus on evidence from the data, not assumptions."""
         TradingAgents v3.3: AI interprets raw data using indicator definitions
         v3.8: Added S/R zones report
         """
-        # User prompt: Only data and task (no indicator definitions)
-        prompt = f"""AVAILABLE DATA:
-
+        # User prompt: Segmented data with clear markers + Chinese task instructions
+        prompt = f"""## 📊 MARKET DATA (Technical Indicators)
 {technical_report}
 
+## 📈 ORDER FLOW (Taker Data)
 {order_flow_report}
 
+## 📉 DERIVATIVES (Funding / OI / Liquidations)
 {derivatives_report}
 
+## 📖 ORDER BOOK DEPTH
 {orderbook_report}
 
+## 🔑 SUPPORT / RESISTANCE ZONES
 {sr_zones_report}
 
+## 💬 SENTIMENT (Long/Short Ratio)
 {sentiment_report}
 
+## 🗣️ DEBATE CONTEXT
 Previous Debate:
 {history}
 
 Last Bull Argument:
 {bull_argument}
 
-TASK:
-1. FIRST: Identify the current MARKET REGIME using the indicator manual
-   (trending/ranging/squeeze) — this determines how to read all indicators
-2. Identify BEARISH signals or risks with specific numbers from the data
-3. Apply the CORRECT indicator interpretation for the current regime
-   (e.g., "support" means different things in trends vs ranges)
-4. Present 2-3 compelling reasons AGAINST going LONG (or for going SHORT)
-5. Counter the bull's arguments with evidence
-6. Entry is at CURRENT MARKET PRICE — assess if current price offers
-   favorable R:R ratio based on S/R zones and market structure
-7. State what would INVALIDATE your bearish thesis
+## 🎯 【分析任务 — 请严格按步骤执行】
 
-Deliver your argument (2-3 paragraphs):"""
+**第一步：判断 MARKET REGIME**
+用指标手册判断当前市场状态 (TRENDING / RANGING / SQUEEZE)
+— 这决定了后续所有指标的解读方式。
+
+**第二步：识别看空信号和风险**
+从上方数据中找出具体的 BEARISH 信号或风险，附带数值。
+必须使用当前 regime 对应的解读规则 (例如 "support" 在趋势市场 vs 震荡市场含义不同)。
+
+**第三步：构建论点**
+提出 2-3 个反对做多 (或支持做空) 的有力理由。
+用数据反驳 Bull 的论点。
+
+**第四步：评估入场条件**
+入场价为当前市场价 — 基于 S/R zones 和市场结构评估 R:R 比。
+
+**第五步：陈述失效条件**
+什么情况下你的看空论点会被推翻？
+
+请用 2-3 段落交付你的论点："""
 
         # System prompt: Role + Indicator manual (v3.25: regime-aware)
-        system_prompt = f"""You are a professional Bear Analyst for {symbol}.
-Your role is to analyze raw market data and build the strongest possible case AGAINST going LONG.
+        # v3.28: Chinese instructions for better DeepSeek instruction-following
+        system_prompt = f"""你是 {symbol} 的专业空头分析师 (Bear Analyst)。
+你的职责是分析原始市场数据，构建最强有力的反对做多 (或支持做空) 的论据。
 
 {INDICATOR_DEFINITIONS}
 
-CRITICAL: You MUST first identify the market regime (Step 1 in the manual),
-then interpret all indicators using the CORRECT regime-specific rules.
-Using ranging-market logic in a trending market (or vice versa) is a fatal error.
-Focus on risks and bearish signals in the data."""
+【关键规则 — 必须遵守】
+⚠️ 你必须先判断 market regime (指标手册第一步)，然后用对应 regime 的规则解读所有指标。
+⚠️ 在趋势市场使用震荡市场逻辑 (或反之) 是致命错误。
+⚠️ 聚焦于数据中的风险和看空信号。"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["bear"] = {
@@ -780,29 +808,52 @@ Focus on risks and bearish signals in the data."""
         v3.10: Aligned with TradingAgents original design (rationale + strategic_actions)
         v3.23: Added key_metrics for independent sanity checking
         """
-        prompt = f"""As the portfolio manager and debate facilitator, your role is to critically evaluate this round of debate and make a definitive decision: align with the bear analyst, the bull analyst, or choose HOLD only if it is strongly justified based on the arguments presented.
+        prompt = f"""你是投资组合经理兼辩论裁判。请批判性地评估本轮辩论，做出明确的交易决策：
+支持空头分析师、支持多头分析师、或仅在有强有力理由时选择 HOLD。
 
-DEBATE TRANSCRIPT:
+## 🗣️ DEBATE TRANSCRIPT
 {debate_history}
 
-KEY MARKET METRICS (for independent verification — check if analysts missed anything):
+## 📊 KEY MARKET METRICS (用于独立验证 — 检查分析师是否遗漏了什么)
 {key_metrics if key_metrics else "N/A"}
 
-PAST REFLECTIONS ON MISTAKES:
+## 📚 PAST REFLECTIONS ON MISTAKES
 {past_memories if past_memories else "No past data - this is a fresh start."}
 
-YOUR TASK:
-1. Using the indicator manual, independently verify the current market regime
-   from the key metrics. Then assess: did both analysts apply the correct
-   regime-specific logic? (e.g., ranging-market logic in a trending market
-   produces flawed conclusions.)
-2. Summarize key points from both sides, focusing on the most compelling evidence.
-3. Your recommendation—LONG, SHORT, or HOLD—must be clear and actionable.
-4. Avoid defaulting to HOLD simply because both sides have valid points;
-   commit to a stance grounded in the debate's strongest arguments.
-5. Take into account your past mistakes on similar situations.
+---
 
-OUTPUT FORMAT (JSON only, no other text):
+## 🎯 【决策任务 — 请严格按步骤执行】
+
+### STEP 1: 独立验证 MARKET REGIME
+用指标手册和 Key Metrics 独立判断当前 regime (TRENDING / RANGING / SQUEEZE)。
+然后评估：双方分析师是否都使用了正确的 regime 解读逻辑？
+⚠️ 在趋势市场使用震荡逻辑 (或反之) = 结论不可信。
+
+### STEP 2: Confluence 多层对齐度评估
+请用以下框架评估信号一致性：
+
+| 层级 | 评估内容 | Bull 证据 | Bear 证据 | 哪方更强？ |
+|------|---------|----------|----------|-----------|
+| 趋势层 (1D) | SMA200, ADX/DI 方向 | ? | ? | ? |
+| 动量层 (4H) | RSI, MACD, CVD | ? | ? | ? |
+| 关键水平 (15M) | S/R zone, BB, Order Book | ? | ? | ? |
+| 衍生品数据 | Funding, OI, Liquidations | ? | ? | ? |
+
+对齐度评估：
+- 3-4 层一致 → HIGH confidence 交易
+- 2 层一致 → MEDIUM confidence 交易
+- 0-1 层一致 → 应该 HOLD
+- ‼️ 趋势层 (1D) 权重最高 — 与 1D 趋势矛盾的信号需要其他 3 层全部确认才可采纳
+
+### STEP 3: 总结双方核心论据
+聚焦最有说服力的证据，不要罗列所有观点。
+
+### STEP 4: 做出明确决策
+- 你的建议 — LONG、SHORT 或 HOLD — 必须清晰可执行
+- ‼️ 不要因为双方都有道理就默认 HOLD — 选择证据更强的一方
+- 参考过去的失误教训，避免重复犯错
+
+## 📤 OUTPUT FORMAT (只输出 JSON，不要其他文字):
 {{
     "decision": "LONG|SHORT|HOLD",
     "winning_side": "BULL|BEAR|TIE",
@@ -812,14 +863,35 @@ OUTPUT FORMAT (JSON only, no other text):
     "acknowledged_risks": ["risk1", "risk2"]
 }}"""
 
-        system_prompt = f"""You are a Portfolio Manager and debate facilitator.
-Critically evaluate the debate and make a decisive trading recommendation.
-Commit to the side with stronger evidence. Learn from past mistakes.
+        # v3.28: Chinese instructions + few-shot + confluence matrix for better DeepSeek performance
+        system_prompt = f"""你是投资组合经理兼辩论裁判 (Portfolio Manager / Judge)。
+批判性地评估辩论内容，做出果断的交易建议。选择证据更强的一方。从过去的错误中学习。
 
 {INDICATOR_DEFINITIONS}
 
-Use the indicator manual to independently verify whether the analysts
-applied the correct regime-specific interpretation of the data."""
+【关键规则 — 必须遵守】
+⚠️ 用指标手册独立验证分析师是否使用了正确的 regime 解读。
+⚠️ 用中文进行内部推理分析，最终以 JSON 格式输出结果。
+⚠️ 不要因为双方都有道理就默认 HOLD — 这是最常见的错误。
+
+【正确决策示例 — Few-shot】
+
+示例 1: 趋势一致 → 选择顺势方
+情况: 1D ADX=33 上涨趋势, Bull 引用趋势+动量, Bear 引用 RSI 超买
+分析: ADX>25 = TRENDING。Bear 用震荡市场逻辑 (RSI 70 = 超买) 在趋势市场中是错误的。
+      Cardwell 规则: 上涨趋势中 RSI 40-80 为正常范围，80 = 强动量。
+结果: {{"decision":"LONG","winning_side":"BULL","confidence":"HIGH"}}
+
+示例 2: 数据矛盾但趋势层主导
+情况: 1D 强下跌趋势, 4H 出现 MACD 金叉, Bull 认为反转
+分析: MACD 在震荡市场有 74-97% 假信号率。1D 强趋势未改变。
+      4H MACD 金叉在强下跌趋势中更可能是反弹而非反转。
+结果: {{"decision":"SHORT","winning_side":"BEAR","confidence":"MEDIUM"}}
+
+示例 3: 真正需要 HOLD 的情况
+情况: ADX=12 (RANGING), 价格在 range 中间, 两方都没有强证据
+分析: 震荡市场 + 无明确方向 + 无关键水平触及。等待价格到达 range 边缘。
+结果: {{"decision":"HOLD","winning_side":"TIE","confidence":"LOW"}}"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["judge"] = {
@@ -1048,131 +1120,133 @@ applied the correct regime-specific interpretation of the data."""
             hc_reason = hard_control_info.get('reason', '')
             if block_long or block_short:
                 hard_control_section = f"""
-⚠️ S/R ZONE PROXIMITY ALERT (v3.26 - Information for Your Assessment):
-- Near HIGH Strength RESISTANCE: {'YES' if block_long else 'No'}
-- Near HIGH Strength SUPPORT: {'YES' if block_short else 'No'}
-- Detail: {hc_reason if hc_reason else 'N/A'}
+## ‼️ 【S/R ZONE 风险警报 — 请务必评估】
+⚠️ S/R ZONE PROXIMITY ALERT:
+- 接近 HIGH 强度阻力位 (Near HIGH Strength RESISTANCE): {'**YES**' if block_long else 'No'}
+- 接近 HIGH 强度支撑位 (Near HIGH Strength SUPPORT): {'**YES**' if block_short else 'No'}
+- 详情 (Detail): {hc_reason if hc_reason else 'N/A'}
 
-Context for your assessment:
-- "HIGH strength" means multiple sources confirm this zone (BB + SMA + Order Wall confluence)
-- Historical data shows trading against HIGH strength multi-source zones has lower success rates
-- However, breakouts through strong zones (with volume confirmation) can signal powerful moves
-- Consider this information alongside all other market data when making your decision
+‼️ 评估要点:
+- "HIGH 强度" = 多源确认 (BB + SMA + Order Wall 共振)，历史反弹率较高
+- 逆 HIGH 强度 zone 交易的成功率显著降低
+- 但伴随放量的强力突破可能是强势信号
+- 这是参考信息，不是硬性规则 — 请结合所有数据综合判断
 """
 
-        prompt = f"""As the Risk Manager, provide final trade parameters.
+        prompt = f"""你是风险管理者 (Risk Manager)，负责最终交易参数的评估和设定。
 {hard_control_section}
 
-PROPOSED TRADE:
+## 📋 PROPOSED TRADE (Judge 建议)
 - Action: {action}
 - Confidence: {confidence}
 - Rationale: {rationale}
 - Strategic Actions: {actions_str}
 - Acknowledged Risks: {', '.join(risks)}
 
-MARKET DATA:
+## 📊 MARKET DATA
 {technical_report}
 
 {sentiment_report}
 
+## 🔑 S/R ZONES
 {sr_zones_for_risk}
 
-DERIVATIVES & FUNDING RATE:
+## 📉 DERIVATIVES & FUNDING RATE
 {derivatives_report if derivatives_report else "N/A"}
 
-ORDER FLOW & LIQUIDITY:
+## 📈 ORDER FLOW & LIQUIDITY
 {order_flow_report if order_flow_report else "N/A"}
 
 {orderbook_report if orderbook_report else ""}
 
-CURRENT POSITION:
+## 💼 CURRENT POSITION
 {self._format_position(current_position)}
 
-ACCOUNT CONTEXT:
+## 🏦 ACCOUNT CONTEXT
 {self._format_account(account_context)}
 
-CURRENT PRICE: ${current_price:,.2f}
+**当前价格: ${current_price:,.2f}** (入场将以此价格执行，不是 S/R 价位)
 
-YOUR TASK:
-Note: Entry will be at CURRENT MARKET PRICE (${current_price:,.2f}), not at S/R levels.
+---
 
-1. First, independently verify the MARKET REGIME using the indicator manual above:
-   - Check ADX, BB Width, price vs SMAs to determine TRENDING / RANGING / SQUEEZE
-   - Verify the proposed trade direction is consistent with the current regime
-   - If the Judge recommended a counter-trend trade in a strong trend, assess the risk carefully
+## 🎯 【分析任务 — 请严格按步骤执行】
 
-2. If an S/R Zone Proximity Alert is shown above, factor it into your assessment:
-   - HIGH strength zones (multi-source confluence) have historically higher bounce rates
-   - However, breakout through strong zones can be powerful — use volume and momentum to judge
-   - This is information, not a rule — weigh it alongside all other data
+### STEP 1: 验证 MARKET REGIME
+用上方指标手册独立验证当前市场状态：
+- 检查 ADX、BB Width、Price vs SMAs → 判断 TRENDING / RANGING / SQUEEZE
+- 验证 Judge 建议的交易方向是否与当前 regime 一致
+- ⚠️ 如果 Judge 在强趋势中建议逆势交易，需要特别谨慎评估风险
 
-3. Calculate SL/TP based on S/R zones and market structure:
-   - For LONG: SL below nearest SUPPORT, TP at nearest RESISTANCE
-   - For SHORT: SL above nearest RESISTANCE, TP at nearest SUPPORT
-   - Prefer zones with HIGH strength or ORDER_FLOW confirmation
-   - Consider minimum SL distance of 0.5-1% to avoid noise-triggered stops
+### STEP 2: 评估 S/R Zone 风险
+如果上方有 S/R Zone Proximity Alert：
+- HIGH 强度 zone (多源确认) 历史上反弹率更高
+- 但强力突破 HIGH 强度 zone (伴随放量和动量) 可能是强势信号
+- ‼️ 这是参考信息，不是硬性规则 — 结合所有数据综合判断
 
-4. Evaluate Risk/Reward ratio:
-   - Calculate: Risk = |current_price - stop_loss|, Reward = |take_profit - current_price|
-   - R/R = Reward / Risk
+### STEP 3: 计算 SL/TP
+基于 S/R zones 和市场结构设定止损止盈：
+- LONG: SL 在最近 SUPPORT 下方, TP 在最近 RESISTANCE
+- SHORT: SL 在最近 RESISTANCE 上方, TP 在最近 SUPPORT
+- 优先选择 HIGH 强度或有 ORDER_FLOW 确认的 zone
+- 最小 SL 距离 0.5-1%，避免噪音触发止损
 
-   Statistical context on R/R (from institutional trading research):
-   - R/R >= 1.5:1 is the standard institutional minimum for favorable expected value
-   - R/R < 1.5:1 means risk exceeds reward — historically negative expectancy
-   - Trades with R/R < 1.0:1 have strongly negative expected returns
+### STEP 4: 评估 Risk/Reward
+计算: Risk = |current_price - stop_loss|, Reward = |take_profit - current_price|, R/R = Reward / Risk
 
-   R/R naturally reflects price position:
-   - Price closer to SUPPORT → LONG has better R/R (small risk, large reward)
-   - Price closer to RESISTANCE → SHORT has better R/R
-   - Price in MIDDLE of range → Both directions tend to have poor R/R
+R/R 参考标准 (机构交易研究):
+| R/R | 评价 | 仓位建议 |
+|-----|------|---------|
+| >= 2.5:1 | 优秀 | 80-100% |
+| 2.0-2.5:1 | 良好 | 50-80% |
+| 1.5-2.0:1 | 可接受 | 30-50% |
+| < 1.5:1 | 不可接受 | → 改为 HOLD |
 
-   Regime context (Osler 2000, ADX research):
-   - ADX < 20 (RANGING): S/R bounces are ~70% reliable, standard R/R analysis applies
-   - ADX 20-30 (WEAK TREND): Counter-trend entries are riskier, need higher R/R to compensate
-   - ADX 30-40 (STRONG TREND): S/R levels break more often (~25% bounce rate)
-   - ADX > 40 (VERY STRONG TREND): Counter-trend S/R entries historically have very low success rate
-   - "Counter-trend" = LONG when DI- > DI+ (bearish), or SHORT when DI+ > DI- (bullish)
+R/R 与价格位置的关系：
+- 价格靠近 SUPPORT → LONG R/R 好 (小风险、大回报)
+- 价格靠近 RESISTANCE → SHORT R/R 好
+- 价格在中间 → 两个方向 R/R 都差
 
-5. Position sizing — consider these factors together:
-   - R/R quality: Higher R/R supports larger position, lower R/R warrants smaller position
-   - General guideline: R/R >= 2.5:1 (80-100%), 2.0-2.5:1 (50-80%), 1.5-2.0:1 (30-50%)
-   - Regime: Strong trend with-trend trades can be sized more aggressively
+Regime 对 S/R 可靠性的影响 (Osler 2000):
+- ADX < 20 (RANGING): S/R 反弹 ~70% 可靠，标准 R/R 分析适用
+- ADX 20-30 (WEAK TREND): 逆势入场更有风险，需更高 R/R 补偿
+- ADX 30-40 (STRONG TREND): S/R 经常被突破 (~25% 反弹率)
+- ADX > 40 (VERY STRONG): 逆势 S/R 入场历史成功率极低
 
-   Funding rate cost:
-   - Funding rate is a DIRECT COST paid every 8 hours while holding a position
-   - LONG pays when rate is POSITIVE, SHORT pays when rate is NEGATIVE
-   - "Last Settled" = the rate applied at the most recent settlement (historical fact)
-   - "Predicted" = the real-time estimated rate for the NEXT settlement (changes continuously)
-   - Daily cost estimate = |predicted_rate| x 3 (three 8h settlements per day)
-   - If predicted rate diverges significantly from settled rate: market sentiment is shifting
-   - Settlement countdown < 30min with extreme predicted rate: expect short-term volatility
+### STEP 5: 确定仓位大小
+综合以下因素：
+- **R/R 质量**: R/R 越高可承受越大仓位
+- **Regime**: 强趋势顺势交易可以更激进
+- **Funding Rate 成本**:
+  - 每 8 小时结算一次，持仓直接成本
+  - LONG 在 rate > 0 时付费, SHORT 在 rate < 0 时付费
+  - 日成本估算 = |predicted_rate| × 3
+  - Predicted vs Settled 差异大 = 市场情绪正在转变
+- **流动性和滑点**:
+  - 检查 ORDER FLOW 和 ORDER BOOK 的执行风险
+  - buy_ratio > 0.65 或 < 0.35 = 单边拥挤，潜在反向信号
+  - 根据预期执行质量调整仓位
 
-   Liquidity and slippage:
-   - Check ORDER FLOW and ORDER BOOK data for execution risk
-   - Wide spreads, large order walls, and low depth increase slippage risk
-   - Extreme buy_ratio (>0.65 or <0.35) means one-sided positioning — potential contrarian signal
-   - Adjust position size based on expected execution quality
+### STEP 6: 做出最终决策
+- 你拥有指标手册、全部市场数据和 Judge 的建议
+- 综合所有信息做出独立的风险调整后决策
+- ‼️ 如果交易质量差 (R/R 不佳、regime 不利、成本过高)，改为 HOLD
+- 在 "reason" 字段清楚解释你的推理
 
-6. Make your final decision:
-   - You have the indicator manual, all market data, and the Judge's recommendation
-   - Synthesize everything and make an independent risk-adjusted decision
-   - If the trade quality is poor (bad R/R, adverse regime, high costs), change to HOLD
-   - Explain your reasoning clearly in the "reason" field
+---
 
-SIGNAL TYPES (choose the most appropriate):
-- LONG: Open new long or add to existing long position
-- SHORT: Open new short or add to existing short position
-- CLOSE: Close current position completely (do NOT open opposite position)
-- HOLD: No action, maintain current state
-- REDUCE: Reduce current position size but keep direction (use with lower position_size_pct)
+## 📋 SIGNAL TYPES
+- **LONG**: 开新多仓或加仓
+- **SHORT**: 开新空仓或加仓
+- **CLOSE**: 完全平仓 (不开反向仓位)
+- **HOLD**: 不操作，维持现状
+- **REDUCE**: 减仓但保持方向 (设置较低的 position_size_pct)
 
-POSITION SIZE RULES:
-- position_size_pct: Target position as percentage of maximum allowed (0-100)
-- 100 = full position, 50 = half position, 0 = close all
-- For REDUCE signal: set position_size_pct to desired remaining size (e.g., 50 = reduce to half)
-- For CLOSE signal: position_size_pct should be 0
+## 📐 POSITION SIZE RULES
+- position_size_pct: 目标仓位占最大允许仓位的百分比 (0-100)
+- REDUCE: 设为目标剩余大小 (如 50 = 减半)
+- CLOSE: 设为 0
 
-OUTPUT FORMAT (JSON only, no other text):
+## 📤 OUTPUT FORMAT (只输出 JSON，不要其他文字):
 {{
     "signal": "LONG|SHORT|CLOSE|HOLD|REDUCE",
     "confidence": "HIGH|MEDIUM|LOW",
@@ -1185,14 +1259,38 @@ OUTPUT FORMAT (JSON only, no other text):
     "debate_summary": "<brief summary of bull vs bear debate>"
 }}"""
 
-        system_prompt = f"""You are a Risk Manager.
-Your role is to evaluate proposed trades, set SL/TP levels, and determine position sizing.
+        # v3.28: Chinese instructions + few-shot examples for better DeepSeek performance
+        system_prompt = f"""你是风险管理者 (Risk Manager)。
+你的职责是评估 Judge 提出的交易建议，设定 SL/TP 价位，并确定仓位大小。
 
 {INDICATOR_DEFINITIONS}
 
-Use the indicator manual to independently verify the market regime and validate
-that the proposed trade direction is consistent with current market conditions.
-Make your own assessment — do not blindly follow the Judge's recommendation."""
+【关键规则 — 必须遵守】
+⚠️ 用指标手册独立验证 market regime，确认交易方向与当前市场状况一致。
+⚠️ 做出你自己的评估 — 不要盲从 Judge 的建议。
+⚠️ 用中文进行内部推理分析，最终以 JSON 格式输出结果。
+
+【正确分析示例 — Few-shot】
+
+示例 1: 趋势市场顺势交易
+情况: ADX=35, DI+ > DI-, RSI=58, Price > SMA200, Judge 建议 LONG
+分析: ADX>25 = TRENDING, 顺势交易。最近 Support $95,000, Resistance $99,000。
+      SL=$94,500 (Support 下方), TP=$98,800 (Resistance 附近)。
+      Risk=$500, Reward=$3,800, R/R=7.6:1 → 优秀。Funding rate 0.01% 正常。
+结果: {{"signal":"LONG","confidence":"HIGH","position_size_pct":85,"stop_loss":94500,"take_profit":98800}}
+
+示例 2: R/R 不足 → 改为 HOLD
+情况: ADX=15 (RANGING), Judge 建议 LONG, 价格在 range 中间
+分析: 最近 Support $94,000, Resistance $96,000, 当前 $95,200。
+      SL=$93,500, TP=$95,800。Risk=$1,700, Reward=$600, R/R=0.35:1 → 不可接受。
+      价格在 range 中间，两个方向 R/R 都差。
+结果: {{"signal":"HOLD","confidence":"LOW","position_size_pct":0,"reason":"R/R 0.35:1 远低于 1.5:1 门槛"}}
+
+示例 3: 逆势交易需要额外谨慎
+情况: ADX=38 (STRONG TREND down, DI- > DI+), Judge 建议 LONG (逆势)
+分析: 强下跌趋势中，S/R 反弹率仅 ~25%。即使 RSI 超卖，逆势做多风险极高。
+      ADX > 30 时 S/R 可靠性大幅下降。
+结果: {{"signal":"HOLD","confidence":"MEDIUM","position_size_pct":0,"reason":"ADX=38 强下跌趋势，逆势做多历史成功率极低"}}"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["risk"] = {
