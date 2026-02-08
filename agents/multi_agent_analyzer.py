@@ -1211,6 +1211,7 @@ Regime 对 S/R 可靠性的影响 (Osler 2000):
 - ADX 20-30 (WEAK TREND): 逆势入场更有风险，需更高 R/R 补偿
 - ADX 30-40 (STRONG TREND): S/R 经常被突破 (~25% 反弹率)
 - ADX > 40 (VERY STRONG): 逆势 S/R 入场历史成功率极低
+- "逆势 (Counter-trend)" 定义: DI- > DI+ (空头主导) 时做 LONG，或 DI+ > DI- (多头主导) 时做 SHORT
 
 ### STEP 5: 确定仓位大小
 综合以下因素：
@@ -1243,6 +1244,7 @@ Regime 对 S/R 可靠性的影响 (Osler 2000):
 
 ## 📐 POSITION SIZE RULES
 - position_size_pct: 目标仓位占最大允许仓位的百分比 (0-100)
+- 100 = 全仓 (full position), 50 = 半仓 (half position), 0 = 清仓 (close all)
 - REDUCE: 设为目标剩余大小 (如 50 = 减半)
 - CLOSE: 设为 0
 
