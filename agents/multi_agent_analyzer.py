@@ -1218,14 +1218,18 @@ Regime 对 S/R 可靠性的影响 (Osler 2000):
 - **R/R 质量**: R/R 越高可承受越大仓位
 - **Regime**: 强趋势顺势交易可以更激进
 - **Funding Rate 成本**:
-  - 每 8 小时结算一次，持仓直接成本
-  - LONG 在 rate > 0 时付费, SHORT 在 rate < 0 时付费
-  - 日成本估算 = |predicted_rate| × 3
-  - Predicted vs Settled 差异大 = 市场情绪正在转变
+  - 每 8 小时结算一次，持仓直接成本 (Funding rate is a DIRECT COST paid every 8 hours while holding a position)
+  - LONG 在 rate > 0 时付费, SHORT 在 rate < 0 时付费 (LONG pays when rate is POSITIVE, SHORT pays when rate is NEGATIVE)
+  - "Last Settled" = 最近结算时的历史费率 (已发生的历史事实)
+  - "Predicted" = 下次结算的实时预估费率 (持续变化)
+  - 日成本估算 = |predicted_rate| × 3 (每日三次 8h 结算)
+  - Predicted vs Settled 差异大 = 市场情绪正在转变 (market sentiment is shifting)
+  - ⚠️ 结算倒计时 < 30分钟且 predicted rate 极端 → 预期短期波动 (Settlement countdown < 30min with extreme predicted rate: expect short-term volatility)
 - **流动性和滑点**:
-  - 检查 ORDER FLOW 和 ORDER BOOK 的执行风险
-  - buy_ratio > 0.65 或 < 0.35 = 单边拥挤，潜在反向信号
-  - 根据预期执行质量调整仓位
+  - 检查 ORDER FLOW 和 ORDER BOOK 的执行风险 (Check ORDER FLOW and ORDER BOOK data for execution risk)
+  - 宽价差、大额挂单墙、低深度 → 增加滑点风险 (Wide spreads, large order walls, and low depth increase slippage risk)
+  - buy_ratio > 0.65 或 < 0.35 = 单边拥挤，潜在反向信号 (Extreme buy_ratio means one-sided positioning — potential contrarian signal)
+  - 根据预期执行质量调整仓位 (Adjust position size based on expected execution quality)
 
 ### STEP 6: 做出最终决策
 - 你拥有指标手册、全部市场数据和 Judge 的建议
