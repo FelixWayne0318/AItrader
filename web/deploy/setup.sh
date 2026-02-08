@@ -41,8 +41,8 @@ sudo apt-get update
 sudo apt-get install -y \
     curl \
     git \
-    python3.11 \
-    python3.11-venv \
+    python3.12 \
+    python3.12-venv \
     python3-pip \
     nodejs \
     npm
@@ -106,7 +106,7 @@ echo -e "\n${GREEN}[4/8] Setting up backend...${NC}"
 cd "$INSTALL_DIR/backend"
 
 # Create virtual environment
-python3.11 -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate
 
 # Install dependencies

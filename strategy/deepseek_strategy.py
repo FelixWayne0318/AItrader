@@ -338,6 +338,11 @@ class DeepSeekAIStrategy(Strategy):
             'action_taken': '',      # What action was taken (if any)
         }
 
+        # v4.13: Pending SL/TP state for two-phase order submission
+        # Entry order submitted first, SL/TP submitted after fill in on_position_opened()
+        # Required because NT 1.222.0 rejects bracket orders with linked_order_ids
+        self._pending_sltp: Optional[Dict[str, Any]] = None
+
         # v3.18: Pending reversal state for event-driven two-phase commit
         # This prevents race condition when reversing positions (close then open)
         # Format: {
@@ -4716,14 +4721,19 @@ class DeepSeekAIStrategy(Strategy):
         quantity: float,
     ):
         """
-        Submit a bracket order with entry, stop loss, and take profit using NautilusTrader's built-in bracket orders.
+        Submit entry order with pending SL/TP (two-phase approach).
 
-        This uses the OrderFactory.bracket() method which automatically creates:
-        - Entry order (MARKET)
-        - Stop Loss order (STOP_MARKET) linked with OTO (One-Triggers-Other)
-        - Take Profit order (LIMIT) linked with OTO and OCO with SL
+        v4.13: NautilusTrader 1.222.0's _submit_order_list() rejects bracket orders
+        with linked_order_ids (UNSUPPORTED_OCO_CONDITIONAL_ORDERS) because Binance
+        migrated conditional orders (STOP_MARKET, TAKE_PROFIT_MARKET) to the Algo
+        Order API (/fapi/v1/algoOrder) in Dec 2025. The old bracket approach
+        (order_factory.bracket → submit_order_list) is no longer viable.
 
-        The OCO linkage is handled automatically by NautilusTrader.
+        New approach:
+        1. Submit MARKET entry order only
+        2. Store pending SL/TP prices in self._pending_sltp
+        3. on_position_opened() submits SL + TP as individual orders
+        4. OCO managed manually in on_order_filled() (already implemented)
 
         Parameters
         ----------
@@ -4745,13 +4755,10 @@ class DeepSeekAIStrategy(Strategy):
             return
 
         # v4.11: Use shared SL/TP validation (unified with add-to-position path)
-        # Previously this had ~100 lines of duplicated validation logic.
-        # Now both new positions and adds go through _validate_sltp_for_entry().
         confidence = self.latest_signal_data.get('confidence', 'MEDIUM') if self.latest_signal_data else 'MEDIUM'
         validated = self._validate_sltp_for_entry(side, confidence)
 
         if validated is None:
-            # v3.18 + v4.11: Do NOT fallback to unprotected market order
             self.log.error(
                 "❌ SL/TP validation failed for new position - order blocked "
                 "(no price data, no signal data, or R/R < minimum)"
@@ -4776,7 +4783,7 @@ class DeepSeekAIStrategy(Strategy):
 
         # Log SL/TP summary
         self.log.info(
-            f"🎯 Creating bracket order for {side.name}:\n"
+            f"🎯 Opening position for {side.name}:\n"
             f"   Entry: ~${entry_price:,.2f} (MARKET)\n"
             f"   Stop Loss: ${stop_loss_price:,.2f} ({((stop_loss_price/entry_price - 1) * 100):.2f}%)\n"
             f"   Take Profit: ${tp_price:,.2f} ({((tp_price/entry_price - 1) * 100):.2f}%)\n"
@@ -4785,61 +4792,50 @@ class DeepSeekAIStrategy(Strategy):
         )
 
         try:
-            # v4.12: Create bracket order WITHOUT emulation - SL/TP go directly to Binance
-            # Previously used emulation_trigger=TriggerType.DEFAULT which kept SL/TP in local
-            # OrderEmulator memory. This meant: (1) Binance shows no pending orders, (2) process
-            # crash = SL/TP lost = position unprotected, (3) mixed emulated/venue state after scaling.
-            # Now: OTO handled by ExecutionEngine (children released after entry fills),
-            # OCO managed manually in on_order_filled() (cancel peer when one fills).
-            bracket_order_list = self.order_factory.bracket(
+            # v4.13: Two-phase approach - submit entry first, SL/TP after fill
+            # Store pending SL/TP for on_position_opened() to submit
+            self._pending_sltp = {
+                'sl_price': stop_loss_price,
+                'tp_price': tp_price,
+                'entry_price': entry_price,
+                'side': side,
+                'quantity': quantity,
+                'confidence': confidence,
+            }
+
+            # Pre-initialize trailing stop state with estimated prices
+            # (will be updated with actual fill price in on_position_opened)
+            instrument_key = str(self.instrument_id)
+            self.trailing_stop_state[instrument_key] = {
+                "entry_price": entry_price,
+                "highest_price": entry_price if side == OrderSide.BUY else None,
+                "lowest_price": entry_price if side == OrderSide.SELL else None,
+                "current_sl_price": stop_loss_price,
+                "current_tp_price": tp_price,
+                "sl_order_id": None,  # Will be set in on_position_opened
+                "activated": False,
+                "side": "LONG" if side == OrderSide.BUY else "SHORT",
+                "quantity": quantity,
+            }
+
+            # Submit MARKET entry order only
+            entry_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
                 order_side=side,
                 quantity=self.instrument.make_qty(quantity),
-                sl_trigger_price=self.instrument.make_price(stop_loss_price),
-                tp_price=self.instrument.make_price(tp_price),
                 time_in_force=TimeInForce.GTC,
-                # emulation_trigger omitted → defaults to NO_TRIGGER → sent to Binance
             )
-
-            # Submit the bracket order list
-            self.submit_order_list(bracket_order_list)
+            self.submit_order(entry_order)
 
             self.log.info(
-                f"✅ Submitted bracket order: {side.name} {quantity:.3f} BTC with SL/TP\n"
-                f"   OrderList ID: {bracket_order_list.id}"
+                f"✅ Submitted entry order: {side.name} {quantity:.3f} BTC\n"
+                f"   SL/TP will be submitted after fill (pending in _pending_sltp)"
             )
 
-            # Save bracket order info for trailing stop
-            if self.enable_trailing_stop:
-                instrument_key = str(self.instrument_id)
-
-                # Extract SL order from bracket (it's typically the second order in the list)
-                sl_order = None
-                for order in bracket_order_list.orders:
-                    if order.order_type == OrderType.STOP_MARKET:
-                        sl_order = order
-                        break
-
-                if sl_order:
-                    self.trailing_stop_state[instrument_key] = {
-                        "entry_price": entry_price,
-                        "highest_price": entry_price if side == OrderSide.BUY else None,
-                        "lowest_price": entry_price if side == OrderSide.SELL else None,
-                        "current_sl_price": stop_loss_price,
-                        "current_tp_price": tp_price,  # v3.8: Store TP price for notifications
-                        "sl_order_id": str(sl_order.client_order_id),
-                        "activated": False,
-                        "side": "LONG" if side == OrderSide.BUY else "SHORT",
-                        "quantity": quantity,
-                    }
-                    self.log.debug(
-                        f"📌 Saved SL order ID for trailing stop: {str(sl_order.client_order_id)[:8]}..."
-                    )
-
         except Exception as e:
-            # v3.18: Do NOT fallback to unprotected order - this is too dangerous
-            # Opening a position without SL/TP exposes the account to unlimited risk
-            self.log.error(f"❌ Failed to submit bracket order: {e}")
+            # Clear pending state on failure
+            self._pending_sltp = None
+            self.log.error(f"❌ Failed to submit entry order: {e}")
             self.log.error(
                 "🚫 NOT opening position without SL/TP protection - "
                 "this would expose account to unlimited risk"
@@ -4848,7 +4844,7 @@ class DeepSeekAIStrategy(Strategy):
             # Update signal status to indicate failure
             self._last_signal_status = {
                 'executed': False,
-                'reason': f'Bracket订单失败，取消开仓',
+                'reason': f'入场订单失败，取消开仓',
                 'action_taken': '',
             }
 
@@ -4858,8 +4854,8 @@ class DeepSeekAIStrategy(Strategy):
                     error_msg = self.telegram_bot.format_error_alert({
                         'level': 'CRITICAL',
                         'message': (
-                            f"🚫 Bracket订单失败，已取消开仓\n"
-                            f"原因: 无法设置止损保护\n"
+                            f"🚫 入场订单失败，已取消开仓\n"
+                            f"原因: 入场订单提交异常\n"
                             f"信号: {side.name} {quantity:.3f} BTC\n"
                             f"处理: 等待下一个信号"
                         ),
@@ -4868,10 +4864,6 @@ class DeepSeekAIStrategy(Strategy):
                     self.telegram_bot.send_message_sync(error_msg)
                 except Exception as notify_error:
                     self.log.error(f"Failed to send Telegram alert: {notify_error}")
-
-            # v3.18: Do NOT submit unprotected order
-            # Old dangerous code removed:
-            # self._submit_order(side=side, quantity=quantity, reduce_only=False)
 
     def on_order_filled(self, event):
         """
@@ -4946,10 +4938,10 @@ class DeepSeekAIStrategy(Strategy):
         """
         Handle position opened events.
 
-        Note: With bracket orders, SL/TP orders are automatically submitted as part of the bracket.
-        We no longer need to manually submit them here.
+        v4.13: Submit SL/TP as individual orders after entry fill.
+        NT 1.222.0 rejects bracket orders with linked_order_ids, so we use
+        a two-phase approach: entry first → SL/TP after position opens.
         """
-        # PositionOpened event contains position data directly
         self.log.info(
             f"🟢 Position opened: {event.side.name} "
             f"{event.quantity} @ {event.avg_px_open}"
@@ -4958,46 +4950,126 @@ class DeepSeekAIStrategy(Strategy):
         # v3.12: Store entry conditions for memory system
         self._last_entry_conditions = self._format_entry_conditions()
 
-        # Update trailing stop state with actual entry price if it exists
-        # (bracket order already initialized it with estimated price)
-        if self.enable_trailing_stop:
-            instrument_key = str(self.instrument_id)
-            entry_price = float(event.avg_px_open)
+        instrument_key = str(self.instrument_id)
+        entry_price = float(event.avg_px_open)
 
-            if instrument_key in self.trailing_stop_state:
-                # Update with actual entry price
-                self.trailing_stop_state[instrument_key]["entry_price"] = entry_price
-                if event.side == PositionSide.LONG:
-                    self.trailing_stop_state[instrument_key]["highest_price"] = entry_price
-                else:
-                    self.trailing_stop_state[instrument_key]["lowest_price"] = entry_price
+        # Update trailing stop state with actual entry price
+        if instrument_key in self.trailing_stop_state:
+            self.trailing_stop_state[instrument_key]["entry_price"] = entry_price
+            if event.side == PositionSide.LONG:
+                self.trailing_stop_state[instrument_key]["highest_price"] = entry_price
+            else:
+                self.trailing_stop_state[instrument_key]["lowest_price"] = entry_price
 
-                self.log.debug(
-                    f"📊 Updated trailing stop state with actual entry price: ${entry_price:,.2f}"
+            self.log.debug(
+                f"📊 Updated trailing stop state with actual entry price: ${entry_price:,.2f}"
+            )
+        else:
+            self.trailing_stop_state[instrument_key] = {
+                "entry_price": entry_price,
+                "highest_price": entry_price if event.side == PositionSide.LONG else None,
+                "lowest_price": entry_price if event.side == PositionSide.SHORT else None,
+                "current_sl_price": None,
+                "current_tp_price": None,
+                "sl_order_id": None,
+                "activated": False,
+                "side": event.side.name,
+                "quantity": float(event.quantity),
+            }
+
+        # v4.13: Submit pending SL/TP orders individually
+        if hasattr(self, '_pending_sltp') and self._pending_sltp:
+            pending = self._pending_sltp
+            self._pending_sltp = None  # Clear immediately to prevent double submission
+
+            sl_price = pending['sl_price']
+            tp_price = pending['tp_price']
+            quantity = float(event.quantity)
+
+            # Determine exit side (opposite of position)
+            exit_side = OrderSide.SELL if event.side == PositionSide.LONG else OrderSide.BUY
+
+            self.log.info(
+                f"📋 Submitting SL/TP for {event.side.name} position:\n"
+                f"   SL: ${sl_price:,.2f} (STOP_MARKET)\n"
+                f"   TP: ${tp_price:,.2f} (LIMIT)"
+            )
+
+            sl_submitted = False
+            tp_submitted = False
+
+            # Submit SL (STOP_MARKET → routed to /fapi/v1/algoOrder by NT 1.222.0)
+            try:
+                sl_order = self.order_factory.stop_market(
+                    instrument_id=self.instrument_id,
+                    order_side=exit_side,
+                    quantity=self.instrument.make_qty(quantity),
+                    trigger_price=self.instrument.make_price(sl_price),
+                    trigger_type=TriggerType.LAST_PRICE,
+                    reduce_only=True,
+                )
+                self.submit_order(sl_order)
+                sl_submitted = True
+
+                # Update trailing stop state with SL order ID
+                self.trailing_stop_state[instrument_key]["sl_order_id"] = str(sl_order.client_order_id)
+                self.trailing_stop_state[instrument_key]["current_sl_price"] = sl_price
+
+                self.log.info(
+                    f"✅ SL order submitted: {exit_side.name} @ ${sl_price:,.2f} "
+                    f"(ID: {str(sl_order.client_order_id)[:8]}...)"
+                )
+            except Exception as e:
+                self.log.error(f"❌ Failed to submit SL order: {e}")
+
+            # Submit TP (LIMIT → regular /fapi/v1/order endpoint)
+            try:
+                tp_order = self.order_factory.limit(
+                    instrument_id=self.instrument_id,
+                    order_side=exit_side,
+                    quantity=self.instrument.make_qty(quantity),
+                    price=self.instrument.make_price(tp_price),
+                    time_in_force=TimeInForce.GTC,
+                    reduce_only=True,
+                )
+                self.submit_order(tp_order)
+                tp_submitted = True
+
+                self.trailing_stop_state[instrument_key]["current_tp_price"] = tp_price
+
+                self.log.info(
+                    f"✅ TP order submitted: {exit_side.name} @ ${tp_price:,.2f} "
+                    f"(ID: {str(tp_order.client_order_id)[:8]}...)"
+                )
+            except Exception as e:
+                self.log.error(f"❌ Failed to submit TP order: {e}")
+
+            # Safety: If SL failed, submit emergency SL
+            if not sl_submitted:
+                self.log.error("🚨 SL order failed - submitting emergency SL")
+                self._submit_emergency_sl(quantity, event.side.name, reason="SL提交失败")
+
+            if not tp_submitted:
+                self.log.warning(
+                    "⚠️ TP order failed - position has SL protection but no TP. "
+                    "Will rely on trailing stop or next signal for exit."
                 )
 
-                # v4.9: Post-fill R/R validation
-                # SL/TP were calculated using estimated price, but MARKET fill may be different.
-                # If fill price degraded R/R below minimum, adjust TP upward to restore.
+            # v4.9: Post-fill R/R validation
+            if self.enable_trailing_stop:
                 self._validate_and_adjust_rr_post_fill(
                     instrument_key=instrument_key,
                     fill_price=entry_price,
                     side=event.side.name,
                 )
-            else:
-                # Fallback: initialize if not already set (shouldn't happen with bracket orders)
-                self.trailing_stop_state[instrument_key] = {
-                    "entry_price": entry_price,
-                    "highest_price": entry_price if event.side == PositionSide.LONG else None,
-                    "lowest_price": entry_price if event.side == PositionSide.SHORT else None,
-                    "current_sl_price": None,
-                    "sl_order_id": None,
-                    "activated": False,
-                    "side": event.side.name,
-                    "quantity": float(event.quantity),
-                }
-                self.log.info(
-                    f"📊 Trailing stop initialized for {event.side.name} position @ ${entry_price:,.2f}"
+        elif self.enable_trailing_stop:
+            # No pending SL/TP (e.g. reversal Phase 2 or add-to-position)
+            # Still do post-fill R/R validation if trailing stop is enabled
+            if instrument_key in self.trailing_stop_state:
+                self._validate_and_adjust_rr_post_fill(
+                    instrument_key=instrument_key,
+                    fill_price=entry_price,
+                    side=event.side.name,
                 )
 
         # v4.0: Send unified trade execution notification (combines signal + fill + position)

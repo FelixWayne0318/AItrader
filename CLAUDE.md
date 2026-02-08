@@ -237,8 +237,8 @@ CodeQL 提供更深入的语义分析，包括安全漏洞检测和数据流分�
 | **安装路径** | /home/linuxuser/nautilus_AItrader |
 | **服务名** | nautilus-trader |
 | **分支** | main |
-| **Python** | 3.11+ (必须) |
-| **NautilusTrader** | 1.221.0 |
+| **Python** | 3.12+ (必须) |
+| **NautilusTrader** | 1.222.0 |
 | **配置文件** | ~/.env.aitrader (永久存储) |
 
 ## 配置文件管理
@@ -294,7 +294,7 @@ sudo journalctl -u nautilus-trader -f --no-hostname
 `reinstall.sh` 脚本现在包含自动诊断和修复功能，会在安装时检测并修复已知问题：
 
 **预检查** (Step 0):
-- ✅ Python 版本检查 (必须 3.11+)
+- ✅ Python 版本检查 (必须 3.12+)
 - ✅ 磁盘空间检查 (建议至少 5GB)
 - ✅ 内存检查 (建议至少 2GB)
 
@@ -488,7 +488,7 @@ Environment=AUTO_CONFIRM=true
    - 问题：Binance API 返回非 ASCII 符号导致 Rust 代码 panic
    - 错误：`Condition failed: invalid string for 'value' contained a non-ASCII char`
    - 根因：NautilusTrader 旧版本 Rust 代码只接受 ASCII
-   - **最终修复**：升级到 Python 3.11 + NautilusTrader 1.221.0
+   - **最终修复**：升级到 Python 3.12 + NautilusTrader 1.222.0 (曾用 3.11 + 1.221.0)
    - 官方修复：[GitHub Issue #3053](https://github.com/nautechsystems/nautilus_trader/issues/3053), [PR #3105](https://github.com/nautechsystems/nautilus_trader/pull/3105)
    - 注意：1.211.0 只修复了 Currency，1.221.0 才完整修复 Symbol/PositionId
 
@@ -657,13 +657,28 @@ Environment=AUTO_CONFIRM=true
       - 修复：信号后添加 "(上次)" 标签，避免用户误以为是当前周期结果
     - 文件：`strategy/trading_logic.py`, `strategy/deepseek_strategy.py`, `utils/telegram_bot.py`
 
+21. **Binance Algo Order API 迁移 + NT Bracket 修复** (UNSUPPORTED_OCO_CONDITIONAL_ORDERS) - **关键修复**
+    - **问题**: Bracket 订单被拒，错误 `UNSUPPORTED_OCO_CONDITIONAL_ORDERS`
+    - **表层原因**: Binance 2025年12月将 STOP_MARKET/TAKE_PROFIT_MARKET 从 `/fapi/v1/order` 迁移到 `/fapi/v1/algoOrder`
+    - **深层根因**: NautilusTrader 1.222.0 的 `_submit_order_list()` (BinanceCommonExecutionClient L1022-1030) 检测到 bracket 订单的 `linked_order_ids` 后，**在本地直接拒绝全部订单**——订单从未发送到 Binance
+    - **升级** (Phase 1): Python 3.11 → 3.12, NautilusTrader 1.221.0 → 1.222.0
+    - **代码修复** (Phase 2, v4.13): 改用两阶段订单提交
+      - `_submit_bracket_order()` → 仅提交 MARKET 入场单 + 存储 `_pending_sltp`
+      - `on_position_opened()` → 入场成交后分别提交:
+        - SL: `order_factory.stop_market()` → `submit_order()` (NT 自动路由到 algoOrder)
+        - TP: `order_factory.limit()` → `submit_order()` (普通端点)
+      - OCO: `on_order_filled()` 手动取消对方 (已有逻辑)
+    - **验证**: 直接 API 测试确认 Algo API 正常 (algoType=CONDITIONAL, triggerPrice)
+    - 文件：`strategy/deepseek_strategy.py` (v4.13), `requirements.txt`
+    - 参考：Binance Futures API Changelog (Dec 2025)
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
 - ❌ 使用 `main.py` 作为入口 → ✅ 使用 `main_live.py`
 - ❌ 忘记设置 `AUTO_CONFIRM=true` → 会卡在确认提示
 - ❌ 止损在入场价错误一侧 → 已修复，会自动回退到默认2%
-- ❌ 使用 Python 3.10 → ✅ 必须使用 Python 3.11+
+- ❌ 使用 Python 3.11 或更低版本 → ✅ 必须使用 Python 3.12+ (NautilusTrader 1.222.0 要求)
 - ❌ 从后台线程访问 `indicator_manager` → ✅ 使用 `_cached_current_price` (Rust 指标不可跨线程)
 - ❌ 使用 `nautilus_trader.core.nautilus_pyo3` 的指标 → ✅ 使用 `nautilus_trader.indicators` (Cython 版本，线程安全)
 - ❌ 在 `__init__.py` 中自动导入 → ✅ 直接导入模块 (避免循环导入)
@@ -684,6 +699,7 @@ Environment=AUTO_CONFIRM=true
 - ❌ **反转交易直接平仓后开仓** → ✅ **使用 `_pending_reversal` 两阶段提交** (v3.18)
 - ❌ **加仓后不更新 SL/TP 数量** → ✅ **调用 `_update_sltp_quantity()` 更新订单** (v3.18)
 - ❌ **仅在 AI prompt 中要求 R/R >= 1.5:1** → ✅ **`validate_multiagent_sltp()` 硬性执行 R/R 门槛** (回退到技术分析)
+- ❌ **使用 `order_factory.bracket()` + `submit_order_list()`** → ✅ **分步提交: MARKET entry → on_position_opened → SL + TP 单独提交** (v4.13, NT 1.222.0 拒绝 linked orders)
 
 ## 文件结构
 
