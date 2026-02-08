@@ -4452,6 +4452,23 @@ class DeepSeekAIStrategy(Strategy):
                 new_tp_price=final_tp,
             )
 
+            # v5.2: Send Telegram notification for dynamic SL/TP update
+            try:
+                if self.telegram_bot:
+                    update_msg = self.telegram_bot.format_dynamic_sltp_update({
+                        'side': position_side.upper(),
+                        'current_price': current_price,
+                        'old_sl': old_sl,
+                        'new_sl': final_sl,
+                        'old_tp': old_tp if old_tp and old_tp > 0 else 0,
+                        'new_tp': final_tp,
+                        'sl_changed': sl_changed,
+                        'tp_changed': bool(tp_changed),
+                    })
+                    self.telegram_bot.send_message_sync(update_msg)
+            except Exception as tg_err:
+                self.log.debug(f"Failed to send dynamic SL/TP Telegram notification: {tg_err}")
+
         except Exception as e:
             self.log.warning(f"⚠️ Dynamic SL/TP update failed (position still protected): {e}")
 
@@ -5972,6 +5989,31 @@ class DeepSeekAIStrategy(Strategy):
             # v4.7: Get account context for portfolio risk fields
             account_context = self._get_account_context(current_price) if current_price > 0 else {}
 
+            # v5.2: Get SL/TP from trailing_stop_state + Binance fallback
+            sl_price = None
+            tp_price = None
+            position_side = None
+            trailing_active = False
+            if pos_data:
+                position_side = pos_data.get('side', '').upper()
+                instrument_key = str(self.instrument_id)
+                ts_state = self.trailing_stop_state.get(instrument_key, {})
+                sl_price = ts_state.get('current_sl_price')
+                tp_price = ts_state.get('current_tp_price')
+                trailing_active = ts_state.get('activated', False)
+                # Fallback to Binance orders
+                if sl_price is None or tp_price is None:
+                    try:
+                        symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+                        pos_side_lower = position_side.lower() if position_side else 'long'
+                        sl_tp = self.binance_account.get_sl_tp_from_orders(symbol, pos_side_lower)
+                        if sl_price is None:
+                            sl_price = sl_tp.get('sl_price')
+                        if tp_price is None:
+                            tp_price = sl_tp.get('tp_price')
+                    except Exception:
+                        pass
+
             status_info = {
                 'is_running': True,  # If this method is called, strategy is running
                 'is_paused': self.is_trading_paused,
@@ -5982,6 +6024,11 @@ class DeepSeekAIStrategy(Strategy):
                 'last_signal': last_signal,
                 'last_signal_time': last_signal_time,
                 'uptime': uptime_str,
+                # v5.2: SL/TP & Position info
+                'position_side': position_side,
+                'sl_price': sl_price,
+                'tp_price': tp_price,
+                'trailing_active': trailing_active,
                 # v4.7: Portfolio Risk Fields (CRITICAL)
                 'total_unrealized_pnl_usd': account_context.get('total_unrealized_pnl_usd'),
                 'liquidation_buffer_portfolio_min_pct': account_context.get('liquidation_buffer_portfolio_min_pct'),

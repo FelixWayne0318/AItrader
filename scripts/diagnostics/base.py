@@ -342,7 +342,7 @@ class DiagnosticContext:
 
     # Step tracking
     current_step: int = 0
-    total_steps: int = 33  # 28 data steps + 3 order flow + code_integrity + math_verify
+    total_steps: int = 34  # 28 data steps + 3 order flow + code_integrity + math_verify + json_output
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
