@@ -3989,12 +3989,52 @@
       "pattern_type": "contains",
       "created": "2026-02-07T13:05:42.302094",
       "auto_generated": true
+    },
+    {
+      "id": "abbaf37145db",
+      "commit": "acd8be2",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(trading): post-fill R/R validation + real-time entry price (v4.9)",
+      "pattern": "from strategy.trading_logic import get_min_rr_ratio",
+      "pattern_type": "import",
+      "created": "2026-02-07T14:03:37.458476",
+      "auto_generated": true
+    },
+    {
+      "id": "28e437a0a600",
+      "commit": "a9d380b",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(safety): emergency SL protection + OCO peer cleanup after scaling (v4.10)",
+      "pattern": "_submit_emergency_sl",
+      "pattern_type": "function_exists",
+      "created": "2026-02-07T15:25:38.410704",
+      "auto_generated": true
+    },
+    {
+      "id": "00faa2072e43",
+      "commit": "b9cb189",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(trading): unified R/R validation for position adds + bracket orders (v4.11)",
+      "pattern": "_validate_sltp_for_entry",
+      "pattern_type": "function_exists",
+      "created": "2026-02-07T23:55:35.212458",
+      "auto_generated": true
+    },
+    {
+      "id": "d384abc1c0f0",
+      "commit": "b9cb189",
+      "file": "tests/test_bracket_order.py",
+      "message": "fix(trading): unified R/R validation for position adds + bracket orders (v4.11)",
+      "pattern": "test_submit_bracket_order_blocks_when_price_missing",
+      "pattern_type": "function_exists",
+      "created": "2026-02-07T23:55:35.230891",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-07T13:05:51.360664",
-    "count": 399,
+    "updated": "2026-02-07T23:55:43.543756",
+    "count": 403,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }

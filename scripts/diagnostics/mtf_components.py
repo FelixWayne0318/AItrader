@@ -407,16 +407,35 @@ class TelegramChecker(DiagnosticStep):
             else:
                 self.ctx.add_warning("TelegramBot.send_message_sync 方法缺失")
 
-            from utils.telegram_command_handler import TelegramCommandHandler
+            from utils.telegram_command_handler import (
+                TelegramCommandHandler,
+                QUERY_COMMANDS,
+                CONTROL_COMMANDS,
+                CONTROL_COMMANDS_WITH_ARGS,
+            )
             print("     ✅ TelegramCommandHandler 类可导入")
 
-            # Check command methods
-            commands = ['cmd_status', 'cmd_position', 'cmd_pause', 'cmd_resume', 'cmd_close']
-            for cmd in commands:
-                if hasattr(TelegramCommandHandler, cmd):
-                    print(f"        ✅ {cmd} 方法存在")
+            # Check command dispatch registries (v3.0: commands dispatched via strategy_callback)
+            required_query = ['status', 'position', 'balance', 'analyze', 'orders']
+            required_control = ['pause', 'resume', 'close']
+            required_control_args = ['force_analysis', 'modify_sl', 'modify_tp']
+
+            print("     📋 命令注册检查 (dispatch registry):")
+            for cmd in required_query:
+                if cmd in QUERY_COMMANDS:
+                    print(f"        ✅ query/{cmd} → '{QUERY_COMMANDS[cmd]}'")
                 else:
-                    print(f"        ⚠️ {cmd} 方法缺失")
+                    print(f"        ⚠️ query/{cmd} 未注册")
+            for cmd in required_control:
+                if cmd in CONTROL_COMMANDS:
+                    print(f"        ✅ control/{cmd} (PIN required)")
+                else:
+                    print(f"        ⚠️ control/{cmd} 未注册")
+            for cmd in required_control_args:
+                if cmd in CONTROL_COMMANDS_WITH_ARGS:
+                    print(f"        ✅ control/{cmd} (with args)")
+                else:
+                    print(f"        ⚠️ control/{cmd} 未注册")
 
             # Test API connectivity
             print()

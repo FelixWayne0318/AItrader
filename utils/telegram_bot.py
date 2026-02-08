@@ -1043,6 +1043,56 @@ class TelegramBot:
             f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
         )
 
+    def format_dynamic_sltp_update(self, update_data: Dict[str, Any]) -> str:
+        """
+        Format dynamic SL/TP update notification (v5.2).
+
+        Sent when _dynamic_sltp_update() changes SL/TP prices based on S/R zones.
+
+        Parameters
+        ----------
+        update_data : dict
+            Contains old_sl, new_sl, old_tp, new_tp, current_price, side,
+            sl_changed, tp_changed, reason
+        """
+        side = update_data.get('side', 'LONG')
+        current_price = update_data.get('current_price', 0)
+        old_sl = update_data.get('old_sl', 0)
+        new_sl = update_data.get('new_sl', 0)
+        old_tp = update_data.get('old_tp', 0)
+        new_tp = update_data.get('new_tp', 0)
+        sl_changed = update_data.get('sl_changed', False)
+        tp_changed = update_data.get('tp_changed', False)
+
+        side_emoji = '🟢' if side == 'LONG' else '🔴'
+        msg = f"📊 *Dynamic SL/TP Update*\n"
+        msg += "━━━━━━━━━━━━━━━━━━\n"
+        msg += f"{side_emoji} {side} | 💵 ${current_price:,.2f}\n"
+
+        if sl_changed and old_sl and new_sl:
+            sl_direction = '⬆️' if new_sl > old_sl else '⬇️'
+            sl_pct = abs(new_sl - old_sl) / old_sl * 100 if old_sl > 0 else 0
+            msg += f"\n🛑 *SL*: ${old_sl:,.2f} → ${new_sl:,.2f} {sl_direction}\n"
+            msg += f"  变化: {sl_pct:.2f}%\n"
+
+        if tp_changed and old_tp and new_tp:
+            tp_direction = '⬆️' if new_tp > old_tp else '⬇️'
+            tp_pct = abs(new_tp - old_tp) / old_tp * 100 if old_tp > 0 else 0
+            msg += f"\n🎯 *TP*: ${old_tp:,.2f} → ${new_tp:,.2f} {tp_direction}\n"
+            msg += f"  变化: {tp_pct:.2f}%\n"
+
+        # Show current R/R
+        if new_sl and new_tp and current_price > 0:
+            risk = abs(current_price - new_sl)
+            reward = abs(new_tp - current_price)
+            if risk > 0:
+                rr = reward / risk
+                rr_icon = '✅' if rr >= 2.0 else '✓' if rr >= 1.5 else '⚠️'
+                msg += f"\n📐 R/R: 1:{rr:.1f} {rr_icon}\n"
+
+        msg += f"\n⏰ {datetime.utcnow().strftime('%H:%M:%S')} UTC"
+        return msg
+
     def format_daily_summary(self, summary_data: Dict[str, Any]) -> str:
         """
         Format daily performance summary.
@@ -1209,12 +1259,39 @@ class TelegramBot:
         msg += "━━━━━━━━━━━━━━━━━━\n"
         msg += f"*Status*: {status_text}\n"
         msg += f"*Pair*: {self.escape_markdown(str(status_info.get('instrument_id', 'N/A')))}\n"
-        msg += f"*Price*: ${status_info.get('current_price', 0):,.2f}\n"
-        msg += f"*Balance*: ${status_info.get('equity', 0):,.2f}\n"
+        current_price = status_info.get('current_price') or 0
+        equity = status_info.get('equity') or 0
+        msg += f"*Price*: ${current_price:,.2f}\n"
+        msg += f"*Balance*: ${equity:,.2f}\n"
 
-        pnl = status_info.get('unrealized_pnl', 0)
+        pnl = status_info.get('unrealized_pnl') or 0
         pnl_icon = self._pnl_icon(pnl)
         msg += f"*Unrealized P&L*: {pnl_icon} ${pnl:,.2f}\n"
+
+        # v5.2: SL/TP display (dynamic, from trailing_stop_state or Binance)
+        position_side = status_info.get('position_side')
+        sl_price = status_info.get('sl_price')
+        tp_price = status_info.get('tp_price')
+        trailing_active = status_info.get('trailing_active', False)
+
+        if position_side and (sl_price or tp_price):
+            side_emoji = '🟢' if position_side == 'LONG' else '🔴'
+            msg += f"\n{side_emoji} *{position_side}*\n"
+            if sl_price:
+                sl_dist = abs(current_price - sl_price) / current_price * 100 if current_price > 0 else 0
+                msg += f"  🛑 SL: ${sl_price:,.2f} ({sl_dist:.1f}%)\n"
+            if tp_price:
+                tp_dist = abs(tp_price - current_price) / current_price * 100 if current_price > 0 else 0
+                msg += f"  🎯 TP: ${tp_price:,.2f} ({tp_dist:.1f}%)\n"
+            if sl_price and tp_price and current_price > 0:
+                risk = abs(current_price - sl_price)
+                reward = abs(tp_price - current_price)
+                if risk > 0:
+                    rr = reward / risk
+                    rr_icon = '✅' if rr >= 2.0 else '✓' if rr >= 1.5 else '⚠️'
+                    msg += f"  📐 R/R: 1:{rr:.1f} {rr_icon}\n"
+            if trailing_active:
+                msg += f"  🔄 移动止损已激活\n"
 
         msg += f"\n*Last Signal*: {self.escape_markdown(str(status_info.get('last_signal', 'N/A')))}\n"
         msg += f"*Signal Time*: {self.escape_markdown(str(status_info.get('last_signal_time', 'N/A')))}\n"

@@ -2,8 +2,11 @@
 Summary Module
 
 Generates comprehensive diagnostic summaries and analysis.
+Includes v4.12 machine-readable JSON output.
 """
 
+import json
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from .base import (
@@ -627,6 +630,83 @@ class DeepAnalysis(DiagnosticStep):
         print("=" * 70)
         print("  深入分析完成")
         print("=" * 70)
+
+    def should_skip(self) -> bool:
+        return self.ctx.summary_mode
+
+
+class MachineReadableSummary(DiagnosticStep):
+    """
+    v4.12 机器可读 JSON 输出
+
+    Generates a structured JSON summary of all diagnostic results,
+    matching the format used by diagnose_v412.py.
+    """
+
+    name = "v4.12 机器可读 JSON 输出"
+
+    def run(self) -> bool:
+        print()
+        print("=" * 70)
+        print("  Machine-readable (复制以下内容给 Claude):")
+        print("=" * 70)
+
+        results = []
+
+        # Code integrity results
+        ci_results = getattr(self.ctx, 'code_integrity_results', [])
+        for r in ci_results:
+            results.append({
+                "id": r["id"],
+                "status": "pass" if r["pass"] else "fail",
+                "desc": r["desc"],
+                "actual": r.get("actual", ""),
+            })
+
+        # Math verification results
+        mv_results = getattr(self.ctx, 'math_verification_results', [])
+        for r in mv_results:
+            results.append({
+                "id": r["id"],
+                "status": "pass" if r["pass"] else "fail",
+                "desc": r["desc"],
+                "actual": r.get("actual", ""),
+            })
+
+        # Phase results from runner
+        for check_id, check_pass, desc in getattr(self.ctx, 'step_results', []):
+            results.append({
+                "id": check_id,
+                "status": "pass" if check_pass else "fail",
+                "desc": desc,
+                "actual": "",
+            })
+
+        passed = sum(1 for r in results if r["status"] == "pass")
+        failed = sum(1 for r in results if r["status"] == "fail")
+        total = len(results)
+
+        # Add high-level counts from errors/warnings
+        errors_count = len(self.ctx.errors)
+        warnings_count = len(self.ctx.warnings)
+
+        summary = {
+            "version": "v4.12",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "errors": errors_count,
+            "warnings": warnings_count,
+            "signal": self.ctx.signal_data.get('signal', 'N/A'),
+            "confidence": self.ctx.signal_data.get('confidence', 'N/A'),
+            "price": self.ctx.current_price,
+            "results": results[:50],  # Limit for readability
+        }
+
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+        print()
+        return True
 
     def should_skip(self) -> bool:
         return self.ctx.summary_mode

@@ -779,15 +779,14 @@ class DeepSeekAIStrategy(Strategy):
         self.subscribe_bars(self.bar_type)
         self.log.info(f"Subscribed to {self.bar_type}")
 
-        # v3.16: Subscribe to trade ticks for OrderEmulator
-        # This is CRITICAL for emulated SL/TP orders to trigger properly.
-        # Without real-time price data, the emulator only sees bar close prices (every 15 min).
-        # With trade ticks, the emulator can detect SL/TP triggers in real-time.
+        # v4.12: Subscribe to trade ticks for real-time price caching
+        # Used by: _cached_current_price (Telegram commands), trailing stop price tracking
+        # Note: No longer needed for OrderEmulator (v4.12 removed SL/TP emulation)
         try:
             self.subscribe_trade_ticks(self.instrument_id)
-            self.log.info(f"Subscribed to trade ticks for {self.instrument_id} (OrderEmulator support)")
+            self.log.info(f"Subscribed to trade ticks for {self.instrument_id} (price caching)")
         except Exception as e:
-            self.log.warning(f"Failed to subscribe to trade ticks: {e} - SL/TP emulation may be delayed")
+            self.log.warning(f"Failed to subscribe to trade ticks: {e}")
 
         # Multi-Timeframe subscriptions (v3.2.9)
         if self.mtf_enabled and self.mtf_manager:
@@ -873,6 +872,78 @@ class DeepSeekAIStrategy(Strategy):
             except Exception as e:
                 self.log.warning(f"Failed to send Telegram startup notification: {e}")
 
+        # v4.12: Check for existing positions that need SL/TP protection
+        # After process crash/restart, Binance position may exist but SL/TP orders
+        # could have been lost (pre-v4.12 emulated orders) or missed during shutdown.
+        self._recover_sltp_on_start()
+
+    def _recover_sltp_on_start(self):
+        """
+        v4.12: Recover SL/TP protection for existing positions on startup.
+
+        Checks if there's an open position on Binance without SL/TP orders.
+        If found, creates emergency SL to protect the position immediately.
+        """
+        try:
+            position_data = self._get_current_position_data(
+                current_price=0, from_telegram=False
+            )
+            if not position_data or position_data.get('quantity', 0) == 0:
+                self.log.info("✅ No open position on startup — no SL/TP recovery needed")
+                return
+
+            quantity = position_data['quantity']
+            side = position_data.get('side', 'long')
+
+            # Check if SL/TP orders already exist on Binance
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
+
+            has_sl = any(
+                str(o.order_type) == 'STOP_MARKET' or 'STOP' in str(o.order_type)
+                for o in reduce_only_orders
+            )
+
+            if has_sl:
+                self.log.info(
+                    f"✅ Position {side} {quantity:.4f} BTC has SL protection "
+                    f"({len(reduce_only_orders)} protective orders found)"
+                )
+                # Restore trailing_stop_state from existing orders
+                instrument_key = str(self.instrument_id)
+                if instrument_key not in self.trailing_stop_state:
+                    for o in reduce_only_orders:
+                        if 'STOP' in str(o.order_type):
+                            sl_price = float(o.trigger_price) if hasattr(o, 'trigger_price') else 0
+                            self.trailing_stop_state[instrument_key] = {
+                                "entry_price": float(position_data.get('entry_price', 0)),
+                                "highest_price": None,
+                                "lowest_price": None,
+                                "current_sl_price": sl_price,
+                                "current_tp_price": 0,
+                                "sl_order_id": str(o.client_order_id),
+                                "activated": False,
+                                "side": side.upper(),
+                                "quantity": quantity,
+                            }
+                            self.log.info(f"📌 Restored trailing_stop_state from Binance SL @ ${sl_price:,.0f}")
+                            break
+                return
+
+            # No SL found — position is UNPROTECTED!
+            self.log.warning(
+                f"🚨 Position {side} {quantity:.4f} BTC has NO SL/TP protection! "
+                f"Creating emergency SL..."
+            )
+            self._submit_emergency_sl(
+                quantity=quantity,
+                position_side=side,
+                reason="启动时检测到无保护仓位",
+            )
+
+        except Exception as e:
+            self.log.error(f"❌ Failed to recover SL/TP on start: {e}")
+
     def on_stop(self):
         """Actions to be performed on strategy stop."""
         self.log.info("Stopping DeepSeek AI Strategy...")
@@ -907,8 +978,25 @@ class DeepSeekAIStrategy(Strategy):
             except Exception as e:
                 self.log.warning(f"Error stopping Telegram queue: {e}")
 
-        # Cancel any pending orders
-        self.cancel_all_orders(self.instrument_id)
+        # v4.12: Only cancel non-protective orders — keep SL/TP on Binance
+        # Previously: cancel_all_orders() removed SL/TP, leaving position unprotected on restart.
+        # Now: SL/TP (reduce_only orders) stay on Binance, protecting the position even when bot is off.
+        try:
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            for order in open_orders:
+                if not order.is_reduce_only:
+                    self.cancel_order(order)
+                    self.log.info(f"🗑️ Cancelled non-protective order on shutdown: {order.client_order_id}")
+            protective_count = sum(1 for o in open_orders if o.is_reduce_only)
+            if protective_count > 0:
+                self.log.info(f"🛡️ Kept {protective_count} SL/TP orders on Binance for position protection")
+        except Exception as e:
+            self.log.warning(f"Error during selective order cleanup: {e}")
+            # Fallback: cancel all if selective fails (safety)
+            try:
+                self.cancel_all_orders(self.instrument_id)
+            except Exception:
+                pass
 
         # Unsubscribe from data
         self.unsubscribe_bars(self.bar_type)
@@ -1819,6 +1907,9 @@ class DeepSeekAIStrategy(Strategy):
             if self.enable_trailing_stop:
                 self._update_trailing_stops(price_data['price'])
 
+            # v4.12: Dynamic SL/TP update based on current S/R zones
+            if self.enable_auto_sl_tp:
+                self._dynamic_sltp_update()
 
         finally:
             # 🔒 Fix I38: Always release lock when on_timer exits
@@ -3249,10 +3340,28 @@ class DeepSeekAIStrategy(Strategy):
                 return
 
             if size_diff > 0:
-                # Add to position with simple market order
-                # NOTE: Bracket orders CANNOT be used for adding to existing positions
-                # They can only be used for opening new positions (entry + SL + TP linked)
+                # v4.11: Validate R/R before adding to position (same validation as new positions)
+                # Previously, adds bypassed all R/R/S/R validation, allowing entries at resistance
+                # with degraded R/R. Now we validate using current price + AI's new SL/TP.
                 order_side = OrderSide.BUY if target_side == 'long' else OrderSide.SELL
+                validated = self._validate_sltp_for_entry(order_side, confidence)
+
+                if validated is None:
+                    # R/R validation failed — reject the add
+                    side_cn = '多' if target_side == 'long' else '空'
+                    self.log.warning(
+                        f"🚫 加仓被拒: R/R 不满足最低要求，维持现有{side_cn}仓 ({current_qty:.4f} BTC)"
+                    )
+                    self._last_signal_status = {
+                        'executed': False,
+                        'reason': f'加仓 R/R 不足 (保持 {current_qty:.4f} BTC)',
+                        'action_taken': '维持现有仓位',
+                    }
+                    return
+
+                new_sl_price, new_tp_price, entry_price = validated
+
+                # Submit add order
                 self._submit_order(
                     side=order_side,
                     quantity=abs(size_diff),
@@ -3263,11 +3372,13 @@ class DeepSeekAIStrategy(Strategy):
                     f"({current_qty:.3f} → {target_quantity:.3f})"
                 )
 
-                # v3.18: Update SL/TP orders to match new total position size
-                # This is critical - without this, SL/TP only covers the old position size
-                self._update_sltp_quantity(
+                # v4.11: Update SL/TP prices AND quantities (not just quantities)
+                # Uses AI's new validated SL/TP based on current price
+                self._replace_sltp_orders(
                     new_total_quantity=target_quantity,
                     position_side=target_side,
+                    new_sl_price=new_sl_price,
+                    new_tp_price=new_tp_price,
                 )
 
                 # v4.9: Send scaling notification via Telegram
@@ -3293,7 +3404,7 @@ class DeepSeekAIStrategy(Strategy):
                 self._last_signal_status = {
                     'executed': True,
                     'reason': '',
-                    'action_taken': f'加仓 +{abs(size_diff):.4f} BTC',
+                    'action_taken': f'加仓 +{abs(size_diff):.4f} BTC (SL ${new_sl_price:,.0f} TP ${new_tp_price:,.0f})',
                 }
             else:
                 # Reduce position
@@ -3360,6 +3471,15 @@ class DeepSeekAIStrategy(Strategy):
                         self.telegram_bot.send_message_sync(scaling_msg)
                     except Exception as e:
                         self.log.debug(f"Failed to send scaling notification: {e}")
+
+                # v4.10: Recreate SL/TP for remaining position after reduce
+                # All SL/TP were cancelled above, so we must recreate from trailing_stop_state
+                remaining_qty = fresh_qty - actual_reduce
+                if remaining_qty > 0.0001:
+                    self._recreate_sltp_after_reduce(remaining_qty, target_side)
+                    self.log.info(
+                        f"📝 Recreated SL/TP for remaining {remaining_qty:.4f} BTC"
+                    )
 
                 # v4.1: Update signal status - reducing position
                 self._last_signal_status = {
@@ -3467,6 +3587,227 @@ class DeepSeekAIStrategy(Strategy):
                 'reason': f'禁止反转 (持有{current_cn}仓)',
                 'action_taken': '',
             }
+
+    def _validate_sltp_for_entry(
+        self,
+        side: OrderSide,
+        confidence: str,
+    ) -> Optional[Tuple[float, float, float]]:
+        """
+        v4.11: Validate SL/TP for any entry (new position OR add to position).
+
+        Extracts the R/R validation logic from _submit_bracket_order so it can be
+        reused for both opening and adding to positions. Uses current real-time price
+        + AI's latest SL/TP + S/R zones, same as the bracket order path.
+
+        Parameters
+        ----------
+        side : OrderSide
+            Order side (BUY or SELL)
+        confidence : str
+            Signal confidence level (HIGH/MEDIUM/LOW)
+
+        Returns
+        -------
+        Optional[Tuple[float, float, float]]
+            (stop_loss_price, take_profit_price, entry_price) if valid,
+            None if R/R validation fails
+        """
+        if not self.latest_signal_data or not self.latest_technical_data:
+            self.log.warning("⚠️ No signal/technical data for SL/TP validation")
+            return None
+
+        # Get current real-time price (same priority chain as _submit_bracket_order)
+        entry_price: Optional[float] = None
+
+        if self.binance_account:
+            try:
+                realtime_price = self.binance_account.get_realtime_price('BTCUSDT')
+                if realtime_price and realtime_price > 0:
+                    entry_price = realtime_price
+            except Exception:
+                pass
+
+        if entry_price is None and self.latest_price_data and self.latest_price_data.get('price'):
+            entry_price = float(self.latest_price_data['price'])
+
+        if entry_price is None and hasattr(self.indicator_manager, "recent_bars"):
+            recent_bars = self.indicator_manager.recent_bars
+            if recent_bars:
+                entry_price = float(recent_bars[-1].close)
+
+        if entry_price is None:
+            cache_bars = self.cache.bars(self.bar_type)
+            if cache_bars:
+                entry_price = float(cache_bars[-1].close)
+
+        if entry_price is None or entry_price <= 0:
+            self.log.error("❌ Cannot determine price for SL/TP validation")
+            return None
+
+        # Get S/R zones (same as _submit_bracket_order)
+        support = 0.0
+        resistance = 0.0
+
+        if hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
+            nearest_support = self.latest_sr_zones_data.get('nearest_support')
+            nearest_resistance = self.latest_sr_zones_data.get('nearest_resistance')
+            if nearest_support and hasattr(nearest_support, 'price_center'):
+                support = nearest_support.price_center
+            if nearest_resistance and hasattr(nearest_resistance, 'price_center'):
+                resistance = nearest_resistance.price_center
+        else:
+            support = self.latest_technical_data.get('support', 0.0)
+            resistance = self.latest_technical_data.get('resistance', 0.0)
+
+        # Validate AI's SL/TP with R/R check
+        multi_sl = self.latest_signal_data.get('stop_loss')
+        multi_tp = self.latest_signal_data.get('take_profit')
+
+        is_valid, validated_sl, validated_tp, validation_reason = validate_multiagent_sltp(
+            side=side.name,
+            multi_sl=multi_sl,
+            multi_tp=multi_tp,
+            entry_price=entry_price,
+        )
+
+        if is_valid:
+            stop_loss_price = validated_sl
+            tp_price = validated_tp
+            self.log.info(f"🎯 SL/TP validated for entry: {validation_reason}")
+        else:
+            # Fall back to technical analysis (same as _submit_bracket_order)
+            if multi_sl or multi_tp:
+                self.log.warning(
+                    f"⚠️ AI SL/TP invalid: {validation_reason}, "
+                    f"falling back to S/R-based technical analysis"
+                )
+
+            stop_loss_price, tp_price, calc_method = calculate_technical_sltp(
+                side=side.name,
+                entry_price=entry_price,
+                support=support,
+                resistance=resistance,
+                confidence=confidence,
+                use_support_resistance=self.sl_use_support_resistance,
+                sl_buffer_pct=self.sl_buffer_pct,
+            )
+            self.log.info(f"📍 {calc_method}")
+
+        if side == OrderSide.BUY:
+            rr = (tp_price - entry_price) / (entry_price - stop_loss_price) if entry_price > stop_loss_price else 0
+        else:
+            rr = (entry_price - tp_price) / (stop_loss_price - entry_price) if stop_loss_price > entry_price else 0
+        self.log.info(
+            f"✅ SL/TP validated: Price=${entry_price:,.2f} "
+            f"SL=${stop_loss_price:,.2f} TP=${tp_price:,.2f} R/R={rr:.2f}:1"
+        )
+
+        return (stop_loss_price, tp_price, entry_price)
+
+    def _replace_sltp_orders(
+        self,
+        new_total_quantity: float,
+        position_side: str,
+        new_sl_price: float,
+        new_tp_price: float,
+    ):
+        """
+        v4.11: Replace SL/TP orders with new prices AND quantities.
+
+        Unlike _update_sltp_quantity (which only changes quantity), this method
+        cancels all existing SL/TP and recreates them at NEW prices with the
+        correct total quantity. Used after adding to a position.
+
+        Parameters
+        ----------
+        new_total_quantity : float
+            New total position quantity
+        position_side : str
+            Position side ('long' or 'short')
+        new_sl_price : float
+            New stop loss price
+        new_tp_price : float
+            New take profit price
+        """
+        sl_confirmed = False
+        tp_confirmed = False
+        exit_side = OrderSide.SELL if position_side == 'long' else OrderSide.BUY
+        new_qty = self.instrument.make_qty(new_total_quantity)
+
+        try:
+            # Step 1: Cancel all existing SL/TP orders
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
+
+            if reduce_only_orders:
+                self.log.info(
+                    f"🗑️ Cancelling {len(reduce_only_orders)} old SL/TP orders "
+                    f"(replacing with new prices)"
+                )
+                for order in reduce_only_orders:
+                    try:
+                        self.cancel_order(order)
+                    except Exception as e:
+                        self.log.warning(f"⚠️ Failed to cancel order: {e}")
+
+            # Step 2: Create new SL at new price
+            try:
+                new_sl_order = self.order_factory.stop_market(
+                    instrument_id=self.instrument_id,
+                    order_side=exit_side,
+                    quantity=new_qty,
+                    trigger_price=self.instrument.make_price(new_sl_price),
+                    trigger_type=TriggerType.LAST_PRICE,
+                    reduce_only=True,
+                )
+                self.submit_order(new_sl_order)
+                sl_confirmed = True
+                self.log.info(
+                    f"✅ New SL @ ${new_sl_price:,.2f} qty={new_total_quantity:.4f}"
+                )
+
+                # Update trailing stop state
+                instrument_key = str(self.instrument_id)
+                if instrument_key in self.trailing_stop_state:
+                    self.trailing_stop_state[instrument_key]["sl_order_id"] = str(new_sl_order.client_order_id)
+                    self.trailing_stop_state[instrument_key]["current_sl_price"] = new_sl_price
+                    self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
+            except Exception as e:
+                self.log.error(f"❌ Failed to create new SL: {e}")
+
+            # Step 3: Create new TP at new price
+            try:
+                new_tp_order = self.order_factory.limit(
+                    instrument_id=self.instrument_id,
+                    order_side=exit_side,
+                    quantity=new_qty,
+                    price=self.instrument.make_price(new_tp_price),
+                    time_in_force=TimeInForce.GTC,
+                    reduce_only=True,
+                )
+                self.submit_order(new_tp_order)
+                tp_confirmed = True
+                self.log.info(
+                    f"✅ New TP @ ${new_tp_price:,.2f} qty={new_total_quantity:.4f}"
+                )
+
+                # Update trailing stop state TP
+                instrument_key = str(self.instrument_id)
+                if instrument_key in self.trailing_stop_state:
+                    self.trailing_stop_state[instrument_key]["current_tp_price"] = new_tp_price
+            except Exception as e:
+                self.log.error(f"❌ Failed to create new TP: {e}")
+
+        except Exception as e:
+            self.log.error(f"❌ Failed to replace SL/TP orders: {e}")
+
+        # Emergency SL if replacement failed
+        if not sl_confirmed:
+            self._submit_emergency_sl(new_total_quantity, position_side, reason="加仓后SL替换失败")
+
+        if not tp_confirmed:
+            self.log.warning("⚠️ TP replacement failed, position has SL but no TP")
 
     def _open_new_position(self, side: str, quantity: float):
         """
@@ -3636,7 +3977,7 @@ class DeepSeekAIStrategy(Strategy):
 
     def _update_sltp_quantity(self, new_total_quantity: float, position_side: str):
         """
-        v3.18: Update SL/TP order quantities after adding to position.
+        v3.18/v4.10: Update SL/TP order quantities after adding to position.
 
         When adding to an existing position, the SL/TP orders still have the old quantity.
         This method updates them to match the new total position size.
@@ -3644,6 +3985,7 @@ class DeepSeekAIStrategy(Strategy):
         Strategy:
         1. Try to modify existing orders using NautilusTrader's modify_order
         2. If modify fails (not supported), cancel and recreate SL/TP
+        3. v4.10: VERIFY SL/TP exist after update - if missing, submit emergency SL
 
         Parameters
         ----------
@@ -3652,6 +3994,9 @@ class DeepSeekAIStrategy(Strategy):
         position_side : str
             Position side ('long' or 'short')
         """
+        sl_confirmed = False
+        tp_confirmed = False
+
         try:
             open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
             reduce_only_orders = [o for o in open_orders if o.is_reduce_only]
@@ -3661,135 +4006,471 @@ class DeepSeekAIStrategy(Strategy):
                     f"⚠️ No SL/TP orders found to update after adding to position. "
                     f"Position may not be fully protected."
                 )
-                return
-
-            self.log.info(
-                f"📝 Updating {len(reduce_only_orders)} SL/TP orders to new quantity: "
-                f"{new_total_quantity:.4f} BTC"
-            )
-
-            new_qty = self.instrument.make_qty(new_total_quantity)
-            updated_count = 0
-            failed_orders = []
-
-            for order in reduce_only_orders:
-                try:
-                    # Try to modify the order quantity
-                    self.modify_order(order, new_qty)
-                    updated_count += 1
-                    self.log.debug(
-                        f"✅ Modified order {str(order.client_order_id)[:8]}... "
-                        f"to quantity {new_total_quantity:.4f}"
-                    )
-                except Exception as modify_error:
-                    self.log.warning(
-                        f"⚠️ Failed to modify order {str(order.client_order_id)[:8]}...: {modify_error}"
-                    )
-                    failed_orders.append(order)
-
-            # Handle failed modifications by cancel and recreate
-            if failed_orders:
+                # Fall through to verification step below
+            else:
                 self.log.info(
-                    f"🔄 {len(failed_orders)} orders couldn't be modified, will cancel and recreate"
+                    f"📝 Updating {len(reduce_only_orders)} SL/TP orders to new quantity: "
+                    f"{new_total_quantity:.4f} BTC"
                 )
 
-                # Collect order details before cancelling
-                sl_orders_to_recreate = []
-                tp_orders_to_recreate = []
+                new_qty = self.instrument.make_qty(new_total_quantity)
+                updated_count = 0
+                failed_orders = []
 
-                for order in failed_orders:
+                for order in reduce_only_orders:
                     try:
-                        # Determine if this is SL or TP based on order type
+                        # Try to modify the order quantity
+                        self.modify_order(order, new_qty)
+                        updated_count += 1
                         if order.order_type == OrderType.STOP_MARKET:
-                            trigger_price = float(order.trigger_price) if hasattr(order, 'trigger_price') else None
-                            if trigger_price:
-                                sl_orders_to_recreate.append({
-                                    'trigger_price': trigger_price,
-                                    'side': order.side,
-                                })
+                            sl_confirmed = True
                         elif order.order_type == OrderType.LIMIT:
-                            limit_price = float(order.price) if hasattr(order, 'price') else None
-                            if limit_price:
-                                tp_orders_to_recreate.append({
-                                    'price': limit_price,
-                                    'side': order.side,
-                                })
-
-                        # Cancel the old order
-                        self.cancel_order(order)
-                        self.log.debug(f"🗑️ Cancelled old order {str(order.client_order_id)[:8]}...")
-                    except Exception as cancel_error:
-                        self.log.error(f"❌ Failed to cancel order: {cancel_error}")
-
-                # Recreate SL orders with new quantity
-                for sl_info in sl_orders_to_recreate:
-                    try:
-                        new_sl_order = self.order_factory.stop_market(
-                            instrument_id=self.instrument_id,
-                            order_side=sl_info['side'],
-                            quantity=new_qty,
-                            trigger_price=self.instrument.make_price(sl_info['trigger_price']),
-                            trigger_type=TriggerType.LAST_PRICE,
-                            reduce_only=True,
+                            tp_confirmed = True
+                        self.log.debug(
+                            f"✅ Modified order {str(order.client_order_id)[:8]}... "
+                            f"to quantity {new_total_quantity:.4f}"
                         )
-                        self.submit_order(new_sl_order)
-                        updated_count += 1
-                        self.log.info(
-                            f"✅ Recreated SL order @ ${sl_info['trigger_price']:,.2f} "
-                            f"with qty {new_total_quantity:.4f}"
+                    except Exception as modify_error:
+                        self.log.warning(
+                            f"⚠️ Failed to modify order {str(order.client_order_id)[:8]}...: {modify_error}"
                         )
+                        failed_orders.append(order)
 
-                        # Update trailing stop state if needed
-                        instrument_key = str(self.instrument_id)
-                        if instrument_key in self.trailing_stop_state:
-                            self.trailing_stop_state[instrument_key]["sl_order_id"] = str(new_sl_order.client_order_id)
-                            self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
-                    except Exception as recreate_error:
-                        self.log.error(f"❌ Failed to recreate SL order: {recreate_error}")
+                # Handle failed modifications by cancel and recreate
+                if failed_orders:
+                    self.log.info(
+                        f"🔄 {len(failed_orders)} orders couldn't be modified, will cancel and recreate"
+                    )
 
-                # Recreate TP orders with new quantity
-                for tp_info in tp_orders_to_recreate:
-                    try:
-                        new_tp_order = self.order_factory.limit(
-                            instrument_id=self.instrument_id,
-                            order_side=tp_info['side'],
-                            quantity=new_qty,
-                            price=self.instrument.make_price(tp_info['price']),
-                            time_in_force=TimeInForce.GTC,
-                            reduce_only=True,
-                        )
-                        self.submit_order(new_tp_order)
-                        updated_count += 1
-                        self.log.info(
-                            f"✅ Recreated TP order @ ${tp_info['price']:,.2f} "
-                            f"with qty {new_total_quantity:.4f}"
-                        )
-                    except Exception as recreate_error:
-                        self.log.error(f"❌ Failed to recreate TP order: {recreate_error}")
+                    # Collect order details before cancelling
+                    sl_orders_to_recreate = []
+                    tp_orders_to_recreate = []
 
-            if updated_count > 0:
-                self.log.info(
-                    f"✅ Updated {updated_count} SL/TP orders to match new position size"
-                )
+                    for order in failed_orders:
+                        try:
+                            # Determine if this is SL or TP based on order type
+                            if order.order_type == OrderType.STOP_MARKET:
+                                trigger_price = float(order.trigger_price) if hasattr(order, 'trigger_price') else None
+                                if trigger_price:
+                                    sl_orders_to_recreate.append({
+                                        'trigger_price': trigger_price,
+                                        'side': order.side,
+                                    })
+                            elif order.order_type == OrderType.LIMIT:
+                                limit_price = float(order.price) if hasattr(order, 'price') else None
+                                if limit_price:
+                                    tp_orders_to_recreate.append({
+                                        'price': limit_price,
+                                        'side': order.side,
+                                    })
 
-                # Update trailing stop state quantity
-                instrument_key = str(self.instrument_id)
-                if instrument_key in self.trailing_stop_state:
-                    self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
+                            # Cancel the old order
+                            self.cancel_order(order)
+                            self.log.debug(f"🗑️ Cancelled old order {str(order.client_order_id)[:8]}...")
+                        except Exception as cancel_error:
+                            self.log.error(f"❌ Failed to cancel order: {cancel_error}")
+
+                    # Recreate SL orders with new quantity
+                    for sl_info in sl_orders_to_recreate:
+                        try:
+                            new_sl_order = self.order_factory.stop_market(
+                                instrument_id=self.instrument_id,
+                                order_side=sl_info['side'],
+                                quantity=new_qty,
+                                trigger_price=self.instrument.make_price(sl_info['trigger_price']),
+                                trigger_type=TriggerType.LAST_PRICE,
+                                reduce_only=True,
+                            )
+                            self.submit_order(new_sl_order)
+                            sl_confirmed = True
+                            updated_count += 1
+                            self.log.info(
+                                f"✅ Recreated SL order @ ${sl_info['trigger_price']:,.2f} "
+                                f"with qty {new_total_quantity:.4f}"
+                            )
+
+                            # Update trailing stop state if needed
+                            instrument_key = str(self.instrument_id)
+                            if instrument_key in self.trailing_stop_state:
+                                self.trailing_stop_state[instrument_key]["sl_order_id"] = str(new_sl_order.client_order_id)
+                                self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
+                        except Exception as recreate_error:
+                            self.log.error(f"❌ Failed to recreate SL order: {recreate_error}")
+
+                    # Recreate TP orders with new quantity
+                    for tp_info in tp_orders_to_recreate:
+                        try:
+                            new_tp_order = self.order_factory.limit(
+                                instrument_id=self.instrument_id,
+                                order_side=tp_info['side'],
+                                quantity=new_qty,
+                                price=self.instrument.make_price(tp_info['price']),
+                                time_in_force=TimeInForce.GTC,
+                                reduce_only=True,
+                            )
+                            self.submit_order(new_tp_order)
+                            tp_confirmed = True
+                            updated_count += 1
+                            self.log.info(
+                                f"✅ Recreated TP order @ ${tp_info['price']:,.2f} "
+                                f"with qty {new_total_quantity:.4f}"
+                            )
+                        except Exception as recreate_error:
+                            self.log.error(f"❌ Failed to recreate TP order: {recreate_error}")
+
+                if updated_count > 0:
+                    self.log.info(
+                        f"✅ Updated {updated_count} SL/TP orders to match new position size"
+                    )
+
+                    # Update trailing stop state quantity
+                    instrument_key = str(self.instrument_id)
+                    if instrument_key in self.trailing_stop_state:
+                        self.trailing_stop_state[instrument_key]["quantity"] = new_total_quantity
 
         except Exception as e:
             self.log.error(f"❌ Failed to update SL/TP quantities: {e}")
-            # Send warning - position may be partially protected
+
+        # ===== v4.10: CRITICAL - Verify SL exists after update =====
+        # If SL was not confirmed (modify failed AND recreate failed), position is UNPROTECTED.
+        # Submit emergency SL using default 2% stop loss.
+        if not sl_confirmed:
+            self._submit_emergency_sl(new_total_quantity, position_side, reason="加仓后SL更新失败")
+
+        # Send warning if TP is missing (less critical than SL)
+        if not tp_confirmed:
+            self.log.warning(
+                f"⚠️ TP order not confirmed after scaling. "
+                f"Position has SL protection but no TP."
+            )
             if self.telegram_bot and self.enable_telegram:
                 try:
                     alert_msg = self.telegram_bot.format_error_alert({
                         'level': 'WARNING',
-                        'message': f"加仓后更新SL/TP失败，仓位可能未完全保护",
-                        'context': f"新仓位: {new_total_quantity:.4f} BTC, 错误: {str(e)[:50]}",
+                        'message': f"加仓后TP更新失败，仓位仅有SL保护",
+                        'context': f"仓位: {new_total_quantity:.4f} BTC {position_side}",
                     })
                     self.telegram_bot.send_message_sync(alert_msg)
                 except Exception:
                     pass
+
+    def _submit_emergency_sl(self, quantity: float, position_side: str, reason: str):
+        """
+        v4.10: Submit emergency stop loss when normal SL is missing.
+
+        This is a safety net - if SL update/recreate fails during scaling,
+        we MUST have a stop loss to prevent unlimited losses.
+
+        Uses 2% default stop loss from current price.
+
+        Parameters
+        ----------
+        quantity : float
+            Position quantity in BTC
+        position_side : str
+            Position side ('long' or 'short')
+        reason : str
+            Why emergency SL is needed (for logging/alert)
+        """
+        try:
+            # Get current price for emergency SL calculation
+            current_price = None
+            if self.binance_account:
+                try:
+                    current_price = self.binance_account.get_realtime_price('BTCUSDT')
+                except Exception:
+                    pass
+
+            if not current_price:
+                with self._state_lock:
+                    current_price = self._cached_current_price
+
+            if not current_price or current_price <= 0:
+                self.log.error(
+                    f"🚨 CRITICAL: Cannot submit emergency SL - no price available! "
+                    f"Position {quantity:.4f} BTC {position_side} is UNPROTECTED!"
+                )
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        self.telegram_bot.send_message_sync(
+                            f"🚨 CRITICAL: 无法提交紧急止损 - 无法获取价格!\n"
+                            f"仓位 {quantity:.4f} BTC {position_side} 处于无保护状态!\n"
+                            f"原因: {reason}\n"
+                            f"请立即手动设置止损!"
+                        )
+                    except Exception:
+                        pass
+                return
+
+            # Calculate emergency SL: 2% from current price
+            emergency_sl_pct = 0.02
+            if position_side == 'long':
+                sl_price = current_price * (1 - emergency_sl_pct)
+                exit_side = OrderSide.SELL
+            else:
+                sl_price = current_price * (1 + emergency_sl_pct)
+                exit_side = OrderSide.BUY
+
+            new_qty = self.instrument.make_qty(quantity)
+            emergency_sl = self.order_factory.stop_market(
+                instrument_id=self.instrument_id,
+                order_side=exit_side,
+                quantity=new_qty,
+                trigger_price=self.instrument.make_price(sl_price),
+                trigger_type=TriggerType.LAST_PRICE,
+                reduce_only=True,
+            )
+            self.submit_order(emergency_sl)
+
+            # Update trailing stop state
+            instrument_key = str(self.instrument_id)
+            if instrument_key in self.trailing_stop_state:
+                self.trailing_stop_state[instrument_key]["sl_order_id"] = str(emergency_sl.client_order_id)
+                self.trailing_stop_state[instrument_key]["current_sl_price"] = sl_price
+                self.trailing_stop_state[instrument_key]["quantity"] = quantity
+
+            self.log.warning(
+                f"🚨 Emergency SL submitted @ ${sl_price:,.2f} (2% from ${current_price:,.2f})\n"
+                f"   Reason: {reason}\n"
+                f"   Quantity: {quantity:.4f} BTC {position_side}"
+            )
+
+            # Send CRITICAL Telegram alert
+            if self.telegram_bot and self.enable_telegram:
+                try:
+                    self.telegram_bot.send_message_sync(
+                        f"🚨 紧急止损已设置\n\n"
+                        f"原因: {reason}\n"
+                        f"仓位: {quantity:.4f} BTC {position_side.upper()}\n"
+                        f"紧急SL: ${sl_price:,.2f} (距当前价 2%)\n"
+                        f"当前价: ${current_price:,.2f}\n\n"
+                        f"⚠️ 这是安全回退止损，请检查是否需要调整"
+                    )
+                except Exception:
+                    pass
+
+        except Exception as e:
+            self.log.error(f"🚨 CRITICAL: Emergency SL submission failed: {e}")
+            if self.telegram_bot and self.enable_telegram:
+                try:
+                    self.telegram_bot.send_message_sync(
+                        f"🚨 CRITICAL: 紧急止损提交失败!\n"
+                        f"仓位 {quantity:.4f} BTC {position_side} 处于无保护状态!\n"
+                        f"错误: {str(e)[:100]}\n"
+                        f"请立即手动设置止损!"
+                    )
+                except Exception:
+                    pass
+
+    def _recreate_sltp_after_reduce(self, remaining_qty: float, position_side: str):
+        """
+        v4.12: Recreate SL/TP orders after reducing position.
+
+        After a reduce, all SL/TP were cancelled. This recalculates SL/TP using
+        current S/R zones (via _validate_sltp_for_entry), with a safety rule:
+        new SL must be at least as protective as the old SL.
+        Falls back to emergency SL if recalculation fails.
+
+        Parameters
+        ----------
+        remaining_qty : float
+            Remaining position quantity after reduce
+        position_side : str
+            Position side ('long' or 'short')
+        """
+        try:
+            instrument_key = str(self.instrument_id)
+            state = self.trailing_stop_state.get(instrument_key)
+            old_sl_price = state.get("current_sl_price") if state else None
+            exit_side = OrderSide.SELL if position_side == 'long' else OrderSide.BUY
+            entry_side = OrderSide.BUY if position_side == 'long' else OrderSide.SELL
+            new_qty = self.instrument.make_qty(remaining_qty)
+            sl_submitted = False
+
+            # v4.12: Recalculate SL/TP using current S/R zones
+            confidence = self.latest_signal_data.get('confidence', 'MEDIUM') if self.latest_signal_data else 'MEDIUM'
+            validated = self._validate_sltp_for_entry(entry_side, confidence)
+
+            if validated:
+                new_sl_price, new_tp_price, entry_price = validated
+
+                # Safety rule: SL can only move in favorable direction
+                # LONG: new SL >= old SL (higher is more protective)
+                # SHORT: new SL <= old SL (lower is more protective)
+                if old_sl_price and old_sl_price > 0:
+                    if position_side == 'long':
+                        final_sl = max(new_sl_price, old_sl_price)
+                    else:
+                        final_sl = min(new_sl_price, old_sl_price)
+                    if final_sl != new_sl_price:
+                        self.log.info(
+                            f"🛡️ SL kept at more protective level: "
+                            f"${final_sl:,.2f} (old) vs ${new_sl_price:,.2f} (new S/R)"
+                        )
+                    new_sl_price = final_sl
+
+                sl_price = new_sl_price
+                tp_price = new_tp_price
+                self.log.info(
+                    f"📊 Reduce recalc: SL=${sl_price:,.2f} TP=${tp_price:,.2f} "
+                    f"(based on current S/R zones)"
+                )
+            else:
+                # Fallback to old prices if recalculation fails
+                sl_price = old_sl_price
+                tp_price = state.get("current_tp_price") if state else None
+                self.log.warning("⚠️ SL/TP recalculation failed, using previous prices")
+
+            # Recreate SL
+            if sl_price and sl_price > 0:
+                try:
+                    new_sl = self.order_factory.stop_market(
+                        instrument_id=self.instrument_id,
+                        order_side=exit_side,
+                        quantity=new_qty,
+                        trigger_price=self.instrument.make_price(sl_price),
+                        trigger_type=TriggerType.LAST_PRICE,
+                        reduce_only=True,
+                    )
+                    self.submit_order(new_sl)
+                    sl_submitted = True
+                    self.log.info(f"✅ Recreated SL @ ${sl_price:,.2f} for {remaining_qty:.4f} BTC")
+
+                    if state:
+                        state["sl_order_id"] = str(new_sl.client_order_id)
+                        state["current_sl_price"] = sl_price
+                        state["quantity"] = remaining_qty
+                except Exception as e:
+                    self.log.error(f"❌ Failed to recreate SL: {e}")
+
+            # Recreate TP
+            if tp_price and tp_price > 0:
+                try:
+                    new_tp = self.order_factory.limit(
+                        instrument_id=self.instrument_id,
+                        order_side=exit_side,
+                        quantity=new_qty,
+                        price=self.instrument.make_price(tp_price),
+                        time_in_force=TimeInForce.GTC,
+                        reduce_only=True,
+                    )
+                    self.submit_order(new_tp)
+                    self.log.info(f"✅ Recreated TP @ ${tp_price:,.2f} for {remaining_qty:.4f} BTC")
+
+                    if state:
+                        state["current_tp_price"] = tp_price
+                except Exception as e:
+                    self.log.error(f"❌ Failed to recreate TP: {e}")
+
+            # If SL failed, use emergency SL
+            if not sl_submitted:
+                self._submit_emergency_sl(remaining_qty, position_side, reason="减仓后SL重建失败")
+
+        except Exception as e:
+            self.log.error(f"❌ Failed to recreate SL/TP after reduce: {e}")
+            self._submit_emergency_sl(remaining_qty, position_side, reason=f"减仓后SL/TP重建异常: {str(e)[:50]}")
+
+    def _dynamic_sltp_update(self):
+        """
+        v4.12: Dynamically update SL/TP based on current S/R zones.
+
+        Called every on_timer cycle (15 min). When a position exists, recalculates
+        SL/TP using the latest support/resistance zones.
+
+        Safety rules:
+        - SL only moves in favorable direction (LONG: up, SHORT: down)
+        - TP can move both ways but must maintain R/R >= 1.5:1
+        - Trailing stop coexists: final SL = max(trailing SL, dynamic SL)
+        - Skipped if no position or no S/R data available
+        """
+        try:
+            current_position = self._get_current_position_data()
+            if not current_position:
+                return
+
+            position_side = current_position.get('side', '').lower()
+            quantity = abs(float(current_position.get('quantity', 0)))
+            if quantity <= 0 or position_side not in ('long', 'short'):
+                return
+
+            instrument_key = str(self.instrument_id)
+            state = self.trailing_stop_state.get(instrument_key)
+            if not state:
+                return
+
+            old_sl = state.get("current_sl_price")
+            old_tp = state.get("current_tp_price")
+            if not old_sl or old_sl <= 0:
+                return  # No existing SL to update (emergency SL handles this)
+
+            # Recalculate SL/TP from current S/R zones
+            entry_side = OrderSide.BUY if position_side == 'long' else OrderSide.SELL
+            confidence = self.latest_signal_data.get('confidence', 'MEDIUM') if self.latest_signal_data else 'MEDIUM'
+            validated = self._validate_sltp_for_entry(entry_side, confidence)
+            if not validated:
+                return  # No S/R data available, skip this cycle
+
+            new_sl, new_tp, current_price = validated
+
+            # Safety: SL only moves in favorable direction
+            if position_side == 'long':
+                final_sl = max(new_sl, old_sl)
+            else:
+                final_sl = min(new_sl, old_sl)
+
+            # Trailing stop coexistence: use whichever is more protective
+            if self.enable_trailing_stop and state.get("trailing_active"):
+                trailing_sl = state.get("current_sl_price", 0)
+                if position_side == 'long':
+                    final_sl = max(final_sl, trailing_sl)
+                else:
+                    final_sl = min(final_sl, trailing_sl)
+
+            final_tp = new_tp  # TP can move both ways (R/R already validated)
+
+            # Check if update is needed (avoid unnecessary cancel+recreate)
+            sl_changed = abs(final_sl - old_sl) / old_sl > 0.001  # > 0.1% change
+            tp_changed = old_tp and old_tp > 0 and abs(final_tp - old_tp) / old_tp > 0.001
+
+            if not sl_changed and not tp_changed:
+                self.log.debug("📊 Dynamic SL/TP: no significant change, skipping update")
+                return
+
+            # Log the update
+            changes = []
+            if sl_changed:
+                changes.append(f"SL: ${old_sl:,.2f}→${final_sl:,.2f}")
+            if tp_changed:
+                changes.append(f"TP: ${old_tp:,.2f}→${final_tp:,.2f}")
+            self.log.info(f"🔄 Dynamic SL/TP update: {', '.join(changes)}")
+
+            # Use _replace_sltp_orders for atomic cancel+recreate
+            self._replace_sltp_orders(
+                new_total_quantity=quantity,
+                position_side=position_side,
+                new_sl_price=final_sl,
+                new_tp_price=final_tp,
+            )
+
+            # v5.2: Send Telegram notification for dynamic SL/TP update
+            try:
+                if self.telegram_bot:
+                    update_msg = self.telegram_bot.format_dynamic_sltp_update({
+                        'side': position_side.upper(),
+                        'current_price': current_price,
+                        'old_sl': old_sl,
+                        'new_sl': final_sl,
+                        'old_tp': old_tp if old_tp and old_tp > 0 else 0,
+                        'new_tp': final_tp,
+                        'sl_changed': sl_changed,
+                        'tp_changed': bool(tp_changed),
+                    })
+                    self.telegram_bot.send_message_sync(update_msg)
+            except Exception as tg_err:
+                self.log.debug(f"Failed to send dynamic SL/TP Telegram notification: {tg_err}")
+
+        except Exception as e:
+            self.log.warning(f"⚠️ Dynamic SL/TP update failed (position still protected): {e}")
 
     def _close_position_only(self, current_position: Dict[str, Any]):
         """
@@ -4063,108 +4744,35 @@ class DeepSeekAIStrategy(Strategy):
             self._submit_order(side=side, quantity=quantity, reduce_only=False)
             return
 
-        if not self.latest_signal_data or not self.latest_technical_data:
-            self.log.warning("⚠️ No signal/technical data available for SL/TP - submitting simple market order")
-            self._submit_order(side=side, quantity=quantity, reduce_only=False)
-            return
+        # v4.11: Use shared SL/TP validation (unified with add-to-position path)
+        # Previously this had ~100 lines of duplicated validation logic.
+        # Now both new positions and adds go through _validate_sltp_for_entry().
+        confidence = self.latest_signal_data.get('confidence', 'MEDIUM') if self.latest_signal_data else 'MEDIUM'
+        validated = self._validate_sltp_for_entry(side, confidence)
 
-        # Determine latest price for entry estimation
-        # v4.9: Prefer real-time Binance API price over stale bar close
-        # Bar close can be minutes old, causing R/R validation to use wrong price
-        entry_price: Optional[float] = None
-
-        # Priority 1: Real-time price from Binance REST API (most accurate)
-        if self.binance_account:
-            try:
-                realtime_price = self.binance_account.get_realtime_price('BTCUSDT')
-                if realtime_price and realtime_price > 0:
-                    entry_price = realtime_price
-                    self.log.debug(f"📊 Using Binance real-time price for bracket: ${entry_price:,.2f}")
-            except Exception as e:
-                self.log.debug(f"Real-time price fetch failed, using fallback: {e}")
-
-        # Priority 2: Latest price data from AI analysis (bar close)
-        if entry_price is None and self.latest_price_data and self.latest_price_data.get('price'):
-            entry_price = float(self.latest_price_data['price'])
-
-        # Priority 3: Recent bars
-        if entry_price is None and hasattr(self.indicator_manager, "recent_bars"):
-            recent_bars = self.indicator_manager.recent_bars
-            if recent_bars:
-                entry_price = float(recent_bars[-1].close)
-
-        # Priority 4: Cache bars
-        if entry_price is None:
-            cache_bars = self.cache.bars(self.bar_type)
-            if cache_bars:
-                entry_price = float(cache_bars[-1].close)
-
-        if entry_price is None or entry_price <= 0:
-            self.log.error("❌ Unable to determine entry price for bracket order, submitting market order instead")
-            self._submit_order(side=side, quantity=quantity, reduce_only=False)
-            return
-
-        # Get confidence and technical data
-        confidence = self.latest_signal_data.get('confidence', 'MEDIUM')
-
-        # v3.14: Use S/R Zone data (more sophisticated) instead of basic technical_data support/resistance
-        # S/R Zone Calculator aggregates: BB, SMA_50, SMA_200, Order Walls, Pivot Points
-        # Falls back to basic technical_data if S/R Zones not available
-        support = 0.0
-        resistance = 0.0
-        sr_source = "none"
-
-        if hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
-            nearest_support = self.latest_sr_zones_data.get('nearest_support')
-            nearest_resistance = self.latest_sr_zones_data.get('nearest_resistance')
-            if nearest_support and hasattr(nearest_support, 'price_center'):
-                support = nearest_support.price_center
-                sr_source = f"S/R Zone ({nearest_support.strength}, {nearest_support.level})"
-            if nearest_resistance and hasattr(nearest_resistance, 'price_center'):
-                resistance = nearest_resistance.price_center
-                sr_source = f"S/R Zone ({nearest_resistance.strength}, {nearest_resistance.level})"
-            self.log.info(f"📊 Using {sr_source}: Support=${support:,.0f}, Resistance=${resistance:,.0f}")
-        else:
-            # Fallback to basic technical data (simple high/low of recent bars)
-            support = self.latest_technical_data.get('support', 0.0)
-            resistance = self.latest_technical_data.get('resistance', 0.0)
-            if support > 0 or resistance > 0:
-                sr_source = "technical_data (basic)"
-                self.log.info(f"📊 Using {sr_source}: Support=${support:,.0f}, Resistance=${resistance:,.0f}")
-
-        # Check for MultiAgent SL/TP (from Judge decision)
-        # Note: MultiAgent returns 'stop_loss' and 'take_profit' fields directly
-        multi_sl = self.latest_signal_data.get('stop_loss')
-        multi_tp = self.latest_signal_data.get('take_profit')
-
-        # Use shared function to validate MultiAgent SL/TP (same logic as diagnose_realtime.py)
-        is_valid, validated_sl, validated_tp, validation_reason = validate_multiagent_sltp(
-            side=side.name,  # Convert OrderSide.BUY → 'BUY'
-            multi_sl=multi_sl,
-            multi_tp=multi_tp,
-            entry_price=entry_price,
-        )
-
-        if is_valid:
-            # MultiAgent SL/TP validated successfully
-            stop_loss_price = validated_sl
-            tp_price = validated_tp
-            self.log.info(f"🎯 Using MultiAgent SL/TP: {validation_reason}")
-        else:
-            # Fall back to technical analysis using shared function (v3.14: now uses S/R Zones for TP)
-            if multi_sl or multi_tp:
-                self.log.warning(f"⚠️ MultiAgent SL/TP invalid: {validation_reason}, falling back to S/R-based technical analysis")
-
-            stop_loss_price, tp_price, calc_method = calculate_technical_sltp(
-                side=side.name,  # Convert OrderSide.BUY → 'BUY'
-                entry_price=entry_price,
-                support=support,
-                resistance=resistance,
-                confidence=confidence,
-                use_support_resistance=self.sl_use_support_resistance,
-                sl_buffer_pct=self.sl_buffer_pct,
+        if validated is None:
+            # v3.18 + v4.11: Do NOT fallback to unprotected market order
+            self.log.error(
+                "❌ SL/TP validation failed for new position - order blocked "
+                "(no price data, no signal data, or R/R < minimum)"
             )
-            self.log.info(f"📍 {calc_method}")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': 'SL/TP验证失败，取消开仓',
+                'action_taken': '',
+            }
+            if self.telegram_bot and self.enable_telegram:
+                try:
+                    self.telegram_bot.send_message_sync(
+                        "🚫 开仓被阻止\n"
+                        "SL/TP验证失败 (R/R不足或无价格数据)\n"
+                        "维持 HOLD 等待下一信号"
+                    )
+                except Exception:
+                    pass
+            return
+
+        stop_loss_price, tp_price, entry_price = validated
 
         # Log SL/TP summary
         self.log.info(
@@ -4177,10 +4785,12 @@ class DeepSeekAIStrategy(Strategy):
         )
 
         try:
-            # Create bracket order using OrderFactory
-            # This automatically creates entry + SL + TP with OTO/OCO linkage
-            # IMPORTANT: Use emulation_trigger to enable order emulation for Binance compatibility
-            # Binance doesn't support native OCO+OTO orders, so NautilusTrader will emulate them
+            # v4.12: Create bracket order WITHOUT emulation - SL/TP go directly to Binance
+            # Previously used emulation_trigger=TriggerType.DEFAULT which kept SL/TP in local
+            # OrderEmulator memory. This meant: (1) Binance shows no pending orders, (2) process
+            # crash = SL/TP lost = position unprotected, (3) mixed emulated/venue state after scaling.
+            # Now: OTO handled by ExecutionEngine (children released after entry fills),
+            # OCO managed manually in on_order_filled() (cancel peer when one fills).
             bracket_order_list = self.order_factory.bracket(
                 instrument_id=self.instrument_id,
                 order_side=side,
@@ -4188,7 +4798,7 @@ class DeepSeekAIStrategy(Strategy):
                 sl_trigger_price=self.instrument.make_price(stop_loss_price),
                 tp_price=self.instrument.make_price(tp_price),
                 time_in_force=TimeInForce.GTC,
-                emulation_trigger=TriggerType.DEFAULT,  # Enable order emulation
+                # emulation_trigger omitted → defaults to NO_TRIGGER → sent to Binance
             )
 
             # Submit the bracket order list
@@ -4267,8 +4877,10 @@ class DeepSeekAIStrategy(Strategy):
         """
         Handle order filled events.
 
-        Note: OCO logic is now handled automatically by NautilusTrader's bracket orders.
-        We no longer need to manually cancel peer orders.
+        v4.12: ALL SL/TP OCO management is handled here (not by OrderEmulator).
+        Since v4.12 removed emulation (SL/TP sent directly to Binance), there is no
+        automatic OCO linkage. When SL fills → cancel TP, when TP fills → cancel SL.
+        This applies to ALL scenarios: bracket, add, reduce, trailing stop.
         """
         filled_order_id = str(event.client_order_id)
 
@@ -4277,6 +4889,29 @@ class DeepSeekAIStrategy(Strategy):
             f"{event.last_qty} @ {event.last_px} "
             f"(ID: {filled_order_id[:8]}...)"
         )
+
+        # v4.10: Immediate OCO peer cleanup for standalone SL/TP orders
+        # After _update_sltp_quantity cancel+recreate, SL and TP are independent.
+        # When one fills, we must cancel the other immediately.
+        try:
+            filled_order = self.cache.order(event.client_order_id)
+            if filled_order and filled_order.is_reduce_only:
+                # This was a SL or TP fill - cancel any remaining reduce_only orders
+                open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                peer_orders = [o for o in open_orders
+                               if o.is_reduce_only and o.client_order_id != event.client_order_id]
+                if peer_orders:
+                    for peer in peer_orders:
+                        try:
+                            self.cancel_order(peer)
+                            self.log.info(
+                                f"🔗 Cancelled OCO peer order {str(peer.client_order_id)[:8]}... "
+                                f"(type: {peer.order_type.name}) after {filled_order.order_type.name} fill"
+                            )
+                        except Exception as e:
+                            self.log.warning(f"⚠️ Failed to cancel OCO peer: {e}")
+        except Exception as e:
+            self.log.debug(f"OCO peer cleanup check: {e}")
 
         # v4.0: Order fill notification is now combined with position notification
         # See on_position_opened for unified trade execution message
@@ -5354,6 +5989,31 @@ class DeepSeekAIStrategy(Strategy):
             # v4.7: Get account context for portfolio risk fields
             account_context = self._get_account_context(current_price) if current_price > 0 else {}
 
+            # v5.2: Get SL/TP from trailing_stop_state + Binance fallback
+            sl_price = None
+            tp_price = None
+            position_side = None
+            trailing_active = False
+            if pos_data:
+                position_side = pos_data.get('side', '').upper()
+                instrument_key = str(self.instrument_id)
+                ts_state = self.trailing_stop_state.get(instrument_key, {})
+                sl_price = ts_state.get('current_sl_price')
+                tp_price = ts_state.get('current_tp_price')
+                trailing_active = ts_state.get('activated', False)
+                # Fallback to Binance orders
+                if sl_price is None or tp_price is None:
+                    try:
+                        symbol = str(self.instrument_id).split('.')[0].replace('-PERP', '')
+                        pos_side_lower = position_side.lower() if position_side else 'long'
+                        sl_tp = self.binance_account.get_sl_tp_from_orders(symbol, pos_side_lower)
+                        if sl_price is None:
+                            sl_price = sl_tp.get('sl_price')
+                        if tp_price is None:
+                            tp_price = sl_tp.get('tp_price')
+                    except Exception:
+                        pass
+
             status_info = {
                 'is_running': True,  # If this method is called, strategy is running
                 'is_paused': self.is_trading_paused,
@@ -5364,6 +6024,11 @@ class DeepSeekAIStrategy(Strategy):
                 'last_signal': last_signal,
                 'last_signal_time': last_signal_time,
                 'uptime': uptime_str,
+                # v5.2: SL/TP & Position info
+                'position_side': position_side,
+                'sl_price': sl_price,
+                'tp_price': tp_price,
+                'trailing_active': trailing_active,
                 # v4.7: Portfolio Risk Fields (CRITICAL)
                 'total_unrealized_pnl_usd': account_context.get('total_unrealized_pnl_usd'),
                 'liquidation_buffer_portfolio_min_pct': account_context.get('liquidation_buffer_portfolio_min_pct'),
