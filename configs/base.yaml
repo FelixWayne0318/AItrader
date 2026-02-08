@@ -28,6 +28,7 @@ trading_logic:
   min_tp_distance_pct: 0.005      # 最小止盈距离 0.5%
   default_sl_pct: 0.02            # 默认止损 2%
   default_tp_pct: 0.03            # 默认止盈 3%
+  min_rr_ratio: 1.5               # 最小风险收益比 (R/R < 1.5:1 拒绝 AI SL/TP，回退到技术分析)
 
   # 按信心级别的止盈配置
   tp_pct_by_confidence:
@@ -82,6 +83,9 @@ indicators:
   bb_period: 20
   bb_std: 2.0
 
+  # ADX (趋势强度) 配置
+  adx_period: 14
+
   # 其他
   volume_ma_period: 20
   support_resistance_lookback: 20
@@ -108,8 +112,6 @@ ai:
   # 信号处理
   signal:
     history_count: 30             # 信号历史队列大小 (原 maxlen=30)
-    skip_on_divergence: true      # [LEGACY] AI 分歧时跳过交易
-    use_confidence_fusion: true   # [LEGACY] 不再使用
 
 # =============================================================================
 # 情绪数据
@@ -147,7 +149,7 @@ risk:
   stop_loss:
     enabled: true
     use_support_resistance: true
-    buffer_pct: 0.001             # 缓冲 0.1%
+    buffer_pct: 0.005             # 缓冲 0.5% (确认真正突破 S/R)
 
   take_profit:
     high_confidence_pct: 0.03     # 高信心: 3%
@@ -209,23 +211,34 @@ risk:
       min_interval_minutes: 30      # 最少 30 分钟间隔
       max_trades_per_day: 10        # 每日最多 10 笔
 
-  # ===== v3.13: Hybrid ATR-AI 仓位计算 =====
-  # 公式: 最终仓位 = ATR仓位 × AI调节系数
-  # - ATR 提供风险上限 (波动率适应)
-  # - AI 只能减仓，不能加仓 (风险可控)
+  # ===== v4.8: AI 控制仓位计算 =====
+  # 公式: 最终仓位 = max_usdt × AI建议百分比
+  # - max_usdt = equity × max_position_ratio × leverage
+  # - AI 根据信心程度建议仓位百分比 (0-100%)
+  # - 例: $1000 × 30% × 10杠杆 = $3000 最大仓位
   position_sizing:
-    method: "hybrid_atr_ai"         # fixed_pct | atr_based | kelly | hybrid_atr_ai
+    method: "ai_controlled"         # fixed_pct | atr_based | kelly | hybrid_atr_ai | ai_controlled
 
-    # ATR-Based 参数 (也用于 hybrid_atr_ai 的上限计算)
+    # AI 控制模式参数 (v4.8 默认)
+    ai_controlled:
+      # AI 未提供仓位时的默认百分比
+      default_size_pct: 50          # 默认使用 50% 最大仓位
+      # 信心等级对应的仓位百分比
+      confidence_mapping:
+        HIGH: 80                    # 高信心: 80% → $2400
+        MEDIUM: 50                  # 中信心: 50% → $1500
+        LOW: 30                     # 低信心: 30% → $900
+
+    # ATR-Based 参数 (备用/参考)
     atr_based:
-      risk_per_trade_pct: 0.01      # 每笔风险 1% of equity
+      risk_per_trade_pct: 0.02      # 每笔风险 2% of equity (提高)
       atr_period: 14                # ATR 周期
       atr_multiplier: 2.0           # 止损距离 = 2 × ATR
 
-    # v3.13: Hybrid ATR-AI 参数
+    # v3.13: Hybrid ATR-AI 参数 (备用)
     # AI调节系数 = min_mult + ai_weight × (AI_pct / 100), 范围 [min, max]
     hybrid_atr_ai:
-      enabled: true
+      enabled: false                # 已切换到 ai_controlled
       min_multiplier: 0.3           # AI 最低系数 (保底 30%)
       max_multiplier: 1.0           # AI 最高系数 (不超过 ATR)
       ai_weight: 0.7                # AI 影响权重
@@ -270,10 +283,9 @@ network:
     max_limit: 1500               # Binance K线最大获取数量
     timeout: 10                   # 请求超时 (秒)
 
-  # OCO 订单管理 (Redis)
+  # OCO 订单管理
   oco_manager:
-    socket_timeout: 5             # Redis socket 超时 (秒)
-    socket_connect_timeout: 5     # Redis 连接超时 (秒)
+    socket_timeout: 5             # WebSocket 超时 (秒)
 
   # Telegram
   telegram:
@@ -291,13 +303,25 @@ telegram:
   bot_token: ""
   chat_id: ""
 
-  # 通知类型
+  # 通知类型 (v3.13: 完善配置开关)
   notify:
-    signals: true
-    fills: true
-    positions: true
-    errors: true
+    signals: true             # 交易信号通知
+    fills: true               # 订单成交通知
+    positions: true           # 持仓开仓/平仓通知
+    errors: true              # 错误警报
     heartbeat: true           # v2.1: 每次 on_timer 运行发送心跳状态 (测试阶段推荐开启)
+    trailing_stop: true       # v3.13: 移动止损更新通知
+    startup: true             # v3.13: 策略启动通知
+    shutdown: true            # v3.13: 策略关闭通知
+    daily_summary: true       # v3.13: 每日绩效总结 (已启用自动发送)
+    weekly_summary: true      # v3.13: 每周绩效总结 (已启用自动发送)
+
+  # v3.13: 定时总结配置
+  summary:
+    auto_daily: true               # 自动发送每日总结 (UTC 00:00)
+    auto_weekly: true              # 自动发送每周总结 (周一 UTC 00:00)
+    daily_hour_utc: 0              # 每日总结发送时间 (UTC 小时)
+    weekly_day: 0                  # 每周总结发送日 (0=周一, 6=周日)
 
   # v2.0: 消息队列配置 (异步非阻塞发送)
   queue:
@@ -306,6 +330,13 @@ telegram:
     max_retries: 3                # 失败消息最大重试次数
     alert_cooldown: 300           # 告警收敛冷却时间 (秒)
     send_interval: 0.5            # 发送间隔 (秒，防止速率限制)
+
+  # v3.13: 静音时段 (可选)
+  quiet_hours:
+    enabled: false                # 启用静音时段
+    start: "00:00"                # 开始时间 (UTC)
+    end: "08:00"                  # 结束时间 (UTC)
+    urgent_only: true             # 静音时段只发送紧急消息 (errors)
 
   # v2.0: 安全配置
   security:
@@ -508,6 +539,55 @@ order_flow:
       technical: 0.25
       derivatives: 0.25
       sentiment: 0.20
+
+# =============================================================================
+# S/R Zone 配置 (Support/Resistance Zone Calculator) v3.0
+# =============================================================================
+sr_zones:
+  enabled: true                         # 启用 S/R Zone 计算
+
+  # ---------------------------------------------------------------------------
+  # Swing Point 检测 (Williams Fractal / N-bar Pivot)
+  # 参考: Chan (2022, MDPI) - swing points 改善 ML S/R 盈利能力 +65%
+  # ---------------------------------------------------------------------------
+  swing_detection:
+    enabled: true                       # 启用 Swing Point 检测
+    left_bars: 5                        # 左侧 N 根 bar (确认 swing)
+    right_bars: 5                       # 右侧 N 根 bar (确认 swing)
+    weight: 1.2                         # Swing Point 权重 (介于 BB=1.0 和 SMA_200=1.5 之间)
+    max_swing_age: 100                  # 最大回看 bar 数 (15M bar × 100 = 25 小时)
+
+  # ---------------------------------------------------------------------------
+  # 聚类配置 (将候选价位合并为 Zone)
+  # ---------------------------------------------------------------------------
+  clustering:
+    method: "distance"                  # 聚类方法: distance (当前唯一支持)
+    cluster_pct: 0.5                    # 固定聚类阈值 (价差 < 0.5% 合并)
+    use_atr_adaptive: true              # 启用 ATR 自适应聚类阈值
+    atr_cluster_multiplier: 0.5         # ATR 聚类乘数 (cluster_threshold = ATR × multiplier)
+
+  # ---------------------------------------------------------------------------
+  # Touch Count 评分
+  # 参考: Osler (2000, FRB NY) - 2-3 次触碰是 S/R 最佳强度
+  # ---------------------------------------------------------------------------
+  scoring:
+    touch_count_enabled: true           # 启用 Touch Count 评分
+    touch_threshold_atr: 0.3            # 触碰判定距离 = ATR × 0.3
+    optimal_touches: [2, 3]             # 最优触碰次数 (权重加成 +0.5)
+    decay_after_touches: 4              # 超过此次数后权重开始衰减
+
+  # ---------------------------------------------------------------------------
+  # Zone 通用配置
+  # ---------------------------------------------------------------------------
+  zone_expand_pct: 0.1                  # Zone 边界扩展 (上下各 0.1%)
+
+  # ---------------------------------------------------------------------------
+  # 硬风控 (默认禁用，由 AI 自主决策)
+  # 参考: v3.16 TradingAgents Autonomy - AI 应完全自主决策
+  # ---------------------------------------------------------------------------
+  hard_control:
+    enabled: false                      # 启用本地硬风控覆盖 (默认关闭)
+    threshold_pct: 1.0                  # 硬风控触发阈值 (距离 < 1%)
 
 # =============================================================================
 # 订单簿深度配置 (Order Book Depth) v2.0 - v3.7 新增

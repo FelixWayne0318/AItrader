@@ -6,9 +6,8 @@ Runs the DeepSeek AI strategy on Binance Futures (BTCUSDT-PERP) with live market
 
 import os
 import sys
+import signal
 import argparse
-import yaml
-from decimal import Decimal
 from pathlib import Path
 
 # =============================================================================
@@ -56,34 +55,6 @@ else:
     load_dotenv()  # Try default locations
     print("[CONFIG] Warning: No .env file found, using system environment")
 
-
-def load_yaml_config() -> dict:
-    """
-    Load strategy configuration from YAML file.
-
-    Returns
-    -------
-    dict
-        Configuration dictionary from YAML, or empty dict if loading fails
-    """
-    config_path = Path(__file__).parent / "configs" / "strategy_config.yaml"
-    if not config_path.exists():
-        print(f"[CONFIG] Warning: {config_path} not found, using defaults")
-        return {}
-
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
-            if config is None:
-                print(f"[CONFIG] Warning: {config_path} is empty, using defaults")
-                return {}
-            return config
-    except yaml.YAMLError as e:
-        print(f"[CONFIG] Error parsing YAML config: {e}")
-        raise
-    except Exception as e:
-        print(f"[CONFIG] Error loading config file: {e}")
-        raise
 
 
 def _strip_env_comment(value: str) -> str:
@@ -198,6 +169,14 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         trend_strength_multiplier=config_manager.get('position', 'trend_strength_multiplier', default=1.2),
         min_trade_amount=config_manager.get('position', 'min_trade_amount', default=0.001),
 
+        # v4.8: Position sizing method configuration
+        position_sizing_method=config_manager.get('risk', 'position_sizing', 'method', default='ai_controlled'),
+        position_sizing_default_pct=config_manager.get('risk', 'position_sizing', 'ai_controlled', 'default_size_pct', default=50.0),
+        position_sizing_high_pct=config_manager.get('risk', 'position_sizing', 'ai_controlled', 'confidence_mapping', 'HIGH', default=80.0),
+        position_sizing_medium_pct=config_manager.get('risk', 'position_sizing', 'ai_controlled', 'confidence_mapping', 'MEDIUM', default=50.0),
+        position_sizing_low_pct=config_manager.get('risk', 'position_sizing', 'ai_controlled', 'confidence_mapping', 'LOW', default=30.0),
+        position_sizing_cumulative=True,  # v4.8: 累加模式，允许多次加仓
+
         # Technical indicators (all from ConfigManager)
         # For 1m timeframe, use development.yaml with shorter periods
         sma_periods=config_manager.get('indicators', 'sma_periods', default=[5, 20, 50]),
@@ -208,6 +187,9 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         bb_std=config_manager.get('indicators', 'bb_std', default=2.0),
         volume_ma_period=config_manager.get('indicators', 'volume_ma_period', default=20),
         support_resistance_lookback=config_manager.get('indicators', 'support_resistance_lookback', default=20),
+
+        # v3.0: S/R Zone Calculator config (passed as dict to MultiAgentAnalyzer)
+        sr_zones_config=config_manager.get('sr_zones', default={}),
 
         # AI
         deepseek_api_key=deepseek_api_key,
@@ -251,12 +233,6 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         # OCO (from ConfigManager)
         enable_oco=config_manager.get('risk', 'oco', 'enabled', default=True),
 
-        # [LEGACY - 不再使用] Multi-Agent Divergence Handling
-        # 保留用于向后兼容，但不再生效
-        # Support both old (strategy.risk.*) and new (ai.signal.*) paths via PATH_ALIASES
-        skip_on_divergence=config_manager.get('ai', 'signal', 'skip_on_divergence', default=True),
-        use_confidence_fusion=config_manager.get('ai', 'signal', 'use_confidence_fusion', default=True),
-
         # Execution
         position_adjustment_threshold=config_manager.get('execution', 'position_adjustment_threshold', default=0.001),
 
@@ -272,6 +248,15 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         telegram_notify_positions=config_manager.get('telegram', 'notify', 'positions', default=True),
         telegram_notify_errors=config_manager.get('telegram', 'notify', 'errors', default=True),
         telegram_notify_heartbeat=config_manager.get('telegram', 'notify', 'heartbeat', default=True),  # v2.1
+        # v3.13: 新增通知开关
+        telegram_notify_trailing_stop=config_manager.get('telegram', 'notify', 'trailing_stop', default=True),
+        telegram_notify_startup=config_manager.get('telegram', 'notify', 'startup', default=True),
+        telegram_notify_shutdown=config_manager.get('telegram', 'notify', 'shutdown', default=True),
+        # v3.13: 自动总结配置
+        telegram_auto_daily=config_manager.get('telegram', 'summary', 'auto_daily', default=False),
+        telegram_auto_weekly=config_manager.get('telegram', 'summary', 'auto_weekly', default=False),
+        telegram_daily_hour_utc=config_manager.get('telegram', 'summary', 'daily_hour_utc', default=0),
+        telegram_weekly_day=config_manager.get('telegram', 'summary', 'weekly_day', default=0),
 
         # Telegram Queue (v4.0 - Non-blocking message sending)
         telegram_queue_enabled=config_manager.get('telegram', 'queue', 'enabled', default=True),
@@ -296,8 +281,6 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         network_binance_balance_cache_ttl=config_manager.get('network', 'binance', 'balance_cache_ttl', default=5.0),
         network_bar_persistence_max_limit=config_manager.get('network', 'bar_persistence', 'max_limit', default=1500),
         network_bar_persistence_timeout=config_manager.get('network', 'bar_persistence', 'timeout', default=10.0),
-        network_oco_manager_socket_timeout=config_manager.get('network', 'oco_manager', 'socket_timeout', default=5.0),
-        network_oco_manager_socket_connect_timeout=config_manager.get('network', 'oco_manager', 'socket_connect_timeout', default=5.0),
         sentiment_timeout=config_manager.get('sentiment', 'timeout', default=10.0),
 
         # Multi-Timeframe Configuration (v3.3: removed unused filter configs)
@@ -329,9 +312,14 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
     )
 
 
-def get_binance_config() -> tuple:
+def get_binance_config(config_manager: ConfigManager | None = None) -> tuple:
     """
     Build Binance data and execution client configs.
+
+    Parameters
+    ----------
+    config_manager : ConfigManager, optional
+        Configuration manager for reading recv_window_ms etc.
 
     Returns
     -------
@@ -344,6 +332,11 @@ def get_binance_config() -> tuple:
 
     if not api_key or not api_secret:
         raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET required in .env")
+
+    # Read recv_window from config (fixes -1021 timestamp errors)
+    recv_window_ms = 5000
+    if config_manager:
+        recv_window_ms = config_manager.get('network', 'binance', 'recv_window', default=5000)
 
     # CRITICAL: Use load_all=True for proper instrument initialization
     # NautilusTrader 1.221.0 has fixed non-ASCII symbol issues
@@ -366,6 +359,7 @@ def get_binance_config() -> tuple:
         api_secret=api_secret,
         account_type=BinanceAccountType.USDT_FUTURES,
         testnet=False,
+        recv_window_ms=recv_window_ms,
         instrument_provider=InstrumentProviderConfig(
             load_all=True,  # Load all instruments for proper execution
         ),
@@ -390,7 +384,7 @@ def setup_trading_node(config_manager: ConfigManager) -> TradingNodeConfig:
     """
     # Get configurations
     strategy_config = get_strategy_config(config_manager)
-    data_config, exec_config = get_binance_config()
+    data_config, exec_config = get_binance_config(config_manager)
 
     # Wrap strategy config in ImportableStrategyConfig
     importable_config = ImportableStrategyConfig(
@@ -458,6 +452,41 @@ def parse_args():
         help='Dry run mode (load config but don\'t start trading)'
     )
     return parser.parse_args()
+
+
+def _send_shutdown_telegram(config_manager):
+    """
+    Fallback shutdown notification via direct HTTP call to Telegram API.
+
+    This runs in the finally block of main() to guarantee the user is notified
+    even if NautilusTrader's on_stop() was never called (e.g., SIGTERM killed
+    the event loop before strategy cleanup).
+    """
+    try:
+        import requests
+        from datetime import datetime
+
+        enabled = config_manager.get('telegram', 'enabled', default=False)
+        token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+        chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
+
+        if not enabled or not token or not chat_id:
+            return
+
+        msg = (
+            "🛑 *Service Stopped*\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📋 Process exiting\n"
+            f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        )
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={'chat_id': chat_id, 'text': msg, 'parse_mode': 'Markdown'},
+            timeout=10,
+        )
+        print("📱 Sent shutdown notification to Telegram")
+    except Exception as e:
+        print(f"⚠️  Failed to send shutdown notification: {e}")
 
 
 def main():
@@ -536,6 +565,14 @@ def main():
     node.add_exec_client_factory("BINANCE", BinanceLiveExecClientFactory)
     print("✅ Binance factories registered")
 
+    # Register SIGTERM handler for systemctl stop graceful shutdown
+    # Converts SIGTERM to KeyboardInterrupt so NautilusTrader's on_stop() is called
+    def _sigterm_handler(signum, frame):
+        print("\n⚠️  SIGTERM received (systemctl stop)...")
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
     try:
         # Build the node (connects to exchange, loads instruments)
         node.build()
@@ -561,6 +598,10 @@ def main():
         print("\n🛑 Cleaning up resources...")
         node.dispose()
         print("✅ Resources cleaned up")
+
+        # Fallback shutdown notification via direct Telegram API
+        # Strategy's on_stop() may not be called if SIGTERM kills the event loop
+        _send_shutdown_telegram(config_manager)
 
         print("\n" + "=" * 70)
         print("Trading session ended")

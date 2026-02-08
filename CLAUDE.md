@@ -401,7 +401,9 @@ cd /home/linuxuser/nautilus_AItrader && sudo systemctl stop nautilus-trader && g
 | 显示提交 | `git log --oneline -5` | 核对 commit hash 确认版本 |
 | 实时诊断 | `scripts/diagnose_realtime.py` | 调用真实 API，验证完整数据流 |
 
-### 实时诊断工具 (diagnose_realtime.py)
+### 实时诊断工具 (diagnose_realtime.py v2.7.0)
+
+**v2.7.0 更新**: 新增 v3.18 订单流程完整模拟 (7 种场景)
 
 ```bash
 cd /home/linuxuser/nautilus_AItrader
@@ -426,6 +428,17 @@ python3 scripts/diagnose_realtime.py --export --push
 | `--summary` | 仅显示关键结果，跳过中间分析 |
 | `--export` | 保存到 `logs/diagnosis_YYYYMMDD_HHMMSS.txt` |
 | `--push` | 配合 `--export` 推送到 GitHub 仓库 |
+
+**v3.18 订单流程模拟场景**:
+| 场景 | 描述 | 验证重点 |
+|------|------|----------|
+| 1 | 新开仓 (无持仓 → 开仓) | Bracket 订单完整性 |
+| 2 | 同向加仓 | `_update_sltp_quantity` |
+| 3 | 部分平仓 | 订单数量正确性 |
+| 4 | 完全平仓 | 状态清理 |
+| 5 | 反转交易 | 两阶段提交 |
+| 6 | Bracket 失败 | 无保护回退禁止 |
+| 7 | SL/TP modify 失败 | WARNING 告警 |
 
 **GitHub 推送前提条件**：
 - 服务器已配置 SSH Key 用于 GitHub 推送
@@ -576,6 +589,74 @@ Environment=AUTO_CONFIRM=true
       - 配置优先级：先检查 `production.yaml`，回退到 `base.yaml`
     - 文件：`scripts/health_check.sh`
 
+17. **v3.18 订单流程安全修复** (Order Flow Safety) - **关键修复**
+    - **问题 1**: 反转交易竞态条件 (Race Condition)
+      - 问题：平仓和开仓之间可能有新信号干扰
+      - 修复：添加 `_pending_reversal` 状态变量，在 `on_position_closed` 中使用两阶段提交
+      - 流程：Phase 1 (存储状态 + 平仓) → on_position_closed → Phase 2 (检测状态 + 开仓)
+    - **问题 2**: Bracket 订单失败导致无保护仓位
+      - 问题：entry 成功但 SL/TP 订单失败，仓位处于无保护状态
+      - 修复：移除自动回退到无保护 MARKET 单的逻辑，改为发送 CRITICAL 告警并保持 HOLD
+      - 原则：宁可错过交易，不可无保护入场
+    - **问题 3**: 加仓后 SL/TP 数量未更新
+      - 问题：同向加仓后，SL/TP 订单数量仍是旧数量
+      - 修复：添加 `_update_sltp_quantity()` 方法，使用 `modify_order()` 更新订单数量
+    - **问题 4**: SL/TP modify 失败无回退
+      - 问题：`modify_order` 失败时无处理
+      - 修复：失败时发送 WARNING 告警，提醒仓位可能未完全保护
+    - 文件：`strategy/deepseek_strategy.py:3200-3500`
+    - 诊断：`scripts/diagnose_realtime.py` v2.7.0 新增 7 种场景模拟
+
+18. **v3.16 S/R Zone 硬风控移至 AI** (TradingAgents Autonomy) - **架构改进**
+    - **背景**: TradingAgents 原则 "Autonomy is non-negotiable" - AI 应完全自主决策
+    - **问题**: v3.8-v3.15 本地硬风控在 AI 决策后强制覆盖信号，违反 AI 自主权
+    - **修复**: 将硬风控逻辑移入 Risk Manager prompt，由 AI 自主判断
+    - **变更**:
+      - `sr_hard_control_enabled` 默认值从 `True` 改为 `False`
+      - Risk Manager prompt 新增 "⛔ S/R ZONE HARD CONTROL ALERT" 段落
+      - AI 收到 `block_long`/`block_short` 信息后自主决定是否遵守
+      - 本地覆盖仅在显式启用 `sr_hard_control_enabled: true` 时生效 (紧急模式)
+    - **AI 决策规则**:
+      - `Block LONG=YES + proposed LONG` → AI 应改为 HOLD (除非有特殊理由)
+      - `Block SHORT=YES + proposed SHORT` → AI 应改为 HOLD (除非有特殊理由)
+      - AI 可在特殊情况下覆盖 (如突破 + 成交量确认)，但必须在 reason 中说明
+    - 文件：`agents/multi_agent_analyzer.py:846-912`
+    - 参考：[TradingAgents Framework](https://github.com/TauricResearch/TradingAgents)
+
+19. **v3.17 入场规则简化** (R/R 驱动) - **架构改进**
+    - **背景**: v3.15 的 "1-2% 内" 硬性规则过于主观，导致过多 HOLD
+    - **问题**: 固定百分比不考虑市场状况，真正重要的是 R/R 比率
+    - **修复**: 移除距离百分比限制，改为纯 R/R 驱动
+    - **变更**:
+      - 移除 "within 1-2%" 硬性入场规则
+      - 移除 "> 2% away" 拒绝规则
+      - R/R >= 1.5:1 是**唯一**入场标准
+      - 新增 R/R 与仓位大小关联 (R/R 越高可用越大仓位)
+    - **新入场逻辑**:
+      ```
+      R/R >= 2.5:1 → 高仓位 (80-100%)
+      R/R 2.0-2.5:1 → 中仓位 (50-80%)
+      R/R 1.5-2.0:1 → 低仓位 (30-50%)
+      R/R < 1.5:1 → HOLD (不交易)
+      ```
+    - **原理**: 价格位置自然反映在 R/R 中
+      - 靠近支撑 → LONG R/R 好
+      - 靠近阻力 → SHORT R/R 好
+      - 中间位置 → 两边 R/R 都差 → HOLD
+    - 文件：`agents/multi_agent_analyzer.py:950-979`
+    - **重要**: R/R >= 1.5:1 由 `validate_multiagent_sltp()` 硬性执行，不仅仅是 AI prompt 建议
+
+20. **R/R 硬性门槛 + Heartbeat 信号标签修复** - **关键修复**
+    - **问题 1**: R/R >= 1.5:1 仅在 AI prompt 中存在，`validate_multiagent_sltp()` 未强制执行
+      - 根因：AI 返回结构正确但 R/R 极低的 SL/TP (如 0.1:1) 时直接通过验证
+      - 修复：在 `validate_multiagent_sltp()` 中添加 R/R 硬性门槛检查
+      - 配置：`configs/base.yaml: trading_logic.min_rr_ratio: 1.5`
+      - 当 R/R < 1.5:1 时，拒绝 AI SL/TP，回退到 `calculate_technical_sltp()` (已有 R/R 调整)
+    - **问题 2**: Heartbeat 显示的信号来自上一个分析周期，但未标注
+      - 根因：`_send_heartbeat_notification()` 在 AI 分析之前运行，读取 `self.last_signal`
+      - 修复：信号后添加 "(上次)" 标签，避免用户误以为是当前周期结果
+    - 文件：`strategy/trading_logic.py`, `strategy/deepseek_strategy.py`, `utils/telegram_bot.py`
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
@@ -599,6 +680,10 @@ Environment=AUTO_CONFIRM=true
 - ❌ **仪器加载超时配置不足** → ✅ **production.yaml 中设置 max_retries: 180** (`load_all=true` 需要 1-3 分钟)
 - ❌ **YAML 配置文件缺少必需配置段** → ✅ **确保 production.yaml 包含 network 配置段**
 - ❌ **使用 bash grep/awk 解析 YAML** → ✅ **使用 Python yaml.safe_load() 解析嵌套配置**
+- ❌ **Bracket 订单失败时回退到无保护 MARKET 单** → ✅ **发送 CRITICAL 告警，保持 HOLD** (v3.18)
+- ❌ **反转交易直接平仓后开仓** → ✅ **使用 `_pending_reversal` 两阶段提交** (v3.18)
+- ❌ **加仓后不更新 SL/TP 数量** → ✅ **调用 `_update_sltp_quantity()` 更新订单** (v3.18)
+- ❌ **仅在 AI prompt 中要求 R/R >= 1.5:1** → ✅ **`validate_multiagent_sltp()` 硬性执行 R/R 门槛** (回退到技术分析)
 
 ## 文件结构
 
@@ -640,7 +725,7 @@ Environment=AUTO_CONFIRM=true
 │   ├── deepseek_client.py    # DeepSeek AI 客户端
 │   ├── sentiment_client.py   # Binance 多空比
 │   ├── telegram_bot.py       # Telegram 通知
-│   ├── telegram_command_handler.py # Telegram 命令处理
+│   ├── telegram_command_handler.py # Telegram 命令处理 (v3.0 重设计)
 │   ├── binance_account.py    # Binance 账户工具
 │   ├── bar_persistence.py    # K线数据持久化
 │   └── oco_manager.py        # OCO 订单管理
@@ -661,10 +746,13 @@ Environment=AUTO_CONFIRM=true
 ├── scripts/                  # 脚本工具
 │   ├── # === 诊断工具 ===
 │   ├── diagnose.py           # 全面诊断工具 v2.0
-│   ├── diagnose_realtime.py  # 实时 API 诊断
+│   ├── diagnose_realtime.py  # 实时 API 诊断 v2.7.0 (含 v3.18 订单流程模拟)
 │   ├── diagnose_telegram.py  # Telegram 诊断
 │   ├── diagnose_no_signal.py # 无信号诊断
 │   ├── comprehensive_diagnosis.py # 全面诊断
+│   ├── diagnostics/          # 诊断模块 (v2.7.0)
+│   │   ├── order_flow_simulation.py  # v3.18 订单流程模拟 (7 场景)
+│   │   └── ...               # 其他诊断步骤模块
 │   │
 │   ├── # === 提交分析工具 (GitHub Actions 自动运行) ===
 │   ├── smart_commit_analyzer.py  # 智能回归检测 (规则自动从 git 生成)
@@ -911,14 +999,36 @@ TELEGRAM_CHAT_ID=xxx          # 你的个人用户 ID
 | `leverage` | 5 | 杠杆倍数 (建议 3-10) |
 | `use_real_balance_as_equity` | true | 自动从 Binance 获取真实余额 |
 
-#### 仓位管理
+#### 仓位管理 (v4.8 更新)
+
+**v4.8 重大变更**: 仓位计算改为 AI 控制模式 (`ai_controlled`)
+
+**计算公式**:
+```
+max_usdt = equity × max_position_ratio × leverage
+final_usdt = max_usdt × confidence_pct
+
+例: $1000 × 30% × 10杠杆 = $3000 最大仓位
+```
+
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `base_usdt_amount` | 100 | 基础仓位 USDT (Binance 最低 $100) |
-| `high_confidence_multiplier` | 1.5 | 高信心仓位乘数 → $150 |
-| `medium_confidence_multiplier` | 1.0 | 中等信心 → $100 |
-| `low_confidence_multiplier` | 0.5 | 低信心 → $50 |
-| `max_position_ratio` | 0.30 | 最大仓位比例 (30% of equity) |
+| `position_sizing.method` | ai_controlled | 仓位计算方法 (v4.8 默认) |
+| `max_position_ratio` | 0.30 | 最大仓位比例 (占 equity 的比例) |
+| `ai_controlled.default_size_pct` | 50 | AI 未提供时的默认百分比 |
+
+**信心等级仓位映射** (以 $1000 资金, 10x 杠杆为例):
+| 信心等级 | 百分比 | 仓位金额 |
+|---------|-------|---------|
+| HIGH | 80% | $2400 |
+| MEDIUM | 50% | $1500 |
+| LOW | 30% | $900 |
+
+**旧版参数** (fixed_pct 方法, 已不再默认使用):
+| `base_usdt_amount` | 100 | 基础仓位 USDT |
+| `high_confidence_multiplier` | 1.5 | 高信心乘数 |
+| `medium_confidence_multiplier` | 1.0 | 中等信心乘数 |
+| `low_confidence_multiplier` | 0.5 | 低信心乘数 |
 
 #### 风险管理
 | 参数 | 默认值 | 说明 |
@@ -938,7 +1048,7 @@ TELEGRAM_CHAT_ID=xxx          # 你的个人用户 ID
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `enable_auto_sl_tp` | true | 启用自动止损止盈 |
-| `sl_buffer_pct` | 0.001 | 止损缓冲 (0.1%) |
+| `sl_buffer_pct` | 0.005 | 止损缓冲 0.5% (确认真正突破 S/R) |
 | `tp_high_confidence_pct` | 0.03 | 高信心止盈 3% |
 | `tp_medium_confidence_pct` | 0.02 | 中等信心止盈 2% |
 | `tp_low_confidence_pct` | 0.01 | 低信心止盈 1% |
@@ -1204,19 +1314,53 @@ python3 scripts/diagnose_orderbook.py --symbol ETHUSDT --limit 50 --volatility 0
 4. **启用**: `configs/base.yaml` 中设置 `order_book.enabled: true`
 5. **监控**: 观察数据质量和性能影响
 
-### Telegram 命令
+### Telegram 命令 (v3.0 重设计)
+
+**"/" 菜单显示** (8 个快捷命令):
 
 | 命令 | 说明 |
 |------|------|
-| `/menu` | 显示交互按钮菜单 |
-| `/status` | 查看系统状态和真实余额 |
-| `/position` | 查看当前持仓 |
-| `/orders` | 查看挂单 |
-| `/history` | 最近交易记录 |
-| `/risk` | 风险指标 |
-| `/pause` | 暂停交易 |
-| `/resume` | 恢复交易 |
-| `/close` | 平仓 |
+| `/menu` | 操作面板 (推荐入口) |
+| `/s` | 快速状态 |
+| `/p` | 快速查看持仓 |
+| `/b` | 账户余额 |
+| `/a` | 技术面快照 |
+| `/fa` | 立即触发 AI 分析 |
+| `/close` | 平仓 (需 PIN) |
+| `/help` | 帮助 |
+
+**查询命令** (无需 PIN):
+
+| 命令 | 快捷 | 说明 |
+|------|------|------|
+| `/status` | `/s` | 系统状态 |
+| `/position` | `/p` | 当前持仓 |
+| `/balance` | `/b` | 账户余额、保证金、容量 |
+| `/analyze` | `/a` | 技术指标快照 (RSI/MACD/BB) |
+| `/orders` | — | 查看挂单 |
+| `/history` | — | 交易记录 |
+| `/risk` | — | 风险指标 |
+| `/daily` | — | 日报 |
+| `/weekly` | — | 周报 |
+| `/config` | — | 当前策略配置 |
+| `/version` | `/v` | 版本号+运行时间 |
+| `/logs` | `/l` | 最近日志 (20行) |
+
+**控制命令** (需 PIN):
+
+| 命令 | 快捷 | 说明 |
+|------|------|------|
+| `/pause` | — | 暂停交易 |
+| `/resume` | — | 恢复交易 |
+| `/close` | — | 全部平仓 |
+| `/force_analysis` | `/fa` | 立即触发 AI 分析 |
+| `/partial_close 50` | `/pc 50` | 部分平仓 (指定百分比) |
+| `/set_leverage 10` | — | 修改杠杆倍数 |
+| `/toggle trailing` | — | 功能开关 (trailing/sentiment/mtf/auto\_sltp/reversal) |
+| `/set min_confidence HIGH` | — | 修改运行时参数 |
+| `/restart` | — | 重启交易服务 |
+
+**菜单交互**: `/menu` 显示 inline keyboard，点击按钮后显示结果 + "返回菜单" 按钮。
 
 ### 修改配置
 

@@ -371,6 +371,9 @@ python3 scripts/diagnose_realtime.py
 | 循环导入错误 | 移除 `__init__.py` 自动导入 | - |
 | net_sentiment KeyError | 默认情绪数据添加必需字段 | - |
 | 时间周期解析错误 | 检查顺序调整 | - |
+| **v3.18 反转竞态条件** | 两阶段提交 + `_pending_reversal` 状态 | v3.18 |
+| **v3.18 Bracket 失败风险** | 不回退无保护单，发送 CRITICAL 告警 | v3.18 |
+| **v3.18 SL/TP 数量不同步** | `_update_sltp_quantity()` 方法 | v3.18 |
 
 ---
 
@@ -436,5 +439,5 @@ python3 scripts/diagnose_realtime.py
 
 ---
 
-*文档版本: 2026-01-24*
-*适用于: AItrader v1.0 + NautilusTrader 1.221.0*
+*文档版本: 2026-02-05*
+*适用于: AItrader v3.18 + NautilusTrader 1.221.0*

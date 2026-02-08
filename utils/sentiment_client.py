@@ -58,7 +58,9 @@ class SentimentDataFetcher:
 
     def fetch(self, token: str = "BTC") -> Optional[Dict[str, Any]]:
         """
-        Fetch sentiment data for specified token.
+        Fetch sentiment data for specified token (with history).
+
+        v3.24: Now fetches 10 data points for history series.
 
         Parameters
         ----------
@@ -74,7 +76,11 @@ class SentimentDataFetcher:
                 'negative_ratio': float,  # Short ratio (bearish)
                 'net_sentiment': float,   # Long - Short
                 'data_time': str,
-                'data_delay_minutes': int
+                'data_delay_minutes': int,
+                'history': [              # v3.24: Historical data points
+                    {'long': float, 'short': float, 'ratio': float, 'timestamp': int},
+                    ...
+                ]
             }
         """
         try:
@@ -83,11 +89,11 @@ class SentimentDataFetcher:
                 print(f"⚠️ Invalid token: {token}")
                 return None
 
-            # Build request
+            # v3.24: Fetch 10 data points for history series
             params = {
                 "symbol": f"{token.upper()}USDT",  # Normalize to uppercase
                 "period": self.timeframe,
-                "limit": 1
+                "limit": 10
             }
 
             # Make request
@@ -100,7 +106,23 @@ class SentimentDataFetcher:
             if response.status_code == 200:
                 data = response.json()
                 if data and len(data) > 0:
-                    return self._parse_binance_data(data[0])
+                    # Parse latest (data[0] is newest from Binance)
+                    result = self._parse_binance_data(data[0])
+                    if result:
+                        # v3.24: Build history series (oldest → newest)
+                        history = []
+                        for item in reversed(data):
+                            try:
+                                history.append({
+                                    'long': float(item.get('longAccount', 0.5)),
+                                    'short': float(item.get('shortAccount', 0.5)),
+                                    'ratio': float(item.get('longShortRatio', 1.0)),
+                                    'timestamp': item.get('timestamp', 0),
+                                })
+                            except (ValueError, TypeError):
+                                continue
+                        result['history'] = history
+                    return result
 
             print(f"⚠️ Binance API returned unexpected response: {response.status_code}")
             return None

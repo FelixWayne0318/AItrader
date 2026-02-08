@@ -22,6 +22,10 @@ class AIDataAssembler:
     - 整合 BinanceDerivativesClient (大户数据、Taker 比等)
     - 整合 Coinalyze 历史数据 (OI/Funding/多空比趋势)
     - 添加 format_complete_report() 供 AI 使用
+
+    v3.0.1 更新 (IMPLEMENTATION_PLAN Section 4.2.1):
+    - 添加 historical_context 支持 (20 值趋势数据)
+    - AI 可以看到指标趋势，而非孤立的单一值
     """
 
     def __init__(
@@ -77,6 +81,7 @@ class AIDataAssembler:
         position_data: Optional[Dict[str, Any]] = None,
         symbol: str = "BTCUSDT",
         interval: str = "15m",
+        indicator_manager=None,
     ) -> Dict[str, Any]:
         """
         组装完整的 AI 输入数据 (同步方法)
@@ -91,6 +96,8 @@ class AIDataAssembler:
             交易对
         interval : str
             K线周期
+        indicator_manager : TechnicalIndicatorManager, optional
+            技术指标管理器 (用于获取 historical_context) - v3.0.1 新增
 
         Returns
         -------
@@ -165,13 +172,32 @@ class AIDataAssembler:
                 self.logger.warning(f"⚠️ Order book fetch error: {e}")
                 orderbook_data = self._no_data_orderbook(str(e))
 
-        # Step 8: 组装最终数据
+        # Step 8: 获取历史上下文 (v3.0.1 - IMPLEMENTATION_PLAN Section 4.2.1)
+        # count=35 确保 MACD 历史计算有足够数据 (slow_period=26 + 5 + buffer)
+        historical_context = None
+        if indicator_manager is not None:
+            try:
+                historical_context = indicator_manager.get_historical_context(count=35)
+                self.logger.debug(
+                    f"Historical context: trend={historical_context.get('trend_direction')}, "
+                    f"momentum={historical_context.get('momentum_shift')}"
+                )
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to get historical context: {e}")
+                historical_context = {
+                    "error": str(e),
+                    "trend_direction": "ERROR",
+                    "momentum_shift": "ERROR",
+                }
+
+        # Step 9: 组装最终数据
         return {
             "price": {
                 "current": current_price,
                 "change_pct": self._calc_change(raw_klines) if raw_klines else 0,
             },
             "technical": technical_data,
+            "historical_context": historical_context,  # v3.0.1 新增
             "order_flow": order_flow_data,
             "derivatives": derivatives,
             "sentiment": sentiment_data,
@@ -184,6 +210,7 @@ class AIDataAssembler:
                 "binance_derivatives_enabled": self.binance_derivatives is not None,
                 "orderbook_enabled": self.binance_orderbook is not None,
                 "orderbook_status": orderbook_data.get("_status", {}).get("code") if orderbook_data else "DISABLED",
+                "historical_context_enabled": historical_context is not None,  # v3.0.1 新增
             },
         }
 
@@ -227,81 +254,110 @@ class AIDataAssembler:
             except Exception as e:
                 self.logger.warning(f"⚠️ OI parse error: {e}")
 
-        # Funding 转换 (v2.1: 添加 Binance 直接对比)
-        # 先获取 Binance 直接的 Funding Rate
+        # Funding 转换 (v3.22→v5.1: 完全以 Binance 为准)
+        # premiumIndex.lastFundingRate = 预期费率, /fundingRate = 已结算费率
         binance_funding = None
         try:
             binance_funding = self.binance_klines.get_funding_rate()
         except Exception as e:
             self.logger.debug(f"⚠️ Binance funding rate fetch error: {e}")
 
-        if funding_raw:
+        # 获取 Binance 资金费率结算历史 (最近 10 次)
+        binance_funding_history = None
+        try:
+            binance_funding_history = self.binance_klines.get_funding_rate_history(limit=10)
+        except Exception as e:
+            self.logger.debug(f"⚠️ Binance funding rate history fetch error: {e}")
+
+        if binance_funding:
+            # v5.1: funding_rate = 已结算费率, predicted_rate = 预期费率 (from lastFundingRate)
+            funding_rate = binance_funding['funding_rate']        # 已结算
+            funding_pct = binance_funding['funding_rate_pct']     # 已结算 (%)
+
+            # 构建历史趋势
+            history_rates = []
+            if binance_funding_history:
+                for record in binance_funding_history:
+                    try:
+                        rate = float(record.get('fundingRate', 0))
+                        history_rates.append({
+                            "time": record.get('fundingTime'),
+                            "rate": rate,
+                            "rate_pct": round(rate * 100, 4),
+                            "mark_price": record.get('markPrice'),
+                        })
+                    except (ValueError, TypeError):
+                        continue
+
+            # 计算历史趋势方向
+            funding_trend = "N/A"
+            if len(history_rates) >= 3:
+                recent_3 = [r['rate'] for r in history_rates[-3:]]
+                if recent_3[-1] > recent_3[0] * 1.1:
+                    funding_trend = "RISING"
+                elif recent_3[-1] < recent_3[0] * 0.9:
+                    funding_trend = "FALLING"
+                else:
+                    funding_trend = "STABLE"
+
+            result["funding_rate"] = {
+                "value": funding_rate,              # 已结算费率 (向后兼容)
+                "settled": funding_rate,             # 已结算费率 (明确语义)
+                "settled_pct": funding_pct,          # 已结算费率 (%)
+                "interpretation": self._interpret_funding(funding_rate),
+                "source": "binance_8h",
+                "period": "8h",
+                # v5.1: 预期费率直接来自 premiumIndex.lastFundingRate (非自算)
+                "predicted_rate": binance_funding.get('predicted_rate'),
+                "predicted_rate_pct": binance_funding.get('predicted_rate_pct'),
+                # v3.22: 下次结算时间
+                "next_funding_time": binance_funding.get('next_funding_time'),
+                "next_funding_countdown_min": binance_funding.get('next_funding_countdown_min'),
+                # v3.22: 结算历史 (最近 10 次)
+                "history": history_rates,
+                "trend": funding_trend,
+                # v3.22: 溢价指数
+                "premium_index": binance_funding.get('premium_index'),
+                "mark_price": binance_funding.get('mark_price'),
+                "index_price": binance_funding.get('index_price'),
+                # 保留 Coinalyze 对比 (仅参考)
+                "coinalyze_pct": None,
+                "binance_pct": funding_pct,
+            }
+
+            # 记录 Coinalyze 对比值 (如果可用)
+            if funding_raw:
+                try:
+                    coinalyze_pct = round(float(funding_raw.get('value', 0)) * 100, 4)
+                    result["funding_rate"]["coinalyze_pct"] = coinalyze_pct
+                except (ValueError, TypeError):
+                    pass
+        elif funding_raw:
+            # Binance 不可用时降级到 Coinalyze
             try:
                 coinalyze_value = float(funding_raw.get('value', 0))
                 coinalyze_pct = round(coinalyze_value * 100, 4)
-
-                # 决定使用哪个数据源 (v3.7: 配置化)
-                # 读取配置
-                funding_config = self.config.get('coinalyze', {}).get('funding_rate', {})
-                prefer_binance = funding_config.get('prefer_binance_when_divergent', True)
-                max_ratio = funding_config.get('max_divergence_ratio', 10.0)
-                always_binance = funding_config.get('always_use_binance', False)
-
-                use_binance = False
-                binance_pct = None
-                if binance_funding:
-                    binance_pct = binance_funding.get('funding_rate_pct', 0)
-
-                    # 如果配置为始终使用 Binance
-                    if always_binance:
-                        use_binance = True
-                    # 否则检查差异
-                    elif prefer_binance and binance_pct > 0 and coinalyze_pct > 0:
-                        ratio = coinalyze_pct / binance_pct
-                        if ratio > max_ratio or ratio < (1 / max_ratio):
-                            self.logger.warning(
-                                f"⚠️ Funding rate 数据差异大: "
-                                f"Coinalyze={coinalyze_pct:.4f}%, Binance={binance_pct:.4f}%, "
-                                f"ratio={ratio:.2f} (threshold={max_ratio})"
-                            )
-                            # Coinalyze 异常时使用 Binance
-                            use_binance = True
-
-                # 选择最终使用的值
-                if use_binance and binance_funding:
-                    final_value = binance_funding['funding_rate']
-                    final_pct = binance_pct
-                    source = "binance_8h"  # v3.8: 明确标注为币安 8 小时资金费率
-                else:
-                    final_value = coinalyze_value
-                    final_pct = coinalyze_pct
-                    source = "coinalyze"
-
                 result["funding_rate"] = {
-                    "value": final_value,
-                    "current": final_value,
-                    "current_pct": final_pct,
-                    "interpretation": self._interpret_funding(final_value),
-                    "source": source,
-                    "period": "8h" if source == "binance_8h" else "aggregated",  # v3.8: 标注周期
-                    # 保留两个数据源供对比
+                    "value": coinalyze_value,
+                    "current": coinalyze_value,
+                    "current_pct": coinalyze_pct,
+                    "interpretation": self._interpret_funding(coinalyze_value),
+                    "source": "coinalyze_fallback",
+                    "period": "aggregated",
+                    "predicted_rate": None,
+                    "predicted_rate_pct": None,
+                    "next_funding_time": None,
+                    "next_funding_countdown_min": None,
+                    "history": [],
+                    "trend": "N/A",
+                    "premium_index": None,
+                    "mark_price": None,
+                    "index_price": None,
                     "coinalyze_pct": coinalyze_pct,
-                    "binance_pct": binance_pct,
+                    "binance_pct": None,
                 }
             except Exception as e:
                 self.logger.warning(f"⚠️ Funding parse error: {e}")
-        elif binance_funding:
-            # Coinalyze 无数据，使用 Binance
-            result["funding_rate"] = {
-                "value": binance_funding['funding_rate'],
-                "current": binance_funding['funding_rate'],
-                "current_pct": binance_funding['funding_rate_pct'],
-                "interpretation": self._interpret_funding(binance_funding['funding_rate']),
-                "source": "binance_8h",  # v3.8: 明确标注为币安 8 小时资金费率
-                "period": "8h",  # v3.8: 标注周期
-                "coinalyze_pct": None,
-                "binance_pct": binance_funding['funding_rate_pct'],
-            }
 
         # Liquidation 转换 (嵌套结构)
         # v2.1: 即使 history 为空也返回结构 (区分"无爆仓"和"数据缺失")
@@ -419,20 +475,50 @@ class AIDataAssembler:
                     f"(${oi.get('total_usd', 0):,.0f}) [Trend: {oi_trend}]"
                 )
 
-            # Funding Rate
+            # Funding Rate (v3.22: 增强版 — 当前 + 预期 + 历史趋势)
             fr = derivatives.get("funding_rate")
             if fr:
-                fr_trend = trends.get("funding_trend", "N/A")
+                fr_trend = fr.get("trend") or trends.get("funding_trend", "N/A")
                 parts.append(
-                    f"  - Funding Rate: {fr.get('current_pct', 0):.4f}% "
+                    f"  - Funding Rate (last settled): {fr.get('current_pct', 0):.4f}% "
                     f"({fr.get('interpretation', 'N/A')}) [Trend: {fr_trend}]"
                 )
+                # 溢价指数 + 预期费率
+                premium_index = fr.get('premium_index')
+                if premium_index is not None:
+                    pi_pct = premium_index * 100
+                    mark = fr.get('mark_price', 0)
+                    index = fr.get('index_price', 0)
+                    parts.append(
+                        f"  - Premium Index: {pi_pct:+.4f}% "
+                        f"(Mark: ${mark:,.2f}, Index: ${index:,.2f})"
+                    )
+                predicted_pct = fr.get('predicted_rate_pct')
+                if predicted_pct is not None:
+                    parts.append(
+                        f"  - Predicted Next Funding Rate: {predicted_pct:.4f}%"
+                    )
+                # 下次结算倒计时
+                countdown = fr.get('next_funding_countdown_min')
+                if countdown is not None:
+                    hours = countdown // 60
+                    mins = countdown % 60
+                    parts.append(
+                        f"  - Next Settlement: {hours}h {mins}m"
+                    )
+                # 历史 (最近 10 次结算)
+                history = fr.get('history', [])
+                if history and len(history) >= 2:
+                    rates_str = " → ".join(
+                        [f"{r['rate_pct']:.4f}%" for r in history]
+                    )
+                    parts.append(f"  - Settlement History (last {len(history)}): {rates_str}")
 
-            # Liquidations
+            # Liquidations (v3.24: 24h)
             liq = derivatives.get("liquidations")
             if liq:
                 parts.append(
-                    f"  - Liquidations (1h): Long ${liq.get('long_usd', 0):,.0f} / "
+                    f"  - Liquidations (24h): Long ${liq.get('long_usd', 0):,.0f} / "
                     f"Short ${liq.get('short_usd', 0):,.0f}"
                 )
 
@@ -503,6 +589,11 @@ class AIDataAssembler:
             )
             parts.append(f"  - Net Sentiment: {sentiment.get('net_sentiment', 0):+.3f}")
             parts.append(f"  - L/S Ratio: {sentiment.get('long_short_ratio', 1):.2f}")
+            # v3.24: Show history series
+            history = sentiment.get('history', [])
+            if history and len(history) >= 2:
+                long_series = [f"{h['long']*100:.1f}%" for h in history]
+                parts.append(f"  - Long% History: {' → '.join(long_series)}")
 
         # =========================================================================
         # 6. 数据源状态
@@ -603,6 +694,29 @@ class AIDataAssembler:
                                 f"  Slippage (Buy 1 BTC): {s['estimated']:.3f}% "
                                 f"[conf={s['confidence']:.0%}, range={s['range'][0]:.3f}%-{s['range'][1]:.3f}%]"
                             )
+
+        # =========================================================================
+        # 8. 历史上下文 (v3.0.1 新增 - IMPLEMENTATION_PLAN Section 4.2.1)
+        # =========================================================================
+        historical = data.get("historical_context")
+        if historical and historical.get("trend_direction") not in ["INSUFFICIENT_DATA", "ERROR"]:
+            parts.append("\nHISTORICAL CONTEXT (Last 20 bars):")
+            parts.append(
+                f"  - Trend Direction: {historical.get('trend_direction', 'N/A')} "
+                f"{historical.get('price_arrow', '')}"
+            )
+            parts.append(f"  - Momentum Shift: {historical.get('momentum_shift', 'N/A')}")
+            parts.append(f"  - Price Change: {historical.get('price_change_pct', 0):+.2f}%")
+            parts.append(f"  - Volume Ratio: {historical.get('current_volume_ratio', 1):.2f}x")
+            parts.append(f"  - RSI Current: {historical.get('rsi_current', 0):.1f}")
+            parts.append(f"  - MACD Current: {historical.get('macd_current', 0):.4f}")
+
+            # 可视化趋势 (简化版)
+            price_trend = historical.get('price_trend', [])
+            if len(price_trend) >= 5:
+                # 取最近5个点展示趋势
+                trend_str = " → ".join([f"${p:,.0f}" for p in price_trend[-5:]])
+                parts.append(f"  - Price Trend: {trend_str}")
 
         parts.append("\n" + "=" * 50)
 

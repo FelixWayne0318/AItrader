@@ -142,11 +142,13 @@ class MTFComponentTester(DiagnosticStep):
                 else:
                     print("        ❌ OI 获取失败")
 
-                # Test Funding Rate
+                # Test Funding Rate (使用 Binance 作为主要数据源)
                 kline_client = BinanceKlineClient(timeout=10)
                 binance_fr = kline_client.get_funding_rate(symbol=self.ctx.symbol)
                 if binance_fr:
-                    print(f"        ✅ Funding Rate (Binance 8h): {binance_fr.get('funding_rate_pct', 0):.4f}%")
+                    print(f"        ✅ Settled FR: {binance_fr.get('funding_rate_pct', 0):.4f}% | Predicted FR: {binance_fr.get('predicted_rate_pct', 0):.4f}%")
+                    # v4.8: 保存 Binance funding rate 到 context (主要数据源)
+                    self.ctx.binance_funding_rate = binance_fr
 
         except ImportError as e:
             print(f"     ❌ 无法导入 CoinalyzeClient: {e}")
@@ -234,11 +236,20 @@ class MTFComponentTester(DiagnosticStep):
             weighted_obi_cfg = ob_proc_cfg.get('weighted_obi', {})
             anomaly_cfg = ob_proc_cfg.get('anomaly_detection', {})
 
+            # Ensure all required keys are present (avoid KeyError)
+            weighted_obi_config = {
+                "base_decay": weighted_obi_cfg.get('base_decay', 0.8),
+                "adaptive": weighted_obi_cfg.get('adaptive', True),
+                "volatility_factor": weighted_obi_cfg.get('volatility_factor', 0.1),
+                "min_decay": weighted_obi_cfg.get('min_decay', 0.5),
+                "max_decay": weighted_obi_cfg.get('max_decay', 0.95),
+            }
+
             ob_processor = OrderBookProcessor(
                 price_band_pct=ob_proc_cfg.get('price_band_pct', 0.5),
                 base_anomaly_threshold=anomaly_cfg.get('base_threshold', 3.0),
                 slippage_amounts=ob_proc_cfg.get('slippage_amounts', [0.1, 0.5, 1.0]),
-                weighted_obi_config=weighted_obi_cfg if weighted_obi_cfg else None,
+                weighted_obi_config=weighted_obi_config,
                 history_size=ob_proc_cfg.get('history', {}).get('size', 10),
                 logger=None
             )
@@ -335,9 +346,14 @@ class MTFComponentTester(DiagnosticStep):
                 wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
                 print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
 
-            # Hard control status
+            # Hard control status (v3.16: AI 建议，非本地覆盖)
             hard_control = sr_result.get('hard_control', {})
-            print(f"     ⚠️ 硬风控: Block LONG={hard_control.get('block_long', False)}, Block SHORT={hard_control.get('block_short', False)}")
+            block_long = hard_control.get('block_long', False)
+            block_short = hard_control.get('block_short', False)
+            if block_long or block_short:
+                print(f"     📋 AI 建议: 避免 LONG={block_long}, 避免 SHORT={block_short} (v3.16 AI 自主判断)")
+            else:
+                print(f"     ✅ S/R Zone 建议: 无限制")
 
             print("     ✅ S/R Zone Calculator 测试完成")
 
@@ -391,16 +407,35 @@ class TelegramChecker(DiagnosticStep):
             else:
                 self.ctx.add_warning("TelegramBot.send_message_sync 方法缺失")
 
-            from utils.telegram_command_handler import TelegramCommandHandler
+            from utils.telegram_command_handler import (
+                TelegramCommandHandler,
+                QUERY_COMMANDS,
+                CONTROL_COMMANDS,
+                CONTROL_COMMANDS_WITH_ARGS,
+            )
             print("     ✅ TelegramCommandHandler 类可导入")
 
-            # Check command methods
-            commands = ['cmd_status', 'cmd_position', 'cmd_pause', 'cmd_resume', 'cmd_close']
-            for cmd in commands:
-                if hasattr(TelegramCommandHandler, cmd):
-                    print(f"        ✅ {cmd} 方法存在")
+            # Check command dispatch registries (v3.0: commands dispatched via strategy_callback)
+            required_query = ['status', 'position', 'balance', 'analyze', 'orders']
+            required_control = ['pause', 'resume', 'close']
+            required_control_args = ['force_analysis', 'modify_sl', 'modify_tp']
+
+            print("     📋 命令注册检查 (dispatch registry):")
+            for cmd in required_query:
+                if cmd in QUERY_COMMANDS:
+                    print(f"        ✅ query/{cmd} → '{QUERY_COMMANDS[cmd]}'")
                 else:
-                    print(f"        ⚠️ {cmd} 方法缺失")
+                    print(f"        ⚠️ query/{cmd} 未注册")
+            for cmd in required_control:
+                if cmd in CONTROL_COMMANDS:
+                    print(f"        ✅ control/{cmd} (PIN required)")
+                else:
+                    print(f"        ⚠️ control/{cmd} 未注册")
+            for cmd in required_control_args:
+                if cmd in CONTROL_COMMANDS_WITH_ARGS:
+                    print(f"        ✅ control/{cmd} (with args)")
+                else:
+                    print(f"        ⚠️ control/{cmd} 未注册")
 
             # Test API connectivity
             print()
@@ -476,6 +511,7 @@ class ErrorRecoveryChecker(DiagnosticStep):
         print()
         print("  [4] SL/TP 验证失败恢复:")
         print("     ✅ validate_multiagent_sltp 失败 → 回退到 calculate_technical_sltp")
+        print("        (包括: SL 方向错误, 距离不足, R/R < 1.5:1)")
         print("     ✅ 技术 SL/TP 计算失败 → 使用默认 2% SL, confidence-based TP")
 
         # Network error recovery

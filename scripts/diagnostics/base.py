@@ -8,7 +8,9 @@ across all diagnostic steps.
 import io
 import os
 import sys
+import time
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -231,6 +233,16 @@ def parse_bar_interval(bar_type_str: str) -> str:
         return "15m"  # Default
 
 
+@contextmanager
+def step_timer(label: str, timings: dict):
+    """Context manager to time a step and store the result."""
+    start = time.monotonic()
+    yield
+    elapsed = time.monotonic() - start
+    timings[label] = elapsed
+    print(f"  [{elapsed:.2f}s] {label}")
+
+
 def extract_symbol(instrument_id: str) -> str:
     """
     Extract trading symbol from instrument ID.
@@ -292,6 +304,8 @@ class DiagnosticContext:
     # Position data
     current_position: Optional[Dict] = None
     account_balance: Dict = field(default_factory=dict)
+    account_context: Dict = field(default_factory=dict)  # v4.7: Portfolio risk fields
+    binance_leverage: int = 10  # v4.8: Real leverage from Binance API
 
     # Sentiment data
     sentiment_data: Dict = field(default_factory=dict)
@@ -302,12 +316,25 @@ class DiagnosticContext:
     # MTF data
     order_flow_report: Optional[Dict] = None
     derivatives_report: Optional[Dict] = None
-    orderbook_report: Optional[Dict] = None
+    orderbook_report: Optional[Dict] = None  # v3.7: Order book depth data
+    binance_derivatives_data: Optional[Dict] = None  # v3.21: Binance Top Traders, Taker Ratio
+    binance_funding_rate: Optional[Dict] = None  # v4.8: Binance 8h funding rate (主要数据源)
+    sr_zones_data: Optional[Dict] = None  # v2.6.0: S/R Zone Calculator data
+    sr_bars_data: Optional[List] = None  # v3.0: 120 bars for S/R Swing Detection
 
     # AI decision data
     multi_agent: Any = None
     signal_data: Dict = field(default_factory=dict)
     final_signal: str = "HOLD"
+    ai_call_trace: List = field(default_factory=list)  # Full AI I/O trace for log export
+
+    # Timing data (v3.0.0 diagnostic)
+    step_timings: Dict = field(default_factory=dict)
+
+    # v4.12: Code integrity & math verification results
+    code_integrity_results: List = field(default_factory=list)
+    math_verification_results: List = field(default_factory=list)
+    step_results: List = field(default_factory=list)  # (id, pass, desc) tuples
 
     # Output buffer for export
     output_buffer: io.StringIO = field(default_factory=io.StringIO)
@@ -315,7 +342,7 @@ class DiagnosticContext:
 
     # Step tracking
     current_step: int = 0
-    total_steps: int = 19  # 17 main steps + 2 summary steps
+    total_steps: int = 34  # 28 data steps + 3 order flow + code_integrity + math_verify + json_output
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
@@ -415,6 +442,26 @@ class DiagnosticRunner:
         )
         self.steps: List[DiagnosticStep] = []
 
+        # v2.4.8: Load dotenv early to ensure environment variables are available
+        # for all diagnostic steps (including APIHealthCheck which runs first)
+        self._load_environment()
+
+    def _load_environment(self) -> None:
+        """Load environment variables from .env files early."""
+        try:
+            from dotenv import load_dotenv
+            env_permanent = Path.home() / ".env.aitrader"
+            env_local = self.ctx.project_root / ".env"
+
+            if env_permanent.exists():
+                load_dotenv(env_permanent)
+            elif env_local.exists():
+                load_dotenv(env_local)
+            else:
+                load_dotenv()
+        except ImportError:
+            pass  # dotenv not installed, continue without it
+
     def add_step(self, step_class: type) -> None:
         """Add a diagnostic step."""
         self.steps.append(step_class(self.ctx))
@@ -441,8 +488,8 @@ class DiagnosticRunner:
             self.setup_output_capture()
 
             print("=" * 70)
-            print("  实盘信号诊断工具 v2.0 (模块化重构版)")
-            print("  基于 TradingAgents v3.12 架构")
+            print("  实盘信号诊断工具 (100% Live-Consistent)")
+            print("  基于 TradingAgents 架构 + R/R 硬性门槛")
             print("=" * 70)
             print()
 
@@ -494,7 +541,7 @@ class DiagnosticRunner:
 
     def export_results(self) -> Optional[Path]:
         """
-        Export diagnostic results to file.
+        Export diagnostic results to file + AI call trace to separate log.
 
         Returns:
             Path to exported file, or None if not in export mode
@@ -508,6 +555,8 @@ class DiagnosticRunner:
         logs_dir.mkdir(exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # 1. Main diagnosis report
         filename = f"diagnosis_{timestamp}.txt"
         filepath = logs_dir / filename
 
@@ -515,27 +564,103 @@ class DiagnosticRunner:
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(output_content)
 
+        # 2. AI call trace log (full input/output for every API call)
+        ai_log_filename = f"ai_calls_{timestamp}.txt"
+        ai_log_filepath = logs_dir / ai_log_filename
+        self._export_ai_call_trace(ai_log_filepath)
+
         print()
         print("=" * 70)
         print("  📤 诊断结果导出")
         print("=" * 70)
-        print(f"  ✅ 已保存到: {filepath}")
-        print(f"  📊 文件大小: {len(output_content):,} 字符")
+        print(f"  ✅ 诊断报告: {filepath}")
+        print(f"     ({len(output_content):,} 字符)")
+        print(f"  ✅ AI 调用日志: {ai_log_filepath}")
+        if ai_log_filepath.exists():
+            print(f"     ({ai_log_filepath.stat().st_size:,} 字节, 完整 AI 输入/输出)")
 
         if self.ctx.push_to_github:
-            self._push_to_github(filepath, filename)
+            self._push_to_github_multi([filepath, ai_log_filepath])
 
         return filepath
 
-    def _push_to_github(self, filepath: Path, filename: str) -> None:
-        """Push export file to GitHub."""
+    def _export_ai_call_trace(self, filepath: Path) -> None:
+        """Export full AI call trace with complete input/output to a separate log file."""
+        trace = self.ctx.ai_call_trace
+        if not trace:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write("No AI calls recorded in this diagnostic session.\n")
+            return
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write("=" * 80 + "\n")
+            f.write(f"  AI API Call Trace — {len(trace)} Sequential Calls\n")
+            f.write(f"  Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 80 + "\n\n")
+
+            # Summary table
+            f.write("┌─────┬──────────────────┬────────┬────────────┬──────────┬──────────┐\n")
+            f.write("│  #  │ Agent            │  Time  │  Tokens    │  Prompt  │  Reply   │\n")
+            f.write("├─────┼──────────────────┼────────┼────────────┼──────────┼──────────┤\n")
+            total_time = 0
+            total_tokens = 0
+            for i, call in enumerate(trace, 1):
+                label = call.get('label', f'call_{i}')
+                elapsed = call.get('elapsed_sec', 0)
+                tokens = call.get('tokens', {})
+                prompt_tk = tokens.get('prompt', 0)
+                completion_tk = tokens.get('completion', 0)
+                total_tk = tokens.get('total', 0)
+                total_time += elapsed
+                total_tokens += total_tk
+                f.write(f"│ {i:<3} │ {label:<16} │ {elapsed:>5.1f}s │ {total_tk:>10,} │ {prompt_tk:>8,} │ {completion_tk:>8,} │\n")
+            f.write("├─────┼──────────────────┼────────┼────────────┼──────────┼──────────┤\n")
+            f.write(f"│     │ TOTAL            │ {total_time:>5.1f}s │ {total_tokens:>10,} │          │          │\n")
+            f.write("└─────┴──────────────────┴────────┴────────────┴──────────┴──────────┘\n")
+            f.write("\n")
+
+            # Detailed call logs
+            for i, call in enumerate(trace, 1):
+                label = call.get('label', f'call_{i}')
+                elapsed = call.get('elapsed_sec', 0)
+                tokens = call.get('tokens', {})
+                temp = call.get('temperature', 0)
+                messages = call.get('messages', [])
+                response = call.get('response', '')
+
+                f.write("\n" + "=" * 80 + "\n")
+                f.write(f"  CALL {i}/{len(trace)}: {label}\n")
+                f.write(f"  Temperature: {temp}  |  Time: {elapsed:.1f}s  |  Tokens: {tokens.get('total', 0):,}\n")
+                f.write("=" * 80 + "\n")
+
+                for msg in messages:
+                    role = msg.get('role', 'unknown').upper()
+                    content = msg.get('content', '')
+                    f.write(f"\n{'─'*40} [{role} PROMPT] {'─'*40}\n\n")
+                    f.write(content)
+                    f.write(f"\n\n[{role} PROMPT length: {len(content):,} chars]\n")
+
+                f.write(f"\n{'─'*40} [AI RESPONSE] {'─'*40}\n\n")
+                f.write(response)
+                f.write(f"\n\n[AI RESPONSE length: {len(response):,} chars]\n")
+
+            f.write("\n" + "=" * 80 + "\n")
+            f.write("  END OF AI CALL TRACE\n")
+            f.write("=" * 80 + "\n")
+
+    def _push_to_github_multi(self, filepaths: list) -> None:
+        """Push multiple export files to GitHub in a single commit."""
         import subprocess
 
-        commit_msg = f"chore: Add diagnosis report {filename}"
+        filenames = [fp.name for fp in filepaths if fp.exists()]
+        commit_msg = f"chore: Add diagnosis report + AI call trace ({', '.join(filenames)})"
         try:
             os.chdir(self.ctx.project_root)
 
-            subprocess.run(['git', 'add', '-f', str(filepath)], check=True, capture_output=True)
+            for fp in filepaths:
+                if fp.exists():
+                    subprocess.run(['git', 'add', '-f', str(fp)], check=True, capture_output=True)
+
             subprocess.run(['git', 'commit', '-m', commit_msg], check=True, capture_output=True)
 
             result = subprocess.run(
@@ -547,8 +672,10 @@ class DiagnosticRunner:
             subprocess.run(['git', 'push', '-u', 'origin', branch], check=True, capture_output=True)
 
             print(f"  ✅ 已推送到 GitHub (分支: {branch})")
-            print(f"  📎 文件路径: logs/{filename}")
+            for fn in filenames:
+                print(f"  📎 logs/{fn}")
 
         except subprocess.CalledProcessError as e:
             print(f"  ⚠️ Git 推送失败: {e}")
-            print(f"     请手动提交: git add -f {filepath} && git commit -m '{commit_msg}' && git push")
+            paths_str = ' '.join(str(fp) for fp in filepaths)
+            print(f"     请手动提交: git add -f {paths_str} && git commit && git push")

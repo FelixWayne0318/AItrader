@@ -5,7 +5,6 @@ Provides AI-powered market analysis and trading signal generation.
 """
 
 import json
-import re
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime

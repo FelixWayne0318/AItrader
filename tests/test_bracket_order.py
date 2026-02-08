@@ -66,7 +66,7 @@ def _ensure_nautilus_stub() -> None:
     TimeInForce = enum.Enum("TimeInForce", "GTC FOK IOC")
     PositionSide = enum.Enum("PositionSide", "LONG SHORT")
     PriceType = enum.Enum("PriceType", "LAST MARK")
-    TriggerType = enum.Enum("TriggerType", "LAST INDEX MARK")
+    TriggerType = enum.Enum("TriggerType", "LAST INDEX MARK DEFAULT")
     OrderType = enum.Enum("OrderType", "MARKET LIMIT STOP_MARKET")
     enums_mod.OrderSide = OrderSide
     enums_mod.TimeInForce = TimeInForce
@@ -234,10 +234,16 @@ def _make_strategy_stub() -> DeepSeekAIStrategy:
     strategy.enable_trailing_stop = False
     strategy.trailing_stop_state = {}
     strategy.log = DummyLogger()
+    # v4.11: Additional attributes needed for _validate_sltp_for_entry
+    strategy.binance_account = None
+    strategy.telegram_bot = None
+    strategy.enable_telegram = False
+    strategy._last_signal_status = {}
     return strategy
 
 
 def test_submit_bracket_order_uses_latest_price_data() -> None:
+    """v4.11: Bracket order now uses _validate_sltp_for_entry (unified validation)."""
     strategy = _make_strategy_stub()
 
     strategy._submit_bracket_order(OrderSide.BUY, 0.01)
@@ -246,13 +252,16 @@ def test_submit_bracket_order_uses_latest_price_data() -> None:
     tp_price = strategy.order_factory.kwargs["tp_price"]
     sl_trigger = strategy.order_factory.kwargs["sl_trigger_price"]
 
-    assert tp_price == Decimal("1030.0")
+    # SL: Support-based ($950 - 0.1% buffer) = $949.05
     assert sl_trigger == Decimal("949.05")
+    # TP: Resistance-based with R/R >= 1.5:1 adjustment (via calculate_technical_sltp)
+    assert float(tp_price) > 1050.0, f"TP should be above resistance, got {tp_price}"
     strategy.submit_order_list.assert_called_once()
     strategy._submit_order.assert_not_called()
 
 
-def test_submit_bracket_order_falls_back_when_price_missing() -> None:
+def test_submit_bracket_order_blocks_when_price_missing() -> None:
+    """v3.18 + v4.11: No fallback to unprotected market order when price is missing."""
     strategy = _make_strategy_stub()
     strategy.latest_price_data = {}
     strategy.indicator_manager.recent_bars = []
@@ -260,11 +269,12 @@ def test_submit_bracket_order_falls_back_when_price_missing() -> None:
 
     strategy._submit_bracket_order(OrderSide.SELL, 0.02)
 
-    strategy._submit_order.assert_called_once_with(side=OrderSide.SELL, quantity=0.02, reduce_only=False)
+    # v3.18: Should NOT submit any order (no unprotected market orders)
+    strategy._submit_order.assert_not_called()
     assert strategy.order_factory.kwargs is None
 
 
 if __name__ == "__main__":
     test_submit_bracket_order_uses_latest_price_data()
-    test_submit_bracket_order_falls_back_when_price_missing()
+    test_submit_bracket_order_blocks_when_price_missing()
     print("✅ bracket order tests passed")

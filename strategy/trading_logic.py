@@ -7,17 +7,10 @@ This module contains core trading logic functions that are used by both:
 
 This ensures 100% consistency between diagnostic and live trading behavior.
 
-当前使用的函数 (v9.0):
-- check_confidence_threshold() - 信心阈值检查
+Functions:
 - calculate_position_size() - 仓位计算
-- validate_multiagent_sltp() - MultiAgent SL/TP 验证 (v9.0 新增)
-- calculate_technical_sltp() - 技术分析 SL/TP 计算 (v9.0 新增)
-
-以下函数已被标记为 LEGACY (不再使用):
-- process_signals() - 层级架构使用Judge决策，无需信号合并
-- check_divergence() - 层级架构不存在信号分歧
-- resolve_divergence_by_confidence() - 层级架构不存在信号分歧
-- create_hold_signal() - 可选保留
+- validate_multiagent_sltp() - MultiAgent SL/TP 验证
+- calculate_technical_sltp() - 技术分析 SL/TP 计算
 """
 
 import math
@@ -62,6 +55,7 @@ def _get_trading_logic_config() -> Dict[str, Any]:
             'min_tp_distance_pct': config.get('trading_logic', 'min_tp_distance_pct', default=0.005),
             'default_sl_pct': config.get('trading_logic', 'default_sl_pct', default=0.02),
             'default_tp_pct': config.get('trading_logic', 'default_tp_pct', default=0.03),
+            'min_rr_ratio': config.get('trading_logic', 'min_rr_ratio', default=1.5),
             'tp_pct_by_confidence': config.get('trading_logic', 'tp_pct_by_confidence', default={
                 'high': 0.03,
                 'medium': 0.02,
@@ -85,6 +79,11 @@ def get_min_sl_distance_pct() -> float:
 def get_min_tp_distance_pct() -> float:
     """获取最小止盈距离百分比"""
     return _get_trading_logic_config()['min_tp_distance_pct']
+
+
+def get_min_rr_ratio() -> float:
+    """获取最小风险收益比 (R/R)"""
+    return _get_trading_logic_config()['min_rr_ratio']
 
 
 def get_default_sl_pct() -> float:
@@ -139,200 +138,6 @@ def get_quantity_adjustment_step() -> float:
 # LOGIC CONSTANTS (不可配置 - 这些是业务逻辑规则)
 # =============================================================================
 
-# Confidence weight mapping (used across all functions)
-CONFIDENCE_WEIGHT = {
-    'HIGH': 3,
-    'MEDIUM': 2,
-    'LOW': 1,
-}
-
-CONFIDENCE_LEVELS = {
-    'LOW': 0,
-    'MEDIUM': 1,
-    'HIGH': 2,
-}
-
-VALID_CONFIDENCES = {'HIGH', 'MEDIUM', 'LOW'}
-
-
-# =============================================================================
-# LEGACY FUNCTIONS - 不再使用，保留用于向后兼容
-# =============================================================================
-
-
-def check_divergence(
-    signal_deepseek: str,
-    signal_multi: str,
-) -> Tuple[bool, bool, bool]:
-    """
-    Check if two signals are divergent.
-
-    Parameters
-    ----------
-    signal_deepseek : str
-        DeepSeek signal ('BUY', 'SELL', 'HOLD')
-    signal_multi : str
-        MultiAgent signal ('BUY', 'SELL', 'HOLD')
-
-    Returns
-    -------
-    Tuple[bool, bool, bool]
-        (is_consensus, is_opposing, is_hold_vs_action)
-        - is_consensus: True if signals match
-        - is_opposing: True if BUY vs SELL
-        - is_hold_vs_action: True if HOLD vs BUY/SELL
-    """
-    # Check for consensus
-    if signal_deepseek == signal_multi:
-        return True, False, False
-
-    # Check for opposing signals (BUY vs SELL)
-    opposing_signals = {signal_deepseek, signal_multi} == {'BUY', 'SELL'}
-
-    # Check for HOLD vs actionable signal (HOLD vs BUY or HOLD vs SELL)
-    hold_vs_action = (
-        (signal_deepseek == 'HOLD' and signal_multi in ['BUY', 'SELL']) or
-        (signal_multi == 'HOLD' and signal_deepseek in ['BUY', 'SELL'])
-    )
-
-    return False, opposing_signals, hold_vs_action
-
-
-def resolve_divergence_by_confidence(
-    signal_deepseek: Dict[str, Any],
-    signal_multi: Dict[str, Any],
-    logger: Optional[logging.Logger] = None,
-) -> Tuple[Optional[Dict[str, Any]], str]:
-    """
-    Resolve opposing signals using weighted confidence fusion.
-
-    Based on industry best practices from QuantAgent and TradingAgents frameworks:
-    - Use the signal with higher confidence
-    - Only skip when confidence levels are equal
-
-    Parameters
-    ----------
-    signal_deepseek : Dict
-        DeepSeek AI signal with 'signal' and 'confidence'
-    signal_multi : Dict
-        MultiAgent signal with 'signal' and 'confidence'
-    logger : Logger, optional
-        Logger for output messages
-
-    Returns
-    -------
-    Tuple[Optional[Dict], str]
-        (resolved_signal, log_message)
-        - resolved_signal: Dict with the winning signal, or None if equal confidence
-        - log_message: Description of what happened
-    """
-    # Parameter validation - check for None signals
-    if signal_deepseek is None or signal_multi is None:
-        msg = (
-            f"❌ Confidence fusion failed: signal is None "
-            f"(deepseek={signal_deepseek is not None}, multi={signal_multi is not None})"
-        )
-        if logger:
-            logger.error(msg)
-        return None, msg
-
-    # Check for required 'signal' key
-    if 'signal' not in signal_deepseek:
-        msg = "❌ Confidence fusion failed: DeepSeek signal missing 'signal' key"
-        if logger:
-            logger.error(msg)
-        return None, msg
-    if 'signal' not in signal_multi:
-        msg = "❌ Confidence fusion failed: MultiAgent signal missing 'signal' key"
-        if logger:
-            logger.error(msg)
-        return None, msg
-
-    ds_signal = signal_deepseek['signal']
-    ds_conf = signal_deepseek.get('confidence', 'MEDIUM')
-    ma_signal = signal_multi['signal']
-    ma_conf = signal_multi.get('confidence', 'MEDIUM')
-
-    # Validate and fix invalid confidence values
-    if ds_conf not in VALID_CONFIDENCES:
-        msg = f"⚠️ Invalid DeepSeek confidence '{ds_conf}', using MEDIUM as default"
-        if logger:
-            logger.warning(msg)
-        ds_conf = 'MEDIUM'
-    if ma_conf not in VALID_CONFIDENCES:
-        msg = f"⚠️ Invalid MultiAgent confidence '{ma_conf}', using MEDIUM as default"
-        if logger:
-            logger.warning(msg)
-        ma_conf = 'MEDIUM'
-
-    ds_weight = CONFIDENCE_WEIGHT.get(ds_conf, 2)
-    ma_weight = CONFIDENCE_WEIGHT.get(ma_conf, 2)
-
-    fusion_msg = (
-        f"🔀 Confidence fusion: DeepSeek={ds_signal}({ds_conf}, w={ds_weight}) "
-        f"vs MultiAgent={ma_signal}({ma_conf}, w={ma_weight})"
-    )
-    if logger:
-        logger.info(fusion_msg)
-
-    if ds_weight > ma_weight:
-        # DeepSeek has higher confidence - use its signal
-        result_msg = f"✅ Fusion result: Using DeepSeek signal ({ds_signal}) - higher confidence"
-        if logger:
-            logger.info(result_msg)
-        return signal_deepseek, result_msg
-
-    elif ma_weight > ds_weight:
-        # MultiAgent has higher confidence - use its signal
-        result_msg = f"✅ Fusion result: Using MultiAgent signal ({ma_signal}) - higher confidence"
-        if logger:
-            logger.info(result_msg)
-        # Construct signal in DeepSeek format
-        resolved = {
-            'signal': ma_signal,
-            'confidence': ma_conf,
-            'reason': f"MultiAgent signal selected (higher confidence: {ma_conf} vs {ds_conf}). {signal_multi.get('debate_summary', '')}",
-            'stop_loss': signal_multi.get('stop_loss'),
-            'take_profit': signal_multi.get('take_profit'),
-        }
-        return resolved, result_msg
-
-    else:
-        # Equal confidence - return None to trigger skip
-        result_msg = f"⚖️ Equal confidence ({ds_conf}) - cannot resolve divergence"
-        if logger:
-            logger.warning(result_msg)
-        return None, result_msg
-
-
-def check_confidence_threshold(
-    confidence: str,
-    min_confidence: str,
-) -> Tuple[bool, str]:
-    """
-    Check if signal confidence meets minimum threshold.
-
-    Parameters
-    ----------
-    confidence : str
-        Signal confidence ('LOW', 'MEDIUM', 'HIGH')
-    min_confidence : str
-        Minimum required confidence
-
-    Returns
-    -------
-    Tuple[bool, str]
-        (passes_threshold, message)
-    """
-    min_conf_level = CONFIDENCE_LEVELS.get(min_confidence, 1)
-    signal_conf_level = CONFIDENCE_LEVELS.get(confidence, 1)
-
-    if signal_conf_level < min_conf_level:
-        msg = f"⚠️ Signal confidence {confidence} below minimum {min_confidence}, skipping trade"
-        return False, msg
-
-    msg = f"✅ Confidence {confidence} >= minimum {min_confidence}"
-    return True, msg
 
 
 def calculate_position_size(
@@ -384,8 +189,11 @@ def calculate_position_size(
         return 0.0, {'error': 'Invalid price'}
 
     equity = config.get('equity', 1000)
+    leverage = config.get('leverage', 5)
     max_position_ratio = config.get('max_position_ratio', 0.30)
-    max_usdt = equity * max_position_ratio
+    # v4.8: max_usdt 现在包含杠杆
+    # 例: $1000 × 30% × 10杠杆 = $3000 最大仓位
+    max_usdt = equity * max_position_ratio * leverage
 
     # v3.12: Determine sizing method
     sizing_config = config.get('position_sizing', {})
@@ -531,11 +339,32 @@ def calculate_position_size(
         }
 
     elif method == 'ai_controlled':
-        # v3.12: AI specifies target position as percentage
-        size_pct = float(ai_size_pct) / 100.0  # Convert 0-100 to 0-1
+        # v4.8: AI 控制仓位计算
+        # 公式: 最终仓位 = max_usdt × AI建议百分比
+        # max_usdt = equity × max_position_ratio × leverage (已在上面计算)
 
-        # Calculate target USDT based on percentage of max allowed
-        position_usdt = max_usdt * size_pct
+        ai_config = sizing_config.get('ai_controlled', {})
+        default_size_pct = ai_config.get('default_size_pct', 50)
+        confidence_mapping = ai_config.get('confidence_mapping', {
+            'HIGH': 80,
+            'MEDIUM': 50,
+            'LOW': 30
+        })
+
+        # 确定仓位百分比 (优先级: AI 输出 > 信心映射 > 默认值)
+        if ai_size_pct is not None and ai_size_pct >= 0:
+            # AI 直接提供了仓位百分比
+            size_pct = float(ai_size_pct)
+            size_source = 'ai_provided'
+        else:
+            # 根据信心等级映射
+            confidence = signal_data.get('confidence', 'MEDIUM').upper()
+            size_pct = confidence_mapping.get(confidence, default_size_pct)
+            size_source = f'confidence_{confidence}'
+
+        # 转换为小数并计算仓位
+        size_ratio = size_pct / 100.0  # Convert 0-100 to 0-1
+        position_usdt = max_usdt * size_ratio
 
         # Apply risk multiplier
         position_usdt *= risk_multiplier
@@ -545,14 +374,23 @@ def calculate_position_size(
         details = {
             'method': 'ai_controlled',
             'ai_size_pct': ai_size_pct,
+            'size_pct_used': size_pct,
+            'size_source': size_source,
+            'confidence': signal_data.get('confidence', 'MEDIUM'),
             'equity': equity,
+            'leverage': leverage,
+            'max_position_ratio': max_position_ratio,
             'max_usdt': max_usdt,
             'risk_multiplier': risk_multiplier,
             'final_usdt': final_usdt,
         }
 
         if logger:
-            logger.info(f"📊 AI-controlled sizing: {ai_size_pct}% of max = ${final_usdt:.2f}")
+            logger.info(
+                f"📊 AI-controlled sizing: {size_pct}% of ${max_usdt:.0f} "
+                f"(equity=${equity} × {max_position_ratio*100:.0f}% × {leverage}x) "
+                f"({size_source}) = ${final_usdt:.2f}"
+            )
 
     else:
         # Original fixed_pct method (legacy)
@@ -713,6 +551,7 @@ def validate_multiagent_sltp(
     - BUY/LONG: SL must be below entry, TP must be above entry
     - SELL/SHORT: SL must be above entry, TP must be below entry
     - Both must have minimum distance from entry
+    - R/R ratio must meet minimum threshold (default 1.5:1)
 
     Parameters
     ----------
@@ -739,6 +578,19 @@ def validate_multiagent_sltp(
     # v3.12: Support both legacy (BUY/SELL) and new (LONG/SHORT) formats
     is_long = side.upper() in ('BUY', 'LONG')
 
+    # v3.15: Enforce minimum SL distance (reverts v3.13 "trust AI" approach)
+    # Problem: AI can return SL too close to entry (e.g., 0.09%), causing immediate stop-outs
+    # Solution: Reject AI SL/TP if distance < min threshold, force fallback to S/R-based calculation
+    min_sl = get_min_sl_distance_pct()
+    min_tp = get_min_tp_distance_pct()
+
+    # Hard rejection for SL too close (this is the key fix)
+    if sl_distance < min_sl:
+        return False, None, None, (
+            f"SL too close to entry ({sl_distance*100:.2f}% < {min_sl*100}% minimum). "
+            f"Will use S/R-based technical analysis instead."
+        )
+
     if is_long:
         # BUY: SL must be < entry, TP must be > entry
         if multi_sl >= entry_price:
@@ -746,14 +598,21 @@ def validate_multiagent_sltp(
         if multi_tp <= entry_price:
             return False, None, None, f"BUY TP (${multi_tp:,.2f}) must be > entry (${entry_price:,.2f})"
 
-        # Check minimum distances
-        min_sl = get_min_sl_distance_pct()
-        min_tp = get_min_tp_distance_pct()
-        if sl_distance < min_sl:
-            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {min_sl*100}%)"
-        if tp_distance < min_tp:
-            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {min_tp*100}%)"
+        # R/R hard gate: reject if risk/reward ratio below minimum
+        risk = entry_price - multi_sl
+        reward = multi_tp - entry_price
+        if risk > 0:
+            rr_ratio = reward / risk
+            min_rr = get_min_rr_ratio()
+            if rr_ratio < min_rr:
+                return False, None, None, (
+                    f"R/R {rr_ratio:.2f}:1 < {min_rr}:1 minimum "
+                    f"(SL ${multi_sl:,.2f}, TP ${multi_tp:,.2f}). "
+                    f"Will use S/R-based technical analysis instead."
+                )
 
+        if tp_distance < min_tp:
+            return True, multi_sl, multi_tp, f"Valid with note: TP close to entry ({tp_distance*100:.2f}%)"
         return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
 
     else:  # SELL
@@ -763,14 +622,21 @@ def validate_multiagent_sltp(
         if multi_tp >= entry_price:
             return False, None, None, f"SELL TP (${multi_tp:,.2f}) must be < entry (${entry_price:,.2f})"
 
-        # Check minimum distances
-        min_sl = get_min_sl_distance_pct()
-        min_tp = get_min_tp_distance_pct()
-        if sl_distance < min_sl:
-            return False, None, None, f"SL too close to entry ({sl_distance*100:.3f}% < {min_sl*100}%)"
-        if tp_distance < min_tp:
-            return False, None, None, f"TP too close to entry ({tp_distance*100:.3f}% < {min_tp*100}%)"
+        # R/R hard gate: reject if risk/reward ratio below minimum
+        risk = multi_sl - entry_price
+        reward = entry_price - multi_tp
+        if risk > 0:
+            rr_ratio = reward / risk
+            min_rr = get_min_rr_ratio()
+            if rr_ratio < min_rr:
+                return False, None, None, (
+                    f"R/R {rr_ratio:.2f}:1 < {min_rr}:1 minimum "
+                    f"(SL ${multi_sl:,.2f}, TP ${multi_tp:,.2f}). "
+                    f"Will use S/R-based technical analysis instead."
+                )
 
+        if tp_distance < min_tp:
+            return True, multi_sl, multi_tp, f"Valid with note: TP close to entry ({tp_distance*100:.2f}%)"
         return True, multi_sl, multi_tp, f"Valid (SL: {sl_distance*100:.2f}%, TP: {tp_distance*100:.2f}%)"
 
 
@@ -781,14 +647,23 @@ def calculate_technical_sltp(
     resistance: float,
     confidence: str,
     use_support_resistance: bool = True,
-    sl_buffer_pct: float = 0.001,
+    sl_buffer_pct: float = 0.005,  # 0.5% buffer to confirm real S/R breakout
+    tp_buffer_pct: float = 0.005,  # 0.5% buffer before S/R for TP
+    min_rr_ratio: float = 1.5,
 ) -> Tuple[float, float, str]:
     """
-    Calculate SL/TP based on technical analysis.
+    Calculate SL/TP based on technical analysis (v3.14 - S/R based TP).
 
     This function calculates stop loss and take profit prices using:
-    - Support/resistance levels (if available and valid)
-    - Default percentage-based fallback
+    - Support/resistance levels for BOTH SL and TP (if available and valid)
+    - Default percentage-based fallback only when S/R is not available
+    - Ensures minimum R/R ratio of 1.5:1
+
+    v3.14 Changes:
+    - TP now uses S/R zones instead of fixed percentage
+    - LONG: TP targets resistance level (with buffer before it)
+    - SHORT: TP targets support level (with buffer before it)
+    - R/R validation: if R/R < min_rr_ratio, adjusts TP to meet requirement
 
     Parameters
     ----------
@@ -797,15 +672,19 @@ def calculate_technical_sltp(
     entry_price : float
         Entry price
     support : float
-        Support level price
+        Support level price (nearest support zone center)
     resistance : float
-        Resistance level price
+        Resistance level price (nearest resistance zone center)
     confidence : str
         Signal confidence ('HIGH', 'MEDIUM', 'LOW')
     use_support_resistance : bool
         Whether to use support/resistance levels
     sl_buffer_pct : float
-        Buffer percentage to add to support/resistance
+        Buffer percentage beyond S/R for SL (default 0.1%)
+    tp_buffer_pct : float
+        Buffer percentage before S/R for TP (default 0.1%)
+    min_rr_ratio : float
+        Minimum required Risk/Reward ratio (default 1.5)
 
     Returns
     -------
@@ -817,170 +696,111 @@ def calculate_technical_sltp(
     # v3.12: Support both legacy (BUY/SELL) and new (LONG/SHORT) formats
     is_long = side.upper() in ('BUY', 'LONG')
 
+    # Get default TP percentage for fallback
+    tp_pct = get_tp_pct_by_confidence(confidence)
+    default_sl_pct = get_default_sl_pct()
+
+    method_parts = []
+
     if is_long:
-        # BUY: Stop loss below entry
-        default_sl = entry_price * 0.98  # Default 2% below
+        # =====================================================
+        # LONG: SL below support, TP at resistance
+        # =====================================================
+
+        # --- Stop Loss ---
+        default_sl = entry_price * (1 - default_sl_pct)
 
         if use_support_resistance and support > 0:
             potential_sl = support * (1 - sl_buffer_pct)
             if potential_sl < entry_price - PRICE_EPSILON:
                 stop_loss_price = potential_sl
-                method = f"Support-based SL (${support:,.2f} - buffer)"
+                method_parts.append(f"SL: Support-based (${support:,.0f} - {sl_buffer_pct*100:.1f}% buffer)")
             else:
                 stop_loss_price = default_sl
-                method = f"Default 2% SL (support ${support:,.2f} >= entry)"
+                method_parts.append(f"SL: Default {default_sl_pct*100:.0f}% (support too close)")
         else:
             stop_loss_price = default_sl
-            method = "Default 2% SL"
+            method_parts.append(f"SL: Default {default_sl_pct*100:.0f}%")
 
-        # TP
-        tp_pct = get_tp_pct_by_confidence(confidence)
-        take_profit_price = entry_price * (1 + tp_pct)
+        # --- Take Profit ---
+        default_tp = entry_price * (1 + tp_pct)
 
-    else:  # SELL
-        # SELL: Stop loss above entry
-        default_sl = entry_price * 1.02  # Default 2% above
+        if use_support_resistance and resistance > 0:
+            # TP at resistance minus buffer (take profit slightly before resistance)
+            potential_tp = resistance * (1 - tp_buffer_pct)
+            if potential_tp > entry_price + PRICE_EPSILON:
+                take_profit_price = potential_tp
+                method_parts.append(f"TP: Resistance-based (${resistance:,.0f} - {tp_buffer_pct*100:.1f}% buffer)")
+            else:
+                take_profit_price = default_tp
+                method_parts.append(f"TP: Default {tp_pct*100:.0f}% (resistance too close)")
+        else:
+            take_profit_price = default_tp
+            method_parts.append(f"TP: Default {tp_pct*100:.0f}%")
+
+        # --- R/R Validation ---
+        sl_distance = entry_price - stop_loss_price
+        tp_distance = take_profit_price - entry_price
+
+        if sl_distance > 0:
+            rr_ratio = tp_distance / sl_distance
+            if rr_ratio < min_rr_ratio:
+                # Adjust TP to meet minimum R/R ratio
+                adjusted_tp = entry_price + (sl_distance * min_rr_ratio)
+                if adjusted_tp > take_profit_price:
+                    take_profit_price = adjusted_tp
+                    method_parts.append(f"TP adjusted for R/R >= {min_rr_ratio}:1")
+
+    else:
+        # =====================================================
+        # SHORT: SL above resistance, TP at support
+        # =====================================================
+
+        # --- Stop Loss ---
+        default_sl = entry_price * (1 + default_sl_pct)
 
         if use_support_resistance and resistance > 0:
             potential_sl = resistance * (1 + sl_buffer_pct)
             if potential_sl > entry_price + PRICE_EPSILON:
                 stop_loss_price = potential_sl
-                method = f"Resistance-based SL (${resistance:,.2f} + buffer)"
+                method_parts.append(f"SL: Resistance-based (${resistance:,.0f} + {sl_buffer_pct*100:.1f}% buffer)")
             else:
                 stop_loss_price = default_sl
-                method = f"Default 2% SL (resistance ${resistance:,.2f} <= entry)"
+                method_parts.append(f"SL: Default {default_sl_pct*100:.0f}% (resistance too close)")
         else:
             stop_loss_price = default_sl
-            method = "Default 2% SL"
+            method_parts.append(f"SL: Default {default_sl_pct*100:.0f}%")
 
-        # TP
-        tp_pct = get_tp_pct_by_confidence(confidence)
-        take_profit_price = entry_price * (1 - tp_pct)
+        # --- Take Profit ---
+        default_tp = entry_price * (1 - tp_pct)
 
+        if use_support_resistance and support > 0:
+            # TP at support plus buffer (take profit slightly before support)
+            potential_tp = support * (1 + tp_buffer_pct)
+            if potential_tp < entry_price - PRICE_EPSILON:
+                take_profit_price = potential_tp
+                method_parts.append(f"TP: Support-based (${support:,.0f} + {tp_buffer_pct*100:.1f}% buffer)")
+            else:
+                take_profit_price = default_tp
+                method_parts.append(f"TP: Default {tp_pct*100:.0f}% (support too close)")
+        else:
+            take_profit_price = default_tp
+            method_parts.append(f"TP: Default {tp_pct*100:.0f}%")
+
+        # --- R/R Validation ---
+        sl_distance = stop_loss_price - entry_price
+        tp_distance = entry_price - take_profit_price
+
+        if sl_distance > 0:
+            rr_ratio = tp_distance / sl_distance
+            if rr_ratio < min_rr_ratio:
+                # Adjust TP to meet minimum R/R ratio
+                adjusted_tp = entry_price - (sl_distance * min_rr_ratio)
+                if adjusted_tp < take_profit_price:
+                    take_profit_price = adjusted_tp
+                    method_parts.append(f"TP adjusted for R/R >= {min_rr_ratio}:1")
+
+    method = " | ".join(method_parts)
     return stop_loss_price, take_profit_price, method
 
 
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
-
-
-def create_hold_signal(reason: str) -> Dict[str, Any]:
-    """
-    Create a standardized HOLD signal.
-
-    Parameters
-    ----------
-    reason : str
-        Reason for HOLD
-
-    Returns
-    -------
-    Dict
-        Standardized HOLD signal
-    """
-    return {
-        'signal': 'HOLD',
-        'confidence': 'LOW',
-        'reason': reason,
-        'stop_loss': None,
-        'take_profit': None,
-    }
-
-
-def process_signals(
-    signal_deepseek: Dict[str, Any],
-    signal_multi: Dict[str, Any],
-    use_confidence_fusion: bool = True,
-    skip_on_divergence: bool = True,
-    logger: Optional[logging.Logger] = None,
-) -> Tuple[Dict[str, Any], bool, str]:
-    """
-    Process and merge DeepSeek and MultiAgent signals.
-
-    This is the main signal processing logic used by both live trading and diagnostic.
-
-    Parameters
-    ----------
-    signal_deepseek : Dict
-        DeepSeek AI signal
-    signal_multi : Dict
-        MultiAgent signal
-    use_confidence_fusion : bool
-        Whether to use confidence fusion for divergence
-    skip_on_divergence : bool
-        Whether to skip trade on unresolved divergence
-    logger : Logger, optional
-        Logger for output messages
-
-    Returns
-    -------
-    Tuple[Dict, bool, str]
-        (final_signal, is_consensus, status_message)
-    """
-    ds_signal = signal_deepseek.get('signal', 'ERROR')
-    ma_signal = signal_multi.get('signal', 'ERROR')
-
-    # Check divergence
-    is_consensus, is_opposing, is_hold_vs_action = check_divergence(ds_signal, ma_signal)
-
-    if is_consensus:
-        # Both agree - use DeepSeek signal but with MultiAgent SL/TP if available
-        msg = f"✅ Consensus: Both analyzers agree on {ds_signal}"
-        if logger:
-            logger.info(msg)
-
-        # Merge SL/TP from MultiAgent if available
-        final_signal = signal_deepseek.copy()
-        if signal_multi.get('stop_loss') and signal_multi.get('take_profit'):
-            final_signal['stop_loss_multi'] = signal_multi['stop_loss']
-            final_signal['take_profit_multi'] = signal_multi['take_profit']
-            if logger:
-                logger.info(
-                    f"📊 Using MultiAgent SL/TP: "
-                    f"SL=${signal_multi['stop_loss']:,.2f}, TP=${signal_multi['take_profit']:,.2f}"
-                )
-
-        return final_signal, True, msg
-
-    # Handle divergence
-    if is_opposing or is_hold_vs_action:
-        divergence_type = "BUY vs SELL" if is_opposing else "HOLD vs action"
-
-        if use_confidence_fusion:
-            resolved_signal, fusion_msg = resolve_divergence_by_confidence(
-                signal_deepseek, signal_multi, logger
-            )
-
-            if resolved_signal:
-                return resolved_signal, False, fusion_msg
-
-            # Equal confidence - check skip_on_divergence
-            if skip_on_divergence:
-                msg = f"🚫 Equal confidence divergence ({divergence_type}) - SKIPPING trade"
-                if logger:
-                    logger.warning(msg)
-                return create_hold_signal(msg), False, msg
-            else:
-                msg = f"⚠️ Equal confidence but skip_on_divergence=False - using DeepSeek"
-                if logger:
-                    logger.warning(msg)
-                return signal_deepseek, False, msg
-
-        elif skip_on_divergence:
-            msg = f"🚫 Divergence ({divergence_type}): skip_on_divergence=True - SKIPPING"
-            if logger:
-                logger.warning(msg)
-            return create_hold_signal(msg), False, msg
-
-        else:
-            msg = f"⚠️ Divergence ({divergence_type}): using DeepSeek signal"
-            if logger:
-                logger.warning(msg)
-            return signal_deepseek, False, msg
-
-    # Unexpected divergence type
-    msg = f"⚠️ Unexpected divergence: DeepSeek={ds_signal}, MultiAgent={ma_signal}"
-    if logger:
-        logger.warning(msg)
-    return signal_deepseek, False, msg

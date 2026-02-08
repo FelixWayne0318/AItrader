@@ -22,7 +22,7 @@ class CriticalConfigChecker(DiagnosticStep):
     Validates:
     - main_live.py: load_all and reconciliation settings
     - deepseek_strategy.py: SL/TP field names
-    - trading_logic.py: MIN_SL_DISTANCE_PCT
+    - trading_logic.py: get_min_sl_distance_pct(), get_min_rr_ratio()
     - patches: Binance enum patches
     """
 
@@ -193,7 +193,7 @@ class CriticalConfigChecker(DiagnosticStep):
         issues: List[str],
         warnings: List[str]
     ) -> None:
-        """Check trading_logic.py MIN_SL_DISTANCE_PCT."""
+        """Check trading_logic.py SL/TP validation functions and R/R gate."""
         trading_logic_path = project_root / "strategy" / "trading_logic.py"
 
         if not trading_logic_path.exists():
@@ -202,20 +202,30 @@ class CriticalConfigChecker(DiagnosticStep):
         with open(trading_logic_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        min_sl_match = re.search(
-            r'MIN_SL_DISTANCE_PCT\s*=\s*([\d.]+)', content
-        )
-        if not min_sl_match:
+        # Check SL distance function exists
+        if 'def get_min_sl_distance_pct' not in content:
             warnings.append(
-                "trading_logic.py: 未找到 MIN_SL_DISTANCE_PCT\n"
+                "trading_logic.py: 未找到 get_min_sl_distance_pct() 函数\n"
                 "   → SL 距离验证可能不生效"
             )
-        else:
-            min_sl_pct = float(min_sl_match.group(1))
-            if min_sl_pct < 0.01:
-                warnings.append(
-                    f"trading_logic.py: MIN_SL_DISTANCE_PCT={min_sl_pct}\n"
-                    f"   → 建议至少设置为 0.01 (1%)"
+
+        # Check R/R hard gate function exists
+        if 'def get_min_rr_ratio' not in content:
+            issues.append(
+                "trading_logic.py: 未找到 get_min_rr_ratio() 函数\n"
+                "   → R/R 硬性门槛未实现，AI 可能返回极低 R/R 的 SL/TP"
+            )
+
+        # Check validate_multiagent_sltp contains R/R check
+        if 'def validate_multiagent_sltp' in content:
+            # Find the function body
+            func_start = content.index('def validate_multiagent_sltp')
+            # Look for rr_ratio check within reasonable range
+            func_body = content[func_start:func_start + 3000]
+            if 'rr_ratio' not in func_body or 'get_min_rr_ratio' not in func_body:
+                issues.append(
+                    "trading_logic.py: validate_multiagent_sltp() 缺少 R/R 硬性门槛\n"
+                    "   → AI 返回低 R/R (如 0.1:1) 时无法拦截"
                 )
 
         # Check multi_agent_analyzer.py imports
@@ -225,13 +235,12 @@ class CriticalConfigChecker(DiagnosticStep):
                 analyzer_content = f.read()
 
             has_import = "from strategy.trading_logic import" in analyzer_content
-            has_constant = "MIN_SL_DISTANCE_PCT" in analyzer_content
             has_getter = "get_min_sl_distance_pct" in analyzer_content
 
-            if not (has_import and (has_constant or has_getter)):
+            if not (has_import and has_getter):
                 warnings.append(
-                    "multi_agent_analyzer.py: 未从 trading_logic 导入 SL 验证函数/常量\n"
-                    "   → 应导入 get_min_sl_distance_pct() 或 MIN_SL_DISTANCE_PCT"
+                    "multi_agent_analyzer.py: 未从 trading_logic 导入 SL 验证函数\n"
+                    "   → 应导入 get_min_sl_distance_pct()"
                 )
 
     def _check_patches(
@@ -432,16 +441,31 @@ class StrategyConfigLoader(DiagnosticStep):
                 print(f"  instrument_id: {cfg.instrument_id}")
                 print(f"  bar_type: {cfg.bar_type}")
                 print(f"  equity: ${cfg.equity}")
-                print(f"  base_usdt_amount: ${cfg.base_usdt_amount}")
-                print(f"  leverage: {cfg.leverage}x")
+                print(f"  leverage: {cfg.leverage}x (配置值，实际将从 Binance 同步)")
                 print(f"  min_confidence_to_trade: {cfg.min_confidence_to_trade}")
                 timer_sec = cfg.timer_interval_sec
                 timer_min = timer_sec / 60
                 print(f"  timer_interval_sec: {timer_sec}s ({timer_min:.1f}分钟)")
-                print(f"  sma_periods: {list(cfg.sma_periods)}")
-                print(f"  rsi_period: {cfg.rsi_period}")
-                print(f"  macd_fast/slow: {cfg.macd_fast}/{cfg.macd_slow}")
-                print(f"  debate_rounds: {cfg.debate_rounds}")
+                print()
+
+                # v4.8: Position sizing configuration
+                print("  📊 v4.8 仓位计算配置:")
+                method = getattr(cfg, 'position_sizing_method', 'ai_controlled')
+                print(f"     method: {method}")
+                print(f"     max_position_ratio: {getattr(cfg, 'max_position_ratio', 0.30)*100:.0f}%")
+                print(f"     cumulative: {getattr(cfg, 'position_sizing_cumulative', True)}")
+                print(f"     信心映射:")
+                print(f"       HIGH: {getattr(cfg, 'position_sizing_high_pct', 80)}%")
+                print(f"       MEDIUM: {getattr(cfg, 'position_sizing_medium_pct', 50)}%")
+                print(f"       LOW: {getattr(cfg, 'position_sizing_low_pct', 30)}%")
+                print()
+
+                print("  📊 技术指标配置:")
+                print(f"     sma_periods: {list(cfg.sma_periods)}")
+                print(f"     rsi_period: {cfg.rsi_period}")
+                print(f"     macd_fast/slow: {cfg.macd_fast}/{cfg.macd_slow}")
+                print(f"     debate_rounds: {cfg.debate_rounds}")
+                print()
                 print("  ✅ 配置加载成功 (与实盘完全一致)")
                 print()
                 print(f"  ⏰ 注意: 实盘每 {timer_min:.0f} 分钟分析一次")

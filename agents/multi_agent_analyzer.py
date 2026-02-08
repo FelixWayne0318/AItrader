@@ -36,163 +36,149 @@ from strategy.trading_logic import (
 
 
 # =============================================================================
-# TradingAgents v3.12: Indicator Definitions for AI
-# Borrowed from: TradingAgents/agents/analysts/market_analyst.py
+# INDICATOR_DEFINITIONS — Regime-Aware Trading Knowledge Manual
 #
-# Philosophy: "Teach AI WHAT indicators mean, not HOW to use them"
-# - Provide calculation methods and mathematical definitions
-# - Explain what values represent, not trading rules
-# - Let AI form its own interpretation based on raw data
-# - Aligned with TradingAgents "授人以渔" (授人以渔) principle
+# Evolution:
+# - v3.12: Basic calculation definitions (TradingAgents style)
+# - v3.15: Added "entry at current market price" (removed in v3.17+)
+# - v3.17: Replaced distance-based rules with R/R-driven entry criteria
+# - v3.25: Complete rewrite — regime-aware usage guide with failure modes
+# - v3.26: Risk Manager gets full manual + removed hard rules for AI autonomy
+#
+# Philosophy (nof1 Alpha Arena / TradingAgents):
+# - Encode complete trading knowledge in the system prompt
+# - Teach AI regime detection, indicator interpretation, and failure modes
+# - Let AI synthesize all data and make independent decisions
+# - No hard thresholds that override AI judgment
 # =============================================================================
 INDICATOR_DEFINITIONS = """
-TECHNICAL INDICATOR REFERENCE (Calculation and Meaning):
+====================================================================
+INDICATOR REFERENCE (v3.27)
+====================================================================
+This reference supplements your existing knowledge with regime-specific
+interpretation rules, failure statistics, and specialized frameworks.
+Apply this knowledge to the market data provided alongside it.
 
-MOVING AVERAGES (SMA):
-- Simple Moving Average of closing prices over N periods
-- Calculation: Sum of last N closing prices / N
-- Common periods: 5 (short-term), 20 (medium-term), 50/200 (long-term)
-- Interpretation: Higher values = higher average price over that period
-- Multiple SMAs show different timeframe averages simultaneously
+STEP 1: DETERMINE MARKET REGIME (this changes how all indicators read)
+  ADX > 25 + clear price direction    → TRENDING
+  ADX < 20 + price oscillating        → RANGING
+  ADX < 20 + BB Width at lows         → SQUEEZE (pre-breakout)
+  ADX > 25 + BB Width expanding fast  → VOLATILE TREND
 
-RSI (Relative Strength Index):
-- Momentum oscillator measuring magnitude and velocity of price changes
-- Calculation: 100 - (100 / (1 + RS)), where RS = Avg Gain / Avg Loss (14 periods)
-- Range: 0-100
-  * 0 = Maximum downward momentum (all periods were losses)
-  * 100 = Maximum upward momentum (all periods were gains)
-  * 50 = Equal gains and losses (neutral momentum)
-- Time sensitivity: Standard period is 14 bars, longer periods = smoother values
+REGIME BEHAVIOR:
+  TRENDING:  Trend-following has higher win rates. Counter-trend has high failure
+             rates. S/R levels frequently break.
+  RANGING:   Mean-reversion most reliable. S/R bounces work.
+  SQUEEZE:   Big move imminent, direction unknown. ~50% wrong-side risk pre-breakout.
+  VOLATILE:  Trend-following works, wider stops needed.
+The #1 source of retail losses: applying ranging logic in trending markets.
 
-MACD (Moving Average Convergence Divergence):
-- Trend-following momentum indicator comparing two exponential moving averages
-- Components:
-  * MACD Line: EMA(12) - EMA(26)
-  * Signal Line: EMA(9) of MACD Line
-  * Histogram: MACD Line - Signal Line
-- Interpretation:
-  * Positive MACD = short-term average above long-term average
-  * Negative MACD = short-term average below long-term average
-  * Histogram magnitude = strength of divergence/convergence
-  * Histogram direction = rate of change in divergence
+====================================================================
+INDICATORS (each section: TRENDING use → RANGING use → failure mode)
+====================================================================
 
-BOLLINGER BANDS:
-- Volatility indicator based on standard deviation from moving average
-- Components:
-  * Middle Band: SMA(20)
-  * Upper Band: SMA(20) + (2 × Standard Deviation)
-  * Lower Band: SMA(20) - (2 × Standard Deviation)
-- Band Width: Measures current volatility level
-  * Narrow bands = low volatility period
-  * Wide bands = high volatility period
-- BB Position: Price location within bands (0% = lower band, 100% = upper band)
-- Statistical meaning: ~95% of price action falls within 2 standard deviations
+--- RSI (Cardwell Range Shifts) ---
+TRENDING: Shifted ranges, not traditional 30/70.
+  Uptrend 40-80: pullbacks to 40-50 = with-trend entries. 80 = strong momentum.
+  Downtrend 20-60: rallies to 50-60 = with-trend entries. 20 = strong momentum.
+RANGING: Traditional 30/70 work as overbought/oversold.
+⚠️ Buying RSI <30 in downtrend = most common retail mistake (RSI stays oversold).
+   Cardwell: bullish divergences can CONFIRM downtrends, not reverse them.
 
-VOLUME:
-- Number of contracts/coins traded in a given time period
-- Volume Ratio: Current volume / Average volume over recent periods
-- Interpretation:
-  * Ratio > 1.0 = more trading activity than usual
-  * Ratio < 1.0 = less trading activity than usual
-  * Higher ratio = more market participants engaged
+--- ADX / DI+ / DI- ---
+TRENDING: ADX 25-50 = strong trend. 50+ = very strong. DI+>DI- = up, DI->DI+ = down.
+RANGING: ADX 0-20. ADX 75+ = potential exhaustion.
+⚠️ ADX is lagging — confirms late. Brief spikes in choppy markets = false signals.
 
-ORDER FLOW (Taker Buy/Sell Ratio):
-- Measures aggressive buying vs selling pressure from market takers
-- Calculation: Taker buy volume / Total volume
-- Range: 0-100%
-  * >50% = more aggressive buying (market buy orders)
-  * <50% = more aggressive selling (market sell orders)
-  * 50% = balanced aggressive activity
-- CVD (Cumulative Volume Delta): Running sum of (buy volume - sell volume)
-- Data source: Binance taker buy/sell volume from kline data
+--- MACD ---
+TRENDING: Crossovers = continuation signals. Zero-line cross = major shift.
+  Histogram growth = momentum building. Histogram shrinking = weakening.
+RANGING: Whipsaws repeatedly — 74-97% false positive rate in backtests.
+⚠️ MACD alone has extremely poor reliability — requires confirmation.
 
-FUNDING RATE (Perpetual Futures):
-- Periodic payment mechanism between long and short position holders
-- Purpose: Keep perpetual contract price anchored to spot price
-- Calculation: Based on premium/discount of perpetual vs spot + interest rate component
-- Settlement: Every 8 hours (00:00, 08:00, 16:00 UTC) for Binance
-- Interpretation:
-  * Positive rate = longs pay shorts (indicating more long positions)
-  * Negative rate = shorts pay longs (indicating more short positions)
-  * Magnitude shows degree of position imbalance
-- Note: Binance 8h funding rate is the actual rate traders pay/receive
+--- BOLLINGER BANDS ---
+TRENDING: Price "walks the band" — upper band touch in uptrend is NORMAL.
+  Shorting upper band in uptrend = most common BB error. Middle = dynamic S/R.
+RANGING: Mean-reversion at bands (upper = overbought, lower = oversold).
+SQUEEZE: Low BB Width = big move imminent, direction unknown.
+⚠️ Head fakes during squeezes are common.
 
-OPEN INTEREST (OI):
-- Total number of outstanding derivative contracts (sum of all open positions)
-- Units: Number of contracts or BTC equivalent
-- Change interpretation:
-  * Rising OI + rising price = new long positions entering
-  * Rising OI + falling price = new short positions entering
-  * Falling OI + price move = position closing (profit taking or stop loss)
-  * Stable OI + price move = position rotation between traders
-- Does NOT indicate direction, only total exposure
+--- SMA ---
+TRENDING: Trend filter — Price > SMA200 = uptrend bias, < SMA200 = downtrend.
+  SMA 20/50 = dynamic pullback levels. Golden/Death Cross = long-term shifts.
+RANGING: Whipsaws around SMA.
+⚠️ 35% false signal rate on crosses. Use as filter, not timing signal.
 
-ORDER BOOK DEPTH:
-- Distribution of buy (bid) and sell (ask) limit orders at various price levels
-- Data source: Binance /fapi/v1/depth API (100 levels analyzed)
+--- VOLUME ---
+TRENDING: Rising price + rising volume = genuine. Falling volume = suspect move.
+RANGING: Volume spikes at S/R = potential breakout.
+⚠️ Low-volume moves are unreliable regardless of direction.
 
-- OBI (Order Book Imbalance):
-  * Calculation: (Bid Volume - Ask Volume) / (Bid Volume + Ask Volume)
-  * Range: -1.0 (all asks) to +1.0 (all bids)
-  * Simple OBI: Equal weight to all levels
-  * Weighted OBI: Exponential decay, closer levels weighted higher (decay factor ~0.8)
-  * Adaptive OBI: Decay factor adjusts based on market volatility
+--- CVD (Cumulative Volume Delta) ---
+TRENDING: CVD aligns with price = confirms move.
+  CVD diverges: price up + CVD falling = hidden selling; price down + CVD rising = accumulation.
+RANGING: Absorption pattern — positive CVD + flat price = large seller absorbing buys.
+⚠️ CVD from candle data is approximate. Noisy during low-volume periods.
 
-- Dynamics (vs Previous Snapshot):
-  * OBI Change: Shift in bid/ask balance over time
-  * Depth Change: Change in total volume at bid/ask side
-  * Trend: Direction of imbalance movement (STRENGTHENING_BIDS, WEAKENING_BIDS, etc.)
-  * Note: Requires historical snapshots; first snapshot shows "no historical data"
+--- FUNDING RATE ---
+Daily holding cost = rate × 3 settlements (every 8h).
+  |Rate| < 0.03%: Normal (0.01-0.03% in bull markets is standard, not bearish).
+  > +0.05%: Crowded longs. > +0.10%: Extreme, reversal probability rises.
+  < -0.03%: Bearish pressure. < -0.10%: Extreme panic, bounce probability rises.
+  Predicted vs settled difference > 0.01% = notable shift in market sentiment.
+  Predicted vs settled sign reversal (e.g., +0.01% → -0.01%) = significant positioning change.
+  Settlement countdown < 30min with extreme predicted rate: expect short-term volatility.
+  History: Persistent same-sign rates (>3 settlements) = established positioning.
+  Reversal from extreme = positioning unwind, expect opposite-side volatility.
+⚠️ Funding alone without OI/price context = premature contrarian trades.
 
-- Pressure Gradient:
-  * Measures concentration of orders near best bid/ask
-  * Near-5/10/20: Percentage of volume within 0.5%/1.0%/2.0% of current price
-  * Higher percentage = orders clustered close to market price
-  * Concentration level: LOW/MEDIUM/HIGH based on near-5 percentage
+--- PREMIUM INDEX ---
+Premium Index = (Mark Price - Index Price) / Index Price.
+  Positive = futures trading above spot = long premium (bulls paying to hold).
+  Negative = futures below spot = short premium (bears paying to hold).
+  Predicts next funding rate direction. Premium > 0.05% = expect positive funding.
+  Sharp premium spike = aggressive leveraged positioning, often precedes mean-reversion.
+⚠️ Premium Index is instantaneous — confirm with funding trend before acting.
 
-- Anomalies (Order Walls):
-  * Orders significantly larger than average (threshold: 3-4x mean size)
-  * Dynamic threshold adjusts based on volatility
-  * Shows price level, size in BTC, and multiplier vs average
+--- OPEN INTEREST (4-Quadrant Matrix) ---
+  Price ↑ + OI ↑ = New longs entering → BULLISH CONFIRMATION
+  Price ↑ + OI ↓ = Short covering     → WEAK rally (no new conviction)
+  Price ↓ + OI ↑ = New shorts entering → BEARISH CONFIRMATION
+  Price ↓ + OI ↓ = Long liquidation    → BEARISH EXHAUSTION (potential bottom)
+Rising OI in consolidation = energy building. Sharp OI drop after crash = capitulation.
+⚠️ OI alone reveals nothing — must combine with price direction.
 
-- Slippage Estimate:
-  * Expected price impact when executing a market order of given size
-  * Includes confidence level and range (best/worst case)
-  * Based on actual order book depth distribution
+--- ORDER BOOK ---
+OBI: (Bid Vol - Ask Vol) / Total. Positive = buy support. Negative = sell pressure.
+Dynamics: OBI/depth changes vs previous snapshot show evolving pressure.
+Walls (>3x avg size): Potential S/R, but can be spoofed (placed and cancelled).
+⚠️ High slippage = low liquidity → smaller position sizes needed.
 
-SUPPORT/RESISTANCE ZONES (v2.0):
-- Price levels identified from multiple independent data sources
-- Sources:
-  * Order Book Walls: Large real limit orders (>2 BTC) at specific prices
-  * Bollinger Bands: Upper/lower bands as statistical boundaries
-  * SMA_50/SMA_200: Moving average levels
-  * Pivot Points: Mathematical price levels calculated from high/low/close
+--- S/R ZONES ---
+Strength: HIGH (≥3 sources), MEDIUM (2), LOW (1).
+TRENDING: S/R breaks frequently. Broken support → resistance and vice versa.
+RANGING: S/R holds reliably. Mean-reversion at zones works.
+⚠️ ADX > 40: S/R bounce rate drops to ~25%.
 
-- Zone Strength (based on source confluence):
-  * HIGH: Multiple sources agree (≥3) OR large order wall present (>2 BTC)
-  * MEDIUM: Two sources agree
-  * LOW: Single source only
+--- SENTIMENT (Binance L/S Ratio) ---
+Contrarian at extremes: >55% long = squeeze risk. >55% short = rally risk.
+⚠️ Extremes persist in strong trends. Only meaningful at very high readings (>60%).
 
-- Zone Level (timeframe significance, v2.0):
-  * MAJOR: Daily/weekly significance (SMA_200, weekly BB) - strongest
-  * INTERMEDIATE: 4H significance (SMA_50, 4H BB) - moderate
-  * MINOR: 15M/1H significance (SMA_20, 15M BB, Order Walls) - short-term
+--- TIME-SERIES DATA ---
+All series ordered oldest → newest (chronological).
+Look for: divergences, trend changes, acceleration/deceleration in momentum.
 
-- Zone Source Type (data reliability, v2.0):
-  * ORDER_FLOW: Real-time order book data - most current but can change
-  * TECHNICAL: Calculated indicators (SMA, BB) - widely followed
-  * STRUCTURAL: Historical price levels (Pivot) - time-tested
+====================================================================
+CONFLUENCE FRAMEWORK
+====================================================================
+Single indicators have high false positive rates. Confirm across layers:
+  Layer 1 — TREND: SMA 200, ADX/DI direction
+  Layer 2 — MOMENTUM: RSI, MACD histogram, CVD
+  Layer 3 — KEY LEVEL: S/R zone, BB band, order book wall
 
-- Zone Properties:
-  * Price Center: Midpoint of the zone
-  * Distance: Percentage distance from current price
-  * Sources: Which indicators contributed to this zone
-  * Width: Range of the zone (expanded by 0.1% from center)
-
-- Trading Implications:
-  * Zones with ORDER_FLOW type are real orders that can be eaten through
-  * MAJOR level zones are more significant for longer-term trades
-  * Multiple overlapping sources increase confidence in the zone
+Example — strong setup: All 3 layers align in same direction.
+Example — weak setup: Trend layer (ADX/SMA) conflicts with momentum/levels
+  → trend is statistically the stronger predictor in this conflict.
 """
 
 
@@ -214,6 +200,7 @@ class MultiAgentAnalyzer:
         retry_delay: float = 1.0,  # Configurable retry delay
         json_parse_max_retries: int = 2,  # Configurable JSON parse retries
         memory_file: str = "data/trading_memory.json",  # v3.12: Persistent memory
+        sr_zones_config: Optional[Dict] = None,  # v3.0: S/R Zone config from base.yaml
     ):
         """
         Initialize the multi-agent analyzer.
@@ -256,15 +243,39 @@ class MultiAgentAnalyzer:
         # Track last prompts for diagnosis (v11.4)
         self.last_prompts: Dict[str, Dict[str, str]] = {}
 
+        # Full call trace: every AI API call with input/output/timing
+        self.call_trace: List[Dict[str, Any]] = []
+
         # Retry configuration (same as DeepSeekAnalyzer)
         self.max_retries = 2
         self.retry_delay = 1.0
 
         # v3.8: S/R Zone Calculator (multi-source support/resistance)
+        # v3.0: Accept config from base.yaml sr_zones section
+        sr_cfg = sr_zones_config or {}
+        swing_cfg = sr_cfg.get('swing_detection', {})
+        cluster_cfg = sr_cfg.get('clustering', {})
+        scoring_cfg = sr_cfg.get('scoring', {})
+        hard_ctrl_cfg = sr_cfg.get('hard_control', {})
+
         self.sr_calculator = SRZoneCalculator(
-            cluster_pct=0.5,              # 聚类阈值 0.5%
-            zone_expand_pct=0.1,          # Zone 扩展 0.1%
-            hard_control_threshold_pct=1.0,  # 硬风控阈值 1% (仅对 HIGH strength)
+            cluster_pct=cluster_cfg.get('cluster_pct', 0.5),
+            zone_expand_pct=sr_cfg.get('zone_expand_pct', 0.1),
+            hard_control_threshold_pct=hard_ctrl_cfg.get('threshold_pct', 1.0),
+            # v3.0: Swing Point config
+            swing_detection_enabled=swing_cfg.get('enabled', True),
+            swing_left_bars=swing_cfg.get('left_bars', 5),
+            swing_right_bars=swing_cfg.get('right_bars', 5),
+            swing_weight=swing_cfg.get('weight', 1.2),
+            swing_max_age=swing_cfg.get('max_swing_age', 100),
+            # v3.0: ATR adaptive clustering
+            use_atr_adaptive=cluster_cfg.get('use_atr_adaptive', True),
+            atr_cluster_multiplier=cluster_cfg.get('atr_cluster_multiplier', 0.5),
+            # v3.0: Touch count scoring
+            touch_count_enabled=scoring_cfg.get('touch_count_enabled', True),
+            touch_threshold_atr=scoring_cfg.get('touch_threshold_atr', 0.3),
+            optimal_touches=tuple(scoring_cfg.get('optimal_touches', [2, 3])),
+            decay_after_touches=scoring_cfg.get('decay_after_touches', 4),
             logger=self.logger,
         )
 
@@ -275,6 +286,7 @@ class MultiAgentAnalyzer:
         self,
         messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
+        trace_label: str = "",
     ) -> str:
         """
         Call DeepSeek API with retry logic for robustness.
@@ -301,12 +313,29 @@ class MultiAgentAnalyzer:
 
         for attempt in range(self.max_retries + 1):
             try:
+                t0 = time.monotonic()
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     temperature=temp,
                 )
-                return response.choices[0].message.content
+                elapsed = time.monotonic() - t0
+                content = response.choices[0].message.content
+                # Record call trace for diagnostics
+                usage = response.usage
+                self.call_trace.append({
+                    "label": trace_label or f"call_{len(self.call_trace)+1}",
+                    "messages": messages,
+                    "temperature": temp,
+                    "response": content,
+                    "elapsed_sec": round(elapsed, 2),
+                    "tokens": {
+                        "prompt": usage.prompt_tokens if usage else 0,
+                        "completion": usage.completion_tokens if usage else 0,
+                        "total": usage.total_tokens if usage else 0,
+                    } if usage else {},
+                })
+                return content
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries:
@@ -325,6 +354,7 @@ class MultiAgentAnalyzer:
         messages: List[Dict[str, str]],
         temperature: float,
         max_json_retries: int = 2,
+        trace_label: str = "",
     ) -> Optional[Dict[str, Any]]:
         """
         Call API and extract JSON, with retry on parse failure.
@@ -345,7 +375,7 @@ class MultiAgentAnalyzer:
         """
         for retry_attempt in range(max_json_retries + 1):
             try:
-                result = self._call_api_with_retry(messages=messages, temperature=temperature)
+                result = self._call_api_with_retry(messages=messages, temperature=temperature, trace_label=trace_label)
                 self.logger.debug(f"API response (attempt {retry_attempt + 1}): {result}")
 
                 # Extract JSON from response
@@ -390,16 +420,20 @@ class MultiAgentAnalyzer:
         binance_derivatives_report: Optional[Dict[str, Any]] = None,
         # ========== v3.7: Order Book Depth ==========
         orderbook_report: Optional[Dict[str, Any]] = None,
+        # ========== v4.6: Account Context for Add/Reduce Decisions ==========
+        account_context: Optional[Dict[str, Any]] = None,
+        # ========== v3.0: OHLC bars for S/R Swing Detection ==========
+        bars_data: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis with Bull/Bear debate.
 
         TradingAgents Architecture (Judge-based decision):
-        - Phase 1: Bull/Bear debate (2 AI calls)
+        - Phase 1: Bull/Bear debate (2 × debate_rounds AI calls, sequential)
         - Phase 2: Judge decision (1 AI call with optimized prompt)
         - Phase 3: Risk evaluation (1 AI call)
 
-        Total: 4 AI calls (complete TradingAgents framework)
+        Total: 2×debate_rounds + 2 AI calls (default debate_rounds=2 → 6 calls)
 
         Reference: https://github.com/TauricResearch/TradingAgents (UCLA/MIT paper)
 
@@ -421,6 +455,12 @@ class MultiAgentAnalyzer:
             Derivatives market data (OI, funding, liquidations) - MTF v2.1
         binance_derivatives_report : Dict, optional
             Binance-specific derivatives (top traders, taker ratio) - v3.0
+        orderbook_report : Dict, optional
+            Order book depth data (OBI, liquidity, slippage) - v3.7
+        account_context : Dict, optional
+            Account-level info for add/reduce decisions (v4.6):
+            - equity, leverage, max_position_value
+            - available_capacity, capacity_used_pct, can_add_position
 
         Returns
         -------
@@ -448,6 +488,9 @@ class MultiAgentAnalyzer:
         try:
             self.logger.info("Starting multi-agent analysis (TradingAgents architecture)...")
 
+            # Clear call trace for this analysis cycle
+            self.call_trace = []
+
             # Format reports for prompts
             tech_summary = self._format_technical_report(technical_report)
             sent_summary = self._format_sentiment_report(sentiment_report)
@@ -469,11 +512,12 @@ class MultiAgentAnalyzer:
             orderbook_summary = self._format_orderbook_report(orderbook_report)
 
             # v3.8: Calculate S/R Zones (multi-source support/resistance)
-            # v2.0: Use detailed report with raw data for AI verification
+            # v3.0: Pass bars_data for Swing Point detection and Touch Count
             sr_zones = self._calculate_sr_zones(
                 current_price=current_price,
                 technical_data=technical_report,
                 orderbook_data=orderbook_report,
+                bars_data=bars_data,
             )
             self._sr_zones_cache = sr_zones  # Cache for _evaluate_risk()
             # v2.0: Use detailed report (includes raw data + level/source_type)
@@ -481,7 +525,7 @@ class MultiAgentAnalyzer:
             if not sr_zones_summary:
                 sr_zones_summary = sr_zones.get('ai_report', '') if sr_zones else ''
 
-            # Phase 1: Bull/Bear Debate (2 AI calls)
+            # Phase 1: Bull/Bear Debate (2 × debate_rounds AI calls, sequential)
             self.logger.info("Phase 1: Starting Bull/Bear debate...")
             debate_history = ""
             bull_argument = ""
@@ -501,6 +545,7 @@ class MultiAgentAnalyzer:
                     sr_zones_report=sr_zones_summary,           # v3.8
                     history=debate_history,
                     bear_argument=bear_argument,
+                    trace_label=f"Bull R{round_num + 1}",
                 )
                 debate_history += f"\n\n=== ROUND {round_num + 1} ===\n\nBULL ANALYST:\n{bull_argument}"
 
@@ -515,6 +560,7 @@ class MultiAgentAnalyzer:
                     sr_zones_report=sr_zones_summary,           # v3.8
                     history=debate_history,
                     bull_argument=bull_argument,
+                    trace_label=f"Bear R{round_num + 1}",
                 )
                 debate_history += f"\n\nBEAR ANALYST:\n{bear_argument}"
 
@@ -523,9 +569,17 @@ class MultiAgentAnalyzer:
 
             # Phase 2: Judge makes decision (1 AI call)
             self.logger.info("Phase 2: Judge evaluating debate...")
+            # v3.23: Build key metrics for Judge's independent sanity check
+            # v3.24: Pass all raw data sources for comprehensive verification
+            key_metrics = self._build_key_metrics(
+                technical_report, derivatives_report,
+                order_flow_report, current_price,
+                binance_derivatives_report, sentiment_report,
+            )
             judge_decision = self._get_judge_decision(
                 debate_history=debate_history,
                 past_memories=self._get_past_memories(),
+                key_metrics=key_metrics,
             )
 
             self.logger.info(
@@ -542,6 +596,10 @@ class MultiAgentAnalyzer:
                 current_position=current_position,
                 current_price=current_price,
                 technical_data=technical_report,  # v3.7: Pass dict for BB checks
+                account_context=account_context,  # v4.6: Account info for add/reduce
+                derivatives_report=derivatives_summary,  # v3.22: Funding rate for cost analysis
+                order_flow_report=order_flow_summary,  # v3.23: Liquidity for position sizing
+                orderbook_report=orderbook_summary,  # v3.23: Slippage for position sizing
             )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
@@ -564,6 +622,7 @@ class MultiAgentAnalyzer:
         sr_zones_report: str,        # v3.8
         history: str,
         bear_argument: str,
+        trace_label: str = "Bull",
     ) -> str:
         """
         Generate bull analyst's argument.
@@ -594,19 +653,28 @@ Last Bear Argument:
 {bear_argument if bear_argument else "No bear argument yet - make your opening case."}
 
 TASK:
-1. Identify BULLISH signals with specific numbers from the data
-2. Present 2-3 compelling reasons for going LONG
-3. If bear made arguments, counter them with evidence
+1. FIRST: Identify the current MARKET REGIME using the indicator manual
+   (trending/ranging/squeeze) — this determines how to read all indicators
+2. Identify BULLISH signals with specific numbers from the data
+3. Apply the CORRECT indicator interpretation for the current regime
+   (e.g., RSI 30 means different things in trends vs ranges)
+4. Present 2-3 compelling reasons for going LONG
+5. If bear made arguments, counter them with evidence
+6. Entry is at CURRENT MARKET PRICE — assess if current price offers
+   favorable R:R ratio based on S/R zones and market structure
+7. State what would INVALIDATE your bullish thesis
 
 Deliver your argument (2-3 paragraphs):"""
 
-        # System prompt: Role + Indicator definitions (TradingAgents style)
+        # System prompt: Role + Indicator manual (v3.25: regime-aware)
         system_prompt = f"""You are a professional Bull Analyst for {symbol}.
 Your role is to analyze raw market data and build the strongest possible case for going LONG.
 
 {INDICATOR_DEFINITIONS}
 
-Use the indicator definitions above to interpret the numbers correctly.
+CRITICAL: You MUST first identify the market regime (Step 1 in the manual),
+then interpret all indicators using the CORRECT regime-specific rules.
+Using ranging-market logic in a trending market (or vice versa) is a fatal error.
 Focus on evidence from the data, not assumptions."""
 
         # Store prompts for diagnosis (v11.4)
@@ -618,7 +686,7 @@ Focus on evidence from the data, not assumptions."""
         return self._call_api_with_retry([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
-        ])
+        ], trace_label=trace_label)
 
     def _get_bear_argument(
         self,
@@ -631,6 +699,7 @@ Focus on evidence from the data, not assumptions."""
         sr_zones_report: str,        # v3.8
         history: str,
         bull_argument: str,
+        trace_label: str = "Bear",
     ) -> str:
         """
         Generate bear analyst's argument.
@@ -661,19 +730,28 @@ Last Bull Argument:
 {bull_argument}
 
 TASK:
-1. Identify BEARISH signals or risks with specific numbers from the data
-2. Present 2-3 compelling reasons AGAINST going LONG
-3. Counter the bull's arguments with evidence
+1. FIRST: Identify the current MARKET REGIME using the indicator manual
+   (trending/ranging/squeeze) — this determines how to read all indicators
+2. Identify BEARISH signals or risks with specific numbers from the data
+3. Apply the CORRECT indicator interpretation for the current regime
+   (e.g., "support" means different things in trends vs ranges)
+4. Present 2-3 compelling reasons AGAINST going LONG (or for going SHORT)
+5. Counter the bull's arguments with evidence
+6. Entry is at CURRENT MARKET PRICE — assess if current price offers
+   favorable R:R ratio based on S/R zones and market structure
+7. State what would INVALIDATE your bearish thesis
 
 Deliver your argument (2-3 paragraphs):"""
 
-        # System prompt: Role + Indicator definitions (TradingAgents style)
+        # System prompt: Role + Indicator manual (v3.25: regime-aware)
         system_prompt = f"""You are a professional Bear Analyst for {symbol}.
 Your role is to analyze raw market data and build the strongest possible case AGAINST going LONG.
 
 {INDICATOR_DEFINITIONS}
 
-Use the indicator definitions above to interpret the numbers correctly.
+CRITICAL: You MUST first identify the market regime (Step 1 in the manual),
+then interpret all indicators using the CORRECT regime-specific rules.
+Using ranging-market logic in a trending market (or vice versa) is a fatal error.
 Focus on risks and bearish signals in the data."""
 
         # Store prompts for diagnosis (v11.4)
@@ -685,12 +763,13 @@ Focus on risks and bearish signals in the data."""
         return self._call_api_with_retry([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
-        ])
+        ], trace_label=trace_label)
 
     def _get_judge_decision(
         self,
         debate_history: str,
         past_memories: str,
+        key_metrics: str = "",
     ) -> Dict[str, Any]:
         """
         Judge evaluates the debate and makes decision.
@@ -699,21 +778,29 @@ Focus on risks and bearish signals in the data."""
         Simplified v3.0: Let AI autonomously evaluate without hardcoded rules
         v3.9: Removed duplicate S/R check from prompt (handled by _evaluate_risk)
         v3.10: Aligned with TradingAgents original design (rationale + strategic_actions)
+        v3.23: Added key_metrics for independent sanity checking
         """
         prompt = f"""As the portfolio manager and debate facilitator, your role is to critically evaluate this round of debate and make a definitive decision: align with the bear analyst, the bull analyst, or choose HOLD only if it is strongly justified based on the arguments presented.
 
 DEBATE TRANSCRIPT:
 {debate_history}
 
+KEY MARKET METRICS (for independent verification — check if analysts missed anything):
+{key_metrics if key_metrics else "N/A"}
+
 PAST REFLECTIONS ON MISTAKES:
 {past_memories if past_memories else "No past data - this is a fresh start."}
 
 YOUR TASK:
-Summarize the key points from both sides concisely, focusing on the most compelling evidence or reasoning. Your recommendation—LONG, SHORT, or HOLD—must be clear and actionable.
-
-Avoid defaulting to HOLD simply because both sides have valid points; commit to a stance grounded in the debate's strongest arguments.
-
-Take into account your past mistakes on similar situations. Use these insights to refine your decision-making and ensure you are learning and improving.
+1. Using the indicator manual, independently verify the current market regime
+   from the key metrics. Then assess: did both analysts apply the correct
+   regime-specific logic? (e.g., ranging-market logic in a trending market
+   produces flawed conclusions.)
+2. Summarize key points from both sides, focusing on the most compelling evidence.
+3. Your recommendation—LONG, SHORT, or HOLD—must be clear and actionable.
+4. Avoid defaulting to HOLD simply because both sides have valid points;
+   commit to a stance grounded in the debate's strongest arguments.
+5. Take into account your past mistakes on similar situations.
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
@@ -725,7 +812,14 @@ OUTPUT FORMAT (JSON only, no other text):
     "acknowledged_risks": ["risk1", "risk2"]
 }}"""
 
-        system_prompt = "You are a Portfolio Manager and debate facilitator. Critically evaluate the debate and make a decisive trading recommendation. Avoid defaulting to HOLD - commit to the side with stronger evidence. Learn from past mistakes."
+        system_prompt = f"""You are a Portfolio Manager and debate facilitator.
+Critically evaluate the debate and make a decisive trading recommendation.
+Commit to the side with stronger evidence. Learn from past mistakes.
+
+{INDICATOR_DEFINITIONS}
+
+Use the indicator manual to independently verify whether the analysts
+applied the correct regime-specific interpretation of the data."""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["judge"] = {
@@ -741,6 +835,7 @@ OUTPUT FORMAT (JSON only, no other text):
             ],
             temperature=0.3,  # Slightly higher for more nuanced judgment
             max_json_retries=2,
+            trace_label="Judge",
         )
 
         if decision:
@@ -758,6 +853,111 @@ OUTPUT FORMAT (JSON only, no other text):
             "acknowledged_risks": ["Parse failure"]
         }
 
+    def _build_key_metrics(
+        self,
+        technical_data: Optional[Dict] = None,
+        derivatives_data: Optional[Dict] = None,
+        order_flow_data: Optional[Dict] = None,
+        current_price: float = 0.0,
+        binance_derivatives_data: Optional[Dict] = None,
+        sentiment_data: Optional[Dict] = None,
+    ) -> str:
+        """
+        Build concise key metrics for Judge's independent sanity check (v3.23).
+
+        v3.24: Expanded from ~8 to ~18 fields for comprehensive verification.
+        Only includes raw numbers — no interpretation — so Judge can verify
+        whether Bull/Bear analysts correctly used the data.
+        """
+        lines = []
+        try:
+            if current_price > 0:
+                lines.append(f"Price: ${current_price:,.2f}")
+
+            if technical_data and isinstance(technical_data, dict):
+                # RSI
+                rsi = technical_data.get('rsi')
+                if rsi is not None:
+                    lines.append(f"RSI: {rsi:.1f}")
+                # ADX + DI+/DI- (v3.24: added DI for trend direction)
+                adx = technical_data.get('adx')
+                if adx is not None:
+                    di_plus = technical_data.get('di_plus')
+                    di_minus = technical_data.get('di_minus')
+                    adx_str = f"ADX: {adx:.1f}"
+                    if di_plus is not None and di_minus is not None:
+                        adx_str += f" (DI+: {di_plus:.1f}, DI-: {di_minus:.1f})"
+                    lines.append(adx_str)
+                # MACD
+                macd = technical_data.get('macd')
+                macd_signal = technical_data.get('macd_signal')
+                if macd is not None and macd_signal is not None:
+                    lines.append(f"MACD: {macd:.2f} (signal: {macd_signal:.2f})")
+                # v3.24: BB Position (where price sits within Bollinger Bands)
+                bb_pos = technical_data.get('bb_position')
+                if bb_pos is not None:
+                    lines.append(f"BB Position: {bb_pos:.1%}")
+                # v3.24: SMA positions relative to price
+                for period in [50, 200]:
+                    sma_val = technical_data.get(f'sma_{period}')
+                    if sma_val is not None and sma_val > 0 and current_price > 0:
+                        pct = (current_price - sma_val) / sma_val * 100
+                        lines.append(f"Price vs SMA{period}: {pct:+.2f}%")
+                # v3.24: Volume ratio
+                vol_ratio = technical_data.get('volume_ratio')
+                if vol_ratio is not None:
+                    lines.append(f"Volume Ratio: {vol_ratio:.2f}x")
+
+            if derivatives_data and isinstance(derivatives_data, dict):
+                fr = derivatives_data.get('funding_rate', {})
+                if isinstance(fr, dict):
+                    fr_pct = fr.get('current_pct')
+                    if fr_pct is not None:
+                        predicted = fr.get('predicted_rate_pct')
+                        fr_str = f"Funding Rate: {fr_pct:.4f}%"
+                        if predicted is not None:
+                            fr_str += f" (predicted: {predicted:.4f}%)"
+                        lines.append(fr_str)
+                liq = derivatives_data.get('liquidations', {})
+                if isinstance(liq, dict) and liq.get('total_usd', 0) > 0:
+                    lines.append(f"Liquidations (24h): ${liq['total_usd']:,.0f}")
+                # v3.24: OI change
+                oi = derivatives_data.get('open_interest', {})
+                if isinstance(oi, dict):
+                    oi_change = oi.get('change_pct')
+                    if oi_change is not None:
+                        lines.append(f"OI Change: {oi_change:+.2f}%")
+
+            if order_flow_data and isinstance(order_flow_data, dict):
+                buy_ratio = order_flow_data.get('buy_ratio')
+                if buy_ratio is not None:
+                    lines.append(f"Buy Ratio: {buy_ratio:.1%}")
+                cvd = order_flow_data.get('cvd_trend')
+                if cvd:
+                    lines.append(f"CVD Trend: {cvd}")
+
+            # v3.24: Binance derivatives (top traders)
+            if binance_derivatives_data and isinstance(binance_derivatives_data, dict):
+                top_pos = binance_derivatives_data.get('top_long_short_position', {})
+                latest = top_pos.get('latest') if isinstance(top_pos, dict) else None
+                if latest:
+                    long_pct = float(latest.get('longAccount', 0.5)) * 100
+                    lines.append(f"Top Traders Long: {long_pct:.1f}%")
+
+            # v3.24: Sentiment
+            if sentiment_data and isinstance(sentiment_data, dict):
+                net = sentiment_data.get('net_sentiment')
+                if net is not None:
+                    try:
+                        lines.append(f"Sentiment Net: {float(net):+.3f}")
+                    except (ValueError, TypeError):
+                        pass
+
+        except Exception:
+            pass
+
+        return "\n".join(lines) if lines else "N/A"
+
     def _evaluate_risk(
         self,
         proposed_action: Dict[str, Any],
@@ -766,6 +966,10 @@ OUTPUT FORMAT (JSON only, no other text):
         current_position: Optional[Dict[str, Any]],
         current_price: float,
         technical_data: Optional[Dict[str, Any]] = None,
+        account_context: Optional[Dict[str, Any]] = None,
+        derivatives_report: str = "",
+        order_flow_report: str = "",
+        orderbook_report: str = "",
     ) -> Dict[str, Any]:
         """
         Final risk evaluation and position sizing.
@@ -775,6 +979,9 @@ OUTPUT FORMAT (JSON only, no other text):
         v3.7: Added BB position hardcoded checks for support/resistance risk control
         v3.8: Replaced BB-only check with multi-source S/R Zone check
         v3.11: Removed preset rules from prompt, let AI decide autonomously
+        v4.6: Added account_context for position sizing decisions
+        v3.22: Added derivatives_report for funding rate cost analysis
+        v3.23: Added order_flow_report + orderbook_report for liquidity/slippage
         """
         action = proposed_action.get("decision", "HOLD")
         confidence = proposed_action.get("confidence", "LOW")
@@ -785,35 +992,42 @@ OUTPUT FORMAT (JSON only, no other text):
         if isinstance(risks, list):
             risks = risks.copy()  # Don't modify original
 
-        # ========== v3.8: S/R Zone Hard Control ==========
-        # Uses multi-source S/R zones (BB + SMA + Order Book Walls)
-        # Only blocks when near HIGH strength zones (confluence of multiple sources)
-        # v3.9: Can be disabled via sr_hard_control_enabled config
-        sr_hard_control_enabled = getattr(self, 'sr_hard_control_enabled', True)
+        # ========== v3.16: S/R Zone Hard Control moved to AI ==========
+        # v3.8-v3.15: Local hard control (blocked trades programmatically)
+        # v3.16: Moved to AI - Risk Manager now decides autonomously
+        #        Local override only for emergency (sr_hard_control_enabled: true)
+        #
+        # TradingAgents principle: "Autonomy is non-negotiable"
+        # AI receives hard_control info and decides whether to block
+        # ================================================================
+        sr_hard_control_enabled = getattr(self, 'sr_hard_control_enabled', False)  # v3.16: Default FALSE
         blocked_reason = ""
+        hard_control_info = {}
 
-        if sr_hard_control_enabled and self._sr_zones_cache:
-            hard_control = self._sr_zones_cache.get('hard_control', {})
+        if self._sr_zones_cache:
+            hard_control_info = self._sr_zones_cache.get('hard_control', {})
 
-            # Block LONG if too close to HIGH strength resistance
-            if action == "LONG" and hard_control.get('block_long'):
-                blocked_reason = hard_control.get('reason', 'Too close to resistance')
-                self.logger.warning(f"⚠️ {blocked_reason}")
-                proposed_action["decision"] = "HOLD"
-                proposed_action["confidence"] = "LOW"
-                rationale = f"Blocked: {blocked_reason}"
-                risks.append("Too close to HIGH strength resistance zone")
-                action = "HOLD"
+            # v3.16: Only use local override if explicitly enabled (emergency mode)
+            if sr_hard_control_enabled:
+                # Block LONG if too close to HIGH strength resistance
+                if action == "LONG" and hard_control_info.get('block_long'):
+                    blocked_reason = hard_control_info.get('reason', 'Too close to resistance')
+                    self.logger.warning(f"⚠️ [LOCAL OVERRIDE] {blocked_reason}")
+                    proposed_action["decision"] = "HOLD"
+                    proposed_action["confidence"] = "LOW"
+                    rationale = f"Blocked: {blocked_reason}"
+                    risks.append("Too close to HIGH strength resistance zone")
+                    action = "HOLD"
 
-            # Block SHORT if too close to HIGH strength support
-            elif action == "SHORT" and hard_control.get('block_short'):
-                blocked_reason = hard_control.get('reason', 'Too close to support')
-                self.logger.warning(f"⚠️ {blocked_reason}")
-                proposed_action["decision"] = "HOLD"
-                proposed_action["confidence"] = "LOW"
-                rationale = f"Blocked: {blocked_reason}"
-                risks.append("Too close to HIGH strength support zone")
-                action = "HOLD"
+                # Block SHORT if too close to HIGH strength support
+                elif action == "SHORT" and hard_control_info.get('block_short'):
+                    blocked_reason = hard_control_info.get('reason', 'Too close to support')
+                    self.logger.warning(f"⚠️ [LOCAL OVERRIDE] {blocked_reason}")
+                    proposed_action["decision"] = "HOLD"
+                    proposed_action["confidence"] = "LOW"
+                    rationale = f"Blocked: {blocked_reason}"
+                    risks.append("Too close to HIGH strength support zone")
+                    action = "HOLD"
         # ========== End of S/R Zone Hard Control ==========
 
         # Format strategic actions for prompt
@@ -826,7 +1040,28 @@ OUTPUT FORMAT (JSON only, no other text):
             if not sr_zones_for_risk:
                 sr_zones_for_risk = self._sr_zones_cache.get('ai_report', '')
 
+        # v3.16: Format hard control info for AI (moved from local override to AI decision)
+        hard_control_section = ""
+        if hard_control_info:
+            block_long = hard_control_info.get('block_long', False)
+            block_short = hard_control_info.get('block_short', False)
+            hc_reason = hard_control_info.get('reason', '')
+            if block_long or block_short:
+                hard_control_section = f"""
+⚠️ S/R ZONE PROXIMITY ALERT (v3.26 - Information for Your Assessment):
+- Near HIGH Strength RESISTANCE: {'YES' if block_long else 'No'}
+- Near HIGH Strength SUPPORT: {'YES' if block_short else 'No'}
+- Detail: {hc_reason if hc_reason else 'N/A'}
+
+Context for your assessment:
+- "HIGH strength" means multiple sources confirm this zone (BB + SMA + Order Wall confluence)
+- Historical data shows trading against HIGH strength multi-source zones has lower success rates
+- However, breakouts through strong zones (with volume confirmation) can signal powerful moves
+- Consider this information alongside all other market data when making your decision
+"""
+
         prompt = f"""As the Risk Manager, provide final trade parameters.
+{hard_control_section}
 
 PROPOSED TRADE:
 - Action: {action}
@@ -842,22 +1077,89 @@ MARKET DATA:
 
 {sr_zones_for_risk}
 
+DERIVATIVES & FUNDING RATE:
+{derivatives_report if derivatives_report else "N/A"}
+
+ORDER FLOW & LIQUIDITY:
+{order_flow_report if order_flow_report else "N/A"}
+
+{orderbook_report if orderbook_report else ""}
+
 CURRENT POSITION:
 {self._format_position(current_position)}
+
+ACCOUNT CONTEXT:
+{self._format_account(account_context)}
 
 CURRENT PRICE: ${current_price:,.2f}
 
 YOUR TASK:
-1. Evaluate if the proposed trade makes sense given the market data
-2. Determine stop loss using S/R zones as reference:
-   - For LONG: Place SL below nearest SUPPORT zone (preferably with ORDER_FLOW or HIGH strength)
-   - For SHORT: Place SL above nearest RESISTANCE zone (preferably with ORDER_FLOW or HIGH strength)
-3. Determine take profit using S/R zones as reference:
-   - For LONG: Target nearest RESISTANCE zone as TP (consider zone Level: MAJOR > INTERMEDIATE > MINOR)
-   - For SHORT: Target nearest SUPPORT zone as TP
-4. Determine position size (position_size_pct) based on your risk assessment and R/R ratio
+Note: Entry will be at CURRENT MARKET PRICE (${current_price:,.2f}), not at S/R levels.
 
-SIGNAL TYPES (v3.12 - choose the most appropriate):
+1. First, independently verify the MARKET REGIME using the indicator manual above:
+   - Check ADX, BB Width, price vs SMAs to determine TRENDING / RANGING / SQUEEZE
+   - Verify the proposed trade direction is consistent with the current regime
+   - If the Judge recommended a counter-trend trade in a strong trend, assess the risk carefully
+
+2. If an S/R Zone Proximity Alert is shown above, factor it into your assessment:
+   - HIGH strength zones (multi-source confluence) have historically higher bounce rates
+   - However, breakout through strong zones can be powerful — use volume and momentum to judge
+   - This is information, not a rule — weigh it alongside all other data
+
+3. Calculate SL/TP based on S/R zones and market structure:
+   - For LONG: SL below nearest SUPPORT, TP at nearest RESISTANCE
+   - For SHORT: SL above nearest RESISTANCE, TP at nearest SUPPORT
+   - Prefer zones with HIGH strength or ORDER_FLOW confirmation
+   - Consider minimum SL distance of 0.5-1% to avoid noise-triggered stops
+
+4. Evaluate Risk/Reward ratio:
+   - Calculate: Risk = |current_price - stop_loss|, Reward = |take_profit - current_price|
+   - R/R = Reward / Risk
+
+   Statistical context on R/R (from institutional trading research):
+   - R/R >= 1.5:1 is the standard institutional minimum for favorable expected value
+   - R/R < 1.5:1 means risk exceeds reward — historically negative expectancy
+   - Trades with R/R < 1.0:1 have strongly negative expected returns
+
+   R/R naturally reflects price position:
+   - Price closer to SUPPORT → LONG has better R/R (small risk, large reward)
+   - Price closer to RESISTANCE → SHORT has better R/R
+   - Price in MIDDLE of range → Both directions tend to have poor R/R
+
+   Regime context (Osler 2000, ADX research):
+   - ADX < 20 (RANGING): S/R bounces are ~70% reliable, standard R/R analysis applies
+   - ADX 20-30 (WEAK TREND): Counter-trend entries are riskier, need higher R/R to compensate
+   - ADX 30-40 (STRONG TREND): S/R levels break more often (~25% bounce rate)
+   - ADX > 40 (VERY STRONG TREND): Counter-trend S/R entries historically have very low success rate
+   - "Counter-trend" = LONG when DI- > DI+ (bearish), or SHORT when DI+ > DI- (bullish)
+
+5. Position sizing — consider these factors together:
+   - R/R quality: Higher R/R supports larger position, lower R/R warrants smaller position
+   - General guideline: R/R >= 2.5:1 (80-100%), 2.0-2.5:1 (50-80%), 1.5-2.0:1 (30-50%)
+   - Regime: Strong trend with-trend trades can be sized more aggressively
+
+   Funding rate cost:
+   - Funding rate is a DIRECT COST paid every 8 hours while holding a position
+   - LONG pays when rate is POSITIVE, SHORT pays when rate is NEGATIVE
+   - "Last Settled" = the rate applied at the most recent settlement (historical fact)
+   - "Predicted" = the real-time estimated rate for the NEXT settlement (changes continuously)
+   - Daily cost estimate = |predicted_rate| x 3 (three 8h settlements per day)
+   - If predicted rate diverges significantly from settled rate: market sentiment is shifting
+   - Settlement countdown < 30min with extreme predicted rate: expect short-term volatility
+
+   Liquidity and slippage:
+   - Check ORDER FLOW and ORDER BOOK data for execution risk
+   - Wide spreads, large order walls, and low depth increase slippage risk
+   - Extreme buy_ratio (>0.65 or <0.35) means one-sided positioning — potential contrarian signal
+   - Adjust position size based on expected execution quality
+
+6. Make your final decision:
+   - You have the indicator manual, all market data, and the Judge's recommendation
+   - Synthesize everything and make an independent risk-adjusted decision
+   - If the trade quality is poor (bad R/R, adverse regime, high costs), change to HOLD
+   - Explain your reasoning clearly in the "reason" field
+
+SIGNAL TYPES (choose the most appropriate):
 - LONG: Open new long or add to existing long position
 - SHORT: Open new short or add to existing short position
 - CLOSE: Close current position completely (do NOT open opposite position)
@@ -879,10 +1181,18 @@ OUTPUT FORMAT (JSON only, no other text):
     "stop_loss": <price_number>,
     "take_profit": <price_number>,
     "reason": "<one sentence explaining the final decision>",
+    "invalidation": "<specific condition that would prove this trade wrong>",
     "debate_summary": "<brief summary of bull vs bear debate>"
 }}"""
 
-        system_prompt = "You are a Risk Manager. Analyze the market data and set appropriate trade parameters based on market structure and risk/reward."
+        system_prompt = f"""You are a Risk Manager.
+Your role is to evaluate proposed trades, set SL/TP levels, and determine position sizing.
+
+{INDICATOR_DEFINITIONS}
+
+Use the indicator manual to independently verify the market regime and validate
+that the proposed trade direction is consistent with current market conditions.
+Make your own assessment — do not blindly follow the Judge's recommendation."""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["risk"] = {
@@ -898,6 +1208,7 @@ OUTPUT FORMAT (JSON only, no other text):
             ],
             temperature=0.2,
             max_json_retries=2,
+            trace_label="Risk Manager",
         )
 
         if decision:
@@ -1011,11 +1322,17 @@ OUTPUT FORMAT (JSON only, no other text):
             sl_distance = (current_price - sl) / current_price if sl > 0 else 0
 
             if sl >= current_price:
+                # Critical error: SL on wrong side - must fix
                 decision["stop_loss"] = current_price * (1 - default_sl)
                 self.logger.warning(f"Fixed BUY stop loss (wrong side): {sl} -> {decision['stop_loss']}")
             elif sl_distance < min_sl_distance:
-                decision["stop_loss"] = current_price * (1 - default_sl)
-                self.logger.warning(f"Fixed BUY stop loss (too close {sl_distance*100:.2f}%): {sl} -> {decision['stop_loss']}")
+                # v3.13: TradingAgents style - warn but trust AI's S/R-based decision
+                # The AI was prompted to consider volatility and R/R ratio
+                self.logger.info(
+                    f"📍 BUY stop loss is close ({sl_distance*100:.2f}%) - "
+                    f"trusting AI's S/R-based SL: ${sl:,.2f}"
+                )
+                decision["sl_warning"] = f"SL distance {sl_distance*100:.2f}% is below recommended {min_sl_distance*100:.1f}%"
 
             if tp <= current_price:
                 decision["take_profit"] = current_price * (1 + default_tp_buy)
@@ -1026,11 +1343,16 @@ OUTPUT FORMAT (JSON only, no other text):
             sl_distance = (sl - current_price) / current_price if sl > 0 else 0
 
             if sl <= current_price:
+                # Critical error: SL on wrong side - must fix
                 decision["stop_loss"] = current_price * (1 + default_sl)
                 self.logger.warning(f"Fixed SELL stop loss (wrong side): {sl} -> {decision['stop_loss']}")
             elif sl_distance < min_sl_distance:
-                decision["stop_loss"] = current_price * (1 + default_sl)
-                self.logger.warning(f"Fixed SELL stop loss (too close {sl_distance*100:.2f}%): {sl} -> {decision['stop_loss']}")
+                # v3.13: TradingAgents style - warn but trust AI's S/R-based decision
+                self.logger.info(
+                    f"📍 SELL stop loss is close ({sl_distance*100:.2f}%) - "
+                    f"trusting AI's S/R-based SL: ${sl:,.2f}"
+                )
+                decision["sl_warning"] = f"SL distance {sl_distance*100:.2f}% is below recommended {min_sl_distance*100:.1f}%"
 
             if tp >= current_price:
                 decision["take_profit"] = current_price * (1 - default_tp_sell)
@@ -1069,6 +1391,12 @@ MOMENTUM:
 - MACD: {safe_get('macd'):.4f}
 - MACD Signal: {safe_get('macd_signal'):.4f}
 - MACD Histogram: {safe_get('macd_histogram'):.4f}
+
+TREND STRENGTH (ADX):
+- ADX(14): {safe_get('adx'):.1f} ({data.get('adx_regime', 'N/A')})
+- DI+: {safe_get('di_plus'):.1f}, DI-: {safe_get('di_minus'):.1f} → {data.get('adx_direction', 'N/A')} direction
+- S/R Reliability: {"HIGH (~70% bounce rate, mean-reversion reliable)" if safe_get('adx') < 20 else "MODERATE (~50% bounce rate, confirm with volume)" if safe_get('adx') < 25 else "LOW (~25% bounce rate, S/R breakouts frequent)" if safe_get('adx') < 40 else "VERY LOW (<25% bounce rate, counter-trend S/R historically poor)"}
+- Note: ADX < 20 = ranging (S/R bounces ~70% reliable), ADX > 30 = strong trend (S/R bounces ~25% reliable)
 
 VOLATILITY (Bollinger Bands):
 - Upper: ${safe_get('bb_upper'):,.2f}
@@ -1117,6 +1445,13 @@ BOLLINGER BANDS (4H):
                 val = mtf_trend.get(key)
                 return float(val) if val is not None else default
 
+            # v3.25: 增加 1D RSI + ADX
+            trend_rsi = trend_safe_get('rsi')
+            trend_adx = trend_safe_get('adx')
+            trend_di_plus = trend_safe_get('di_plus')
+            trend_di_minus = trend_safe_get('di_minus')
+            trend_adx_regime = mtf_trend.get('adx_regime', 'UNKNOWN')
+
             report += f"""
 === MARKET DATA (1D Timeframe - Macro Trend) ===
 
@@ -1125,7 +1460,111 @@ TREND INDICATORS (1D):
 - Price vs SMA_200: {'+' if data.get('price', 0) > trend_safe_get('sma_200') else ''}{((data.get('price', 0) / trend_safe_get('sma_200') - 1) * 100) if trend_safe_get('sma_200') > 0 else 0:.2f}%
 - MACD: {trend_safe_get('macd'):.4f}
 - MACD Signal: {trend_safe_get('macd_signal'):.4f}
+- RSI(14): {trend_rsi:.1f}
+- ADX(14): {trend_adx:.1f} ({trend_adx_regime}) | DI+ {trend_di_plus:.1f} / DI- {trend_di_minus:.1f}
 """
+
+        # Add historical context if available (EVALUATION_FRAMEWORK v3.0.1)
+        # v3.21: Show ALL values (not truncated to 5) for better AI trend analysis
+        historical = data.get('historical_context')
+        if historical and historical.get('trend_direction') not in ['INSUFFICIENT_DATA', 'ERROR', None]:
+            trend_dir = historical.get('trend_direction', 'N/A')
+            momentum = historical.get('momentum_shift', 'N/A')
+            price_change = historical.get('price_change_pct', 0)
+            vol_ratio = historical.get('current_volume_ratio', 1.0)
+
+            # v3.21: Format ALL values (full time-series for AI pattern recognition)
+            def format_all_values(values, fmt=".1f"):
+                if not values or not isinstance(values, list):
+                    return "N/A"
+                return " → ".join([f"{v:{fmt}}" for v in values])
+
+            price_trend = historical.get('price_trend', [])
+            rsi_trend = historical.get('rsi_trend', [])
+            macd_trend = historical.get('macd_trend', [])
+            volume_trend = historical.get('volume_trend', [])
+            n_bars = len(price_trend)
+            hours_covered = n_bars * 15 / 60  # 15min bars → hours
+
+            report += f"""
+=== HISTORICAL CONTEXT (Last {n_bars} bars, ~{hours_covered:.1f} hours) ===
+
+TREND ANALYSIS:
+- Overall Direction: {trend_dir}
+- Momentum Shift: {momentum}
+- Price Change: {price_change:+.2f}% over {n_bars} bars
+- Current Volume vs Avg: {vol_ratio:.2f}x
+
+PRICE SERIES ({n_bars} bars, 15min each):
+{format_all_values(price_trend, ",.0f")}
+
+RSI SERIES ({len(rsi_trend)} values):
+{format_all_values(rsi_trend)}
+
+MACD SERIES ({len(macd_trend)} values):
+{format_all_values(macd_trend, ".4f")}
+
+VOLUME SERIES ({len(volume_trend)} values, BTC):
+{format_all_values(volume_trend, ",.1f")}
+"""
+            # v3.24: ADX/DI history (trend strength trajectory)
+            adx_trend = historical.get('adx_trend', [])
+            di_plus_trend = historical.get('di_plus_trend', [])
+            di_minus_trend = historical.get('di_minus_trend', [])
+            if adx_trend and len(adx_trend) >= 2:
+                report += f"""
+ADX SERIES ({len(adx_trend)} values):
+{format_all_values(adx_trend)}
+
+DI+ SERIES:
+{format_all_values(di_plus_trend)}
+
+DI- SERIES:
+{format_all_values(di_minus_trend)}
+"""
+
+            # v3.24: BB Width history (volatility squeeze/expansion)
+            bb_width_trend = historical.get('bb_width_trend', [])
+            if bb_width_trend and len(bb_width_trend) >= 2:
+                report += f"""
+BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
+{format_all_values(bb_width_trend, ".2f")}
+"""
+
+            # v3.24: SMA history for crossover detection
+            sma_history = historical.get('sma_history', {})
+            if sma_history:
+                report += "\nSMA SERIES (for crossover detection):\n"
+                for sma_key, sma_vals in sorted(sma_history.items()):
+                    if sma_vals and len(sma_vals) >= 2:
+                        report += f"{sma_key.upper()} ({len(sma_vals)} values): {format_all_values(sma_vals, ',.0f')}\n"
+
+        # v3.21: Add K-line OHLCV data (让 AI 看到实际价格形态)
+        kline_ohlcv = data.get('kline_ohlcv')
+        if kline_ohlcv and isinstance(kline_ohlcv, list) and len(kline_ohlcv) > 0:
+            from datetime import datetime
+            n_klines = len(kline_ohlcv)
+            report += f"""
+=== K-LINE OHLCV DATA (Last {n_klines} bars, 15min) ===
+"""
+            report += "Time            | Open      | High      | Low       | Close     | Volume\n"
+            report += "-" * 85 + "\n"
+            for bar in kline_ohlcv:
+                ts = bar.get('timestamp', 0)
+                try:
+                    # NautilusTrader ts_init is in nanoseconds
+                    time_str = datetime.utcfromtimestamp(ts / 1e9).strftime('%m-%d %H:%M') if ts > 1e15 else (
+                        datetime.utcfromtimestamp(ts / 1000).strftime('%m-%d %H:%M') if ts > 1e10 else
+                        datetime.utcfromtimestamp(ts).strftime('%m-%d %H:%M') if ts > 0 else "N/A"
+                    )
+                except (OSError, ValueError):
+                    time_str = "N/A"
+                o = bar.get('open', 0)
+                h = bar.get('high', 0)
+                l = bar.get('low', 0)
+                c = bar.get('close', 0)
+                v = bar.get('volume', 0)
+                report += f"{time_str:<15} | ${o:>8,.0f} | ${h:>8,.0f} | ${l:>8,.0f} | ${c:>8,.0f} | {v:>8,.1f}\n"
 
         return report
 
@@ -1133,6 +1572,7 @@ TREND INDICATORS (1D):
         """Format sentiment data for prompts.
 
         TradingAgents v3.3: Pass raw ratios only, no interpretation.
+        v3.24: Added history series for continuous data.
         """
         if not data:
             return "SENTIMENT: Data not available"
@@ -1152,39 +1592,259 @@ TREND INDICATORS (1D):
             neg_ratio = 0.0
         sign = '+' if net >= 0 else ''
 
-        # TradingAgents v3.3: Raw data only, AI interprets
-        return f"""
-MARKET SENTIMENT (Binance Long/Short Ratio):
-- Long Ratio: {pos_ratio:.1%}
-- Short Ratio: {neg_ratio:.1%}
-- Net: {sign}{net:.3f}
-"""
+        lines = [
+            "MARKET SENTIMENT (Binance Long/Short Ratio):",
+            f"- Long Ratio: {pos_ratio:.1%}",
+            f"- Short Ratio: {neg_ratio:.1%}",
+            f"- Net: {sign}{net:.3f}",
+        ]
+
+        # v3.24: Show history series (oldest → newest)
+        history = data.get('history', [])
+        if history and len(history) >= 2:
+            long_series = [f"{h['long']*100:.1f}%" for h in history]
+            ratio_series = [f"{h['ratio']:.3f}" for h in history]
+            lines.append(f"- Long% History: {' → '.join(long_series)}")
+            lines.append(f"- L/S Ratio History: {' → '.join(ratio_series)}")
+
+        return "\n" + "\n".join(lines) + "\n"
 
     def _format_position(self, position: Optional[Dict[str, Any]]) -> str:
-        """Format current position for prompts."""
+        """
+        Format current position for AI prompts with Tier 1 + Tier 2 + v4.7 fields.
+
+        v4.5: Enhanced position data for better AI decision making.
+        v4.7: Added liquidation risk, funding rate, and drawdown attribution.
+        """
         if not position:
             return "No current position (FLAT)"
 
-        # Fix: Ensure numeric types for formatting (API may return strings)
-        try:
-            qty = float(position.get('quantity') or 0)
-        except (ValueError, TypeError):
-            qty = 0.0
-        try:
-            avg_px = float(position.get('avg_px') or 0)
-        except (ValueError, TypeError):
-            avg_px = 0.0
-        try:
-            unrealized_pnl = float(position.get('unrealized_pnl') or 0)
-        except (ValueError, TypeError):
-            unrealized_pnl = 0.0
+        # === Safe extraction of all fields ===
+        def safe_float(val, default=0.0):
+            try:
+                return float(val) if val is not None else default
+            except (ValueError, TypeError):
+                return default
 
-        return f"""
-Side: {position.get('side', 'N/A')}
-Size: {qty:.4f} BTC
-Avg Entry: ${avg_px:,.2f}
-Unrealized P&L: ${unrealized_pnl:,.2f}
-"""
+        def safe_str(val, default='N/A'):
+            return str(val) if val is not None else default
+
+        # Basic fields
+        side = position.get('side', 'N/A').upper()
+        qty = safe_float(position.get('quantity'))
+        avg_px = safe_float(position.get('avg_px'))
+        unrealized_pnl = safe_float(position.get('unrealized_pnl'))
+        current_price = safe_float(position.get('current_price'))
+
+        # Tier 1 fields
+        pnl_pct = safe_float(position.get('pnl_percentage'))
+        duration_mins = position.get('duration_minutes', 0) or 0
+        sl_price = position.get('sl_price')
+        tp_price = position.get('tp_price')
+        rr_ratio = position.get('risk_reward_ratio')
+
+        # Tier 2 fields
+        peak_pnl = position.get('peak_pnl_pct')
+        worst_pnl = position.get('worst_pnl_pct')
+        entry_conf = position.get('entry_confidence')
+        margin_pct = position.get('margin_used_pct')
+
+        # v4.7: Liquidation risk fields
+        liquidation_price = position.get('liquidation_price')
+        liquidation_buffer_pct = position.get('liquidation_buffer_pct')
+        is_liquidation_risk_high = position.get('is_liquidation_risk_high', False)
+
+        # v4.7: Funding rate fields
+        funding_rate_current = position.get('funding_rate_current')
+        funding_rate_cumulative_usd = position.get('funding_rate_cumulative_usd')
+        effective_pnl = position.get('effective_pnl_after_funding')
+        daily_funding_cost = position.get('daily_funding_cost_usd')
+
+        # v4.7: Drawdown fields
+        max_drawdown_pct = position.get('max_drawdown_pct')
+        max_drawdown_duration_bars = position.get('max_drawdown_duration_bars')
+        consecutive_lower_lows = position.get('consecutive_lower_lows', 0)
+
+        # === Build formatted output ===
+        lines = []
+
+        # Header
+        lines.append(f"Side: {side} | Size: {qty:.4f} BTC | Entry: ${avg_px:,.2f}")
+        lines.append("")
+
+        # Performance section
+        lines.append("Performance:")
+        pnl_sign = '+' if pnl_pct >= 0 else ''
+        lines.append(f"  P&L: ${unrealized_pnl:+,.2f} ({pnl_sign}{pnl_pct:.2f}%)")
+
+        # v4.7: Show effective PnL after funding
+        if effective_pnl is not None and funding_rate_cumulative_usd:
+            eff_sign = '+' if effective_pnl >= 0 else ''
+            lines.append(f"  Effective P&L (after funding): ${effective_pnl:+,.2f}")
+
+        # Peak/worst if available
+        if peak_pnl is not None or worst_pnl is not None:
+            peak_str = f"+{peak_pnl:.2f}%" if peak_pnl is not None else "N/A"
+            worst_str = f"{worst_pnl:+.2f}%" if worst_pnl is not None else "N/A"
+            lines.append(f"  Peak: {peak_str} | Worst: {worst_str}")
+
+        # v4.7: Drawdown attribution
+        if max_drawdown_pct is not None and max_drawdown_pct > 0:
+            dd_bars = max_drawdown_duration_bars or 0
+            lines.append(f"  Current Drawdown: -{max_drawdown_pct:.2f}% (for {dd_bars} bars)")
+
+        # Duration
+        if duration_mins > 0:
+            if duration_mins >= 60:
+                hours = duration_mins // 60
+                mins = duration_mins % 60
+                duration_str = f"{hours}h {mins}m"
+            else:
+                duration_str = f"{duration_mins} minutes"
+            lines.append(f"  Duration: {duration_str}")
+
+        lines.append("")
+
+        # v4.7: Liquidation Risk section (CRITICAL)
+        lines.append("Liquidation Risk:")
+        if liquidation_price is not None:
+            lines.append(f"  Liquidation Price: ${liquidation_price:,.2f}")
+            if liquidation_buffer_pct is not None:
+                risk_emoji = "🔴" if is_liquidation_risk_high else "🟢"
+                lines.append(f"  Buffer: {risk_emoji} {liquidation_buffer_pct:.1f}%")
+                if is_liquidation_risk_high:
+                    lines.append("  ⚠️ WARNING: Liquidation risk HIGH (<10% buffer)")
+        else:
+            lines.append("  Liquidation data not available")
+
+        lines.append("")
+
+        # v5.1: Funding Rate section (settled + predicted)
+        lines.append("Funding Rate Impact:")
+        if funding_rate_current is not None:
+            fr_pct = funding_rate_current * 100
+            fr_emoji = "🔴" if fr_pct > 0.01 else "🟢" if fr_pct < -0.01 else "⚪"
+            lines.append(f"  Last Settled Rate: {fr_emoji} {fr_pct:.4f}% per 8h")
+            if daily_funding_cost is not None:
+                lines.append(f"  Estimated Daily Cost: ${daily_funding_cost:.2f}")
+            if funding_rate_cumulative_usd is not None:
+                lines.append(f"  Cumulative Paid: ${funding_rate_cumulative_usd:+.2f}")
+        else:
+            lines.append("  Funding rate data not available")
+
+        lines.append("")
+
+        # Risk Management section
+        lines.append("Risk Management:")
+        if sl_price is not None:
+            sl_dist = ((sl_price - avg_px) / avg_px * 100) if avg_px > 0 else 0
+            lines.append(f"  Stop Loss: ${sl_price:,.2f} ({sl_dist:+.2f}%)")
+        else:
+            lines.append("  Stop Loss: NOT SET")
+
+        if tp_price is not None:
+            tp_dist = ((tp_price - avg_px) / avg_px * 100) if avg_px > 0 else 0
+            lines.append(f"  Take Profit: ${tp_price:,.2f} ({tp_dist:+.2f}%)")
+        else:
+            lines.append("  Take Profit: NOT SET")
+
+        if rr_ratio is not None:
+            lines.append(f"  Risk/Reward Ratio: {rr_ratio:.1f}:1")
+
+        if margin_pct is not None:
+            lines.append(f"  Margin Used: {margin_pct:.1f}% of equity")
+
+        lines.append("")
+
+        # Entry Context section
+        lines.append("Entry Context:")
+        if entry_conf:
+            lines.append(f"  Entry Confidence: {entry_conf}")
+        else:
+            lines.append("  Entry Confidence: UNKNOWN")
+
+        if current_price and avg_px > 0:
+            price_vs_entry = ((current_price - avg_px) / avg_px * 100)
+            lines.append(f"  Current vs Entry: {price_vs_entry:+.2f}%")
+
+        # v4.7: Market structure hint
+        if consecutive_lower_lows and consecutive_lower_lows >= 3:
+            lines.append(f"  ⚠️ Bearish structure: {consecutive_lower_lows} consecutive lower lows")
+
+        return "\n".join(lines)
+
+    def _format_account(self, account: Optional[Dict[str, Any]]) -> str:
+        """
+        Format account context for AI prompts (v4.6 + v4.7).
+
+        Provides capital, capacity, and portfolio-level risk information.
+        v4.7: Added liquidation buffer, funding costs, and total P&L.
+        """
+        if not account:
+            return "Account context not available"
+
+        lines = []
+
+        # Capital info
+        equity = account.get('equity', 0)
+        leverage = account.get('leverage', 1)
+        lines.append(f"Equity: ${equity:,.2f} | Leverage: {leverage}x")
+
+        # Position capacity
+        max_pos_value = account.get('max_position_value', 0)
+        current_pos_value = account.get('current_position_value', 0)
+        available = account.get('available_capacity', 0)
+        capacity_pct = account.get('capacity_used_pct', 0)
+
+        lines.append("")
+        lines.append("Position Capacity:")
+        lines.append(f"  Max Allowed: ${max_pos_value:,.2f}")
+        lines.append(f"  Currently Used: ${current_pos_value:,.2f} ({capacity_pct:.1f}%)")
+        lines.append(f"  Available: ${available:,.2f}")
+
+        # v4.7: Portfolio P&L
+        total_pnl = account.get('total_unrealized_pnl_usd')
+        if total_pnl is not None:
+            lines.append("")
+            lines.append("Portfolio P&L:")
+            pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+            lines.append(f"  Total Unrealized: {pnl_emoji} ${total_pnl:+,.2f}")
+
+        # v4.7: Portfolio Liquidation Risk
+        liq_buffer_min = account.get('liquidation_buffer_portfolio_min_pct')
+        if liq_buffer_min is not None:
+            lines.append("")
+            lines.append("Portfolio Liquidation Risk:")
+            risk_emoji = "🔴" if liq_buffer_min < 10 else "🟡" if liq_buffer_min < 15 else "🟢"
+            lines.append(f"  Min Liquidation Buffer: {risk_emoji} {liq_buffer_min:.1f}%")
+            if liq_buffer_min < 10:
+                lines.append("  ⚠️ CRITICAL: Portfolio near liquidation!")
+            elif liq_buffer_min < 15:
+                lines.append("  ⚠️ WARNING: Reduce risk or add margin")
+
+        # v4.7: Funding Costs
+        daily_funding = account.get('total_daily_funding_cost_usd')
+        cumulative_funding = account.get('total_cumulative_funding_paid_usd')
+        if daily_funding is not None or cumulative_funding is not None:
+            lines.append("")
+            lines.append("Funding Costs:")
+            if daily_funding is not None:
+                lines.append(f"  Daily Cost: ${daily_funding:.2f}")
+            if cumulative_funding is not None:
+                lines.append(f"  Cumulative Paid: ${cumulative_funding:+.2f}")
+
+        # Add/reduce guidance
+        can_add = account.get('can_add_position', False)
+        can_add_safely = account.get('can_add_position_safely', False)
+        lines.append("")
+        if can_add_safely:
+            lines.append("✅ Safe to add position (capacity + liquidation buffer OK)")
+        elif can_add:
+            lines.append("⚠️ Capacity available but liquidation buffer low - add with caution")
+        else:
+            lines.append("🔴 Near max capacity - consider REDUCE or HOLD")
+
+        return "\n".join(lines)
 
     # =========================================================================
     # v3.12: Persistent Memory System (TradingGroup-style experience summary)
@@ -1350,6 +2010,19 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
         """
         return self.last_prompts
 
+    def get_call_trace(self) -> List[Dict[str, Any]]:
+        """
+        Return the full call trace for the last analysis cycle.
+
+        Each entry contains:
+        - messages: List[Dict] (system + user prompts sent to API)
+        - temperature: float
+        - response: str (full API response)
+        - elapsed_sec: float
+        - tokens: Dict with prompt/completion/total counts
+        """
+        return self.call_trace
+
     def _format_order_flow_report(self, data: Optional[Dict[str, Any]]) -> str:
         """
         Format order flow data for AI prompts.
@@ -1373,15 +2046,17 @@ Unrealized P&L: ${unrealized_pnl:,.2f}
         avg_trade = data.get('avg_trade_usdt', 0)
         volume_usdt = data.get('volume_usdt', 0)
         trades_count = data.get('trades_count', 0)
+        cvd_trend = data.get('cvd_trend', 'N/A')
         recent_bars = data.get('recent_10_bars', [])
 
         # Format recent bars (raw data only, AI infers trend)
         recent_str = ", ".join([f"{r:.1%}" for r in recent_bars]) if recent_bars else "N/A"
 
-        # TradingAgents v3.6: Added volume_usdt for market activity assessment
+        # v3.24: Added CVD Trend (was missing — critical confirmation signal)
         return f"""
 ORDER FLOW (Binance Taker Data):
 - Buy Ratio (10-bar avg): {buy_ratio:.1%}
+- CVD Trend: {cvd_trend}
 - Volume (USDT): ${volume_usdt:,.0f}
 - Avg Trade Size: ${avg_trade:,.0f} USDT
 - Trade Count: {trades_count:,}
@@ -1422,72 +2097,123 @@ ORDER FLOW (Binance Taker Data):
         if data and data.get('enabled', True):
             parts.append("COINALYZE DERIVATIVES:")
 
-            # Open Interest (v3.9: removed trend label for AI autonomy)
+            # Open Interest (v3.26: restored trend — single snapshot needs trend context)
+            trends = data.get('trends', {})
             oi = data.get('open_interest')
             if oi:
                 try:
                     oi_btc = float(oi.get('value', 0) or 0)
                 except (ValueError, TypeError):
                     oi_btc = 0.0
-                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC")
+                oi_trend = trends.get('oi_trend', 'N/A')
+                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC (Trend: {oi_trend})")
             else:
                 parts.append("- Open Interest: N/A")
 
-            # Funding Rate (v3.9: removed trend label for AI autonomy)
+            # Funding Rate (v5.1: 已结算 + 预期，语义修正)
             funding = data.get('funding_rate')
             if funding:
+                # 已结算费率 (from /fapi/v1/fundingRate)
                 try:
-                    rate = float(funding.get('value', 0) or 0)
+                    settled_rate = float(funding.get('value', 0) or 0)
                 except (ValueError, TypeError):
-                    rate = 0.0
-                rate_pct = rate * 100
-                parts.append(f"- Funding Rate: {rate_pct:.4f}%")
+                    settled_rate = 0.0
+                settled_pct = settled_rate * 100
+                parts.append(f"- Last Settled Funding Rate: {settled_pct:.4f}%")
+
+                # 预期费率 (from premiumIndex.lastFundingRate, 实时变化)
+                predicted_pct = funding.get('predicted_rate_pct')
+                if predicted_pct is not None:
+                    parts.append(f"- Predicted Next Funding Rate: {predicted_pct:.4f}%")
+
+                # 溢价指数 (瞬时值)
+                premium_index = funding.get('premium_index')
+                if premium_index is not None:
+                    pi_pct = premium_index * 100
+                    mark = funding.get('mark_price', 0)
+                    index = funding.get('index_price', 0)
+                    parts.append(
+                        f"- Premium Index: {pi_pct:+.4f}% "
+                        f"(Mark: ${mark:,.2f}, Index: ${index:,.2f})"
+                    )
+
+                # 下次结算倒计时
+                countdown = funding.get('next_funding_countdown_min')
+                if countdown is not None:
+                    hours = countdown // 60
+                    mins = countdown % 60
+                    parts.append(f"- Next Settlement: {hours}h {mins}m")
+
+                # 结算历史 (最近 10 次 = ~3.3 天)
+                history = funding.get('history', [])
+                if history and len(history) >= 2:
+                    rates_str = " → ".join(
+                        [f"{r['rate_pct']:.4f}%" for r in history]
+                    )
+                    parts.append(f"- Funding History (last {len(history)}): {rates_str}")
+
+                    # 趋势
+                    trend = funding.get('trend', 'N/A')
+                    if trend != 'N/A':
+                        parts.append(f"- Funding Trend: {trend}")
             else:
                 parts.append("- Funding Rate: N/A")
 
-            # Liquidations
+            # Liquidations (v3.24: expanded to 24h with history trend)
             liq = data.get('liquidations')
             if liq:
                 history = liq.get('history', [])
                 if history:
-                    item = history[-1]
-                    long_liq_btc = float(item.get('l', 0))
-                    short_liq_btc = float(item.get('s', 0))
-                    total_btc = long_liq_btc + short_liq_btc
-
                     price_for_conversion = current_price if current_price > 0 else 88000
+
+                    # Calculate 24h totals
+                    total_long_btc = sum(float(h.get('l', 0)) for h in history)
+                    total_short_btc = sum(float(h.get('s', 0)) for h in history)
+                    total_btc = total_long_btc + total_short_btc
                     total_usd = total_btc * price_for_conversion
 
-                    parts.append(f"- Liquidations (1h): {total_btc:.4f} BTC (${total_usd:,.0f})")
+                    parts.append(f"- Liquidations (24h): {total_btc:.4f} BTC (${total_usd:,.0f})")
                     if total_btc > 0:
-                        long_ratio = long_liq_btc / total_btc
-                        parts.append(f"  - Long Liq: {long_liq_btc:.4f} BTC ({long_ratio:.0%})")
-                        parts.append(f"  - Short Liq: {short_liq_btc:.4f} BTC ({1-long_ratio:.0%})")
-                else:
-                    parts.append("- Liquidations (1h): N/A")
-            else:
-                parts.append("- Liquidations (1h): N/A")
+                        long_ratio = total_long_btc / total_btc
+                        parts.append(f"  - Long Liq: {total_long_btc:.4f} BTC ({long_ratio:.0%})")
+                        parts.append(f"  - Short Liq: {total_short_btc:.4f} BTC ({1-long_ratio:.0%})")
 
-            # Long/Short Ratio from Coinalyze (v3.9: removed trend label)
+                    # v3.24: Show hourly history (oldest → newest) for trend
+                    if len(history) >= 3:
+                        hourly_totals = []
+                        for h in history:
+                            h_total = float(h.get('l', 0)) + float(h.get('s', 0))
+                            h_usd = h_total * price_for_conversion
+                            hourly_totals.append(f"${h_usd:,.0f}")
+                        parts.append(f"  Hourly Trend: {' → '.join(hourly_totals)}")
+                else:
+                    parts.append("- Liquidations (24h): N/A")
+            else:
+                parts.append("- Liquidations (24h): N/A")
+
+            # Long/Short Ratio from Coinalyze (v3.26: restored trend for single-snapshot context)
             ls_hist = data.get('long_short_ratio_history')
             if ls_hist and ls_hist.get('history'):
                 latest = ls_hist['history'][-1]
                 ls_ratio = float(latest.get('r', 1))
                 long_pct = float(latest.get('l', 50))
                 short_pct = float(latest.get('s', 50))
+                ls_trend = trends.get('long_short_trend', 'N/A')
                 parts.append(
-                    f"- Long/Short Ratio: {ls_ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%)"
+                    f"- Long/Short Ratio: {ls_ratio:.2f} (Long {long_pct:.1f}% / Short {short_pct:.1f}%) "
+                    f"(Trend: {ls_trend})"
                 )
         else:
             parts.append("COINALYZE: Data not available")
 
         # =========================================================================
         # Section 2: Binance Derivatives (Unique Data)
+        # v3.24: Unhide full history series (previously only showed latest)
         # =========================================================================
         if binance_derivatives:
             parts.append("\nBINANCE DERIVATIVES (Top Traders & Taker):")
 
-            # Top Traders Position Ratio (v3.9: removed trend label)
+            # Top Traders Position Ratio — with full history series
             top_pos = binance_derivatives.get('top_long_short_position', {})
             latest = top_pos.get('latest')
             if latest:
@@ -1498,20 +2224,35 @@ ORDER FLOW (Binance Taker Data):
                     f"- Top Traders Position: Long {long_pct:.1f}% / Short {short_pct:.1f}% "
                     f"(Ratio: {ratio:.2f})"
                 )
+                # v3.24: Show history series
+                history = top_pos.get('data', [])
+                if history and len(history) >= 2:
+                    ratios = [f"{float(h.get('longAccount', 0.5))*100:.1f}%" for h in reversed(history)]
+                    parts.append(f"  History (Long%): {' → '.join(ratios)}")
 
-            # Taker Buy/Sell Ratio (v3.9: removed trend label)
+            # Taker Buy/Sell Ratio — with full history series
             taker = binance_derivatives.get('taker_long_short', {})
             latest = taker.get('latest')
             if latest:
                 ratio = float(latest.get('buySellRatio', 1))
                 parts.append(f"- Taker Buy/Sell Ratio: {ratio:.3f}")
+                # v3.24: Show history series
+                history = taker.get('data', [])
+                if history and len(history) >= 2:
+                    ratios = [f"{float(h.get('buySellRatio', 1)):.3f}" for h in reversed(history)]
+                    parts.append(f"  History: {' → '.join(ratios)}")
 
-            # OI from Binance (v3.9: removed trend label)
+            # OI from Binance — with full history series
             oi_hist = binance_derivatives.get('open_interest_hist', {})
             latest = oi_hist.get('latest')
             if latest:
                 oi_usd = float(latest.get('sumOpenInterestValue', 0))
                 parts.append(f"- OI (Binance): ${oi_usd:,.0f}")
+                # v3.24: Show history series
+                history = oi_hist.get('data', [])
+                if history and len(history) >= 2:
+                    oi_values = [f"${float(h.get('sumOpenInterestValue', 0))/1e9:.2f}B" for h in reversed(history)]
+                    parts.append(f"  History: {' → '.join(oi_values)}")
 
             # 24h Stats
             ticker = binance_derivatives.get('ticker_24hr')
@@ -1530,14 +2271,18 @@ ORDER FLOW (Binance Taker Data):
         current_price: float,
         technical_data: Optional[Dict[str, Any]],
         orderbook_data: Optional[Dict[str, Any]],
+        bars_data: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
-        Calculate S/R Zones from multiple data sources (v3.8).
+        Calculate S/R Zones from multiple data sources (v3.0).
 
         Combines:
         - Bollinger Bands (BB Upper/Lower)
         - SMA (SMA_50, SMA_200)
         - Order Book Walls (bid/ask anomalies)
+        - v3.0: Swing Points (from OHLC bars)
+        - v3.0: ATR-adaptive clustering
+        - v3.0: Touch Count scoring
 
         Parameters
         ----------
@@ -1547,6 +2292,9 @@ ORDER FLOW (Binance Taker Data):
             Technical indicator data containing BB and SMA values
         orderbook_data : Dict, optional
             Order book data containing anomalies (walls)
+        bars_data : List[Dict], optional
+            v3.0: OHLC bar data for swing detection and touch count
+            [{'high': float, 'low': float, 'close': float}, ...]
 
         Returns
         -------
@@ -1590,27 +2338,32 @@ ORDER FLOW (Binance Taker Data):
                     'ask_anomalies': anomalies.get('ask_anomalies', []),
                 }
 
-        # Calculate S/R zones with detailed report (v2.0)
+        # Calculate S/R zones with detailed report (v3.0: bars_data for swing/touch)
         try:
             result = self.sr_calculator.calculate_with_detailed_report(
                 current_price=current_price,
                 bb_data=bb_data,
                 sma_data=sma_data,
                 orderbook_anomalies=orderbook_anomalies,
+                bars_data=bars_data,
             )
 
             # Log S/R zone detection
             if result.get('nearest_resistance'):
                 r = result['nearest_resistance']
+                swing_tag = " [Swing]" if r.has_swing_point else ""
+                touch_tag = f" [T:{r.touch_count}]" if r.touch_count > 0 else ""
                 self.logger.debug(
                     f"S/R Zone: Nearest Resistance ${r.price_center:,.0f} "
-                    f"({r.distance_pct:.1f}% away) [{r.strength}]"
+                    f"({r.distance_pct:.1f}% away) [{r.strength}]{swing_tag}{touch_tag}"
                 )
             if result.get('nearest_support'):
                 s = result['nearest_support']
+                swing_tag = " [Swing]" if s.has_swing_point else ""
+                touch_tag = f" [T:{s.touch_count}]" if s.touch_count > 0 else ""
                 self.logger.debug(
                     f"S/R Zone: Nearest Support ${s.price_center:,.0f} "
-                    f"({s.distance_pct:.1f}% away) [{s.strength}]"
+                    f"({s.distance_pct:.1f}% away) [{s.strength}]{swing_tag}{touch_tag}"
                 )
 
             return result

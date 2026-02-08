@@ -1,33 +1,40 @@
 # utils/sr_zone_calculator.py
 """
-Support/Resistance Zone Calculator v2.0
+Support/Resistance Zone Calculator v3.0
 
 职责:
 - 聚合多个数据源的 S/R 候选价位
 - 聚类形成 S/R Zone (价差 < cluster_pct 的合并)
-- 计算 Zone 强度 (基于 confluence)
+- 计算 Zone 强度 (基于 confluence + touch count)
 - 输出给 AI 和本地硬风控使用
 - v2.0: 添加 level (时间框架级别) 和 source_type (来源类型)
 - v2.0: 添加详细 AI 报告，包含原始数据供 AI 验证
+- v3.0: 添加 Swing Point 检测 (Williams Fractal N-bar pivot)
+- v3.0: ATR 自适应聚类阈值
+- v3.0: Touch Count 评分 (2-3 touches 最优)
 
 设计原则:
 - 只做预处理，不做交易判断
 - 输出结构化数据，让 AI 解读
 - 硬风控只在 HIGH strength 时介入
 - v2.0: 传递原始数据让 AI 可以验证计算结果
+- v3.0: Swing Points 是学术验证最有效的 S/R 来源 (Chan 2022, MDPI)
 
 参考:
+- Chan (2022): Machine Learning with Support/Resistance (MDPI)
+- Osler (2000): Support for Resistance (FRB NY)
+- DeepSupp (2025): HDBSCAN for S/R (arXiv:2507.01971)
 - QuantStrategy.io: Order Book Depth Analysis
 - Analyzing Alpha: Support and Resistance
 - TradingAgents: Local preprocessing + AI decision
 
 Author: AItrader Team
 Date: 2026-01
-Version: 2.0
+Version: 3.0
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 
 
@@ -46,17 +53,17 @@ class SRSourceType:
     """S/R 来源类型"""
     ORDER_FLOW = "ORDER_FLOW"     # 订单流 (Order Wall) - 最实时
     TECHNICAL = "TECHNICAL"       # 技术指标 (SMA, BB) - 广泛认可
-    STRUCTURAL = "STRUCTURAL"     # 结构性 (前高/前低, Pivot) - 历史验证
+    STRUCTURAL = "STRUCTURAL"     # 结构性 (前高/前低, Pivot, Swing Point) - 历史验证
 
 
 @dataclass
 class SRCandidate:
     """S/R 候选价位"""
     price: float
-    source: str          # 来源: BB_Lower, BB_Upper, SMA_50, SMA_200, Order_Wall
-    weight: float        # 权重: Order_Wall=2.0, SMA_200=1.5, BB=1.0, SMA_50=0.8
+    source: str          # 来源: BB_Lower, BB_Upper, SMA_50, SMA_200, Order_Wall, Swing_High, Swing_Low
+    weight: float        # 权重: Order_Wall=0.8, SMA_200=1.5, Swing=1.2, BB=1.0, SMA_50=0.8
     side: str            # support 或 resistance
-    extra: Dict = field(default_factory=dict)  # 额外信息 (如 wall size)
+    extra: Dict = field(default_factory=dict)  # 额外信息 (如 wall size, bar_index)
     # v2.0 新增
     level: str = SRLevel.MINOR           # 时间框架级别
     source_type: str = SRSourceType.TECHNICAL  # 来源类型
@@ -79,11 +86,19 @@ class SRZone:
     level: str = SRLevel.MINOR           # 时间框架级别 (取最高级别)
     source_type: str = SRSourceType.TECHNICAL  # 主要来源类型
     order_walls: List[Dict] = field(default_factory=list)  # Order Wall 详情
+    # v3.0 新增
+    touch_count: int = 0                 # 价格触碰次数 (2-3 最优)
+    has_swing_point: bool = False        # 是否包含 Swing Point
 
 
 class SRZoneCalculator:
     """
-    S/R Zone 计算器
+    S/R Zone 计算器 v3.0
+
+    v3.0 新功能:
+    - Swing Point 检测: Williams Fractal (N-bar pivot high/low)
+    - ATR 自适应聚类: 用 ATR 替代固定百分比，适应不同波动率
+    - Touch Count 评分: 统计价格触碰次数，2-3 次最优 (Osler 2000)
 
     使用方法:
     ```python
@@ -92,7 +107,9 @@ class SRZoneCalculator:
         current_price=100000,
         bb_data={'upper': 101500, 'lower': 98500, 'middle': 100000},
         sma_data={'sma_50': 99000, 'sma_200': 95000},
-        orderbook_anomalies={'bid_anomalies': [...], 'ask_anomalies': [...]}
+        orderbook_anomalies={'bid_anomalies': [...], 'ask_anomalies': [...]},
+        bars_data=[{'high': ..., 'low': ..., 'close': ...}, ...],  # v3.0
+        atr_value=1500.0,  # v3.0
     )
 
     # 输出给 AI
@@ -105,18 +122,30 @@ class SRZoneCalculator:
     """
 
     # 权重配置
+    # v2.1: 降低 Order Wall 权重 (从 2.0 → 0.8)
+    # v3.0: 新增 Swing Point 权重 1.2 (介于 BB=1.0 和 SMA_200=1.5 之间)
     WEIGHTS = {
-        'Order_Wall': 2.0,      # 订单簿大单 (最重要)
-        'SMA_200': 1.5,         # 长期趋势
+        'Order_Wall': 0.8,      # 订单簿大单 (v2.1: 降低权重，仅作为辅助确认)
+        'SMA_200': 1.5,         # 长期趋势 (最重要)
+        'Swing_High': 1.2,      # v3.0: Swing Point (结构性，学术验证有效)
+        'Swing_Low': 1.2,       # v3.0: Swing Point
         'BB_Upper': 1.0,        # 布林带
         'BB_Lower': 1.0,
         'SMA_50': 0.8,          # 中期趋势
         'Pivot': 0.7,           # Pivot Points (可选)
     }
 
+    # v2.1: Order Wall 过滤阈值
+    ORDER_WALL_THRESHOLDS = {
+        'min_btc': 50.0,        # 最小 BTC 阈值 (小于此值不算大单)
+        'min_distance_pct': 0.5, # 最小距离阈值 (距离当前价 < 0.5% 的不算 S/R)
+        'high_strength_btc': 100.0,  # 达到此 BTC 量才能贡献 HIGH strength
+    }
+
     # 强度阈值
+    # v2.1: HIGH 需要 total_weight >= 3.0 或 Order Wall >= 100 BTC
     STRENGTH_THRESHOLDS = {
-        'HIGH': 3.0,            # 总权重 >= 3.0 或有 Order Wall
+        'HIGH': 3.0,            # 总权重 >= 3.0 或 Order Wall >= high_strength_btc
         'MEDIUM': 1.5,          # 总权重 >= 1.5
         'LOW': 0.0,             # 其他
     }
@@ -126,6 +155,20 @@ class SRZoneCalculator:
         cluster_pct: float = 0.5,       # 聚类阈值 (价差 < 0.5% 合并)
         zone_expand_pct: float = 0.1,   # Zone 扩展 (上下各 0.1%)
         hard_control_threshold_pct: float = 1.0,  # 硬风控阈值 (距离 < 1%)
+        # v3.0: Swing Point 配置
+        swing_detection_enabled: bool = True,
+        swing_left_bars: int = 5,       # 左侧 N 根 bar
+        swing_right_bars: int = 5,      # 右侧 N 根 bar
+        swing_weight: float = 1.2,      # Swing Point 权重
+        swing_max_age: int = 100,       # 最大回看 bar 数
+        # v3.0: ATR 自适应聚类
+        use_atr_adaptive: bool = True,
+        atr_cluster_multiplier: float = 0.5,  # cluster_threshold = ATR × multiplier
+        # v3.0: Touch Count 配置
+        touch_count_enabled: bool = True,
+        touch_threshold_atr: float = 0.3,  # 触碰判定距离 = ATR × threshold
+        optimal_touches: Tuple[int, ...] = (2, 3),  # 最优触碰次数
+        decay_after_touches: int = 4,   # 超过此次数开始衰减
         logger: logging.Logger = None,
     ):
         """
@@ -139,13 +182,315 @@ class SRZoneCalculator:
             Zone 边界扩展百分比
         hard_control_threshold_pct : float
             硬风控触发阈值 (仅对 HIGH strength)
+        swing_detection_enabled : bool
+            启用 Swing Point 检测 (v3.0)
+        swing_left_bars : int
+            Swing Point 左侧 bar 数量
+        swing_right_bars : int
+            Swing Point 右侧 bar 数量
+        swing_weight : float
+            Swing Point 权重
+        swing_max_age : int
+            Swing Point 最大回看 bar 数
+        use_atr_adaptive : bool
+            使用 ATR 自适应聚类阈值 (v3.0)
+        atr_cluster_multiplier : float
+            ATR 聚类乘数 (cluster_threshold = ATR × multiplier)
+        touch_count_enabled : bool
+            启用 Touch Count 评分 (v3.0)
+        touch_threshold_atr : float
+            触碰判定距离 (ATR 的倍数)
+        optimal_touches : Tuple[int, ...]
+            最优触碰次数 (权重加成)
+        decay_after_touches : int
+            超过此次数后权重开始衰减
         logger : logging.Logger
             日志记录器
         """
         self.cluster_pct = cluster_pct
         self.zone_expand_pct = zone_expand_pct
         self.hard_control_threshold_pct = hard_control_threshold_pct
+
+        # v3.0: Swing Point
+        self.swing_detection_enabled = swing_detection_enabled
+        self.swing_left_bars = swing_left_bars
+        self.swing_right_bars = swing_right_bars
+        self.swing_weight = swing_weight
+        self.swing_max_age = swing_max_age
+        # Update WEIGHTS with configured swing weight
+        self.WEIGHTS = dict(self.WEIGHTS)  # Instance copy
+        self.WEIGHTS['Swing_High'] = swing_weight
+        self.WEIGHTS['Swing_Low'] = swing_weight
+
+        # v3.0: ATR adaptive clustering
+        self.use_atr_adaptive = use_atr_adaptive
+        self.atr_cluster_multiplier = atr_cluster_multiplier
+
+        # v3.0: Touch count
+        self.touch_count_enabled = touch_count_enabled
+        self.touch_threshold_atr = touch_threshold_atr
+        self.optimal_touches = optimal_touches
+        self.decay_after_touches = decay_after_touches
+
         self.logger = logger or logging.getLogger(__name__)
+
+    # =========================================================================
+    # v3.0: Swing Point Detection (Williams Fractal / N-bar Pivot)
+    # =========================================================================
+
+    def _detect_swing_points(
+        self,
+        bars_data: List[Dict[str, Any]],
+        current_price: float,
+    ) -> List[SRCandidate]:
+        """
+        Detect swing highs and swing lows using Williams Fractal method.
+
+        A swing high occurs when a bar's high is the highest of (left_bars + 1 + right_bars) bars.
+        A swing low occurs when a bar's low is the lowest of (left_bars + 1 + right_bars) bars.
+
+        Reference: Chan (2022, MDPI) - swing points improved ML S/R profitability by 65%.
+
+        Parameters
+        ----------
+        bars_data : List[Dict]
+            OHLC bar data: [{'high': float, 'low': float, 'close': float}, ...]
+            Ordered from oldest to newest.
+        current_price : float
+            Current market price for support/resistance classification.
+
+        Returns
+        -------
+        List[SRCandidate]
+            Detected swing point candidates.
+        """
+        candidates = []
+        if not bars_data:
+            return candidates
+
+        # Limit to max_age bars
+        bars = bars_data[-self.swing_max_age:] if len(bars_data) > self.swing_max_age else bars_data
+        n = len(bars)
+        left = self.swing_left_bars
+        right = self.swing_right_bars
+        min_bars_needed = left + 1 + right
+
+        if n < min_bars_needed:
+            self.logger.debug(
+                f"Swing detection: insufficient bars ({n} < {min_bars_needed})"
+            )
+            return candidates
+
+        for i in range(left, n - right):
+            bar = bars[i]
+            bar_high = float(bar.get('high', 0))
+            bar_low = float(bar.get('low', 0))
+
+            if bar_high <= 0 or bar_low <= 0:
+                continue
+
+            # Check swing high: bar[i].high >= all bars in [i-left, i+right]
+            is_swing_high = True
+            for j in range(i - left, i + right + 1):
+                if j == i:
+                    continue
+                if float(bars[j].get('high', 0)) > bar_high:
+                    is_swing_high = False
+                    break
+
+            # Check swing low: bar[i].low <= all bars in [i-left, i+right]
+            is_swing_low = True
+            for j in range(i - left, i + right + 1):
+                if j == i:
+                    continue
+                if float(bars[j].get('low', 0)) < bar_low:
+                    is_swing_low = False
+                    break
+
+            # Age weighting: more recent swings are more relevant
+            bars_ago = n - 1 - i
+            age_factor = max(0.5, 1.0 - (bars_ago / self.swing_max_age) * 0.5)
+
+            if is_swing_high:
+                # Swing highs (price peaks) are ALWAYS resistance
+                # They represent historical selling pressure regardless of current price
+                candidates.append(SRCandidate(
+                    price=bar_high,
+                    source=f"Swing_High",
+                    weight=self.WEIGHTS['Swing_High'] * age_factor,
+                    side='resistance',
+                    extra={'bar_index': i, 'bars_ago': bars_ago, 'age_factor': age_factor},
+                    level=SRLevel.INTERMEDIATE,
+                    source_type=SRSourceType.STRUCTURAL,
+                ))
+
+            if is_swing_low:
+                # Swing lows (price troughs) are ALWAYS support
+                # They represent historical buying pressure regardless of current price
+                candidates.append(SRCandidate(
+                    price=bar_low,
+                    source=f"Swing_Low",
+                    weight=self.WEIGHTS['Swing_Low'] * age_factor,
+                    side='support',
+                    extra={'bar_index': i, 'bars_ago': bars_ago, 'age_factor': age_factor},
+                    level=SRLevel.INTERMEDIATE,
+                    source_type=SRSourceType.STRUCTURAL,
+                ))
+
+        self.logger.debug(
+            f"Swing detection: found {len(candidates)} swing points from {n} bars"
+        )
+        return candidates
+
+    # =========================================================================
+    # v3.0: ATR Calculation from Bars
+    # =========================================================================
+
+    @staticmethod
+    def _calculate_atr_from_bars(
+        bars_data: List[Dict[str, Any]],
+        period: int = 14,
+    ) -> float:
+        """
+        Calculate ATR (Average True Range) from bar data.
+
+        Used when no external ATR value is provided.
+
+        Parameters
+        ----------
+        bars_data : List[Dict]
+            OHLC bar data.
+        period : int
+            ATR period (default 14).
+
+        Returns
+        -------
+        float
+            ATR value, or 0.0 if insufficient data.
+        """
+        if not bars_data or len(bars_data) < 2:
+            return 0.0
+
+        true_ranges = []
+        for i in range(1, len(bars_data)):
+            high = float(bars_data[i].get('high', 0))
+            low = float(bars_data[i].get('low', 0))
+            prev_close = float(bars_data[i - 1].get('close', 0))
+
+            if high <= 0 or low <= 0 or prev_close <= 0:
+                continue
+
+            tr = max(
+                high - low,
+                abs(high - prev_close),
+                abs(low - prev_close),
+            )
+            true_ranges.append(tr)
+
+        if not true_ranges:
+            return 0.0
+
+        # Use simple average of last `period` TRs
+        recent = true_ranges[-period:] if len(true_ranges) >= period else true_ranges
+        return sum(recent) / len(recent)
+
+    # =========================================================================
+    # v3.0: Touch Count for Zones
+    # =========================================================================
+
+    def _count_zone_touches(
+        self,
+        zone_center: float,
+        zone_low: float,
+        zone_high: float,
+        bars_data: List[Dict[str, Any]],
+        atr_value: float,
+    ) -> int:
+        """
+        Count discrete touches of a zone (consecutive bars = 1 touch).
+
+        A "touch" requires price to leave the zone and then re-enter it.
+        Consecutive bars overlapping the same zone count as a single touch.
+        This matches Osler (2000)'s definition where 2-3 discrete visits
+        to a price level indicate optimal S/R strength.
+
+        Parameters
+        ----------
+        zone_center : float
+            Center price of the zone.
+        zone_low : float
+            Lower boundary of the zone.
+        zone_high : float
+            Upper boundary of the zone.
+        bars_data : List[Dict]
+            OHLC bar data.
+        atr_value : float
+            Current ATR value for touch threshold calculation.
+
+        Returns
+        -------
+        int
+            Number of discrete touches.
+        """
+        if not bars_data or atr_value <= 0:
+            return 0
+
+        touch_distance = atr_value * self.touch_threshold_atr
+        expanded_low = zone_low - touch_distance
+        expanded_high = zone_high + touch_distance
+
+        touches = 0
+        was_in_zone = False
+
+        for bar in bars_data:
+            bar_high = float(bar.get('high', 0))
+            bar_low = float(bar.get('low', 0))
+
+            if bar_high <= 0 or bar_low <= 0:
+                continue
+
+            # Bar overlaps with the expanded zone
+            in_zone = (bar_low <= expanded_high and bar_high >= expanded_low)
+
+            if in_zone and not was_in_zone:
+                # Price just entered the zone — count as a new touch
+                touches += 1
+
+            was_in_zone = in_zone
+
+        return touches
+
+    def _touch_weight_bonus(self, touch_count: int) -> float:
+        """
+        Calculate weight bonus based on touch count.
+
+        2-3 touches: +0.5 weight bonus (optimal, Osler 2000)
+        4+  touches: diminishing bonus (zone may be weakening)
+        0-1 touches: no bonus
+
+        Parameters
+        ----------
+        touch_count : int
+            Number of price touches.
+
+        Returns
+        -------
+        float
+            Weight bonus to add to zone's total_weight.
+        """
+        if touch_count in self.optimal_touches:
+            return 0.5
+        elif touch_count >= self.decay_after_touches:
+            # Diminishing: 0.3 for 4, 0.1 for 5, 0 for 6+
+            decay = max(0.0, 0.5 - (touch_count - self.decay_after_touches + 1) * 0.2)
+            return decay
+        elif touch_count == 1:
+            return 0.1
+        return 0.0
+
+    # =========================================================================
+    # Main Calculation Methods
+    # =========================================================================
 
     def calculate(
         self,
@@ -154,6 +499,9 @@ class SRZoneCalculator:
         sma_data: Optional[Dict[str, float]] = None,
         orderbook_anomalies: Optional[Dict] = None,
         pivot_data: Optional[Dict[str, float]] = None,
+        # v3.0: New parameters (backward compatible)
+        bars_data: Optional[List[Dict[str, Any]]] = None,
+        atr_value: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         计算 S/R Zones
@@ -170,6 +518,11 @@ class SRZoneCalculator:
             订单簿异常数据 {'bid_anomalies': [...], 'ask_anomalies': [...]}
         pivot_data : Dict, optional
             Pivot Points {'r1': float, 's1': float, ...}
+        bars_data : List[Dict], optional
+            v3.0: OHLC bar data for swing detection and touch count
+            [{'high': float, 'low': float, 'close': float, 'open': float}, ...]
+        atr_value : float, optional
+            v3.0: ATR value for adaptive clustering. If None, calculated from bars_data.
 
         Returns
         -------
@@ -190,9 +543,17 @@ class SRZoneCalculator:
         if current_price <= 0:
             return self._empty_result()
 
-        # Step 1: 收集所有候选
+        # v3.0: Calculate ATR if not provided (needed for adaptive clustering + touch count)
+        effective_atr = atr_value
+        if effective_atr is None and bars_data:
+            effective_atr = self._calculate_atr_from_bars(bars_data)
+        if effective_atr is None:
+            effective_atr = 0.0
+
+        # Step 1: 收集所有候选 (v3.0: 包含 Swing Points)
         candidates = self._collect_candidates(
-            current_price, bb_data, sma_data, orderbook_anomalies, pivot_data
+            current_price, bb_data, sma_data, orderbook_anomalies, pivot_data,
+            bars_data=bars_data,
         )
 
         if not candidates:
@@ -202,9 +563,31 @@ class SRZoneCalculator:
         support_candidates = [c for c in candidates if c.side == 'support']
         resistance_candidates = [c for c in candidates if c.side == 'resistance']
 
-        # Step 3: 聚类形成 Zones
-        support_zones = self._cluster_to_zones(support_candidates, current_price, 'support')
-        resistance_zones = self._cluster_to_zones(resistance_candidates, current_price, 'resistance')
+        # Step 3: 聚类形成 Zones (v3.0: ATR 自适应)
+        support_zones = self._cluster_to_zones(
+            support_candidates, current_price, 'support',
+            atr_value=effective_atr,
+        )
+        resistance_zones = self._cluster_to_zones(
+            resistance_candidates, current_price, 'resistance',
+            atr_value=effective_atr,
+        )
+
+        # Step 3.5: v3.0 Touch Count scoring
+        if self.touch_count_enabled and bars_data and effective_atr > 0:
+            for zone in support_zones + resistance_zones:
+                zone.touch_count = self._count_zone_touches(
+                    zone.price_center, zone.price_low, zone.price_high,
+                    bars_data, effective_atr,
+                )
+                # Apply touch weight bonus
+                bonus = self._touch_weight_bonus(zone.touch_count)
+                if bonus > 0:
+                    zone.total_weight = round(zone.total_weight + bonus, 2)
+                    # Re-evaluate strength after bonus
+                    zone.strength = self._evaluate_strength(
+                        zone.total_weight, zone.has_order_wall, zone.wall_size_btc
+                    )
 
         # Step 4: 排序 (按距离)
         support_zones.sort(key=lambda z: z.distance_pct)
@@ -234,6 +617,22 @@ class SRZoneCalculator:
             'ai_report': ai_report,
         }
 
+    def _evaluate_strength(
+        self,
+        total_weight: float,
+        has_order_wall: bool,
+        wall_size_btc: float,
+    ) -> str:
+        """Evaluate zone strength from weight and wall size."""
+        high_strength_btc = self.ORDER_WALL_THRESHOLDS['high_strength_btc']
+        has_significant_wall = has_order_wall and wall_size_btc >= high_strength_btc
+
+        if has_significant_wall or total_weight >= self.STRENGTH_THRESHOLDS['HIGH']:
+            return 'HIGH'
+        elif total_weight >= self.STRENGTH_THRESHOLDS['MEDIUM']:
+            return 'MEDIUM'
+        return 'LOW'
+
     def _collect_candidates(
         self,
         current_price: float,
@@ -241,9 +640,16 @@ class SRZoneCalculator:
         sma_data: Optional[Dict],
         orderbook_anomalies: Optional[Dict],
         pivot_data: Optional[Dict],
+        # v3.0: New parameter
+        bars_data: Optional[List[Dict[str, Any]]] = None,
     ) -> List[SRCandidate]:
-        """收集所有 S/R 候选价位 (v2.0: 添加 level 和 source_type)"""
+        """收集所有 S/R 候选价位 (v3.0: 包含 Swing Points)"""
         candidates = []
+
+        # ===== v3.0: Swing Points (STRUCTURAL type) =====
+        if self.swing_detection_enabled and bars_data:
+            swing_candidates = self._detect_swing_points(bars_data, current_price)
+            candidates.extend(swing_candidates)
 
         # Bollinger Bands (15M = MINOR level)
         if bb_data:
@@ -298,38 +704,84 @@ class SRZoneCalculator:
                 ))
 
         # Order Book Walls (MINOR level, ORDER_FLOW type - 最实时)
+        # v2.1: 添加严格过滤条件，避免盘口普通订单被误识别为 S/R
         if orderbook_anomalies:
+            min_btc = self.ORDER_WALL_THRESHOLDS['min_btc']
+            min_distance_pct = self.ORDER_WALL_THRESHOLDS['min_distance_pct']
+
             # Bid walls = Support
             for wall in orderbook_anomalies.get('bid_anomalies', []):
-                if wall.get('price', 0) < current_price:
-                    candidates.append(SRCandidate(
-                        price=wall['price'],
-                        source=f"Order_Wall_${wall['price']:.0f}",
-                        weight=self.WEIGHTS['Order_Wall'],
-                        side='support',
-                        extra={
-                            'size_btc': wall.get('volume_btc', 0),
-                            'multiplier': wall.get('multiplier', 1),
-                        },
-                        level=SRLevel.MINOR,
-                        source_type=SRSourceType.ORDER_FLOW,
-                    ))
+                wall_price = wall.get('price', 0)
+                wall_btc = wall.get('volume_btc', 0)
+
+                # v2.1: 过滤条件
+                if wall_price <= 0 or wall_price >= current_price:
+                    continue
+
+                # 检查最小 BTC 阈值
+                if wall_btc < min_btc:
+                    self.logger.debug(
+                        f"Skipping bid wall at ${wall_price:.0f}: {wall_btc:.1f} BTC < {min_btc} BTC threshold"
+                    )
+                    continue
+
+                # 检查最小距离阈值
+                distance_pct = (current_price - wall_price) / current_price * 100
+                if distance_pct < min_distance_pct:
+                    self.logger.debug(
+                        f"Skipping bid wall at ${wall_price:.0f}: {distance_pct:.2f}% < {min_distance_pct}% min distance"
+                    )
+                    continue
+
+                candidates.append(SRCandidate(
+                    price=wall_price,
+                    source=f"Order_Wall_${wall_price:.0f}",
+                    weight=self.WEIGHTS['Order_Wall'],
+                    side='support',
+                    extra={
+                        'size_btc': wall_btc,
+                        'multiplier': wall.get('multiplier', 1),
+                    },
+                    level=SRLevel.MINOR,
+                    source_type=SRSourceType.ORDER_FLOW,
+                ))
 
             # Ask walls = Resistance
             for wall in orderbook_anomalies.get('ask_anomalies', []):
-                if wall.get('price', 0) > current_price:
-                    candidates.append(SRCandidate(
-                        price=wall['price'],
-                        source=f"Order_Wall_${wall['price']:.0f}",
-                        weight=self.WEIGHTS['Order_Wall'],
-                        side='resistance',
-                        extra={
-                            'size_btc': wall.get('volume_btc', 0),
-                            'multiplier': wall.get('multiplier', 1),
-                        },
-                        level=SRLevel.MINOR,
-                        source_type=SRSourceType.ORDER_FLOW,
-                    ))
+                wall_price = wall.get('price', 0)
+                wall_btc = wall.get('volume_btc', 0)
+
+                # v2.1: 过滤条件
+                if wall_price <= 0 or wall_price <= current_price:
+                    continue
+
+                # 检查最小 BTC 阈值
+                if wall_btc < min_btc:
+                    self.logger.debug(
+                        f"Skipping ask wall at ${wall_price:.0f}: {wall_btc:.1f} BTC < {min_btc} BTC threshold"
+                    )
+                    continue
+
+                # 检查最小距离阈值
+                distance_pct = (wall_price - current_price) / current_price * 100
+                if distance_pct < min_distance_pct:
+                    self.logger.debug(
+                        f"Skipping ask wall at ${wall_price:.0f}: {distance_pct:.2f}% < {min_distance_pct}% min distance"
+                    )
+                    continue
+
+                candidates.append(SRCandidate(
+                    price=wall_price,
+                    source=f"Order_Wall_${wall_price:.0f}",
+                    weight=self.WEIGHTS['Order_Wall'],
+                    side='resistance',
+                    extra={
+                        'size_btc': wall_btc,
+                        'multiplier': wall.get('multiplier', 1),
+                    },
+                    level=SRLevel.MINOR,
+                    source_type=SRSourceType.ORDER_FLOW,
+                ))
 
         # Pivot Points (STRUCTURAL type)
         if pivot_data:
@@ -361,10 +813,26 @@ class SRZoneCalculator:
         candidates: List[SRCandidate],
         current_price: float,
         side: str,
+        # v3.0: ATR for adaptive clustering
+        atr_value: float = 0.0,
     ) -> List[SRZone]:
-        """将候选聚类为 Zones"""
+        """将候选聚类为 Zones (v3.0: ATR 自适应阈值)"""
         if not candidates:
             return []
+
+        # v3.0: Determine effective cluster threshold
+        if self.use_atr_adaptive and atr_value > 0 and current_price > 0:
+            # ATR-based threshold: ATR × multiplier, expressed as percentage
+            atr_pct = (atr_value / current_price) * 100
+            effective_cluster_pct = atr_pct * self.atr_cluster_multiplier
+            # Clamp to reasonable range [0.1%, 2.0%]
+            effective_cluster_pct = max(0.1, min(2.0, effective_cluster_pct))
+            self.logger.debug(
+                f"ATR adaptive clustering: ATR=${atr_value:.0f} "
+                f"({atr_pct:.2f}%), cluster_pct={effective_cluster_pct:.3f}%"
+            )
+        else:
+            effective_cluster_pct = self.cluster_pct
 
         # 按价格排序
         candidates.sort(key=lambda c: c.price)
@@ -379,7 +847,7 @@ class SRZoneCalculator:
             # 计算价差百分比
             price_diff_pct = abs(candidate.price - last_price) / last_price * 100
 
-            if price_diff_pct <= self.cluster_pct:
+            if price_diff_pct <= effective_cluster_pct:
                 # 合并到当前 cluster
                 current_cluster.append(candidate)
             else:
@@ -402,7 +870,7 @@ class SRZoneCalculator:
         current_price: float,
         side: str,
     ) -> SRZone:
-        """从候选 cluster 创建 Zone (v2.0: 添加 level/source_type/order_walls)"""
+        """从候选 cluster 创建 Zone (v3.0: 添加 swing_point/touch_count)"""
         prices = [c.price for c in cluster]
         price_center = sum(prices) / len(prices)
 
@@ -435,13 +903,11 @@ class SRZoneCalculator:
                     'multiplier': c.extra.get('multiplier', 1),
                 })
 
+        # v3.0: Check for swing points
+        has_swing_point = any('Swing_' in c.source for c in cluster)
+
         # 计算强度
-        if has_order_wall or total_weight >= self.STRENGTH_THRESHOLDS['HIGH']:
-            strength = 'HIGH'
-        elif total_weight >= self.STRENGTH_THRESHOLDS['MEDIUM']:
-            strength = 'MEDIUM'
-        else:
-            strength = 'LOW'
+        strength = self._evaluate_strength(total_weight, has_order_wall, wall_size_btc)
 
         # 距离当前价格
         if side == 'support':
@@ -456,11 +922,12 @@ class SRZoneCalculator:
             if level_priority.get(c.level, 0) > level_priority.get(zone_level, 0):
                 zone_level = c.level
 
-        # v2.0: 确定主要来源类型 (ORDER_FLOW > TECHNICAL > STRUCTURAL)
+        # v2.0: 确定主要来源类型 (ORDER_FLOW > STRUCTURAL > TECHNICAL)
+        # v3.0: STRUCTURAL priority raised (swing points are strong signals)
         type_priority = {
             SRSourceType.ORDER_FLOW: 3,
-            SRSourceType.TECHNICAL: 2,
-            SRSourceType.STRUCTURAL: 1,
+            SRSourceType.STRUCTURAL: 2,
+            SRSourceType.TECHNICAL: 1,
         }
         zone_source_type = SRSourceType.TECHNICAL
         for c in cluster:
@@ -481,6 +948,8 @@ class SRZoneCalculator:
             level=zone_level,
             source_type=zone_source_type,
             order_walls=order_walls,
+            touch_count=0,  # Filled in calculate() after clustering
+            has_swing_point=has_swing_point,
         )
 
     def _check_hard_control(
@@ -546,16 +1015,18 @@ class SRZoneCalculator:
         nearest_support: Optional[SRZone],
         nearest_resistance: Optional[SRZone],
     ) -> str:
-        """生成 AI 报告"""
+        """生成 AI 报告 (v3.0: 包含 swing/touch 信息)"""
         parts = ["SUPPORT/RESISTANCE ZONES:"]
         parts.append("")
 
         # 最近阻力
         if nearest_resistance:
             wall_info = f" [Order Wall: {nearest_resistance.wall_size_btc:.1f} BTC]" if nearest_resistance.has_order_wall else ""
+            swing_info = " [Swing Point]" if nearest_resistance.has_swing_point else ""
+            touch_info = f" [Touches: {nearest_resistance.touch_count}]" if nearest_resistance.touch_count > 0 else ""
             parts.append(f"Nearest RESISTANCE: ${nearest_resistance.price_center:,.0f} "
                         f"({nearest_resistance.distance_pct:.1f}% away) "
-                        f"[{nearest_resistance.strength}]{wall_info}")
+                        f"[{nearest_resistance.strength}]{wall_info}{swing_info}{touch_info}")
             parts.append(f"  Zone: ${nearest_resistance.price_low:,.0f} - ${nearest_resistance.price_high:,.0f}")
             parts.append(f"  Sources: {', '.join(nearest_resistance.sources)}")
         else:
@@ -566,9 +1037,11 @@ class SRZoneCalculator:
         # 最近支撑
         if nearest_support:
             wall_info = f" [Order Wall: {nearest_support.wall_size_btc:.1f} BTC]" if nearest_support.has_order_wall else ""
+            swing_info = " [Swing Point]" if nearest_support.has_swing_point else ""
+            touch_info = f" [Touches: {nearest_support.touch_count}]" if nearest_support.touch_count > 0 else ""
             parts.append(f"Nearest SUPPORT: ${nearest_support.price_center:,.0f} "
                         f"({nearest_support.distance_pct:.1f}% away) "
-                        f"[{nearest_support.strength}]{wall_info}")
+                        f"[{nearest_support.strength}]{wall_info}{swing_info}{touch_info}")
             parts.append(f"  Zone: ${nearest_support.price_low:,.0f} - ${nearest_support.price_high:,.0f}")
             parts.append(f"  Sources: {', '.join(nearest_support.sources)}")
         else:
@@ -583,9 +1056,21 @@ class SRZoneCalculator:
         if other_resistance or other_support:
             parts.append("Other Zones:")
             for zone in other_resistance:
-                parts.append(f"  R: ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]")
+                extras = []
+                if zone.has_swing_point:
+                    extras.append("Swing")
+                if zone.touch_count > 0:
+                    extras.append(f"T:{zone.touch_count}")
+                extra_str = f" ({', '.join(extras)})" if extras else ""
+                parts.append(f"  R: ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{extra_str}")
             for zone in other_support:
-                parts.append(f"  S: ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]")
+                extras = []
+                if zone.has_swing_point:
+                    extras.append("Swing")
+                if zone.touch_count > 0:
+                    extras.append(f"T:{zone.touch_count}")
+                extra_str = f" ({', '.join(extras)})" if extras else ""
+                parts.append(f"  S: ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{extra_str}")
 
         return "\n".join(parts)
 
@@ -616,42 +1101,20 @@ class SRZoneCalculator:
         resistance_zones: List[SRZone] = None,
         nearest_support: Optional[SRZone] = None,
         nearest_resistance: Optional[SRZone] = None,
+        # v3.0: New parameter
+        bars_data: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
-        生成详细 AI 报告 (v2.0)
+        生成详细 AI 报告 (v3.0)
 
         包含:
-        1. 原始数据来源 (BB, SMA, Order Wall)
-        2. 计算后的 S/R Zones (含 level/strength/source_type)
+        1. 原始数据来源 (BB, SMA, Order Wall, Swing Points)
+        2. 计算后的 S/R Zones (含 level/strength/source_type/touch_count)
         3. 交易建议 (供 AI 参考)
-
-        Parameters
-        ----------
-        current_price : float
-            当前价格
-        bb_data : Dict, optional
-            布林带原始数据
-        sma_data : Dict, optional
-            SMA 原始数据
-        orderbook_anomalies : Dict, optional
-            订单簿大单数据
-        support_zones : List[SRZone]
-            计算后的支撑区
-        resistance_zones : List[SRZone]
-            计算后的阻力区
-        nearest_support : SRZone, optional
-            最近支撑
-        nearest_resistance : SRZone, optional
-            最近阻力
-
-        Returns
-        -------
-        str
-            格式化的详细报告
         """
         lines = []
         lines.append("=" * 70)
-        lines.append("            SUPPORT/RESISTANCE ANALYSIS (v2.0)")
+        lines.append("            SUPPORT/RESISTANCE ANALYSIS (v3.0)")
         lines.append("=" * 70)
         lines.append("")
 
@@ -685,6 +1148,21 @@ class SRZoneCalculator:
                 lines.append(f"  • SMA_200:   ${sma_200:,.2f}")
         else:
             lines.append("  • SMA: Not available")
+
+        lines.append("")
+
+        # v3.0: Swing Points
+        swing_count = 0
+        if support_zones and resistance_zones:
+            for zone in (support_zones or []) + (resistance_zones or []):
+                if zone.has_swing_point:
+                    swing_count += 1
+        lines.append(f"Swing Points (Williams Fractal, L={self.swing_left_bars}/R={self.swing_right_bars}):")
+        if bars_data and self.swing_detection_enabled:
+            lines.append(f"  • Bars analyzed: {len(bars_data)}")
+            lines.append(f"  • Zones with swing points: {swing_count}")
+        else:
+            lines.append("  • Swing detection: Not available (no bar data)")
 
         lines.append("")
 
@@ -733,6 +1211,12 @@ class SRZoneCalculator:
                 lines.append(f"      Level: {zone.level} | Strength: {zone.strength} (weight: {zone.total_weight})")
                 lines.append(f"      Sources: {', '.join(zone.sources)}")
                 lines.append(f"      Type: {zone.source_type}")
+                # v3.0: Swing and touch info
+                if zone.has_swing_point:
+                    lines.append(f"      Swing Point: YES (structurally validated)")
+                if zone.touch_count > 0:
+                    touch_quality = "optimal" if zone.touch_count in self.optimal_touches else "weakening" if zone.touch_count >= self.decay_after_touches else "developing"
+                    lines.append(f"      Touch Count: {zone.touch_count} ({touch_quality})")
                 if zone.has_order_wall:
                     lines.append(f"      Order Wall: {zone.wall_size_btc:.2f} BTC total")
                     for wall in zone.order_walls:
@@ -751,6 +1235,12 @@ class SRZoneCalculator:
                 lines.append(f"      Level: {zone.level} | Strength: {zone.strength} (weight: {zone.total_weight})")
                 lines.append(f"      Sources: {', '.join(zone.sources)}")
                 lines.append(f"      Type: {zone.source_type}")
+                # v3.0: Swing and touch info
+                if zone.has_swing_point:
+                    lines.append(f"      Swing Point: YES (structurally validated)")
+                if zone.touch_count > 0:
+                    touch_quality = "optimal" if zone.touch_count in self.optimal_touches else "weakening" if zone.touch_count >= self.decay_after_touches else "developing"
+                    lines.append(f"      Touch Count: {zone.touch_count} ({touch_quality})")
                 if zone.has_order_wall:
                     lines.append(f"      Order Wall: {zone.wall_size_btc:.2f} BTC total")
                     for wall in zone.order_walls:
@@ -770,10 +1260,12 @@ class SRZoneCalculator:
         if nearest_resistance:
             lines.append(f"Nearest Resistance: ${nearest_resistance.price_center:,.0f} "
                         f"({nearest_resistance.distance_pct:.1f}% away)")
-            lines.append(f"  → LONG entries face {nearest_resistance.strength} resistance here")
+            lines.append(f"  → {nearest_resistance.strength} resistance zone - natural LONG take-profit level")
+            lines.append(f"  → CAUTION: Entering LONG here risks rejection from this level")
             if nearest_resistance.source_type == SRSourceType.ORDER_FLOW:
                 lines.append(f"  → Order flow data: {nearest_resistance.wall_size_btc:.2f} BTC wall (real-time)")
-            lines.append(f"  → Consider this level for LONG take-profit")
+            if nearest_resistance.has_swing_point:
+                lines.append(f"  → Swing Point confirmed: structurally validated resistance")
         else:
             lines.append("Nearest Resistance: Not detected (upside open)")
 
@@ -782,10 +1274,12 @@ class SRZoneCalculator:
         if nearest_support:
             lines.append(f"Nearest Support: ${nearest_support.price_center:,.0f} "
                         f"({nearest_support.distance_pct:.1f}% away)")
-            lines.append(f"  → SHORT entries face {nearest_support.strength} support here")
+            lines.append(f"  → {nearest_support.strength} support zone - IDEAL LONG entry point (bounce expected)")
+            lines.append(f"  → CAUTION: Avoid SHORT here - high bounce risk will stop you out")
             if nearest_support.source_type == SRSourceType.ORDER_FLOW:
                 lines.append(f"  → Order flow data: {nearest_support.wall_size_btc:.2f} BTC wall (real-time)")
-            lines.append(f"  → Consider this level for SHORT take-profit")
+            if nearest_support.has_swing_point:
+                lines.append(f"  → Swing Point confirmed: structurally validated support")
         else:
             lines.append("Nearest Support: Not detected (downside open)")
 
@@ -804,18 +1298,25 @@ class SRZoneCalculator:
             lines.append(f"  • Upside Potential: ${current_to_resistance:,.0f} ({nearest_resistance.distance_pct:.1f}%)")
             lines.append(f"  • Downside Risk: ${current_to_support:,.0f} ({nearest_support.distance_pct:.1f}%)")
 
-            # Risk/reward ratio
+            # Risk/reward ratio with guidance
             if current_to_support > 0:
                 rr_ratio = current_to_resistance / current_to_support
-                lines.append(f"  • LONG R/R Ratio: {rr_ratio:.2f}")
+                rr_status = "✅ FAVORABLE" if rr_ratio >= 1.5 else "⚠️ UNFAVORABLE"
+                lines.append(f"  • LONG R/R Ratio: {rr_ratio:.2f}:1 {rr_status}")
+                if rr_ratio < 1.5:
+                    lines.append(f"    → LONG entry NOT recommended here (R/R < 1.5:1)")
             if current_to_resistance > 0:
                 rr_ratio_short = current_to_support / current_to_resistance
-                lines.append(f"  • SHORT R/R Ratio: {rr_ratio_short:.2f}")
+                rr_status = "✅ FAVORABLE" if rr_ratio_short >= 1.5 else "⚠️ UNFAVORABLE"
+                lines.append(f"  • SHORT R/R Ratio: {rr_ratio_short:.2f}:1 {rr_status}")
+                if rr_ratio_short < 1.5:
+                    lines.append(f"    → SHORT entry NOT recommended here (R/R < 1.5:1)")
 
         lines.append("")
         lines.append("=" * 70)
-        lines.append("NOTE: ORDER_FLOW data reflects real-time order book. TECHNICAL data")
-        lines.append("reflects calculated indicators. Use both for comprehensive analysis.")
+        lines.append("NOTE: STRUCTURAL data (Swing Points) reflects price action history.")
+        lines.append("ORDER_FLOW reflects real-time order book. TECHNICAL reflects indicators.")
+        lines.append("Zones with multiple sources and 2-3 touches are the strongest.")
         lines.append("=" * 70)
 
         return "\n".join(lines)
@@ -827,9 +1328,12 @@ class SRZoneCalculator:
         sma_data: Optional[Dict[str, float]] = None,
         orderbook_anomalies: Optional[Dict] = None,
         pivot_data: Optional[Dict[str, float]] = None,
+        # v3.0: New parameters
+        bars_data: Optional[List[Dict[str, Any]]] = None,
+        atr_value: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
-        计算 S/R Zones 并生成详细 AI 报告 (v2.0)
+        计算 S/R Zones 并生成详细 AI 报告 (v3.0)
 
         这是 calculate() 的增强版，额外返回:
         - ai_detailed_report: 详细报告供 AI 验证
@@ -842,6 +1346,8 @@ class SRZoneCalculator:
             sma_data=sma_data,
             orderbook_anomalies=orderbook_anomalies,
             pivot_data=pivot_data,
+            bars_data=bars_data,
+            atr_value=atr_value,
         )
 
         # 生成详细报告
@@ -854,6 +1360,7 @@ class SRZoneCalculator:
             resistance_zones=result['resistance_zones'],
             nearest_support=result['nearest_support'],
             nearest_resistance=result['nearest_resistance'],
+            bars_data=bars_data,
         )
 
         # 存储原始数据供调试
@@ -863,6 +1370,8 @@ class SRZoneCalculator:
             'sma_data': sma_data,
             'orderbook_anomalies': orderbook_anomalies,
             'pivot_data': pivot_data,
+            'bars_count': len(bars_data) if bars_data else 0,
+            'atr_value': atr_value,
         }
 
         return result
