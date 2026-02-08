@@ -916,7 +916,7 @@ async def check_api_connectivity():
             "状态: ✅ Markdown 正常\n"
             "SL: $95,000.00 | TP: $102,000.00\n"
             "R/R: 2.33:1\n\n"
-            "_此消息由 diagnose\\_telegram.py v2.0 发送_"
+            "by diagnose telegram v2.0"
         )
         msg = await bot.send_message(
             chat_id=chat_id, text=test_msg, parse_mode='Markdown'
