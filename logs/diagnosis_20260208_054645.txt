@@ -1,0 +1,1683 @@
+======================================================================
+  实盘信号诊断工具 (100% Live-Consistent)
+  基于 TradingAgents 架构 + R/R 硬性门槛
+======================================================================
+
+[1/34] 服务运行状态检查
+
+  📊 Systemd 服务状态:
+     ✅ nautilus-trader: 运行中
+     启动时间: Sun 2026-02-08 01:57:01 UTC
+
+  📋 最近日志错误统计:
+     ✅ ERROR: 0
+     ✅ WARNING: 0
+
+  💾 进程资源使用:
+     CPU: 0.3%, MEM: 4.8%
+
+[2/34] API 健康检查 (响应时间)
+
+  🌐 API 响应时间测试:
+     ✅ Binance Futures: 173ms
+     ✅ Binance Spot: 166ms
+     ✅ DeepSeek API: 182ms (连通性)
+     ✅ Coinalyze API: 308ms
+
+[3/34] v4.12 代码完整性检查 (静态分析)
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                v4.12 Code Integrity (静态代码检查)                ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  [P1.1] Bracket order: no emulation_trigger
+    Expected: order_factory.bracket() without emulation_trigger
+    Actual:   emulation_trigger removed, bracket call: found
+    Result:   ✅ PASS
+
+  [P1.2] on_stop: preserves SL/TP orders
+    Expected: Selective cancel (skip reduce_only), cancel_all only in fallback
+    Actual:   is_reduce_only check present, cancel_all_orders only in except block
+    Result:   ✅ PASS
+
+  [P1.3] on_start: crash recovery (_recover_sltp_on_start)
+    Expected: Method defined + called in on_start
+    Actual:   defined=True, called_in_on_start=True
+    Result:   ✅ PASS
+
+  [P1.4] on_timer: dynamic SL/TP update
+    Expected: Method defined + called in on_timer
+    Actual:   Both present — SL/TP 每 15 分钟动态调整
+    Result:   ✅ PASS
+
+  [P1.5] Reduce path: S/R recalculation + favorable SL
+    Expected: _validate_sltp_for_entry + SL favorable direction rule
+    Actual:   validate=True, favorable_rule=True
+    Result:   ✅ PASS
+
+  [P1.6] Add path: _replace_sltp_orders (price + qty)
+    Expected: cancel+recreate SL/TP at new prices after adding
+    Actual:   Method defined and used in add-to-position path
+    Result:   ✅ PASS
+
+  [P1.7] Unified SL/TP validation (_validate_sltp_for_entry)
+    Expected: validate_multiagent_sltp + calculate_technical_sltp fallback + price chain
+    Actual:   AI R/R check=True, tech fallback=True, price_chain=True
+    Result:   ✅ PASS
+
+  [P1.8] Dynamic SL/TP: safety rules
+    Expected: SL favorable + trailing coexist + 0.1% threshold + replace_sltp
+    Actual:   favorable_sl=True, trailing=True, threshold=True, replace=True
+    Result:   ✅ PASS
+
+  [P1.9] on_order_filled: manual OCO management
+    Expected: SL fills → cancel TP, TP fills → cancel SL
+    Actual:   OCO logic present=True
+    Result:   ✅ PASS
+
+  [P1.10] Emergency SL method exists
+    Expected: _submit_emergency_sl defined
+    Actual:   Present=True
+    Result:   ✅ PASS
+
+
+  代码完整性: 10/10 通过 ✅
+
+[4/34] 关键配置检查
+----------------------------------------------------------------------
+  ✅ load_all=True
+  ✅ reconciliation=True
+  ✅ SL/TP 字段名正确
+  ✅ 所有关键配置检查通过
+
+[5/34] MTF 多时间框架配置检查
+----------------------------------------------------------------------
+  ✅ MTF 多时间框架: 已启用
+     趋势层 (Trend): 1d (SMA_200)
+     决策层 (Decision): 4h
+       debate_rounds: 2
+       include_trend_context: True
+     执行层 (Execution): 15m
+  ✅ MTF 初始化配置存在
+     trend_min_bars: 220
+     decision_min_bars: 60
+     execution_min_bars: 40
+  ✅ MultiTimeframeManager 模块存在
+  ✅ MultiTimeframeManager 导入成功
+     v3.3: 三层数据收集 (1D/4H/15M)，决策逻辑由 AI 控制
+
+  ✅ Order Flow: 已启用
+     Binance enabled: False
+     Coinalyze enabled: True
+     ✅ Coinalyze API key: 8be2******** (len=36)
+
+[6/34] 从 main_live.py 加载真实配置
+[PATCH] apply_all_patches() starting...
+[PATCH] Step 1: Importing binance_positions module...
+[PATCH] Loading binance_positions.py patch module...
+[PATCH] aiohttp version 3.13.3 is available
+[PATCH] apply_position_filter_patch() called
+[PATCH] Patching aiohttp.ClientResponse.read...
+[PATCH] Original read method: <function ClientResponse.read at 0x7fdb742c2840>
+[PATCH] ✅ Successfully patched aiohttp.ClientResponse.read
+[PATCH] New read method: <function ClientResponse.read at 0x7fdb910b2020>
+[PATCH] ✅ Position filter patch applied successfully
+[PATCH] Step 2: Applying BinanceSymbolFilterType patch...
+[PATCH] apply_all_patches() completed, success=True
+[PATCH] apply_all_patches() starting...
+[PATCH] Step 1: Importing binance_positions module...
+[PATCH] apply_position_filter_patch() called
+[PATCH] Already applied, skipping
+[PATCH] ✅ Position filter patch applied successfully
+[PATCH] Step 2: Applying BinanceSymbolFilterType patch...
+[PATCH] apply_all_patches() completed, success=True
+[CONFIG] Loaded environment from /home/linuxuser/.env.aitrader
+[CONFIG] Equity: 1000
+[CONFIG] Base Position: 100
+[CONFIG] Timeframe: 15m
+  instrument_id: BTCUSDT-PERP.BINANCE
+  bar_type: BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL
+  equity: $1000
+  leverage: 10x (配置值，实际将从 Binance 同步)
+  min_confidence_to_trade: MEDIUM
+  timer_interval_sec: 900s (15.0分钟)
+
+  📊 v4.8 仓位计算配置:
+     method: ai_controlled
+     max_position_ratio: 30%
+     cumulative: True
+     信心映射:
+       HIGH: 80%
+       MEDIUM: 50%
+       LOW: 30%
+
+  📊 技术指标配置:
+     sma_periods: [5, 20, 50, 200]
+     rsi_period: 14
+     macd_fast/slow: 12/26
+     debate_rounds: 2
+
+  ✅ 配置加载成功 (与实盘完全一致)
+
+  ⏰ 注意: 实盘每 15 分钟分析一次
+     如果刚启动服务，需等待第一个周期触发
+
+[7/34] 获取市场数据 (Binance Futures)
+  交易对: BTCUSDT
+  时间周期: 15m (从 bar_type 解析)
+  K线数量: 100
+  最新价格: $69,165.60 (快照时间: 05:44:16)
+  ✅ 市场数据获取成功
+
+[8/34] 获取情绪数据
+  lookback_hours: 4
+  timeframe: 15m
+✅ Using Binance sentiment data from: 2026-02-08 03:15:00 UTC (delay: 149 minutes)
+  Long/Short Ratio: 1.6164
+  Long Account %: 61.78%
+  Short Account %: 38.22%
+  Source: binance
+  ✅ 情绪数据获取成功
+
+[9/34] 初始化 TechnicalIndicatorManager
+  sma_periods: [5, 20, 50, 200]
+  ema_periods: [12, 26]
+  rsi_period: 14
+  macd: 12/26/9
+  bb_period: 20
+  ✅ TechnicalIndicatorManager 初始化成功
+  ✅ 指标已初始化 (100 根K线)
+
+[10/34] 获取技术数据 (模拟 on_timer 流程)
+  SMA_20: $69,244.20
+  SMA_200: $69,074.14
+  SMA_5: $69,251.12
+  SMA_50: $69,283.21
+  EMA_12: $69,228.31
+  EMA_26: $69,236.54
+  RSI: 44.36
+  MACD: -8.2297
+  MACD Signal: -8.0426
+  MACD Histogram: -0.1871
+  BB Upper: $69,451.08
+  BB Lower: $69,037.33
+  [诊断用] Support: $68,863.10
+  [诊断用] Resistance: $69,666.00
+  [诊断用] Overall Trend: 强势下跌
+  ✅ 技术数据获取成功
+  📝 v3.8+: AI 接收原始指标 + S/R Zone v2.0 (动态计算)，不接收预计算的 trend 标签
+  ✅ 4H 决策层数据加载: RSI=49.9
+  ✅ 1D 趋势层数据加载: SMA_200=$102,258.96
+
+[11/34] 构建价格数据
+  Current Price: $69,165.60
+  High: $69,257.80
+  Low: $69,112.20
+  Price Change: -0.11%
+  Period High (25h): $71,150.00
+  Period Low (25h): $67,250.00
+  Period Change (25h): -2.13%
+  K-line Count: 10
+  ✅ 价格数据构建成功
+
+[12/34] 检查 Binance 真实持仓
+----------------------------------------------------------------------
+  📊 杠杆倍数 (from Binance): 10x
+  ✅ 无持仓
+
+  📊 账户资金详情:
+     总余额:       $988.61
+     可用余额:     $988.61
+     已用保证金:   $0.00
+     保证金率:     100.0%
+     总未实现PnL:  $0.00
+
+  📊 v4.8 仓位计算参数:
+     equity: $988.61
+     leverage: 10x
+     max_position_ratio: 30%
+     max_position_value: $2,965.83
+
+  ⚠️ 组合风险:
+     容量使用率: 0.0%
+     加仓建议: ✅ 可安全加仓
+
+[13/34] 记忆系统健康检查 (v3.12 AI Learning)
+----------------------------------------------------------------------
+  📂 记忆文件路径: /home/linuxuser/nautilus_AItrader/data/trading_memory.json
+  ✅ 记忆文件存在
+  📊 记忆条目数量: 6
+     ✅ 成功交易: 1 条
+     ❌ 失败交易: 5 条
+
+  📝 最近 3 条记忆:
+     ❌ [2026-02-07T06:50:18] HOLD → -1.36%
+        Conditions: price=$70,668, RSI=50, MACD=bullish, BB=65%, conf=...
+     ❌ [2026-02-07T07:17:39] HOLD → -2.13%
+        Conditions: price=$68,734, RSI=15, MACD=bearish, BB=-33%, conf...
+     ❌ [2026-02-07T13:17:17] CLOSE → -0.85%
+        Conditions: price=$68,811, RSI=70, MACD=bullish, BB=102%, conf...
+
+  🔍 记忆格式验证:
+     ✅ 存在: decision
+     ✅ 存在: pnl
+     ✅ 存在: conditions
+     ✅ 存在: lesson
+     ✅ 存在: timestamp
+
+  🧠 MultiAgentAnalyzer 记忆系统状态:
+     → 已加载记忆: 6 条
+     → 记忆文件: data/trading_memory.json
+     → 传给 AI 的记忆摘要: 671 字符
+     → 预览: SUCCESSFUL TRADES (learn from these):   ✅ LONG → +0.27% | Conditions: price=$71,181, RSI=75, MACD=bullish, BB=103%, conf=MEDIUM, winner=BULL FAILED TRADES (avoid repeating):   ❌ HOLD → -1.36% | Condit...
+
+  ✅ 记忆系统健康检查完成
+
+[14/34] 交易状态检查
+
+  🔒 交易控制状态:
+     ✅ 交易未暂停 (无 pause file)
+     最低信心要求: MEDIUM
+
+[15/34] AI 输入数据验证 (传给 MultiAgent, 13 类数据)
+----------------------------------------------------------------------
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃               AI 输入数据验证 (传给 MultiAgent, 13 类)               ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+✅ Using Binance sentiment data from: 2026-02-08 03:15:00 UTC (delay: 149 minutes)
+  [5.06s] AIDataAssembler.assemble()
+  ℹ️ kline_ohlcv: 20 bars added to technical_data
+  ℹ️ sr_bars_data: 100 bars for S/R detection
+  ℹ️ S/R Zones: 1 支撑, 1 阻力
+
+  [1] technical_data (15M 技术指标):
+      price:           $69,165.60
+      sma_5:           $69,251.12
+      sma_20:          $69,244.20
+      sma_50:          $69,283.21
+      rsi:             44.36
+      macd:            -8.2297
+      macd_histogram:  -0.1871
+      bb_upper:        $69,451.08
+      bb_lower:        $69,037.33
+      bb_position:     31.0% (0%=下轨, 100%=上轨)
+      [诊断用] overall_trend: 强势下跌
+
+  [2] sentiment_data (情绪数据):
+      positive_ratio:  0.6178 (61.78%)
+      negative_ratio:  0.3822 (38.22%)
+      net_sentiment:   0.2356
+
+  [3] price_data (价格数据 v3.6):
+      price:           $69,165.60
+      price_change:    -0.11% (上一根K线)
+      period_high:     $71,150.00 (25h)
+      period_low:      $67,250.00 (25h)
+      period_change:   -2.13% (25h)
+
+  [4] order_flow_report (订单流 v3.6):
+      buy_ratio:       0.5065 (50.65%)
+      volume_usdt:     $47,983,347
+      avg_trade_usdt:  $2,068.69
+      trades_count:    23,195
+      [诊断用] cvd_trend: NEUTRAL
+      data_source:     binance_raw
+
+  [5] derivatives_report (衍生品数据):
+      OI value (BTC):  81,639.39
+      Funding rate:    -0.000034 (-0.0034%)
+      Liq history[-1]:  l=0.097 BTC, s=0.278 BTC
+
+  [6] binance_derivatives (大户数据 v3.21):
+      Top Traders Position L/S:  1.28 (Long 0.6% / Short 0.4%)
+      Top Traders Account L/S:   1.98
+      Taker Buy/Sell Ratio:      1.09
+
+  [7] order_book_data (订单簿深度 v3.7) [状态: OK]:
+      OBI (simple):    -0.0751
+      OBI (weighted):  -0.5359
+      OBI (adaptive):  -0.5359
+      Dynamics:        首次运行，无历史数据
+      ℹ️ 注: 诊断脚本每次新建实例，无历史数据正常
+         实盘服务中 OrderBookProcessor 会累积历史
+      Bid pressure:    near_5=5.6%
+      Ask pressure:    near_5=16.0%
+      Spread:          0.0001%
+
+  [8] mtf_decision_layer (4H 决策层):
+      rsi:             49.94
+      macd:            -1409.5677
+      sma_20:          $68,295.25
+      sma_50:          $74,048.72
+      bb_upper:        $73,024.80
+      bb_lower:        $63,565.70
+      bb_position:     59.2%
+
+  [9] mtf_trend_layer (1D 趋势层):
+      sma_200:         $102,258.96
+      price vs SMA200: -32.36%
+      macd:            -5785.6914
+      macd_signal:     -4233.4333
+
+  [10] current_position: None (无持仓)
+
+  [11] account_context (v4.7 Portfolio Risk - 13 fields):
+      equity:             $988.61
+      leverage:           10x
+      max_position_ratio: 30%
+      max_position_value: $2,965.83
+      current_pos_value:  $0.00
+      available_capacity: $2,965.83
+      capacity_used_pct:  0.0%
+      can_add_position:   True
+
+      [v4.7 Portfolio Risk]:
+      unrealized_pnl:     $0.00
+      min_liq_buffer:     N/A
+      daily_funding_cost: N/A
+      cumulative_funding: N/A
+      can_add_safely:     ✅ True
+
+  [12] historical_context (35-bar 趋势数据 v3.0.1):
+      trend_direction:    NEUTRAL
+      momentum_shift:     STABLE
+      data_points:        35
+
+      📈 趋势数据 (最近 5 值):
+      price_trend:        69203.60 → 69303.40 → 69343.10 → 69239.90 → 69165.60
+      rsi_trend:          44.66 → 57.88 → 52.41 → 45.40 → 40.92
+      macd_trend:         -34.7530 → -24.5904 → -13.1810 → -12.3242 → -17.4396
+      volume_trend:       416 → 456 → 1038 → 596 → 694
+
+      📉 35-bar 价格变化: -0.47%
+      🟡 平均 RSI: 48.3
+
+      ℹ️ 数据来源: indicator_manager.get_historical_context()
+      ℹ️ 参考: EVALUATION_FRAMEWORK.md Section 2.1 数据完整性
+  [13] S/R Zones (支撑/阻力区 v2.6.0):
+      最近支撑: $69,056 (0.2% away)
+        强度: MEDIUM | 级别: MAJOR
+        来源: BB_Lower, SMA_200
+
+      最近阻力: $69,367 (0.3% away)
+        强度: MEDIUM | 级别: INTERMEDIATE
+        来源: SMA_50, BB_Upper
+
+      ✅ 硬风控: 无限制
+
+      LONG R/R: 1.83:1 ✅ FAVORABLE
+      SHORT R/R: 0.55:1 ⚠️ UNFAVORABLE
+
+      ℹ️ 数据来源: SRZoneCalculator (BB + SMA + Order Walls)
+
+
+  ────────────────────────────────────────────────────────────────
+  ✅ AI 输入数据验证完成 (13 类数据)
+
+[16/34] MultiAgent 层级决策 (TradingAgents 架构)
+----------------------------------------------------------------------
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                 MultiAgent 层级决策 (顺序 AI 调用)                  ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  📋 决策流程 (顺序执行, 100% 匹配实盘):
+     ┌─ Round 1: Bull Analyst → Bear Analyst  (2 API calls)
+     ├─ Round 2: Bull Analyst → Bear Analyst  (2 API calls)
+     ├─ Judge (Portfolio Manager) Decision    (1 API call)
+     └─ Risk Manager Evaluation               (1 API call)
+     ─────────────────────────────────────────────────────
+     合计: 2×debate_rounds + 2 次 DeepSeek 顺序调用
+
+  Model: deepseek-chat
+  Temperature: 0.3
+  Debate Rounds: 2
+  Total API Calls: 6 (顺序执行)
+
+  📊 analyze() 参数完整性检查 (vs 实盘):
+     symbol                           ✅ (BTCUSDT)
+     technical_report                 ✅ (37 fields)
+     sentiment_report                 ✅ (8 fields)
+     current_position                 ⚠️ None
+     price_data                       ✅ (11 fields)
+     order_flow_report                ✅ (10 fields)
+     derivatives_report               ✅ (6 fields)
+     binance_derivatives_report       ✅ (7 fields)
+     orderbook_report                 ✅ (7 fields)
+     account_context                  ✅ (13 fields)
+     bars_data                        ✅ (100 items)
+
+  Running AI analysis...
+  [137.4s] AI analysis complete
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                    AI API 调用追踪 (6 次顺序调用)                    ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  #    Agent                耗时     Tokens   Prompt    Reply
+  ──── ──────────────── ────── ────────── ──────── ────────
+  1    Bull R1           31.1s      8,817    7,885      932
+  2    Bear R1           33.7s     10,809    9,755    1,054
+  3    Bull R2           26.6s     11,798   10,928      870
+  4    Bear R2           29.7s     12,590   11,636      954
+  5    Judge              9.0s      6,531    6,298      233
+  6    Risk Manager       7.2s      9,513    9,331      182
+  ──── ──────────────── ────── ────────── ──────── ────────
+       TOTAL            137.3s     60,058
+
+  💡 完整 AI 输入/输出已保存到独立日志文件 (--export 模式)
+
+  🎯 Judge 最终决策:
+     Signal: HOLD
+     Confidence: HIGH
+     Risk Level: HIGH
+     Winning Side: BEAR
+
+     📋 Judge 决策 (AI 完全自主):
+        - AI 自主分析 Bull/Bear 辩论
+        - AI 自主判断证据强度
+        - 无硬编码规则或阈值
+     Acknowledged Risks:
+       • False breakout in either direction is highly probable in squeeze regime
+       • Crowded longs (61.6%) create liquidation cascade risk on downward resolution
+
+     Debate Summary:
+       Bull case relies on premature directional assumptions; bear case correctly ident
+       ifies the critical error of assuming bias before confirmation in a squeeze.
+
+     Reason: Market is in a definitive SQUEEZE regime (ADX 8.1, BB Width 0.60%) where the manual warns of ~50% wrong-side risk pre-breakout, making any directional trade a high-risk gamble.
+     Invalidation: A confirmed breakout above $69,451 with expanding volume and DI+ surge for LONG, or breakdown below $69,013 with increased volume and OBI deterioration for SHORT.
+
+  📜 辩论记录 (Bull/Bear Debate):
+     
+     
+     === ROUND 1 ===
+     
+     BULL ANALYST:
+     **Step 1: Market Regime Identification**  
+     ADX(14) = 8.1 (<20), DI+ > DI- (17.5 > 15.7), and price has oscillated within a ~$1,900 range ($67,2
+     [截断, 完整长度: 15716 字符]
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃            AI Prompt 结构验证 (System/User + Memory)            ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  [BULL] Prompt 结构:
+     System Prompt 长度: 7181 字符
+     User Prompt 长度:   26292 字符
+     INDICATOR_DEFINITIONS 在 System: ✅ 是
+     System 预览: You are a professional Bull Analyst for BTCUSDT. Your role is to analyze raw market data and build the strongest possible case for going LONG.   =====...
+     User 预览:   AVAILABLE DATA:   === MARKET DATA (15M Timeframe) ===  PRICE: - Current: $69,165.60 - Period High (25h): $71,150.00 - Period Low (25h): $67,250.00 - P...
+
+  [BEAR] Prompt 结构:
+     System Prompt 长度: 7183 字符
+     User Prompt 长度:   29091 字符
+     INDICATOR_DEFINITIONS 在 System: ✅ 是
+     System 预览: You are a professional Bear Analyst for BTCUSDT. Your role is to analyze raw market data and build the strongest possible case AGAINST going LONG.   =...
+     User 预览:   AVAILABLE DATA:   === MARKET DATA (15M Timeframe) ===  PRICE: - Current: $69,165.60 - Period High (25h): $71,150.00 - Period Low (25h): $67,250.00 - P...
+
+  [JUDGE] Prompt 结构:
+     System Prompt 长度: 7089 字符
+     User Prompt 长度:   18061 字符
+     INDICATOR_DEFINITIONS 在 System: ✅ 是
+     PAST REFLECTIONS (记忆): ✅ 是
+     System 预览: You are a Portfolio Manager and debate facilitator. Critically evaluate the debate and make a decisive trading recommendation. Commit to the side with...
+     User 预览:   As the portfolio manager and debate facilitator, your role is to critically evaluate this round of debate and make a definitive decision: align with t...
+     📝 记忆内容预览:
+        PAST REFLECTIONS ON MISTAKES:
+        SUCCESSFUL TRADES (learn from these):
+          ✅ LONG → +0.27% | Conditions: price=$71,181, RSI=75, MACD=bullish, BB=103%, conf=MEDIUM, winner=BULL
+        FAILED TRADES (avoid repeatin...
+
+  [RISK] Prompt 结构:
+     System Prompt 长度: 7111 字符
+     User Prompt 长度:   19512 字符
+     INDICATOR_DEFINITIONS 在 System: ✅ 是
+     System 预览: You are a Risk Manager. Your role is to evaluate proposed trades, set SL/TP levels, and determine position sizing.   =================================...
+     User 预览:   As the Risk Manager, provide final trade parameters.   PROPOSED TRADE: - Action: HOLD - Confidence: MEDIUM - Rationale: The market is in a definitive ...
+
+  📋 Prompt 架构要求:
+     - System Prompt: 角色定义 + INDICATOR_DEFINITIONS
+     - User Prompt: 原始数据 + 任务指令 (纯知识，无指令性语句)
+     - Judge Prompt: 包含 PAST REFLECTIONS (过去交易记忆)
+     - Risk Manager output: 包含 invalidation 字段
+
+  ✅ MultiAgent 分析完成
+
+[17/34] 信号处理与验证
+  原始信号: HOLD
+  信心等级: HIGH
+  最低要求: MEDIUM
+  通过阈值: ✅
+  最终信号: HOLD
+  ✅ 信号处理完成
+
+[18/34] TradingAgents 架构验证
+----------------------------------------------------------------------
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                     TradingAgents 架构验证                      ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  📊 架构原则:
+     "Autonomy is non-negotiable" - AI 完全自主决策
+     Prompts 包含纯知识描述，无 MUST/NEVER/ALWAYS 指令
+     INDICATOR_DEFINITIONS: 精简版 (统一 TRENDING/RANGING/failure)
+     Risk Manager output 包含 invalidation 字段
+
+  📋 数据完整性检查 (13 类):
+     ✅ [1] technical_data (15M): 37 fields
+     ✅ [2] sentiment_data: 8 fields
+     ✅ [3] price_data: 11 fields
+     ✅ [4] order_flow_report: 10 fields
+     ✅ [5] derivatives_report (Coinalyze): 6 fields
+     ✅ [6] binance_derivatives (Top Traders): 7 fields
+     ✅ [7] orderbook_report: 7 fields
+     ✅ [8] mtf_decision_layer (4H): 10 fields
+     ✅ [9] mtf_trend_layer (1D): 4 fields
+     ⚠️ [10] current_position: None (optional)
+     ✅ [11] account_context: 13 fields
+     ✅ [12] historical_context: 17 fields
+     ✅ [13] sr_zones_data: 8 fields
+     ✅ [+] kline_ohlcv: 20 bars (in technical_data)
+     ✅ [+] bars_data (S/R Swing): 100 bars
+
+     数据覆盖率: 12/13 (92%) ✅ COMPLETE
+
+  📋 Prompt 架构验证:
+     ✅ BULL: sys=7181ch, user=26292ch, INDICATOR_REF=yes
+     ✅ BEAR: sys=7183ch, user=29091ch, INDICATOR_REF=yes
+     ✅ JUDGE: sys=7089ch, user=18061ch, INDICATOR_REF=yes [memories]
+     ✅ RISK: sys=7111ch, user=19512ch, INDICATOR_REF=yes [invalidation]
+
+  📋 AI 决策输出验证:
+     ✅ signal: HOLD
+     ✅ confidence: HIGH
+     ✅ risk_level: HIGH
+     ✅ position_size_pct: 0
+     ✅ reason: Market is in a definitive SQUEEZE regime (ADX 8.1,...
+     ✅ invalidation: A confirmed breakout above $69,451 with expanding ...
+     ✅ debate_summary: Bull case relies on premature directional assumpti...
+     ⚠️ stop_loss: missing
+     ⚠️ take_profit: missing
+     覆盖率: 7/9
+
+  📋 耗时分析:
+     ███████████████████░ 137.38s (96.4%) MultiAgent.analyze() total
+     ░░░░░░░░░░░░░░░░░░░░   5.06s ( 3.6%) AIDataAssembler.assemble()
+     ──────────────────── 142.44s TOTAL
+
+
+  ✅ TradingAgents 架构验证完成
+
+[19/34] 诊断总结
+
+======================================================================
+  诊断总结 (TradingAgents 架构)
+======================================================================
+
+  📊 AI Signal: HOLD
+  📊 Final Signal: HOLD
+  📊 Confidence: HIGH
+  📊 Winning Side: BEAR
+  📊 Risk Level: HIGH
+
+  📊 Current Position: FLAT (无持仓)
+
+  ⚪ WOULD NOT EXECUTE: Signal is HOLD
+
+----------------------------------------------------------------------
+  📱 实盘执行流程:
+----------------------------------------------------------------------
+
+  Step 1: AI 分析完成 → Signal = HOLD
+  Step 2: 📱 发送 Telegram 信号通知
+          → 此时你会收到交易信号消息
+  Step 3: 调用 _execute_trade()
+          → ⚪ Signal is HOLD, 不执行交易
+
+  💡 关键点: Telegram 通知在 _execute_trade 之前发送!
+     如果收到信号但无交易，检查服务日志查看 _execute_trade 输出
+
+[20/34] MTF v2.1 组件集成测试
+----------------------------------------------------------------------
+  [9.1] 测试 BinanceKlineClient...
+     ✅ BinanceKlineClient 导入成功
+     ✅ get_klines: 返回 10 根 K线
+
+  [9.2] 测试 OrderFlowProcessor...
+     ✅ OrderFlowProcessor 导入成功
+     ✅ process_klines: buy_ratio=0.5161
+        cvd_trend: NEUTRAL
+        volume_usdt: $2,590,427
+
+  [9.3] 测试 CoinalyzeClient...
+     ✅ CoinalyzeClient 导入成功
+     📊 Coinalyze API 测试 (Key: 8be2******** (len=36))
+        ✅ OI (BTC): 81,641.66
+        ✅ Settled FR: -0.0034% | Predicted FR: -0.0020%
+
+  [9.4] 测试 AIDataAssembler...
+     ✅ AIDataAssembler 导入成功
+✅ Using Binance sentiment data from: 2026-02-08 03:15:00 UTC (delay: 151 minutes)
+     ✅ 数据组装完成:
+        - 技术指标: True
+        - 订单流: True
+        - 衍生品: True
+        - 情绪数据: True
+
+  [9.5] 测试 Order Book (v3.7)...
+     ✅ BinanceOrderBookClient 导入成功
+     ✅ OrderBookProcessor 导入成功
+     ✅ 订单簿获取成功: 100 bids, 100 asks
+        盘口: Bid $69,156.30 | Ask $69,156.40
+        Spread: $0.10 (0.0001%)
+        OBI Simple: -0.1202
+        OBI Adaptive: -0.6661
+
+  [9.5.5] S/R Zone Calculator 测试 (v2.0):
+     ✅ SRZoneCalculator 导入成功
+     📊 当前价格: $69,166
+     📊 数据源: BB=✅, SMA=✅
+     🔴 阻力位: 1 zones
+        1. $69,367 (0.3% away) [MEDIUM]
+     🟢 支撑位: 1 zones
+        1. $69,056 (0.2% away) [MEDIUM]
+     ✅ S/R Zone 建议: 无限制
+     ✅ S/R Zone Calculator 测试完成
+
+  ✅ MTF v2.1 + Order Book 组件集成测试完成
+
+[21/34] Telegram 命令处理验证
+----------------------------------------------------------------------
+  ✅ Telegram 配置已加载
+     Bot Token: 8425******** (len=46)
+     Chat ID: 6134611414
+
+  📋 Telegram 模块检查:
+     ✅ TelegramBot 类可导入
+     ✅ TelegramBot.send_message_sync 方法存在
+     ✅ TelegramCommandHandler 类可导入
+     📋 命令注册检查 (dispatch registry):
+        ✅ query/status → 'status'
+        ✅ query/position → 'position'
+        ✅ query/balance → 'balance'
+        ✅ query/analyze → 'analyze'
+        ✅ query/orders → 'orders'
+        ✅ control/pause (PIN required)
+        ✅ control/resume (PIN required)
+        ✅ control/close (PIN required)
+        ✅ control/force_analysis (with args)
+        ✅ control/modify_sl (with args)
+        ✅ control/modify_tp (with args)
+
+  📤 Telegram API 连通性测试:
+     ✅ Bot Token 有效
+        Bot 名称: @AlgVex_Bot
+
+  ✅ Telegram 验证完成
+
+[22/34] 错误恢复机制验证
+----------------------------------------------------------------------
+  📋 AI 调用失败恢复机制:
+
+  [1] MultiAgentAnalyzer fallback:
+     ✅ _create_fallback_signal 方法存在
+     → AI 调用失败时返回 HOLD + LOW confidence
+
+  [2] API 重试机制:
+     ✅ _call_api_with_retry: 最多重试 2 次
+     ✅ _extract_json_with_retry: JSON 解析失败重试 2 次
+     → 失败后使用 fallback signal
+
+  [3] 数据获取失败恢复:
+     ✅ Coinalyze 失败 → 使用中性默认值 (OI=0, FR=0)
+     ✅ Binance K线失败 → 使用 indicator_manager 缓存数据
+     ✅ 情绪数据失败 → 使用中性默认值 (ratio=0.5)
+
+  [4] SL/TP 验证失败恢复:
+     ✅ validate_multiagent_sltp 失败 → 回退到 calculate_technical_sltp
+        (包括: SL 方向错误, 距离不足, R/R < 1.5:1)
+     ✅ 技术 SL/TP 计算失败 → 使用默认 2% SL, confidence-based TP
+
+  [5] 网络错误恢复:
+     ✅ requests 超时 → 自动重试 (指数退避)
+     ✅ API rate limit → 等待后重试
+     ✅ 连接失败 → 记录错误，使用 fallback
+
+  ✅ 错误恢复机制验证完成
+
+[23/34] Post-Trade 生命周期测试
+----------------------------------------------------------------------
+  📋 OCO 孤儿订单清理 (_cleanup_oco_orphans):
+     ✅ enable_oco = True
+        → 实盘会在每次 on_timer 后调用 _cleanup_oco_orphans()
+        → 清理无持仓时的 reduce-only 订单
+
+  📋 移动止损更新 (_update_trailing_stops):
+     ✅ enable_trailing_stop = True
+        → 激活条件: 盈利 >= 1.00%
+        → 跟踪距离: 0.50%
+        → 实盘会在每次 on_timer 后调用 _update_trailing_stops()
+
+  📋 持仓快照记录 (_save_position_snapshot):
+     ✅ 每次 on_timer 记录持仓状态到 data/position_snapshots/
+        → 用于追踪持仓历史和计算回撤
+
+  ✅ Post-Trade 生命周期测试完成
+
+[24/34] on_bar MTF 路由逻辑模拟
+----------------------------------------------------------------------
+  📊 MTF Bar 路由逻辑 (与 deepseek_strategy.py:on_bar 一致):
+
+  [路由规则] Bar 类型 → 处理层:
+
+     • 1D bar → 趋势层 (_handle_trend_bar)
+       - 更新 SMA_200, MACD
+       - 收集趋势数据供 AI 分析 (v3.1: 不做本地判断)
+       - 设置 _mtf_trend_initialized = True
+
+     • 4H bar → 决策层 (_handle_decision_bar)
+       - 更新决策层技术指标
+       - 收集决策层数据 (AI 自主分析，无本地决策)
+       - 设置 _mtf_decision_initialized = True
+
+     • 15M bar → 执行层 (_handle_execution_bar)
+       - 更新执行层指标 (RSI, MACD 等)
+       - 更新 _cached_current_price (线程安全)
+       - 设置 _mtf_execution_initialized = True
+
+  [模拟路由] 当前诊断使用的 bar_type:
+     bar_type: BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL
+     → 路由到: 执行层 (15M) - 主分析周期
+
+  [指标更新] 本次 bar 更新的指标值:
+     indicator_manager.update(bar) 后:
+     • 价格: $69,165.60
+     • SMA_5: $69,251.12
+     • SMA_20: $69,244.20
+     • SMA_50: $69,283.21
+     • RSI: 44.36
+     • MACD: -8.2297
+     • MACD Signal: -8.0426
+     • Support: $68,863.10
+     • Resistance: $69,666.00
+
+  ✅ on_bar MTF 路由模拟完成
+
+[25/34] 订单提交流程模拟 (_submit_bracket_order)
+----------------------------------------------------------------------
+  📋 订单提交前提检查:
+     信号: HOLD
+     信心: HIGH
+     当前价格: $69,165.60
+
+  ℹ️ 信号为 HOLD，不会提交订单
+
+[26/34] v4.8 仓位计算测试 (ai_controlled 累加模式)
+----------------------------------------------------------------------
+  📋 v4.8 仓位计算配置 (ai_controlled):
+     equity: $988.61 (from Binance)
+     leverage: 10x (from Binance)
+     max_position_ratio: 30%
+     max_position_value: $2,965.83
+
+  📋 v4.8 信心百分比映射:
+     HIGH (80%): $2,373 (0.034304 BTC)
+     MEDIUM (50%): $1,483 (0.021440 BTC)
+     LOW (30%): $890 (0.012864 BTC)
+
+  📋 v4.8 累加模式状态:
+     当前持仓价值: $0.00
+     可用容量: $2,965.83
+     容量使用率: 0.0%
+
+  📊 当前信号: HOLD (不计算仓位)
+
+  📊 不同信心级别仓位参考 (假设 BUY/SELL 信号时):
+     HIGH: 0.034304 BTC ($2,372.66)
+     MEDIUM: 0.021440 BTC ($1,482.91)
+     LOW: 0.012864 BTC ($889.75)
+
+  ✅ v4.8 仓位计算测试完成
+
+[27/34] v4.12 订单流程完整模拟
+----------------------------------------------------------------------
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                    v4.12 订单流程模拟 (10 种场景)                    ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  📋 当前状态:
+     信号: HOLD
+     持仓: 无
+
+  🔄 模拟所有订单场景...
+
+  ✅ 场景 1: 新开仓
+     ────────────────────────────────────────
+     事件流程:
+       submit_order(MARKET BUY)
+       submit_order(STOP_MARKET SL)
+       submit_order(LIMIT TP)
+       on_order_filled(ENTRY)
+       on_position_opened(LONG)
+     状态变化:
+       position: None → LONG
+       sl_order: None → ACTIVE
+       tp_order: None → ACTIVE
+     关键点:
+       • 使用 _submit_bracket_order 提交带 SL/TP 的 Bracket 订单
+       • SL/TP 通过 OTO (One-Triggers-Other) 链接到入场单
+       • SL 和 TP 通过 OCO (One-Cancels-Other) 互相链接
+
+  ✅ 场景 2: 同向加仓
+     ────────────────────────────────────────
+     事件流程:
+       submit_order(MARKET BUY - add position)
+       on_order_filled(ADD)
+       _update_sltp_quantity()
+         → modify_order(SL, new_qty=0.015)
+         → modify_order(TP, new_qty=0.015)
+     状态变化:
+       position_qty: 0.0100 → 0.0150
+       sl_qty: 0.0100 → 0.0150
+       tp_qty: 0.0100 → 0.0150
+     关键点:
+       • v3.18: 加仓后调用 _update_sltp_quantity()
+       • v3.18: 使用 modify_order 更新 SL/TP 数量
+       • v3.18: 如果 modify 失败，回退到 cancel+recreate
+
+  ✅ 场景 3: 部分平仓
+     ────────────────────────────────────────
+     事件流程:
+       cancel_all_orders() - 取消现有 SL/TP
+       submit_order(MARKET SELL - reduce_only)
+       on_order_filled(REDUCE)
+       _submit_bracket_order(new_qty) - 重建 SL/TP
+     状态变化:
+       position_qty: 0.0200 → 0.0100
+       sl_order: CANCELLED → RECREATED
+       tp_order: CANCELLED → RECREATED
+     关键点:
+       • 减仓前取消现有 SL/TP，防止数量不匹配
+       • 减仓单必须设置 reduce_only=True
+       • 减仓后重建 SL/TP 使用新数量
+
+  ✅ 场景 4: 完全平仓
+     ────────────────────────────────────────
+     事件流程:
+       cancel_all_orders() - 取消 SL/TP
+       submit_order(MARKET SELL - reduce_only)
+       on_order_filled(CLOSE)
+       on_position_closed()
+     状态变化:
+       position: LONG → None
+       sl_order: ACTIVE → CANCELLED
+       tp_order: ACTIVE → CANCELLED
+       trailing_stop_state: CLEARED
+     关键点:
+       • 平仓前取消 SL/TP 订单
+       • 平仓单必须设置 reduce_only=True
+       • on_position_closed 清理 trailing_stop_state
+
+  ✅ 场景 5: 反转交易 (v3.18)
+     ────────────────────────────────────────
+     事件流程:
+       ═══ Phase 1: 存储状态并平仓 ═══
+       _pending_reversal = {
+           'target_side': 'short',
+           'target_quantity': 0.015,
+           'old_side': 'long',
+           'submitted_at': datetime.utcnow()
+       }
+       cancel_all_orders() - 取消 SL/TP
+       submit_order(MARKET SELL - reduce_only)
+       on_order_filled(CLOSE)
+       on_position_closed() - 触发 Phase 2
+       
+       ═══ Phase 2: 开新仓 (在 on_position_closed 中) ═══
+       检测到 _pending_reversal
+       _pending_reversal = None  # 立即清空防止重复执行
+       ... (4 more events)
+     状态变化:
+       position: LONG → None → SHORT
+       _pending_reversal: None → {state} → None
+       phase: 1 → 2
+     关键点:
+       • v3.18: 两阶段提交防止竞态条件
+       • v3.18: Phase 1 只平仓，不开新仓
+       • v3.18: Phase 2 在 on_position_closed 中开新仓
+       • v3.18: 开仓前验证无残留仓位
+
+  ✅ 场景 6: Bracket 失败 (v3.18)
+     ────────────────────────────────────────
+     事件流程:
+       尝试 _submit_bracket_order()
+         → 计算 SL 价格...
+         → 计算 TP 价格...
+         → ❌ Exception: SL 验证失败
+       
+       v3.18 行为:
+         → 🚫 NOT opening position without SL/TP protection
+         → _last_signal_status = {
+               'executed': False,
+               'reason': 'Bracket订单失败，取消开仓',
+           }
+         → 发送 CRITICAL Telegram 警报
+       
+       ❌ 旧版 (危险) 行为 (已移除):
+         → self._submit_order(side, qty, reduce_only=False)  # 无保护!
+     状态变化:
+       position: None (保持不变)
+       _last_signal_status.executed: False
+     关键点:
+       • v3.18: Bracket 失败时拒绝开仓
+       • v3.18: 不回退到无 SL/TP 保护的订单
+       • v3.18: 发送 CRITICAL 警报通知用户
+       • v3.18: 等待下一个信号重试
+
+  ✅ 场景 7: SL/TP modify 失败 (v3.18)
+     ────────────────────────────────────────
+     事件流程:
+       submit_order(MARKET BUY - add)
+       on_order_filled(ADD)
+       
+       _update_sltp_quantity() 开始...
+         → 找到 2 个 reduce_only 订单 (SL, TP)
+         → 尝试 modify_order(SL, new_qty=0.015)
+         → ❌ Exception: modify_order 不支持
+         → 尝试 modify_order(TP, new_qty=0.015)
+         → ✅ 成功
+       
+       v3.18 回退逻辑:
+         → 收集失败订单信息 (SL)
+         → 读取 order.trigger_price
+         → cancel_order(SL)
+         → 创建新 SL: order_factory.stop_market()
+       ... (2 more events)
+     状态变化:
+       sl_order: OLD → CANCELLED → RECREATED
+       sl_qty: 0.01 → 0.015
+       trailing_stop_state.sl_order_id: 更新为新订单 ID
+     关键点:
+       • v3.18: modify_order 是首选方法
+       • v3.18: 失败时回退到 cancel+recreate
+       • v3.18: 保留原有价格，只更新数量
+       • v3.18: 更新 trailing_stop_state 中的 sl_order_id
+
+  ✅ 场景 8: 动态 SL/TP 更新 (v4.12)
+     ────────────────────────────────────────
+     事件流程:
+       on_timer → _dynamic_sltp_update()
+         1. 获取当前持仓 + S/R zones
+         2. calculate_technical_sltp() 重新计算
+         3. SL favorable: max(68128.12, 68335.61) = 68335.61
+         4. SL Δ=0.305%, TP Δ=0.488%
+         5. 阈值 0.1%: 更新
+         6. _replace_sltp_orders (atomic cancel+recreate)
+     状态变化:
+       sl_price: $68,128.12 → $68,335.61 (Δ=0.305%)
+       tp_price: $70,894.74 → $71,240.57 (Δ=0.488%)
+       update_needed: YES
+     关键点:
+       • SL 只能向有利方向移动 (LONG: UP, SHORT: DOWN)
+       • 0.1% 阈值避免频繁修改订单
+       • _replace_sltp_orders 原子操作: cancel 旧单 + create 新单
+
+  ✅ 场景 9: 停机保护 (v4.12)
+     ────────────────────────────────────────
+     事件流程:
+       on_stop() 被调用 (机器人停止)
+         for order in cache.orders_open():
+           if order.is_reduce_only:
+             → SKIP (保留 SL/TP)
+           else:
+             → cancel_order(order)
+       
+       结果: SL/TP 挂单保留在 Binance 交易所
+       用户可在 Binance APP 查看这些保护单
+     状态变化:
+       sl_order: ACTIVE → ACTIVE (保留在 Binance)
+       tp_order: ACTIVE → ACTIVE (保留在 Binance)
+       non_reduce_orders: CANCELLED
+     关键点:
+       • v4.12: 机器人停止后，止损止盈单保留在 Binance
+       • v4.12: 仅取消非 reduce_only 订单
+       • v4.12: except 块中有 cancel_all_orders 作为后备
+       • 用户重启后, _recover_sltp_on_start 恢复状态
+
+  ✅ 场景 10: Trailing + Dynamic 共存 (v4.12)
+     ────────────────────────────────────────
+     事件流程:
+       _dynamic_sltp_update() 中:
+         Trailing SL:  $68,473.94
+         Dynamic SL:   $68,128.12
+         max() →       $68,473.94 (winner: trailing)
+       
+       逻辑: max(trailing_sl, dynamic_sl)
+         → 使用更保守 (更接近当前价) 的止损价
+         → 两种止损机制并行运行, 互不冲突
+     状态变化:
+       trailing_sl: $68,473.94
+       dynamic_sl: $68,128.12
+       final_sl: $68,473.94 (winner: trailing)
+     关键点:
+       • Trailing SL: 随价格上涨向上移动
+       • Dynamic SL: 随 S/R zone 变化调整
+       • max() 确保始终使用更安全的止损
+       • SHORT 仓位使用 min() 取代 max()
+
+
+  ═════════════════════════════════════════════════════════════════
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                       v4.12 订单流程验证总结                        ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  通过场景: 10/10
+
+  📋 v3.18 + v4.12 修复验证:
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ 修复项                          │ 状态 │ 验证场景               │
+  ├──────────────────────────────────────────────────────────────────┤
+  │ 反转两阶段提交 (v3.18)          │ ✅   │ 场景 5: 反转交易       │
+  │ Bracket 失败不回退 (v3.18)      │ ✅   │ 场景 6: Bracket 失败   │
+  │ SL/TP 数量更新 (v3.18)          │ ✅   │ 场景 2: 同向加仓       │
+  │ modify 失败回退 (v3.18)         │ ✅   │ 场景 7: modify 失败    │
+  │ 动态 SL/TP + 阈值 (v4.12)      │ ✅   │ 场景 8: 动态更新       │
+  │ 停机保护 SL/TP 保留 (v4.12)    │ ✅   │ 场景 9: on_stop        │
+  │ Trailing + Dynamic 共存 (v4.12) │ ✅   │ 场景 10: 共存          │
+  └──────────────────────────────────────────────────────────────────┘
+
+  ✅ v4.12 订单流程模拟完成
+
+[28/34] v3.18 反转状态机详细模拟
+----------------------------------------------------------------------
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                  反转状态机 (Two-Phase Commit)                   ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  状态机图解:
+
+  ┌──────────────┐
+  │ 初始状态     │
+  │ LONG 持仓    │
+  │ _pending = ∅ │
+  └──────┬───────┘
+         │ 收到 SELL 信号 (反转)
+         ▼
+  ┌──────────────────────────────────────┐
+  │ Phase 1: 存储状态                    │
+  │ _pending_reversal = {                │
+  │   target_side: 'short',              │
+  │   target_quantity: qty,              │
+  │   old_side: 'long',                  │
+  │   submitted_at: now()                │
+  │ }                                    │
+  │ submit_order(SELL, reduce_only=True) │
+  └──────────────┬───────────────────────┘
+                 │ on_order_filled
+                 │ on_position_closed
+                 ▼
+  ┌──────────────────────────────────────┐
+  │ Phase 2: 检测 _pending_reversal      │
+  │ if _pending_reversal:                │
+  │   pending = _pending_reversal        │
+  │   _pending_reversal = None  # 清空  │
+  │   if _get_position() is None:        │
+  │     _submit_bracket_order(SHORT)     │
+  │   else:                              │
+  │     ABORT (残留仓位)                 │
+  └──────────────┬───────────────────────┘
+                 │ on_order_filled
+                 │ on_position_opened
+                 ▼
+  ┌──────────────┐
+  │ 最终状态     │
+  │ SHORT 持仓   │
+  │ _pending = ∅ │
+  └──────────────┘
+
+  边缘情况处理:
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 情况                        │ 处理                          │
+  ├─────────────────────────────────────────────────────────────┤
+  │ Phase 2 时仍有仓位          │ ABORT, 发送 CRITICAL 警报     │
+  │ Phase 2 提交 Bracket 失败   │ 不开仓, 等待下一信号          │
+  │ 平仓订单被拒绝              │ _pending_reversal 保留        │
+  │ SL/TP 触发导致平仓          │ 正常进入 Phase 2              │
+  │ 手动干预平仓                │ 正常进入 Phase 2              │
+  └─────────────────────────────────────────────────────────────┘
+
+  与旧版行为对比:
+
+  旧版 (有竞态条件):
+    1. 提交平仓订单
+    2. 立即提交开仓订单  ← 问题! 可能在平仓完成前执行
+    3. 可能导致双向持仓或订单被拒
+
+  v3.18 (事件驱动):
+    1. 存储 _pending_reversal 状态
+    2. 提交平仓订单
+    3. 等待 on_position_closed 事件
+    4. 验证无仓位后开新仓
+
+  ✅ v3.18 反转状态机模拟完成
+
+[29/34] Bracket 订单流程详细模拟
+----------------------------------------------------------------------
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃               Bracket 订单流程 (Entry + SL + TP)                ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ℹ️ 当前信号为 HOLD，模拟 BUY 信号的 Bracket 订单流程
+  模拟参数:
+     信号: BUY
+     入场价: $69,165.60
+     止损价: $67,782.29 (2.00%)
+     止盈价: $71,240.57 (3.00%)
+     数量: 0.0100 BTC
+
+  订单提交流程:
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 1. _submit_bracket_order(side, quantity)                    │
+  │    ├─ 检查 quantity >= min_trade_amount                     │
+  │    ├─ 检查 enable_auto_sl_tp                                │
+  │    ├─ 获取 entry_price (latest_price_data / bars)           │
+  │    └─ 获取 confidence, support, resistance                  │
+  └─────────────────────────────────────────────────────────────┘
+                          ↓
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 2. SL/TP 价格计算                                           │
+  │    ├─ 优先: AI Judge 提供的 stop_loss, take_profit          │
+  │    ├─ 验证: validate_multiagent_sltp()                      │
+  │    │   ├─ 检查 SL 在入场价正确一侧                          │
+  │    │   └─ R/R >= 1.5:1 硬性门槛                             │
+  │    └─ 回退: calculate_technical_sltp() (S/R Zones)          │
+  └─────────────────────────────────────────────────────────────┘
+                          ↓
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 3. Bracket 订单创建 (order_factory.bracket)                 │
+  │    ├─ entry_order: MARKET (trigger OTO)                     │
+  │    ├─ sl_order: STOP_MARKET (OTO linked, reduce_only)       │
+  │    └─ tp_order: LIMIT (OTO linked, OCO with SL)             │
+  └─────────────────────────────────────────────────────────────┘
+                          ↓
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 4. 订单提交 (submit_order_list)                             │
+  │    └─ NautilusTrader 处理 OTO/OCO 链接                      │
+  └─────────────────────────────────────────────────────────────┘
+                          ↓
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 5. 事件处理                                                 │
+  │    ├─ on_order_filled (Entry) → on_position_opened          │
+  │    ├─ on_order_filled (SL) → on_position_closed             │
+  │    │   └─ OCO: 自动取消 TP                                  │
+  │    └─ on_order_filled (TP) → on_position_closed             │
+  │        └─ OCO: 自动取消 SL                                  │
+  └─────────────────────────────────────────────────────────────┘
+
+  v3.18 关键改进:
+     • Bracket 失败时不回退到无保护订单
+     • 发送 CRITICAL Telegram 警报
+     • _last_signal_status 记录失败原因
+
+  ✅ Bracket 订单流程模拟完成
+
+[30/34] v4.12 数学验证 (R/R, SL方向, 动态调整)
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃               v4.12 Math Verification (数学验证)                ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  价格: $69,165.60  支撑: $69,158.30  阻力: $69,182.10
+
+  --- M1: R/R Hard Gate Test ---
+
+  [M1a] R/R gate: reject R/R < 1.5 (LONG)
+    Expected: Reject: R/R=0.50:1 < 1.5:1
+    Actual:   valid=False, reason=R/R 0.50:1 < 1.5:1 minimum (SL $68,473.94, TP $69,511.43). Will use S/R-based technical analysis instead.
+    Result:   ✅ PASS
+
+  [M1b] R/R gate: accept R/R >= 1.5 (LONG)
+    Expected: Accept: R/R=2.00:1 >= 1.5:1
+    Actual:   valid=True, SL=$67,782.29, TP=$71,932.22
+    Result:   ✅ PASS
+
+  [M1c] R/R gate: reject R/R < 1.5 (SHORT)
+    Expected: Reject low R/R for SHORT
+    Actual:   valid=False, reason=R/R 0.50:1 < 1.5:1 minimum (SL $69,857.26, TP $68,819.77). Will use S/R-based technical analysis instead.
+    Result:   ✅ PASS
+
+  --- M2: SL Side Validation ---
+
+  [M2a] SL side: reject LONG SL > entry
+    Expected: Reject: LONG SL must be < entry
+    Actual:   valid=False, reason=BUY SL ($69,857.26) must be < entry ($69,165.60)
+    Result:   ✅ PASS
+
+  [M2b] SL side: reject SHORT SL < entry
+    Expected: Reject: SHORT SL must be > entry
+    Actual:   valid=False, reason=SELL SL ($68,473.94) must be > entry ($69,165.60)
+    Result:   ✅ PASS
+
+  --- M3: Technical SL/TP Fallback ---
+
+  [M3a] Technical fallback: LONG
+    Actual:   SL=$68,812.51 TP=$70,548.91 R/R=3.92:1 side_ok=True
+    Result:   ✅ PASS
+    Method: SL: Support-based ($69,158 - 0.5% buffer) | TP: Default 2% (resistance too close)
+
+  [M3b] Technical fallback: SHORT
+    Actual:   SL=$69,528.01 TP=$67,782.29 R/R=3.82:1 side_ok=True
+    Result:   ✅ PASS
+    Method: SL: Resistance-based ($69,182 + 0.5% buffer) | TP: Default 2% (support too close)
+
+  --- M4: SL Favorable Direction Rule ---
+
+  [M4a] LONG SL favorable: max(old, new)
+    Expected: Lower blocked (max=67,090.63), higher allowed (max=67,436.46)
+    Actual:   Down: $66,398.98 → $67,090.63 (blocked ✓)
+    Up:   $67,436.46 → $67,436.46 (allowed ✓)
+    Result:   ✅ PASS
+
+  [M4b] SHORT SL favorable: min(old, new)
+    Expected: Higher blocked (min=71,240.57), lower allowed (min=70,894.74)
+    Actual:   Up:   $71,932.22 → $71,240.57 (blocked ✓)
+    Down: $70,894.74 → $70,894.74 (allowed ✓)
+    Result:   ✅ PASS
+
+  --- M5: Dynamic Update Threshold (0.1%) ---
+
+  [M5] Dynamic threshold: skip < 0.1%, update >= 0.1%
+    Expected: 0.05% → skip, 0.2% → update
+    Actual:   Tiny: 0.0500% → SKIP ✓
+    Big:  0.2000% → UPDATE ✓
+    Result:   ✅ PASS
+
+  --- M6: Emergency SL (2% Default) ---
+
+  [M6] Emergency SL: 2% from current price
+    Actual:   LONG emergency SL = $67,782.29 (2.0% below)
+    SHORT emergency SL = $70,548.91 (2.0% above)
+    Result:   ✅ PASS
+
+
+  数学验证: 11/11 通过 ✅
+
+[31/34] 完整数据流汇总
+----------------------------------------------------------------------
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                              技术指标数据                              ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  价格数据:
+    当前价格: $69,165.60
+    24H 最高: $69,257.80
+    24H 最低: $69,112.20
+    价格变化: -0.11%
+
+  移动平均线:
+    SMA_5:  $69,251.12
+    SMA_20: $69,244.20
+    SMA_50: $69,283.21
+    EMA_12: $69,228.31
+    EMA_26: $69,236.54
+
+  震荡指标:
+    RSI:           44.36
+    MACD:          -8.2297
+    MACD Signal:   -8.0426
+    MACD Histogram:-0.1871
+
+  布林带:
+    BB Upper: $69,451.08
+    BB Middle: $69,244.20
+    BB Lower: $69,037.33
+
+  支撑/阻力:
+    支撑位: $68,863.10
+    阻力位: $69,666.00
+
+  趋势判断: 强势下跌
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                               情绪数据                               ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  Binance 多空比:
+    Long/Short Ratio: 1.6164
+    Long Account %:   61.78%
+    Short Account %:  38.22%
+    Net Sentiment:    0.2356
+    数据来源: binance
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                              订单流数据                               ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  Binance Taker 数据 [采样窗口: 50 bars]:
+    Buy Ratio:      0.5065 (50.65%)
+    CVD Trend:      NEUTRAL
+    Avg Trade Size: $2,068.69
+    Volume (USDT):  $47,983,347
+    数据来源: binance_raw
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                              衍生品数据                               ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  Open Interest (Coinalyze):
+    OI (BTC):    81,639.39
+    OI (USD):    $5,646,637,670
+    OI Change:   None
+
+  Funding Rate (Binance):
+    Settled:     -0.0034%
+    Predicted:   -0.0020%
+    Source:      binance_direct
+
+  Liquidations (1h):
+    Long:   0.0970 BTC ($6,709)
+    Short:  0.2780 BTC ($19,228)
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                         当前持仓 & v4.8 仓位状态                         ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  v4.8 仓位参数:
+    杠杆 (Binance): 10x
+    资金 (equity):  $988.61
+    max_position_value: $2,965.83
+
+  持仓状态: 无持仓 (FLAT)
+  v4.8 累加模式: 可开首仓
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                             AI 决策结果                              ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  原始信号: HOLD
+  最终信号: HOLD
+  信心等级: HIGH
+  风险等级: HIGH
+  胜出方:   BEAR
+
+  AI 止损: N/A
+  AI 止盈: N/A
+
+  关键理由:
+
+  确认风险:
+    1. False breakout in either direction is highly probable in squeeze regim...
+    2. Crowded longs (61.6%) create liquidation cascade risk on downward reso...
+
+  ⛔ 失效条件: A confirmed breakout above $69,451 with expanding volume and DI+ surge for LONG, or breakdown below ...
+
+  决策理由: Market is in a definitive SQUEEZE regime (ADX 8.1, BB Width 0.60%) where the manual warns of ~50% wr...
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                             MTF 过滤状态                             ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  架构: TradingAgents - Pure Knowledge Prompts + R/R 驱动入场
+  入场标准: R/R >= 1.5:1 硬性门槛 (validate_multiagent_sltp 强制执行)
+  AI 决策: 纯知识描述 prompts (无 MUST/NEVER/ALWAYS 指令)
+  输出格式: 包含 invalidation 字段 (nof1 对齐)
+
+  AI 决策: HOLD (Confidence: HIGH)
+  Winning Side: BEAR
+
+  ✅ 完整数据流汇总完成
+
+[32/34] 深入分析: 信号产生条件
+
+======================================================================
+  📋 深入分析: 信号产生条件
+======================================================================
+
+[分析1] 技术指标阈值检查
+--------------------------------------------------
+  RSI: 44.36
+    参考阈值: 超卖<30.0, 超买>70.0
+    → ⚪ 中性区间 (30.0-70.0) - AI 综合其他因素判断
+
+  MACD: -8.2297
+  MACD Signal: -8.0426
+    → 🔴 MACD 在信号线下方 - 看跌
+    → 🔴 柱状图为负 (-0.1871) - 下跌动能
+
+  SMA_5: $69,251.12
+  SMA_20: $69,244.20
+  SMA_50: $69,283.21
+  当前价格: $69,165.60
+    → ⚪ 无明确趋势排列
+
+  BB Upper: $69,451.08
+  BB Lower: $69,037.33
+  价格在带内位置: 31.0%
+    → ⚪ 带内中间区域
+
+[分析2] 趋势强度分析
+--------------------------------------------------
+  整体趋势判断: 强势下跌
+  近10根K线变化: -0.20%
+  近20根K线变化: +0.09%
+
+[分析3] 市场情绪分析
+--------------------------------------------------
+  多空比: 1.6164
+    → 🔴 极度看多 (>1.5, 逆向指标: 可能下跌)
+
+[分析4] Judge 决策原因分析 (TradingAgents)
+--------------------------------------------------
+  ⚖️ Judge 最终决策: HOLD
+
+  Winning Side: BEAR
+  Acknowledged Risks:
+    • False breakout in either direction is highly probable in squeeze regime
+    • Crowded longs (61.6%) create liquidation cascade risk on downward resolution
+
+  📋 Judge 完整理由:
+    Market is in a definitive SQUEEZE regime (ADX 8.1, BB Width 0.60%) where the man
+    ual warns of ~50% wrong-side risk pre-breakout, making any directional trade a h
+    igh-risk gamble.
+
+  ⛔ 失效条件 (Invalidation):
+    A confirmed breakout above $69,451 with expanding volume and DI+ surge for LONG,
+     or breakdown below $69,013 with increased volume and OBI deterioration for SHOR
+    T.
+
+  🗣️ 辩论摘要:
+    Bull case relies on premature directional assumptions; bear case correctly ident
+    ifies the critical error of assuming bias before confirmation in a squeeze.
+
+[分析5] 诊断建议
+--------------------------------------------------
+  📌 当前市场状态分析:
+    多头信号得分: 0/3
+    空头信号得分: 2/3
+    → 偏空头，但信号不够强烈
+
+  💡 HOLD 的常见原因:
+    1. 技术指标处于中性区间
+    2. 趋势不明确 (震荡整理)
+    3. 多头和空头信号相互矛盾
+
+  ⏳ 等待以下情况之一发生:
+    • RSI 突破 30 或 70 (当前: 44.4)
+    • MACD 形成明确金叉/死叉
+    • 价格突破支撑位 $68,863.10
+    • 价格突破阻力位 $69,666.00
+
+======================================================================
+  深入分析完成
+======================================================================
+
+[33/34] 历史信号追踪
+
+  📜 最近信号记录:
+     ℹ️ 信号历史文件不存在
+     → 这是正常的，实盘运行后会自动创建
+
+[34/34] v4.12 机器可读 JSON 输出
+
+======================================================================
+  Machine-readable (复制以下内容给 Claude):
+======================================================================
+{
+  "version": "v4.12",
+  "timestamp": "2026-02-08T05:46:45.809825+00:00",
+  "total": 21,
+  "passed": 21,
+  "failed": 0,
+  "errors": 0,
+  "warnings": 0,
+  "signal": "HOLD",
+  "confidence": "HIGH",
+  "price": 69165.6,
+  "results": [
+    {
+      "id": "P1.1",
+      "status": "pass",
+      "desc": "Bracket order: no emulation_trigger",
+      "actual": "emulation_trigger removed, bracket call: found"
+    },
+    {
+      "id": "P1.2",
+      "status": "pass",
+      "desc": "on_stop: preserves SL/TP orders",
+      "actual": "is_reduce_only check present, cancel_all_orders only in except block"
+    },
+    {
+      "id": "P1.3",
+      "status": "pass",
+      "desc": "on_start: crash recovery (_recover_sltp_on_start)",
+      "actual": "defined=True, called_in_on_start=True"
+    },
+    {
+      "id": "P1.4",
+      "status": "pass",
+      "desc": "on_timer: dynamic SL/TP update",
+      "actual": "Both present — SL/TP 每 15 分钟动态调整"
+    },
+    {
+      "id": "P1.5",
+      "status": "pass",
+      "desc": "Reduce path: S/R recalculation + favorable SL",
+      "actual": "validate=True, favorable_rule=True"
+    },
+    {
+      "id": "P1.6",
+      "status": "pass",
+      "desc": "Add path: _replace_sltp_orders (price + qty)",
+      "actual": "Method defined and used in add-to-position path"
+    },
+    {
+      "id": "P1.7",
+      "status": "pass",
+      "desc": "Unified SL/TP validation (_validate_sltp_for_entry)",
+      "actual": "AI R/R check=True, tech fallback=True, price_chain=True"
+    },
+    {
+      "id": "P1.8",
+      "status": "pass",
+      "desc": "Dynamic SL/TP: safety rules",
+      "actual": "favorable_sl=True, trailing=True, threshold=True, replace=True"
+    },
+    {
+      "id": "P1.9",
+      "status": "pass",
+      "desc": "on_order_filled: manual OCO management",
+      "actual": "OCO logic present=True"
+    },
+    {
+      "id": "P1.10",
+      "status": "pass",
+      "desc": "Emergency SL method exists",
+      "actual": "Present=True"
+    },
+    {
+      "id": "M1a",
+      "status": "pass",
+      "desc": "R/R gate: reject R/R < 1.5 (LONG)",
+      "actual": "valid=False, reason=R/R 0.50:1 < 1.5:1 minimum (SL $68,473.94, TP $69,511.43). Will use S/R-based technical analysis instead."
+    },
+    {
+      "id": "M1b",
+      "status": "pass",
+      "desc": "R/R gate: accept R/R >= 1.5 (LONG)",
+      "actual": "valid=True, SL=$67,782.29, TP=$71,932.22"
+    },
+    {
+      "id": "M1c",
+      "status": "pass",
+      "desc": "R/R gate: reject R/R < 1.5 (SHORT)",
+      "actual": "valid=False, reason=R/R 0.50:1 < 1.5:1 minimum (SL $69,857.26, TP $68,819.77). Will use S/R-based technical analysis instead."
+    },
+    {
+      "id": "M2a",
+      "status": "pass",
+      "desc": "SL side: reject LONG SL > entry",
+      "actual": "valid=False, reason=BUY SL ($69,857.26) must be < entry ($69,165.60)"
+    },
+    {
+      "id": "M2b",
+      "status": "pass",
+      "desc": "SL side: reject SHORT SL < entry",
+      "actual": "valid=False, reason=SELL SL ($68,473.94) must be > entry ($69,165.60)"
+    },
+    {
+      "id": "M3a",
+      "status": "pass",
+      "desc": "Technical fallback: LONG",
+      "actual": "SL=$68,812.51 TP=$70,548.91 R/R=3.92:1 side_ok=True"
+    },
+    {
+      "id": "M3b",
+      "status": "pass",
+      "desc": "Technical fallback: SHORT",
+      "actual": "SL=$69,528.01 TP=$67,782.29 R/R=3.82:1 side_ok=True"
+    },
+    {
+      "id": "M4a",
+      "status": "pass",
+      "desc": "LONG SL favorable: max(old, new)",
+      "actual": "Down: $66,398.98 → $67,090.63 (blocked ✓)\n    Up:   $67,436.46 → $67,436.46 (allowed ✓)"
+    },
+    {
+      "id": "M4b",
+      "status": "pass",
+      "desc": "SHORT SL favorable: min(old, new)",
+      "actual": "Up:   $71,932.22 → $71,240.57 (blocked ✓)\n    Down: $70,894.74 → $70,894.74 (allowed ✓)"
+    },
+    {
+      "id": "M5",
+      "status": "pass",
+      "desc": "Dynamic threshold: skip < 0.1%, update >= 0.1%",
+      "actual": "Tiny: 0.0500% → SKIP ✓\n    Big:  0.2000% → UPDATE ✓"
+    },
+    {
+      "id": "M6",
+      "status": "pass",
+      "desc": "Emergency SL: 2% from current price",
+      "actual": "LONG emergency SL = $67,782.29 (2.0% below)\n    SHORT emergency SL = $70,548.91 (2.0% above)"
+    }
+  ]
+}
+
+
+======================================================================
+  诊断完成
+======================================================================
+
+  ✅ 所有检查通过
