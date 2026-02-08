@@ -2,7 +2,7 @@
 
 ## v2.1.0 - Advanced AI-Powered Multi-Timeframe Trading System
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![NautilusTrader](https://img.shields.io/badge/NautilusTrader-Latest-green.svg)](https://nautilustrader.io/)
 [![DeepSeek AI](https://img.shields.io/badge/DeepSeek-AI%20Powered-purple.svg)](https://www.deepseek.com/)
 [![License](https://img.shields.io/badge/license-Educational-orange.svg)](LICENSE)
@@ -277,7 +277,7 @@ nautilus_deepseek/
 
 ### System Requirements
 
-- **Python**: 3.11 or higher (required for NautilusTrader 1.221.0)
+- **Python**: 3.12 or higher (required for NautilusTrader 1.222.0)
 - **Operating System**: Linux/macOS recommended (Windows with WSL2)
 - **Redis**: 5.0+ (for OCO persistence)
 - **Memory**: 512MB+ RAM
@@ -312,7 +312,7 @@ git clone <repository-url> nautilus_deepseek
 cd nautilus_deepseek
 
 # 2. Create virtual environment
-python3.11 -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate
 
 # 3. Install dependencies
@@ -350,8 +350,8 @@ python main_live.py
 # Update system packages
 sudo apt update && sudo apt upgrade -y
 
-# Install Python 3.11+ if not available
-sudo apt install python3.11 python3.11-venv python3-pip -y
+# Install Python 3.12+ if not available
+sudo apt install python3.12 python3.12-venv python3-pip -y
 ```
 
 #### 2. Redis Installation
@@ -384,7 +384,7 @@ git clone <repository-url> nautilus_deepseek
 cd nautilus_deepseek
 
 # Create virtual environment
-python3.11 -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
@@ -1895,8 +1895,8 @@ This project is for **educational and research purposes only**.
 
 ### For Development
 
-- **Python**: 3.11+
-- **NautilusTrader**: Latest stable
+- **Python**: 3.12+
+- **NautilusTrader**: 1.222.0+
 - **Testing**: Refer to feature documentation
 
 ---
