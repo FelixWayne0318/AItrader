@@ -1,6 +1,6 @@
 # utils/sr_zone_calculator.py
 """
-Support/Resistance Zone Calculator v3.0
+Support/Resistance Zone Calculator v3.1
 
 职责:
 - 聚合多个数据源的 S/R 候选价位
@@ -12,6 +12,8 @@ Support/Resistance Zone Calculator v3.0
 - v3.0: 添加 Swing Point 检测 (Williams Fractal N-bar pivot)
 - v3.0: ATR 自适应聚类阈值
 - v3.0: Touch Count 评分 (2-3 touches 最优)
+- v3.1: S/R Flip - 被突破的阻力变为支撑，被跌破的支撑变为阻力
+- v3.1: Round Number 心理整数关口 (Osler 2000)
 
 设计原则:
 - 只做预处理，不做交易判断
@@ -19,6 +21,7 @@ Support/Resistance Zone Calculator v3.0
 - 硬风控只在 HIGH strength 时介入
 - v2.0: 传递原始数据让 AI 可以验证计算结果
 - v3.0: Swing Points 是学术验证最有效的 S/R 来源 (Chan 2022, MDPI)
+- v3.1: S/R Flip 确保价格在任何位置都有上下方 S/R 参考
 
 参考:
 - Chan (2022): Machine Learning with Support/Resistance (MDPI)
@@ -30,7 +33,7 @@ Support/Resistance Zone Calculator v3.0
 
 Author: AItrader Team
 Date: 2026-01
-Version: 3.0
+Version: 3.1
 """
 
 import logging
@@ -60,7 +63,7 @@ class SRSourceType:
 class SRCandidate:
     """S/R 候选价位"""
     price: float
-    source: str          # 来源: BB_Lower, BB_Upper, SMA_50, SMA_200, Order_Wall, Swing_High, Swing_Low
+    source: str          # 来源: BB_Lower, BB_Upper, SMA_50, SMA_200, Order_Wall, Swing_High, Swing_Low, Round_Number
     weight: float        # 权重: Order_Wall=0.8, SMA_200=1.5, Swing=1.2, BB=1.0, SMA_50=0.8
     side: str            # support 或 resistance
     extra: Dict = field(default_factory=dict)  # 额外信息 (如 wall size, bar_index)
@@ -133,6 +136,7 @@ class SRZoneCalculator:
         'BB_Lower': 1.0,
         'SMA_50': 0.8,          # 中期趋势
         'Pivot': 0.7,           # Pivot Points (可选)
+        'Round_Number': 0.6,    # v3.1: 心理整数关口 (Osler 2000: round numbers attract orders)
     }
 
     # v2.1: Order Wall 过滤阈值
@@ -312,26 +316,35 @@ class SRZoneCalculator:
             age_factor = max(0.5, 1.0 - (bars_ago / self.swing_max_age) * 0.5)
 
             if is_swing_high:
-                # Swing highs (price peaks) are ALWAYS resistance
-                # They represent historical selling pressure regardless of current price
+                # S/R Flip: swing high above price = resistance (standard)
+                # swing high below price = support (broken resistance becomes support)
+                # Reference: Osler (2000), Chan (2022)
+                if bar_high >= current_price:
+                    side = 'resistance'
+                else:
+                    side = 'support'  # S/R flip
                 candidates.append(SRCandidate(
                     price=bar_high,
                     source=f"Swing_High",
                     weight=self.WEIGHTS['Swing_High'] * age_factor,
-                    side='resistance',
+                    side=side,
                     extra={'bar_index': i, 'bars_ago': bars_ago, 'age_factor': age_factor},
                     level=SRLevel.INTERMEDIATE,
                     source_type=SRSourceType.STRUCTURAL,
                 ))
 
             if is_swing_low:
-                # Swing lows (price troughs) are ALWAYS support
-                # They represent historical buying pressure regardless of current price
+                # S/R Flip: swing low below price = support (standard)
+                # swing low above price = resistance (broken support becomes resistance)
+                if bar_low <= current_price:
+                    side = 'support'
+                else:
+                    side = 'resistance'  # S/R flip
                 candidates.append(SRCandidate(
                     price=bar_low,
                     source=f"Swing_Low",
                     weight=self.WEIGHTS['Swing_Low'] * age_factor,
-                    side='support',
+                    side=side,
                     extra={'bar_index': i, 'bars_ago': bars_ago, 'age_factor': age_factor},
                     level=SRLevel.INTERMEDIATE,
                     source_type=SRSourceType.STRUCTURAL,
@@ -393,6 +406,73 @@ class SRZoneCalculator:
         # Use simple average of last `period` TRs
         recent = true_ranges[-period:] if len(true_ranges) >= period else true_ranges
         return sum(recent) / len(recent)
+
+    # =========================================================================
+    # v3.1: Round Number Psychological Levels
+    # =========================================================================
+
+    def _generate_round_number_levels(
+        self,
+        current_price: float,
+        count: int = 3,
+    ) -> List[SRCandidate]:
+        """
+        Generate round-number psychological S/R levels near current price.
+
+        Round numbers attract limit orders and act as psychological barriers.
+        Reference: Osler (2000) "Support for Resistance" - FRB NY
+
+        Parameters
+        ----------
+        current_price : float
+            Current price.
+        count : int
+            Number of levels above and below to generate.
+
+        Returns
+        -------
+        List[SRCandidate]
+            Round number candidates (both support and resistance).
+        """
+        candidates = []
+        if current_price <= 0:
+            return candidates
+
+        # Determine round-number step based on price magnitude
+        if current_price >= 10000:
+            step = 1000       # BTC: $71000, $72000, $73000...
+        elif current_price >= 1000:
+            step = 100        # ETH: $3100, $3200...
+        elif current_price >= 100:
+            step = 10
+        elif current_price >= 10:
+            step = 1
+        else:
+            step = 0.1
+
+        # Find the nearest round number below
+        base = int(current_price / step) * step
+
+        for i in range(-count, count + 1):
+            level_price = base + i * step
+            if level_price <= 0:
+                continue
+            # Skip levels too close to current price (< 0.1%)
+            distance_pct = abs(level_price - current_price) / current_price * 100
+            if distance_pct < 0.1:
+                continue
+
+            side = 'support' if level_price < current_price else 'resistance'
+            candidates.append(SRCandidate(
+                price=float(level_price),
+                source='Round_Number',
+                weight=self.WEIGHTS['Round_Number'],
+                side=side,
+                level=SRLevel.MINOR,
+                source_type=SRSourceType.STRUCTURAL,
+            ))
+
+        return candidates
 
     # =========================================================================
     # v3.0: Touch Count for Zones
@@ -805,6 +885,10 @@ class SRZoneCalculator:
                             level=SRLevel.INTERMEDIATE,
                             source_type=SRSourceType.STRUCTURAL,
                         ))
+
+        # v3.1: Round Number Psychological Levels
+        round_candidates = self._generate_round_number_levels(current_price)
+        candidates.extend(round_candidates)
 
         return candidates
 
