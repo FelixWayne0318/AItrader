@@ -286,16 +286,33 @@ def format_markdown(report: Dict[str, Any], checks: List[CheckResult]) -> str:
 def push_outputs(paths: List[Path], message: str) -> Dict[str, Any]:
     results: Dict[str, Any] = {"pushed": False, "error": ""}
 
+    rc, remotes, err = run_cmd(["git", "remote"], cwd=PROJECT_ROOT)
+    if rc != 0:
+        results["error"] = f"git remote check failed: {err}"
+        return results
+
+    remote_names = [r.strip() for r in remotes.splitlines() if r.strip()]
+    if "origin" not in remote_names:
+        if remote_names:
+            results["error"] = (
+                "git remote 'origin' is missing. "
+                f"Available remotes: {', '.join(remote_names)}"
+            )
+        else:
+            results["error"] = "no git remotes configured; cannot push diagnostic report"
+        return results
+
     for p in paths:
         rc, _, err = run_cmd(["git", "add", "-f", str(p)], cwd=PROJECT_ROOT)
         if rc != 0:
             results["error"] = f"git add failed for {p}: {err}"
             return results
 
-    rc, _, err = run_cmd(["git", "commit", "-m", message], cwd=PROJECT_ROOT)
+    rc, out, err = run_cmd(["git", "commit", "-m", message], cwd=PROJECT_ROOT)
     if rc != 0:
-        if "nothing to commit" not in err.lower():
-            results["error"] = f"git commit failed: {err}"
+        combined = f"{out}\n{err}".lower()
+        if "nothing to commit" not in combined:
+            results["error"] = f"git commit failed: {err or out}"
             return results
 
     rc, branch, err = run_cmd(["git", "branch", "--show-current"], cwd=PROJECT_ROOT)
