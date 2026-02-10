@@ -65,6 +65,19 @@ def load_env_file(path: Path) -> None:
             os.environ[key] = value
 
 
+def sanitize_git_remote(url: str) -> str:
+    """Remove credentials from git remote URLs to avoid exporting secrets."""
+    if not url:
+        return url
+
+    # https://<token>@github.com/org/repo.git or https://user:token@host/path
+    redacted = re.sub(r"(https?://)([^/@]+@)", r"\1***@", url)
+
+    # ssh://user:token@host/path
+    redacted = re.sub(r"(ssh://)([^/@]+@)", r"\1***@", redacted)
+    return redacted
+
+
 def discover_git_info() -> Dict[str, str]:
     branch = "UNKNOWN"
     commit = "UNKNOWN"
@@ -80,7 +93,7 @@ def discover_git_info() -> Dict[str, str]:
 
     rc, out, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=PROJECT_ROOT)
     if rc == 0 and out:
-        remote = out
+        remote = sanitize_git_remote(out)
 
     return {
         "branch": branch,
@@ -392,7 +405,7 @@ def main() -> int:
         commit_msg = "chore: add order failure diagnostic report"
         push_result = push_outputs(exported_paths, commit_msg)
         if push_result.get("pushed"):
-            print("✅ Diagnostic report committed and pushed to origin.")
+            print("✅ Diagnostic report committed and pushed to remote branch.")
         else:
             print(f"❌ Push failed: {push_result.get('error', 'unknown error')}")
             return 2
