@@ -343,6 +343,34 @@ class BinanceAccountFetcher:
             'has_position': len(positions) > 0,
         }
 
+    def get_position_mode(self) -> str:
+        """
+        Get Binance Futures position mode.
+
+        Returns
+        -------
+        str
+            "ONE_WAY" when dualSidePosition is false,
+            "HEDGE" when dualSidePosition is true,
+            "UNKNOWN" on API failure.
+        """
+        data = self._make_request("/fapi/v1/positionSide/dual")
+        if not data:
+            return "UNKNOWN"
+
+        dual_side = data.get('dualSidePosition')
+        if isinstance(dual_side, bool):
+            return "HEDGE" if dual_side else "ONE_WAY"
+
+        # Defensive parsing for non-boolean payloads
+        dual_side_str = str(dual_side).lower()
+        if dual_side_str in ('true', '1'):
+            return "HEDGE"
+        if dual_side_str in ('false', '0'):
+            return "ONE_WAY"
+
+        return "UNKNOWN"
+
     def get_open_orders(self, symbol: Optional[str] = None) -> list:
         """
         获取当前挂单列表 (用于恢复 SL/TP 状态).
