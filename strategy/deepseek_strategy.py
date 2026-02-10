@@ -777,6 +777,28 @@ class DeepSeekAIStrategy(Strategy):
 
         self.log.info(f"Loaded instrument: {self.instrument.id}")
 
+        # Startup diagnostics: verify Binance account position mode.
+        # Reduce-only behavior differs between ONE_WAY and HEDGE modes,
+        # and mismatches are a common root cause of -2022 rejections.
+        try:
+            position_mode = self.binance_account.get_position_mode()
+            self._binance_position_mode = position_mode
+            if position_mode == "HEDGE":
+                self.log.warning(
+                    "⚠️ Binance position mode detected: HEDGE. "
+                    "Current strategy does not set explicit positionSide on orders; "
+                    "this can cause reduce-only rejects (-2022). Consider ONE_WAY mode."
+                )
+            elif position_mode == "ONE_WAY":
+                self.log.info("✅ Binance position mode: ONE_WAY")
+            else:
+                self.log.warning(
+                    "⚠️ Binance position mode unknown (API unavailable). "
+                    "If -2022 errors persist, verify account is in ONE_WAY mode."
+                )
+        except Exception as e:
+            self.log.warning(f"⚠️ Failed to detect Binance position mode: {e}")
+
         # Pre-fetch historical bars before subscribing to live data
         self._prefetch_historical_bars(limit=200)
 
@@ -4919,7 +4941,33 @@ class DeepSeekAIStrategy(Strategy):
         reason = getattr(event, 'reason', 'Unknown reason')
         client_order_id = getattr(event, 'client_order_id', 'N/A')
 
-        self.log.error(f"❌ Order rejected: {reason}")
+        # Enriched diagnostics for exchange-side rejects
+        try:
+            pos_data = self._get_current_position_data(from_telegram=True)
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id) or []
+            reduce_only_open = sum(1 for o in open_orders if o.is_reduce_only)
+            self.log.error(
+                "❌ Order rejected: %s | order_id=%s | has_position=%s | "
+                "position_qty=%s | reduce_only_open_orders=%s | position_mode=%s",
+                reason,
+                client_order_id,
+                bool(pos_data),
+                round(float(pos_data.get('quantity', 0)), 6) if pos_data else 0,
+                reduce_only_open,
+                getattr(self, '_binance_position_mode', 'UNKNOWN'),
+            )
+
+            # Common and high-impact guidance for -2022
+            reason_text = str(reason)
+            if '-2022' in reason_text or 'ReduceOnly' in reason_text:
+                self.log.error(
+                    "🚨 Detected Binance -2022 ReduceOnly rejection. Likely causes: "
+                    "(1) position already closed by SL/TP, "
+                    "(2) close quantity exceeds remaining position, "
+                    "(3) account in HEDGE mode without explicit positionSide."
+                )
+        except Exception:
+            self.log.error(f"❌ Order rejected: {reason}")
 
         # 🚨 Fix G34: Force Telegram alert for order rejections
         if self.telegram_bot and self.enable_telegram:
@@ -5477,6 +5525,19 @@ class DeepSeekAIStrategy(Strategy):
             f"⏰ Order expired: {client_order_id}... "
             f"(instrument: {getattr(event, 'instrument_id', self.instrument_id)})"
         )
+
+        # Enriched diagnostics for unexpected GTC expiration
+        try:
+            pos_data = self._get_current_position_data(from_telegram=True)
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id) or []
+            self.log.warning(
+                "📉 Expiry diagnostics | has_position=%s | position_qty=%s | open_orders_after_expiry=%s",
+                bool(pos_data),
+                round(float(pos_data.get('quantity', 0)), 6) if pos_data else 0,
+                len(open_orders),
+            )
+        except Exception as diag_e:
+            self.log.debug(f"Order expiry diagnostics failed: {diag_e}")
 
         # Send Telegram alert for unexpected expirations
         if self.telegram_bot and self.enable_telegram:
