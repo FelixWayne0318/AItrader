@@ -1,0 +1,121 @@
+{
+  "meta": {
+    "generated_at_utc": "2026-02-11 11:36:07",
+    "tool": "scripts/diagnose_order_failures.py",
+    "hours": 24
+  },
+  "git": {
+    "branch": "codex/import-diagnosis-results-into-repository-4z639y",
+    "commit": "35da86545b4eb938170fed9cbad0323e8d812c2a",
+    "origin": "https://github.com/FelixWayne0318/AItrader.git"
+  },
+  "binance_snapshot": {
+    "symbol": "BTCUSDT",
+    "position_mode": "ONE_WAY",
+    "positions_count": 0,
+    "positions": [],
+    "open_orders_count": 0,
+    "reduce_only_orders_count": 0,
+    "reduce_only_stop_orders_count": 0,
+    "reduce_only_tp_limit_orders_count": 0,
+    "open_orders_sample": []
+  },
+  "local_logs": {
+    "directory": "/home/linuxuser/nautilus_AItrader/logs",
+    "scanned_files": 2,
+    "files": [
+      {
+        "file": "/home/linuxuser/nautilus_AItrader/logs/watchdog.log",
+        "matched_lines": 0,
+        "reduce_only_rejects": 0,
+        "reduce_only_mentions": 0,
+        "expired_events": 0,
+        "lines_with_timestamp": 0,
+        "lines_in_window": 0,
+        "samples": []
+      },
+      {
+        "file": "/home/linuxuser/nautilus_AItrader/logs/deepseek_trader.log",
+        "matched_lines": 226,
+        "reduce_only_rejects": 224,
+        "reduce_only_mentions": 0,
+        "expired_events": 2,
+        "lines_with_timestamp": 425,
+        "lines_in_window": 198,
+        "samples": [
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms...",
+          "Order Rejected: {'code': -2022, 'ms..."
+        ]
+      }
+    ],
+    "total_reduce_only_rejects": 224,
+    "total_expired_events": 2,
+    "total_reduce_only_mentions": 0,
+    "lines_with_timestamp": 425,
+    "lines_in_window": 198
+  },
+  "journal": {
+    "available": true,
+    "service": "nautilus-trader",
+    "lines_scanned": 2000,
+    "reduce_matches": 57,
+    "expired_matches": 2,
+    "reduce_samples": [
+      "Feb 10 12:49:22 bn-bot-sg python[499089]: 2026-02-10T12:49:22.074920603Z [ERROR] DeepSeekTrader-001.ExecClient-BINANCE: Failed on submit_order ClientOrderId('O-20260210-124921-001-000-193'): BinanceClientError({'code': -2022, 'msg': 'ReduceOnly Order is rejected.'})",
+      "Feb 10 12:49:22 bn-bot-sg python[499089]: 2026-02-10T12:49:22.075266628Z [WARN] DeepSeekTrader-001.DeepSeekAIStrategy: <--[EVT] OrderRejected(instrument_id=BTCUSDT-PERP.BINANCE, client_order_id=O-20260210-124921-001-000-193, account_id=BINANCE-USDT_FUTURES-master, reason='{'code': -2022, 'msg': 'ReduceOnly Order is rejected.'}', due_post_only=False, ts_event=1770727762074999190)",
+      "Feb 10 12:49:22 bn-bot-sg python[499089]: 2026-02-10T12:49:22.075289016Z [ERROR] DeepSeekTrader-001.DeepSeekAIStrategy: ❌ Order rejected: {'code': -2022, 'msg': 'ReduceOnly Order is rejected.'}",
+      "Feb 10 14:34:07 bn-bot-sg python[499089]: 2026-02-10T14:34:07.824435155Z [ERROR] DeepSeekTrader-001.ExecClient-BINANCE: Failed on submit_order ClientOrderId('O-20260210-143407-001-000-204'): BinanceClientError({'code': -2022, 'msg': 'ReduceOnly Order is rejected.'})",
+      "Feb 10 14:34:07 bn-bot-sg python[499089]: 2026-02-10T14:34:07.825360577Z [WARN] DeepSeekTrader-001.DeepSeekAIStrategy: <--[EVT] OrderRejected(instrument_id=BTCUSDT-PERP.BINANCE, client_order_id=O-20260210-143407-001-000-204, account_id=BINANCE-USDT_FUTURES-master, reason='{'code': -2022, 'msg': 'ReduceOnly Order is rejected.'}', due_post_only=False, ts_event=1770734047824897707)",
+      "Feb 10 14:34:07 bn-bot-sg python[499089]: 2026-02-10T14:34:07.825705160Z [ERROR] DeepSeekTrader-001.DeepSeekAIStrategy: ❌ Order rejected: {'code': -2022, 'msg': 'ReduceOnly Order is rejected.'}",
+      "Feb 10 15:04:15 bn-bot-sg python[499089]: 2026-02-10T15:04:15.864493959Z [ERROR] DeepSeekTrader-001.ExecClient-BINANCE: Failed on submit_order ClientOrderId('O-20260210-150415-001-000-209'): BinanceClientError({'code': -2022, 'msg': 'ReduceOnly Order is rejected.'})",
+      "Feb 10 15:04:15 bn-bot-sg python[499089]: 2026-02-10T15:04:15.864934841Z [WARN] DeepSeekTrader-001.DeepSeekAIStrategy: <--[EVT] OrderRejected(instrument_id=BTCUSDT-PERP.BINANCE, client_order_id=O-20260210-150415-001-000-209, account_id=BINANCE-USDT_FUTURES-master, reason='{'code': -2022, 'msg': 'ReduceOnly Order is rejected.'}', due_post_only=False, ts_event=1770735855864542172)",
+      "Feb 10 15:04:15 bn-bot-sg python[499089]: 2026-02-10T15:04:15.864957396Z [ERROR] DeepSeekTrader-001.DeepSeekAIStrategy: ❌ Order rejected: {'code': -2022, 'msg': 'ReduceOnly Order is rejected.'}",
+      "Feb 10 15:19:02 bn-bot-sg python[499089]: 2026-02-10T15:19:02.779066863Z [ERROR] DeepSeekTrader-001.ExecClient-BINANCE: Failed on submit_order ClientOrderId('O-20260210-151902-001-000-211'): BinanceClientError({'code': -2022, 'msg': 'ReduceOnly Order is rejected.'})",
+      "Feb 10 15:19:02 bn-bot-sg python[499089]: 2026-02-10T15:19:02.779300468Z [WARN] DeepSeekTrader-001.DeepSeekAIStrategy: <--[EVT] OrderRejected(instrument_id=BTCUSDT-PERP.BINANCE, client_order_id=O-20260210-151902-001-000-211, account_id=BINANCE-USDT_FUTURES-master, reason='{'code': -2022, 'msg': 'ReduceOnly Order is rejected.'}', due_post_only=False, ts_event=1770736742779095854)",
+      "Feb 10 15:19:02 bn-bot-sg python[499089]: 2026-02-10T15:19:02.779315425Z [ERROR] DeepSeekTrader-001.DeepSeekAIStrategy: ❌ Order rejected: {'code': -2022, 'msg': 'ReduceOnly Order is rejected.'}",
+      "Feb 10 15:33:50 bn-bot-sg python[499089]: 2026-02-10T15:33:50.545881457Z [ERROR] DeepSeekTrader-001.ExecClient-BINANCE: Failed on submit_order ClientOrderId('O-20260210-153350-001-000-213'): BinanceClientError({'code': -2022, 'msg': 'ReduceOnly Order is rejected.'})",
+      "Feb 10 15:33:50 bn-bot-sg python[499089]: 2026-02-10T15:33:50.546243116Z [WARN] DeepSeekTrader-001.DeepSeekAIStrategy: <--[EVT] OrderRejected(instrument_id=BTCUSDT-PERP.BINANCE, client_order_id=O-20260210-153350-001-000-213, account_id=BINANCE-USDT_FUTURES-master, reason='{'code': -2022, 'msg': 'ReduceOnly Order is rejected.'}', due_post_only=False, ts_event=1770737630545919800)",
+      "Feb 10 15:33:50 bn-bot-sg python[499089]: 2026-02-10T15:33:50.546266885Z [ERROR] DeepSeekTrader-001.DeepSeekAIStrategy: ❌ Order rejected: {'code': -2022, 'msg': 'ReduceOnly Order is rejected.'}"
+    ],
+    "expired_samples": [
+      "Feb 10 14:19:25 bn-bot-sg python[499089]: 2026-02-10T14:19:25.368337031Z [WARN] DeepSeekTrader-001.DeepSeekAIStrategy: ⏰ Order expired: O-202602... (instrument: BTCUSDT-PERP.BINANCE)",
+      "Feb 10 14:58:42 bn-bot-sg python[499089]: 2026-02-10T14:58:42.712689604Z [WARN] DeepSeekTrader-001.DeepSeekAIStrategy: ⏰ Order expired: O-202602... (instrument: BTCUSDT-PERP.BINANCE)"
+    ]
+  },
+  "checks": [
+    {
+      "name": "Position mode",
+      "status": "PASS",
+      "details": "Binance position mode is ONE_WAY."
+    },
+    {
+      "name": "ReduceOnly rejection in local logs",
+      "status": "FAIL",
+      "details": "Found 224 rejection lines in local logs (strict reject patterns)."
+    },
+    {
+      "name": "GTC expiry in local logs",
+      "status": "WARN",
+      "details": "Found 2 expiry-related lines in local logs."
+    },
+    {
+      "name": "systemd journal scan",
+      "status": "WARN",
+      "details": "reduce_matches=57, expired_matches=2"
+    }
+  ],
+  "root_causes": [
+    "Likely root cause: reduce-only orders submitted after position already closed / stale close flow race.",
+    "Likely root cause: orphan GTC protective orders not canceled fast enough after fill/close events."
+  ]
+}
