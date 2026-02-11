@@ -65,6 +65,23 @@ def load_env_file(path: Path) -> None:
             os.environ[key] = value
 
 
+
+
+def sanitize_git_remote(url: str) -> str:
+    if not url:
+        return "UNKNOWN"
+
+    cleaned = url.strip()
+
+    # Remove URL credentials: https://user:token@host/repo.git -> https://host/repo.git
+    cleaned = re.sub(r"^(https?://)([^/@]+@)", r"\1", cleaned, flags=re.IGNORECASE)
+
+    # Generic token redaction for accidental secret leakage in remote strings
+    cleaned = re.sub(r"(ghp_[A-Za-z0-9_]{20,})", "ghp_[REDACTED]", cleaned)
+    cleaned = re.sub(r"(github_pat_[A-Za-z0-9_]{20,})", "github_pat_[REDACTED]", cleaned)
+
+    return cleaned
+
 def discover_git_info() -> Dict[str, str]:
     branch = "UNKNOWN"
     commit = "UNKNOWN"
@@ -80,7 +97,7 @@ def discover_git_info() -> Dict[str, str]:
 
     rc, out, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=PROJECT_ROOT)
     if rc == 0 and out:
-        remote = out
+        remote = sanitize_git_remote(out)
 
     return {
         "branch": branch,
