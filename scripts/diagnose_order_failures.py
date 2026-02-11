@@ -68,19 +68,39 @@ def load_env_file(path: Path) -> None:
 
 
 def sanitize_git_remote(url: str) -> str:
+    """Return a non-sensitive remote identifier safe for report export.
+
+    We intentionally do NOT preserve full remote URLs because repository remotes
+    are often configured with embedded credentials/tokens in production hosts.
+    """
     if not url:
         return "UNKNOWN"
 
     cleaned = url.strip()
 
-    # Remove URL credentials: https://user:token@host/repo.git -> https://host/repo.git
-    cleaned = re.sub(r"^(https?://)([^/@]+@)", r"\1", cleaned, flags=re.IGNORECASE)
+    # Canonical safe forms:
+    # - git@github.com:owner/repo(.git)
+    # - https://github.com/owner/repo(.git)
+    m = re.match(r"^git@([^:]+):([^/]+)/([^/]+?)(?:\.git)?$", cleaned, flags=re.IGNORECASE)
+    if m:
+        host, owner, repo = m.groups()
+        return f"git@{host}:{owner}/{repo}.git"
 
-    # Generic token redaction for accidental secret leakage in remote strings
-    cleaned = re.sub(r"(ghp_[A-Za-z0-9_]{20,})", "ghp_[REDACTED]", cleaned)
-    cleaned = re.sub(r"(github_pat_[A-Za-z0-9_]{20,})", "github_pat_[REDACTED]", cleaned)
+    m = re.match(r"^https?://(?:[^/@]+@)?([^/]+)/([^/]+)/([^/?#]+?)(?:\.git)?(?:[?#].*)?$", cleaned, flags=re.IGNORECASE)
+    if m:
+        host, owner, repo = m.groups()
+        return f"https://{host}/{owner}/{repo}.git"
 
-    return cleaned
+    # If token-like marker appears anywhere in a non-canonical remote, hide it fully.
+    if re.search(r"ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}", cleaned):
+        return "REDACTED"
+
+    # Fallback: never emit unknown raw URL; keep only host-level hint if possible.
+    m = re.match(r"^(?:https?://)?(?:[^/@]+@)?([^/:?#]+)", cleaned, flags=re.IGNORECASE)
+    if m:
+        return f"https://{m.group(1)}/[REDACTED].git"
+
+    return "REDACTED"
 
 def discover_git_info() -> Dict[str, str]:
     branch = "UNKNOWN"
