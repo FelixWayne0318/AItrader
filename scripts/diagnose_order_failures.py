@@ -65,6 +65,37 @@ def load_env_file(path: Path) -> None:
             os.environ[key] = value
 
 
+
+
+def sanitize_git_remote(url: str) -> str:
+    """Return a safe-to-export git remote string without embedded credentials."""
+    if not url:
+        return "UNKNOWN"
+
+    cleaned = url.strip()
+
+    # 1) Strip URL userinfo: https://user:token@host/repo.git -> https://host/repo.git
+    cleaned = re.sub(r"^(https?://)([^/@]+@)", r"\1", cleaned, flags=re.IGNORECASE)
+
+    # 2) Redact common token patterns that may appear anywhere in the remote string
+    token_patterns = [
+        (r"ghp_[A-Za-z0-9_]{20,}", "ghp_[REDACTED]"),
+        (r"github_pat_[A-Za-z0-9_]{20,}", "github_pat_[REDACTED]"),
+        (r"glpat-[A-Za-z0-9_-]{20,}", "glpat-[REDACTED]"),
+        (r"xox[baprs]-[A-Za-z0-9-]{20,}", "xox-[REDACTED]"),
+    ]
+    for pat, repl in token_patterns:
+        cleaned = re.sub(pat, repl, cleaned)
+
+    # 3) Redact token-like query parameters (?token=...&access_token=...)
+    cleaned = re.sub(r"([?&](?:token|access_token|auth|password|passwd)=)[^&#]+", r"\1[REDACTED]", cleaned, flags=re.IGNORECASE)
+
+    # 4) Last-resort guard: if raw credential markers still remain, avoid exporting URL entirely
+    if re.search(r"https?://[^/\s:@]+:[^@/\s]+@", cleaned, re.IGNORECASE):
+        return "REDACTED_REMOTE"
+
+    return cleaned
+
 def discover_git_info() -> Dict[str, str]:
     branch = "UNKNOWN"
     commit = "UNKNOWN"
@@ -80,7 +111,7 @@ def discover_git_info() -> Dict[str, str]:
 
     rc, out, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=PROJECT_ROOT)
     if rc == 0 and out:
-        remote = out
+        remote = sanitize_git_remote(out)
 
     return {
         "branch": branch,
@@ -89,7 +120,7 @@ def discover_git_info() -> Dict[str, str]:
     }
 
 
-def parse_log_file(path: Path, cutoff_utc: datetime) -> Dict[str, Any]:
+def parse_log_file(path: Path) -> Dict[str, Any]:
     stats = {
         "file": str(path),
         "matched_lines": 0,
@@ -127,15 +158,21 @@ def collect_local_logs(hours: int) -> Dict[str, Any]:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     candidates: List[Path] = []
+    cutoff_ts = cutoff.timestamp()
     if logs_dir.exists():
         for p in logs_dir.glob("*.log*"):
-            if p.is_file():
-                candidates.append(p)
+            if not p.is_file():
+                continue
+            try:
+                if p.stat().st_mtime >= cutoff_ts:
+                    candidates.append(p)
+            except OSError:
+                continue
 
     candidates.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
     candidates = candidates[:10]
 
-    items = [parse_log_file(p, cutoff) for p in candidates]
+    items = [parse_log_file(p) for p in candidates]
 
     return {
         "directory": str(logs_dir),
