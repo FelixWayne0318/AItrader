@@ -65,6 +65,37 @@ def load_env_file(path: Path) -> None:
             os.environ[key] = value
 
 
+
+
+def sanitize_git_remote(url: str) -> str:
+    """Return a safe-to-export git remote string without embedded credentials."""
+    if not url:
+        return "UNKNOWN"
+
+    cleaned = url.strip()
+
+    # 1) Strip URL userinfo: https://user:token@host/repo.git -> https://host/repo.git
+    cleaned = re.sub(r"^(https?://)([^/@]+@)", r"\1", cleaned, flags=re.IGNORECASE)
+
+    # 2) Redact common token patterns that may appear anywhere in the remote string
+    token_patterns = [
+        (r"ghp_[A-Za-z0-9_]{20,}", "ghp_[REDACTED]"),
+        (r"github_pat_[A-Za-z0-9_]{20,}", "github_pat_[REDACTED]"),
+        (r"glpat-[A-Za-z0-9_-]{20,}", "glpat-[REDACTED]"),
+        (r"xox[baprs]-[A-Za-z0-9-]{20,}", "xox-[REDACTED]"),
+    ]
+    for pat, repl in token_patterns:
+        cleaned = re.sub(pat, repl, cleaned)
+
+    # 3) Redact token-like query parameters (?token=...&access_token=...)
+    cleaned = re.sub(r"([?&](?:token|access_token|auth|password|passwd)=)[^&#]+", r"\1[REDACTED]", cleaned, flags=re.IGNORECASE)
+
+    # 4) Last-resort guard: if raw credential markers still remain, avoid exporting URL entirely
+    if re.search(r"https?://[^/\s:@]+:[^@/\s]+@", cleaned, re.IGNORECASE):
+        return "REDACTED_REMOTE"
+
+    return cleaned
+
 def discover_git_info() -> Dict[str, str]:
     branch = "UNKNOWN"
     commit = "UNKNOWN"
@@ -80,7 +111,7 @@ def discover_git_info() -> Dict[str, str]:
 
     rc, out, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=PROJECT_ROOT)
     if rc == 0 and out:
-        remote = out
+        remote = sanitize_git_remote(out)
 
     return {
         "branch": branch,
