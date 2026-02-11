@@ -23,7 +23,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -65,6 +65,37 @@ def load_env_file(path: Path) -> None:
             os.environ[key] = value
 
 
+
+
+def sanitize_git_remote(url: str) -> str:
+    """Return a safe-to-export git remote string without embedded credentials."""
+    if not url:
+        return "UNKNOWN"
+
+    cleaned = url.strip()
+
+    # 1) Strip URL userinfo: https://user:token@host/repo.git -> https://host/repo.git
+    cleaned = re.sub(r"^(https?://)([^/@]+@)", r"\1", cleaned, flags=re.IGNORECASE)
+
+    # 2) Redact common token patterns that may appear anywhere in the remote string
+    token_patterns = [
+        (r"ghp_[A-Za-z0-9_]{20,}", "ghp_[REDACTED]"),
+        (r"github_pat_[A-Za-z0-9_]{20,}", "github_pat_[REDACTED]"),
+        (r"glpat-[A-Za-z0-9_-]{20,}", "glpat-[REDACTED]"),
+        (r"xox[baprs]-[A-Za-z0-9-]{20,}", "xox-[REDACTED]"),
+    ]
+    for pat, repl in token_patterns:
+        cleaned = re.sub(pat, repl, cleaned)
+
+    # 3) Redact token-like query parameters (?token=...&access_token=...)
+    cleaned = re.sub(r"([?&](?:token|access_token|auth|password|passwd)=)[^&#]+", r"\1[REDACTED]", cleaned, flags=re.IGNORECASE)
+
+    # 4) Last-resort guard: if raw credential markers still remain, avoid exporting URL entirely
+    if re.search(r"https?://[^/\s:@]+:[^@/\s]+@", cleaned, re.IGNORECASE):
+        return "REDACTED_REMOTE"
+
+    return cleaned
+
 def discover_git_info() -> Dict[str, str]:
     branch = "UNKNOWN"
     commit = "UNKNOWN"
@@ -80,7 +111,7 @@ def discover_git_info() -> Dict[str, str]:
 
     rc, out, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=PROJECT_ROOT)
     if rc == 0 and out:
-        remote = out
+        remote = sanitize_git_remote(out)
 
     return {
         "branch": branch,
@@ -89,34 +120,72 @@ def discover_git_info() -> Dict[str, str]:
     }
 
 
+
+
+def parse_line_timestamp_utc(line: str) -> Optional[datetime]:
+    """Best-effort parse of log line timestamp to UTC."""
+    patterns: List[Tuple[str, str]] = [
+        (r"\b(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})\b", "%Y-%m-%d %H:%M:%S"),
+        (r"\b(\d{4}-\d{2}-\d{2}[T]\d{2}:\d{2}:\d{2})\b", "%Y-%m-%dT%H:%M:%S"),
+        (r"\b(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3})\b", "%Y-%m-%d %H:%M:%S,%f"),
+    ]
+    for pattern, fmt in patterns:
+        m = re.search(pattern, line)
+        if not m:
+            continue
+        raw = m.group(1)
+        try:
+            parsed = datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+        return parsed.replace(tzinfo=timezone.utc)
+    return None
+
 def parse_log_file(path: Path, cutoff_utc: datetime) -> Dict[str, Any]:
     stats = {
         "file": str(path),
         "matched_lines": 0,
         "reduce_only_rejects": 0,
+        "reduce_only_mentions": 0,
         "expired_events": 0,
+        "lines_with_timestamp": 0,
+        "lines_in_window": 0,
         "samples": [],
     }
 
     if not path.exists():
         return stats
 
-    # Broad matching to support multilingual logs / varied formatter output
-    re_reject = re.compile(r"order\s+rejected|reduceonly|reduce-only|-2022", re.IGNORECASE)
+    # Strict rejection detection to avoid counting benign "reduce-only" mentions
+    re_reject = re.compile(r"-2022|order\s+rejected|reduce-?only.*reject|reject.*reduce-?only", re.IGNORECASE)
+    re_reduce_mention = re.compile(r"reduceonly|reduce-only", re.IGNORECASE)
     re_expired = re.compile(r"order\s+expired|gtc\s+order\s+expired", re.IGNORECASE)
 
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         line_lc = line.lower()
-        if not (re_reject.search(line_lc) or re_expired.search(line_lc)):
+        has_signal = bool(re_reject.search(line_lc) or re_reduce_mention.search(line_lc) or re_expired.search(line_lc))
+        if not has_signal:
             continue
 
-        stats["matched_lines"] += 1
+        ts = parse_line_timestamp_utc(line)
+        if ts is not None:
+            stats["lines_with_timestamp"] += 1
+            if ts < cutoff_utc:
+                continue
+            stats["lines_in_window"] += 1
+
         if re_reject.search(line_lc):
             stats["reduce_only_rejects"] += 1
+            stats["matched_lines"] += 1
+        elif re_reduce_mention.search(line_lc):
+            # track mention volume separately, but do not treat as rejection evidence
+            stats["reduce_only_mentions"] += 1
+
         if re_expired.search(line_lc):
             stats["expired_events"] += 1
+            stats["matched_lines"] += 1
 
-        if len(stats["samples"]) < 12:
+        if len(stats["samples"]) < 12 and (re_reject.search(line_lc) or re_expired.search(line_lc)):
             stats["samples"].append(line[:500])
 
     return stats
@@ -127,10 +196,16 @@ def collect_local_logs(hours: int) -> Dict[str, Any]:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     candidates: List[Path] = []
+    cutoff_ts = cutoff.timestamp()
     if logs_dir.exists():
         for p in logs_dir.glob("*.log*"):
-            if p.is_file():
-                candidates.append(p)
+            if not p.is_file():
+                continue
+            try:
+                if p.stat().st_mtime >= cutoff_ts:
+                    candidates.append(p)
+            except OSError:
+                continue
 
     candidates.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
     candidates = candidates[:10]
@@ -143,6 +218,9 @@ def collect_local_logs(hours: int) -> Dict[str, Any]:
         "files": items,
         "total_reduce_only_rejects": sum(i["reduce_only_rejects"] for i in items),
         "total_expired_events": sum(i["expired_events"] for i in items),
+        "total_reduce_only_mentions": sum(i.get("reduce_only_mentions", 0) for i in items),
+        "lines_with_timestamp": sum(i.get("lines_with_timestamp", 0) for i in items),
+        "lines_in_window": sum(i.get("lines_in_window", 0) for i in items),
     }
 
 
@@ -216,7 +294,7 @@ def evaluate(data: Dict[str, Any]) -> List[CheckResult]:
     if reject_count == 0:
         results.append(CheckResult("ReduceOnly rejection in local logs", "PASS", "No reduce-only rejection found in scanned local logs."))
     else:
-        results.append(CheckResult("ReduceOnly rejection in local logs", "FAIL", f"Found {reject_count} matching lines in local logs."))
+        results.append(CheckResult("ReduceOnly rejection in local logs", "FAIL", f"Found {reject_count} rejection lines in local logs (strict reject patterns)."))
 
     expired_count = int(local.get("total_expired_events", 0))
     if expired_count == 0:
@@ -236,6 +314,27 @@ def evaluate(data: Dict[str, Any]) -> List[CheckResult]:
 
     return results
 
+
+
+
+def infer_root_causes(report: Dict[str, Any]) -> List[str]:
+    causes: List[str] = []
+    mode = str(report["binance_snapshot"].get("position_mode", "UNKNOWN"))
+    rejects = int(report["local_logs"].get("total_reduce_only_rejects", 0))
+    mentions = int(report["local_logs"].get("total_reduce_only_mentions", 0))
+    expired = int(report["local_logs"].get("total_expired_events", 0))
+
+    if mode == "HEDGE" and rejects > 0:
+        causes.append("Likely root cause: HEDGE mode with reduce-only flows missing explicit positionSide.")
+    if mode == "ONE_WAY" and rejects > 0:
+        causes.append("Likely root cause: reduce-only orders submitted after position already closed / stale close flow race.")
+    if mentions > 0 and rejects == 0:
+        causes.append("Observed many reduce-only mentions but no strict rejection signatures; prior noise likely from benign logs.")
+    if expired > 0:
+        causes.append("Likely root cause: orphan GTC protective orders not canceled fast enough after fill/close events.")
+    if not causes:
+        causes.append("No strong root-cause signal found in current lookback window.")
+    return causes
 
 def format_markdown(report: Dict[str, Any], checks: List[CheckResult]) -> str:
     lines: List[str] = []
@@ -263,6 +362,10 @@ def format_markdown(report: Dict[str, Any], checks: List[CheckResult]) -> str:
     lines.append(f"- Reduce-only LIMIT TP Orders: `{b.get('reduce_only_tp_limit_orders_count')}`")
     lines.append("")
 
+    lines.append(f"- Reduce-only mentions (non-rejection): `{report['local_logs'].get('total_reduce_only_mentions', 0)}`")
+    lines.append(f"- Timestamped matched lines in window: `{report['local_logs'].get('lines_in_window', 0)}` / `{report['local_logs'].get('lines_with_timestamp', 0)}`")
+    lines.append("")
+
     lines.append("## Journal Scan")
     j = report["journal"]
     if not j.get("available", False):
@@ -272,6 +375,11 @@ def format_markdown(report: Dict[str, Any], checks: List[CheckResult]) -> str:
         lines.append(f"- Lines scanned: `{j.get('lines_scanned')}`")
         lines.append(f"- Reduce-related matches: `{j.get('reduce_matches')}`")
         lines.append(f"- Expiry-related matches: `{j.get('expired_matches')}`")
+    lines.append("")
+
+    lines.append("## Likely Root Causes")
+    for cause in report.get("root_causes", []):
+        lines.append(f"- {cause}")
     lines.append("")
 
     lines.append("## Recommended Next Actions")
@@ -344,6 +452,7 @@ def main() -> int:
 
     checks = evaluate(report)
     report["checks"] = [c.__dict__ for c in checks]
+    report["root_causes"] = infer_root_causes(report)
 
     print("=" * 72)
     print("Order Failure Diagnostics")

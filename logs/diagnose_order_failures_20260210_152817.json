@@ -1,0 +1,61 @@
+{
+  "meta": {
+    "generated_at_utc": "2026-02-10 15:28:17",
+    "tool": "scripts/diagnose_order_failures.py",
+    "hours": 24
+  },
+  "git": {
+    "branch": "work",
+    "commit": "2b558fc857e3b85bb7cdfb45f904b9d648b9efff",
+    "origin": "UNKNOWN"
+  },
+  "binance_snapshot": {
+    "symbol": "BTCUSDT",
+    "position_mode": "UNKNOWN",
+    "positions_count": 0,
+    "positions": [],
+    "open_orders_count": 0,
+    "reduce_only_orders_count": 0,
+    "reduce_only_stop_orders_count": 0,
+    "reduce_only_tp_limit_orders_count": 0,
+    "open_orders_sample": []
+  },
+  "local_logs": {
+    "directory": "/workspace/AItrader/logs",
+    "scanned_files": 0,
+    "files": [],
+    "total_reduce_only_rejects": 0,
+    "total_expired_events": 0
+  },
+  "journal": {
+    "available": true,
+    "service": "nautilus-trader",
+    "lines_scanned": 1,
+    "reduce_matches": 0,
+    "expired_matches": 0,
+    "reduce_samples": [],
+    "expired_samples": []
+  },
+  "checks": [
+    {
+      "name": "Position mode",
+      "status": "WARN",
+      "details": "Unable to confirm Binance position mode."
+    },
+    {
+      "name": "ReduceOnly rejection in local logs",
+      "status": "PASS",
+      "details": "No reduce-only rejection found in scanned local logs."
+    },
+    {
+      "name": "GTC expiry in local logs",
+      "status": "PASS",
+      "details": "No unexpected expiry found in scanned local logs."
+    },
+    {
+      "name": "systemd journal scan",
+      "status": "PASS",
+      "details": "reduce_matches=0, expired_matches=0"
+    }
+  ]
+}
