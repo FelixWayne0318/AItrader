@@ -131,6 +131,12 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     trailing_distance_pct: float = 0.005
     trailing_update_threshold_pct: float = 0.002
 
+    # v4.0: SL/TP method and dynamic update configuration
+    sltp_method: str = "legacy"  # "legacy" (percentage-based) or "sr_based" (S/R zone driven)
+    atr_buffer_multiplier: float = 0.5  # ATR buffer for SL placement behind S/R zone
+    dynamic_sltp_update: bool = True  # Reevaluate SL/TP every on_timer cycle
+    dynamic_update_threshold_pct: float = 0.002  # Min change to trigger SL/TP update (0.2%)
+
     # Partial Take Profit - NOT IMPLEMENTED
     # WARNING: This feature is NOT YET IMPLEMENTED. Setting to True has no effect.
     # The config is preserved for future implementation.
@@ -299,7 +305,13 @@ class DeepSeekAIStrategy(Strategy):
         self.trailing_activation_pct = config.trailing_activation_pct
         self.trailing_distance_pct = config.trailing_distance_pct
         self.trailing_update_threshold_pct = config.trailing_update_threshold_pct
-        
+
+        # v4.0: SL/TP method configuration (G3)
+        self.sltp_method = config.sltp_method
+        self.atr_buffer_multiplier = config.atr_buffer_multiplier
+        self.dynamic_sltp_update_enabled = config.dynamic_sltp_update
+        self.dynamic_update_threshold_pct = config.dynamic_update_threshold_pct
+
         # Thread lock for shared state (Telegram thread safety)
         self._state_lock = threading.Lock()
 
@@ -352,6 +364,14 @@ class DeepSeekAIStrategy(Strategy):
         #   'submitted_at': datetime,
         # }
         self._pending_reversal: Optional[Dict[str, Any]] = None
+
+        # v4.0: Pending reduce SL/TP state for event-driven rebuild after partial close
+        # Set in _reduce_position(), consumed in on_position_changed()
+        self._pending_reduce_sltp: Optional[Dict[str, Any]] = None
+
+        # v4.0: Cached ATR value for emergency SL calculation (updated in on_timer)
+        self._cached_atr_value: float = 0.0
+
         # Format: {
         #   "instrument_id": {
         #       "entry_price": float,
@@ -1811,6 +1831,50 @@ class DeepSeekAIStrategy(Strategy):
                 # v3.0: Get extended bars for S/R Swing Point detection
                 sr_bars_data = self.indicator_manager.get_kline_data(count=120)
 
+                # v4.0 (E1): Update cached ATR value from 15M bars
+                if sr_bars_data and len(sr_bars_data) >= 14:
+                    try:
+                        from utils.sr_zone_calculator import SRZoneCalculator
+                        atr_val = SRZoneCalculator._calculate_atr_from_bars(sr_bars_data)
+                        if atr_val and atr_val > 0:
+                            self._cached_atr_value = atr_val
+                    except Exception:
+                        pass  # ATR cache is best-effort
+
+                # v4.0 (E1): Extract MTF bars from trend/decision managers (if available)
+                bars_data_4h = None
+                bars_data_1d = None
+                daily_bar = None
+                weekly_bar = None
+                if self.mtf_enabled and self.mtf_manager:
+                    try:
+                        # 4H bars from decision layer
+                        decision_mgr = getattr(self.mtf_manager, 'decision_manager', None)
+                        if decision_mgr and hasattr(decision_mgr, 'recent_bars') and decision_mgr.recent_bars:
+                            bars_data_4h = [
+                                {'high': float(b.high), 'low': float(b.low),
+                                 'close': float(b.close), 'open': float(b.open),
+                                 'volume': float(b.volume)}
+                                for b in decision_mgr.recent_bars[-50:]
+                            ]
+                        # 1D bars from trend layer
+                        trend_mgr = getattr(self.mtf_manager, 'trend_manager', None)
+                        if trend_mgr and hasattr(trend_mgr, 'recent_bars') and trend_mgr.recent_bars:
+                            bars_1d_raw = [
+                                {'high': float(b.high), 'low': float(b.low),
+                                 'close': float(b.close), 'open': float(b.open),
+                                 'volume': float(b.volume)}
+                                for b in trend_mgr.recent_bars[-120:]
+                            ]
+                            bars_data_1d = bars_1d_raw
+                            # Extract daily bar (last completed) and weekly bar (last 5 days)
+                            if bars_1d_raw:
+                                daily_bar = bars_1d_raw[-1]
+                                from utils.sr_pivot_calculator import aggregate_weekly_bar
+                                weekly_bar = aggregate_weekly_bar(bars_1d_raw)
+                    except Exception as e:
+                        self.log.debug(f"[MTF] Failed to extract MTF bars for S/R: {e}")
+
                 signal_data = self.multi_agent.analyze(
                     symbol="BTCUSDT",
                     technical_report=ai_technical_data,
@@ -1828,6 +1892,12 @@ class DeepSeekAIStrategy(Strategy):
                     account_context=account_context,
                     # ========== v3.0: OHLC bars for S/R Swing Detection ==========
                     bars_data=sr_bars_data,
+                    # ========== v4.0: MTF bars for S/R pivot + volume profile ==========
+                    bars_data_4h=bars_data_4h,
+                    bars_data_1d=bars_data_1d,
+                    daily_bar=daily_bar,
+                    weekly_bar=weekly_bar,
+                    atr_value=self._cached_atr_value,
                 )
 
                 # v3.8: Store S/R Zone data for heartbeat (from MultiAgentAnalyzer cache)
@@ -1913,8 +1983,12 @@ class DeepSeekAIStrategy(Strategy):
                 self._update_trailing_stops(price_data['price'])
 
             # v4.12: Dynamic SL/TP update based on current S/R zones
-            if self.enable_auto_sl_tp:
-                self._dynamic_sltp_update()
+            # v4.0: Route to S/R-based reevaluation or legacy dynamic update
+            if self.enable_auto_sl_tp and self.dynamic_sltp_update_enabled:
+                if self.sltp_method == "sr_based":
+                    self._reevaluate_sltp_for_existing_position()
+                else:
+                    self._dynamic_sltp_update()
 
         finally:
             # 🔒 Fix I38: Always release lock when on_timer exits
@@ -3681,23 +3755,47 @@ class DeepSeekAIStrategy(Strategy):
             tp_price = validated_tp
             self.log.info(f"🎯 SL/TP validated for entry: {validation_reason}")
         else:
-            # Fall back to technical analysis (same as _submit_bracket_order)
+            # Level 1 (AI) failed — try Level 2 (S/R-based) if enabled
             if multi_sl or multi_tp:
                 self.log.warning(
                     f"⚠️ AI SL/TP invalid: {validation_reason}, "
-                    f"falling back to S/R-based technical analysis"
+                    f"trying fallback chain"
                 )
 
-            stop_loss_price, tp_price, calc_method = calculate_technical_sltp(
-                side=side.name,
-                entry_price=entry_price,
-                support=support,
-                resistance=resistance,
-                confidence=confidence,
-                use_support_resistance=self.sl_use_support_resistance,
-                sl_buffer_pct=self.sl_buffer_pct,
-            )
-            self.log.info(f"📍 {calc_method}")
+            sr_fallback_used = False
+
+            # v4.0: Level 2 — S/R-based SL/TP with ATR buffer
+            if self.sltp_method == "sr_based" and hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
+                try:
+                    from utils.sr_sltp_calculator import calculate_sr_based_sltp
+                    sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
+                        current_price=entry_price,
+                        side=side.name,
+                        sr_zones=self.latest_sr_zones_data,
+                        atr_value=self._cached_atr_value,
+                        min_rr_ratio=1.5,
+                        atr_buffer_multiplier=self.atr_buffer_multiplier,
+                    )
+                    if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
+                        stop_loss_price = sr_sl
+                        tp_price = sr_tp
+                        sr_fallback_used = True
+                        self.log.info(f"📍 S/R-based SL/TP: {sr_method}")
+                except Exception as e:
+                    self.log.debug(f"S/R-based SL/TP calculation failed: {e}")
+
+            # Level 3 — Percentage-based fallback (legacy)
+            if not sr_fallback_used:
+                stop_loss_price, tp_price, calc_method = calculate_technical_sltp(
+                    side=side.name,
+                    entry_price=entry_price,
+                    support=support,
+                    resistance=resistance,
+                    confidence=confidence,
+                    use_support_resistance=self.sl_use_support_resistance,
+                    sl_buffer_pct=self.sl_buffer_pct,
+                )
+                self.log.info(f"📍 {calc_method}")
 
         if side == OrderSide.BUY:
             rr = (tp_price - entry_price) / (entry_price - stop_loss_price) if entry_price > stop_loss_price else 0
@@ -4159,6 +4257,113 @@ class DeepSeekAIStrategy(Strategy):
                 except Exception:
                     pass
 
+    # ========================== v4.0 Order Safety Methods ==========================
+
+    def _handle_orphan_order(self, order_id: str, reason: str):
+        """
+        v4.0 (A1): Clean up internal state when SL/TP orders become orphans.
+
+        Called from on_order_expired(), on_order_rejected(), on_order_canceled().
+        Checks if position still exists:
+        - No position → clear all state (external close detected)
+        - Position exists but no active SL → resubmit emergency SL
+        """
+        try:
+            current_position = self._get_current_position_data()
+
+            if not current_position:
+                self._clear_position_state()
+                self.log.info(f"🧹 Position closed externally (orphan: {order_id[:8]}..., {reason})")
+            else:
+                self._resubmit_sltp_if_needed(current_position, reason)
+        except Exception as e:
+            self.log.warning(f"⚠️ _handle_orphan_order failed: {e}")
+
+    def _clear_position_state(self):
+        """
+        v4.0 (A4): Clear all position-related internal state.
+
+        Called when position is detected as closed externally (e.g., manual close
+        on Binance app causing SL/TP to become orphans).
+        """
+        instrument_key = str(self.instrument_id)
+        self.trailing_stop_state.pop(instrument_key, None)
+        self._pending_sltp = None
+        self._pending_reversal = None
+        self._pending_reduce_sltp = None
+        self.latest_signal_data = None
+        self.log.info("🧹 Position state cleared (external close detected)")
+
+    def _resubmit_sltp_if_needed(self, current_position: Dict[str, Any], reason: str = ""):
+        """
+        v4.0 (A4): Detect missing SL/TP and resubmit emergency SL if needed.
+
+        Called when a SL/TP order expires/rejected/canceled but position still exists.
+        Uses emergency SL (2% fixed) since current S/R data may be stale.
+        """
+        try:
+            position_side = current_position.get('side', '').lower()
+            quantity = abs(float(current_position.get('quantity', 0)))
+            if quantity <= 0 or position_side not in ('long', 'short'):
+                return
+
+            # Check if active SL order still exists
+            instrument_key = str(self.instrument_id)
+            state = self.trailing_stop_state.get(instrument_key)
+            if state and state.get("sl_order_id"):
+                # Verify SL order is actually active via cache
+                try:
+                    open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+                    sl_id = state.get("sl_order_id")
+                    sl_active = any(str(o.client_order_id) == sl_id for o in open_orders)
+                    if sl_active:
+                        self.log.info("🔍 SL order still active, skipping resubmit")
+                        return
+                except Exception:
+                    pass  # If check fails, proceed with emergency SL
+
+            # No active SL → submit emergency SL
+            self.log.warning(f"⚠️ No active SL detected after {reason}, submitting emergency SL")
+            self._submit_emergency_sl(quantity, position_side,
+                                      reason=f"SL/TP orphan ({reason}), position still exists")
+
+            # Send Telegram alert
+            if self.telegram_bot and self.enable_telegram:
+                try:
+                    alert_msg = self.telegram_bot.format_error_alert({
+                        'level': 'CRITICAL',
+                        'message': f"SL/TP 过期/被拒 — 已提交紧急止损",
+                        'context': f"Side: {position_side}, Qty: {quantity:.4f}, Reason: {reason}",
+                    })
+                    self.telegram_bot.send_message_sync(alert_msg)
+                except Exception:
+                    pass
+        except Exception as e:
+            self.log.error(f"❌ Failed to resubmit SL/TP: {e}")
+
+    def _validate_sl_against_current_price(self, sl_price: float, side: str, current_price: float) -> float:
+        """
+        v4.0 (A2): Ensure SL won't immediately trigger against current price.
+
+        This prevents Binance -2021 error (order would immediately trigger).
+        If SL is on wrong side of current price, adjusts using ATR buffer.
+        """
+        if side.upper() in ('LONG', 'BUY') and sl_price >= current_price:
+            buffer = self._cached_atr_value * 0.5 if self._cached_atr_value > 0 else current_price * 0.02
+            sl_price = current_price - buffer
+            self.log.warning(
+                f"⚠️ SL adjusted: would immediately trigger for LONG. "
+                f"New SL: ${sl_price:,.2f} (current: ${current_price:,.2f})"
+            )
+        elif side.upper() in ('SHORT', 'SELL') and sl_price <= current_price:
+            buffer = self._cached_atr_value * 0.5 if self._cached_atr_value > 0 else current_price * 0.02
+            sl_price = current_price + buffer
+            self.log.warning(
+                f"⚠️ SL adjusted: would immediately trigger for SHORT. "
+                f"New SL: ${sl_price:,.2f} (current: ${current_price:,.2f})"
+            )
+        return sl_price
+
     def _submit_emergency_sl(self, quantity: float, position_side: str, reason: str):
         """
         v4.10: Submit emergency stop loss when normal SL is missing.
@@ -4375,6 +4580,124 @@ class DeepSeekAIStrategy(Strategy):
             self.log.error(f"❌ Failed to recreate SL/TP after reduce: {e}")
             self._submit_emergency_sl(remaining_qty, position_side, reason=f"减仓后SL/TP重建异常: {str(e)[:50]}")
 
+    def _reevaluate_sltp_for_existing_position(self):
+        """
+        v4.0: Reevaluate SL/TP using S/R zones for existing positions.
+
+        Called every on_timer cycle when sltp_method == "sr_based".
+        Uses calculate_sr_based_sltp() directly for faster, more accurate updates.
+
+        Safety rules:
+        - SL only moves in favorable direction (LONG: up, SHORT: down)
+        - TP can move both ways but must maintain R/R >= 1.5:1
+        - Trailing stop coexists: final SL = max(trailing SL, S/R SL)
+        - Skip if change < dynamic_update_threshold_pct
+        """
+        try:
+            current_position = self._get_current_position_data()
+            if not current_position:
+                return
+
+            position_side = current_position.get('side', '').lower()
+            quantity = abs(float(current_position.get('quantity', 0)))
+            if quantity <= 0 or position_side not in ('long', 'short'):
+                return
+
+            instrument_key = str(self.instrument_id)
+            state = self.trailing_stop_state.get(instrument_key)
+            if not state:
+                return
+
+            old_sl = state.get("current_sl_price")
+            old_tp = state.get("current_tp_price")
+            if not old_sl or old_sl <= 0:
+                return  # No existing SL (emergency SL handles this)
+
+            # Get current price
+            current_price = self._cached_current_price
+            if not current_price or current_price <= 0:
+                return
+
+            # Check if we have S/R zones
+            if not hasattr(self, 'latest_sr_zones_data') or not self.latest_sr_zones_data:
+                return
+
+            # Calculate new SL/TP from S/R zones
+            from utils.sr_sltp_calculator import calculate_sr_based_sltp
+            side_name = "BUY" if position_side == 'long' else "SELL"
+            new_sl, new_tp, sr_method = calculate_sr_based_sltp(
+                current_price=current_price,
+                side=side_name,
+                sr_zones=self.latest_sr_zones_data,
+                atr_value=self._cached_atr_value,
+                min_rr_ratio=1.5,
+                atr_buffer_multiplier=self.atr_buffer_multiplier,
+            )
+
+            if not new_sl or not new_tp or new_sl <= 0 or new_tp <= 0:
+                return  # S/R calculation failed, keep existing SL/TP
+
+            # Safety: SL only moves in favorable direction
+            if position_side == 'long':
+                final_sl = max(new_sl, old_sl)
+            else:
+                final_sl = min(new_sl, old_sl)
+
+            # Trailing stop coexistence: use whichever is more protective
+            if self.enable_trailing_stop and state.get("activated"):
+                trailing_sl = state.get("current_sl_price", 0)
+                if position_side == 'long':
+                    final_sl = max(final_sl, trailing_sl)
+                else:
+                    final_sl = min(final_sl, trailing_sl)
+
+            final_tp = new_tp  # TP can move both ways (R/R already validated)
+
+            # Check if update is significant enough
+            threshold = self.dynamic_update_threshold_pct
+            sl_changed = abs(final_sl - old_sl) / old_sl > threshold
+            tp_changed = old_tp and old_tp > 0 and abs(final_tp - old_tp) / old_tp > threshold
+
+            if not sl_changed and not tp_changed:
+                self.log.debug("📊 S/R SL/TP reevaluation: no significant change, skipping")
+                return
+
+            # Log the update
+            changes = []
+            if sl_changed:
+                changes.append(f"SL: ${old_sl:,.2f}→${final_sl:,.2f}")
+            if tp_changed:
+                changes.append(f"TP: ${old_tp:,.2f}→${final_tp:,.2f}")
+            self.log.info(f"🔄 S/R SL/TP reevaluation ({sr_method}): {', '.join(changes)}")
+
+            # Use _replace_sltp_orders for atomic cancel+recreate
+            self._replace_sltp_orders(
+                new_total_quantity=quantity,
+                position_side=position_side,
+                new_sl_price=final_sl,
+                new_tp_price=final_tp,
+            )
+
+            # Send Telegram notification
+            try:
+                if self.telegram_bot:
+                    update_msg = self.telegram_bot.format_dynamic_sltp_update({
+                        'side': position_side.upper(),
+                        'current_price': current_price,
+                        'old_sl': old_sl,
+                        'new_sl': final_sl,
+                        'old_tp': old_tp if old_tp and old_tp > 0 else 0,
+                        'new_tp': final_tp,
+                        'sl_changed': sl_changed,
+                        'tp_changed': bool(tp_changed),
+                    })
+                    self.telegram_bot.send_message_sync(update_msg)
+            except Exception as tg_err:
+                self.log.debug(f"Failed to send S/R SL/TP Telegram notification: {tg_err}")
+
+        except Exception as e:
+            self.log.warning(f"⚠️ S/R SL/TP reevaluation failed (position still protected): {e}")
+
     def _dynamic_sltp_update(self):
         """
         v4.12: Dynamically update SL/TP based on current S/R zones.
@@ -4424,7 +4747,7 @@ class DeepSeekAIStrategy(Strategy):
                 final_sl = min(new_sl, old_sl)
 
             # Trailing stop coexistence: use whichever is more protective
-            if self.enable_trailing_stop and state.get("trailing_active"):
+            if self.enable_trailing_stop and state.get("activated"):
                 trailing_sl = state.get("current_sl_price", 0)
                 if position_side == 'long':
                     final_sl = max(final_sl, trailing_sl)
@@ -4615,6 +4938,16 @@ class DeepSeekAIStrategy(Strategy):
         except Exception as e:
             self.log.warning(f"⚠️ Failed to cancel some orders: {e}, continuing with reduce")
 
+        # v4.0 (A3): Mutual exclusion check — cannot reduce while pending entry SL/TP
+        if self._pending_sltp:
+            self.log.warning("⚠️ Cannot reduce while _pending_sltp is active, skipping")
+            self._last_signal_status = {
+                'executed': False,
+                'reason': '等待入场SL/TP提交中',
+                'action_taken': '',
+            }
+            return
+
         # Submit reduce order
         reduce_side = OrderSide.SELL if current_side == 'long' else OrderSide.BUY
         self._submit_order(
@@ -4622,6 +4955,19 @@ class DeepSeekAIStrategy(Strategy):
             quantity=reduce_qty,
             reduce_only=True,
         )
+
+        # v4.0 (A3): Set pending reduce SL/TP state for event-driven rebuild
+        import time as _time
+        instrument_key = str(self.instrument_id)
+        state = self.trailing_stop_state.get(instrument_key, {})
+        self._pending_reduce_sltp = {
+            'expected_quantity': target_qty,  # Expected quantity after reduce
+            'position_side': current_side,
+            'old_sl': state.get('current_sl_price'),
+            'old_tp': state.get('current_tp_price'),
+            'timestamp': _time.time(),
+            'reduce_order_side': reduce_side.name,
+        }
 
         # Update signal status
         self._last_signal_status = {
@@ -4915,9 +5261,10 @@ class DeepSeekAIStrategy(Strategy):
         Handle order rejected events.
 
         🚨 Fix G34: Send critical Telegram alert for order rejections.
+        v4.0 (A1): Call _handle_orphan_order to detect unprotected positions.
         """
         reason = getattr(event, 'reason', 'Unknown reason')
-        client_order_id = getattr(event, 'client_order_id', 'N/A')
+        client_order_id = str(getattr(event, 'client_order_id', 'N/A'))
 
         self.log.error(f"❌ Order rejected: {reason}")
 
@@ -4933,6 +5280,9 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.info("📱 Telegram alert sent for order rejection")
             except Exception as e:
                 self.log.warning(f"Failed to send Telegram alert for order rejection: {e}")
+
+        # v4.0 (A1): Check if position is now unprotected
+        self._handle_orphan_order(client_order_id, f"rejected: {reason}")
 
     def on_position_opened(self, event):
         """
@@ -4985,6 +5335,10 @@ class DeepSeekAIStrategy(Strategy):
             sl_price = pending['sl_price']
             tp_price = pending['tp_price']
             quantity = float(event.quantity)
+
+            # v4.0 (A2): Validate SL against current price to prevent -2021 immediate trigger
+            side_name = event.side.name  # "LONG" or "SHORT"
+            sl_price = self._validate_sl_against_current_price(sl_price, side_name, entry_price)
 
             # Determine exit side (opposite of position)
             exit_side = OrderSide.SELL if event.side == PositionSide.LONG else OrderSide.BUY
@@ -5441,15 +5795,13 @@ class DeepSeekAIStrategy(Strategy):
         Handle order canceled events.
 
         v3.10: Track order cancellations for better order lifecycle management.
-        This helps with:
-        - Detecting manual cancellations vs system-initiated cancellations
-        - Tracking SL/TP order cancellations before position changes
-        - Debugging order flow issues
+        v4.0 (A1): Call _handle_orphan_order to detect unprotected positions.
         """
-        client_order_id = str(event.client_order_id)[:8] if hasattr(event, 'client_order_id') else 'N/A'
+        client_order_id = str(event.client_order_id) if hasattr(event, 'client_order_id') else 'N/A'
+        short_id = client_order_id[:8]
 
         self.log.info(
-            f"🗑️ Order canceled: {client_order_id}... "
+            f"🗑️ Order canceled: {short_id}... "
             f"(instrument: {getattr(event, 'instrument_id', self.instrument_id)})"
         )
 
@@ -5459,22 +5811,27 @@ class DeepSeekAIStrategy(Strategy):
         else:
             self._order_cancel_count = 1
 
+        # v4.0 (A1): Check if this was a SL/TP order and position is now unprotected
+        # Only check for reduce_only orders (SL/TP are always reduce_only)
+        instrument_key = str(self.instrument_id)
+        state = self.trailing_stop_state.get(instrument_key)
+        if state and state.get("sl_order_id") == client_order_id:
+            # Our tracked SL was canceled — check position safety
+            state["sl_order_id"] = None  # Clear stale reference
+            self._handle_orphan_order(client_order_id, "SL canceled")
+
     def on_order_expired(self, event):
         """
         Handle order expired events.
 
-        v3.10: Track GTC order expirations (e.g., SL/TP orders that expire due to
-        position close or market conditions).
-
-        Common causes:
-        - GTC orders reaching exchange time limits
-        - Orders expiring due to market close (crypto: shouldn't happen)
-        - Manual order expiration settings
+        v3.10: Track GTC order expirations.
+        v4.0 (A1): Call _handle_orphan_order to detect unprotected positions.
         """
-        client_order_id = str(event.client_order_id)[:8] if hasattr(event, 'client_order_id') else 'N/A'
+        client_order_id = str(event.client_order_id) if hasattr(event, 'client_order_id') else 'N/A'
+        short_id = client_order_id[:8]
 
         self.log.warning(
-            f"⏰ Order expired: {client_order_id}... "
+            f"⏰ Order expired: {short_id}... "
             f"(instrument: {getattr(event, 'instrument_id', self.instrument_id)})"
         )
 
@@ -5483,12 +5840,15 @@ class DeepSeekAIStrategy(Strategy):
             try:
                 alert_msg = self.telegram_bot.format_error_alert({
                     'level': 'WARNING',
-                    'message': f"Order Expired: {client_order_id}...",
+                    'message': f"Order Expired: {short_id}...",
                     'context': "GTC order expired unexpectedly",
                 })
                 self.telegram_bot.send_message_sync(alert_msg)
             except Exception as e:
                 self.log.warning(f"Failed to send Telegram alert for order expiration: {e}")
+
+        # v4.0 (A1): Check if position is now unprotected
+        self._handle_orphan_order(client_order_id, "GTC expired")
 
     def on_order_denied(self, event):
         """
@@ -5553,11 +5913,8 @@ class DeepSeekAIStrategy(Strategy):
         """
         Handle position quantity change events (partial fills, partial closes).
 
-        v3.10: Track position size changes that don't result in full open/close.
-        This is important for:
-        - Detecting partial fills that may need SL/TP quantity adjustments
-        - Tracking position scaling (adding to or reducing from position)
-        - Debugging position synchronization issues
+        v3.10: Track position size changes.
+        v4.0 (A3): Consume _pending_reduce_sltp to rebuild SL/TP after reduce fill.
         """
         self.log.info(
             f"📊 Position changed: {event.side.name} "
@@ -5565,24 +5922,64 @@ class DeepSeekAIStrategy(Strategy):
         )
 
         # Update trailing stop state if position size changed
-        if self.enable_trailing_stop:
-            instrument_key = str(self.instrument_id)
-            if instrument_key in self.trailing_stop_state:
-                new_qty = float(event.quantity)
-                old_qty = self.trailing_stop_state[instrument_key].get("quantity", 0)
+        instrument_key = str(self.instrument_id)
+        if instrument_key in self.trailing_stop_state:
+            new_qty = float(event.quantity)
+            old_qty = self.trailing_stop_state[instrument_key].get("quantity", 0)
 
-                if new_qty != old_qty:
-                    self.trailing_stop_state[instrument_key]["quantity"] = new_qty
-                    self.log.info(
-                        f"📊 Updated trailing stop quantity: {old_qty} → {new_qty}"
-                    )
+            if new_qty != old_qty:
+                self.trailing_stop_state[instrument_key]["quantity"] = new_qty
+                self.log.info(
+                    f"📊 Updated trailing stop quantity: {old_qty} → {new_qty}"
+                )
 
-                    # Warning: SL/TP orders may need adjustment if position size changed
-                    if new_qty < old_qty:
-                        self.log.warning(
-                            f"⚠️ Position reduced. Existing SL/TP orders may have larger "
-                            f"quantity than current position. Consider adjusting manually."
-                        )
+        # v4.0 (A3): Rebuild SL/TP after reduce fill using event-driven approach
+        if self._pending_reduce_sltp:
+            import time as _time
+            pending = self._pending_reduce_sltp
+            elapsed = _time.time() - pending.get('timestamp', 0)
+
+            # Timeout check (60s) — stale pending state, likely reduce order was rejected
+            if elapsed > 60:
+                self.log.warning(
+                    f"⚠️ _pending_reduce_sltp expired ({elapsed:.0f}s), clearing stale state"
+                )
+                self._pending_reduce_sltp = None
+                return
+
+            # Event association check — ensure this position change is from our reduce
+            new_qty = float(event.quantity)
+            expected_qty = pending.get('expected_quantity', 0)
+            if expected_qty > 0:
+                qty_diff_pct = abs(new_qty - expected_qty) / max(expected_qty, 0.0001)
+                qty_matches = qty_diff_pct < 0.05  # 5% tolerance
+            else:
+                qty_matches = False
+
+            if not qty_matches:
+                self.log.warning(
+                    f"⚠️ Position change qty {new_qty:.4f} != expected {expected_qty:.4f}, "
+                    f"not consuming _pending_reduce_sltp"
+                )
+                return
+
+            # Match confirmed — rebuild SL/TP with reduced quantity
+            self._pending_reduce_sltp = None
+            self.log.info(f"🔄 Reduce fill confirmed, rebuilding SL/TP for qty={new_qty:.4f}")
+
+            try:
+                self._replace_sltp_orders(
+                    new_total_quantity=new_qty,
+                    position_side=pending['position_side'],
+                    new_sl_price=pending['old_sl'],
+                    new_tp_price=pending['old_tp'],
+                )
+            except Exception as e:
+                self.log.error(f"❌ Failed to rebuild SL/TP after reduce: {e}")
+                self._submit_emergency_sl(
+                    new_qty, pending['position_side'],
+                    reason="减仓后SL重建失败"
+                )
 
     def _format_entry_conditions(self) -> str:
         """

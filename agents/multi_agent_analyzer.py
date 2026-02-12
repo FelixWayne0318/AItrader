@@ -424,6 +424,12 @@ class MultiAgentAnalyzer:
         account_context: Optional[Dict[str, Any]] = None,
         # ========== v3.0: OHLC bars for S/R Swing Detection ==========
         bars_data: Optional[List[Dict[str, Any]]] = None,
+        # ========== v4.0: MTF bars for S/R pivot + volume profile ==========
+        bars_data_4h: Optional[List[Dict[str, Any]]] = None,
+        bars_data_1d: Optional[List[Dict[str, Any]]] = None,
+        daily_bar: Optional[Dict[str, Any]] = None,
+        weekly_bar: Optional[Dict[str, Any]] = None,
+        atr_value: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis with Bull/Bear debate.
@@ -461,6 +467,16 @@ class MultiAgentAnalyzer:
             Account-level info for add/reduce decisions (v4.6):
             - equity, leverage, max_position_value
             - available_capacity, capacity_used_pct, can_add_position
+        bars_data_4h : List[Dict], optional
+            v4.0: 4H OHLCV bars for MTF swing detection
+        bars_data_1d : List[Dict], optional
+            v4.0: 1D OHLCV bars for MTF swing detection
+        daily_bar : Dict, optional
+            v4.0: Most recent completed daily bar for pivot calculation
+        weekly_bar : Dict, optional
+            v4.0: Aggregated weekly bar for pivot calculation
+        atr_value : float, optional
+            v4.0: Cached ATR value for S/R buffer calculation
 
         Returns
         -------
@@ -513,11 +529,17 @@ class MultiAgentAnalyzer:
 
             # v3.8: Calculate S/R Zones (multi-source support/resistance)
             # v3.0: Pass bars_data for Swing Point detection and Touch Count
+            # v4.0: Pass MTF bars for pivot points + volume profile
             sr_zones = self._calculate_sr_zones(
                 current_price=current_price,
                 technical_data=technical_report,
                 orderbook_data=orderbook_report,
                 bars_data=bars_data,
+                bars_data_4h=bars_data_4h,
+                bars_data_1d=bars_data_1d,
+                daily_bar=daily_bar,
+                weekly_bar=weekly_bar,
+                atr_value=atr_value,
             )
             self._sr_zones_cache = sr_zones  # Cache for _evaluate_risk()
             # v2.0: Use detailed report (includes raw data + level/source_type)
@@ -2376,9 +2398,14 @@ ORDER FLOW (Binance Taker Data):
         technical_data: Optional[Dict[str, Any]],
         orderbook_data: Optional[Dict[str, Any]],
         bars_data: Optional[List[Dict[str, Any]]] = None,
+        bars_data_4h: Optional[List[Dict[str, Any]]] = None,
+        bars_data_1d: Optional[List[Dict[str, Any]]] = None,
+        daily_bar: Optional[Dict[str, Any]] = None,
+        weekly_bar: Optional[Dict[str, Any]] = None,
+        atr_value: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
-        Calculate S/R Zones from multiple data sources (v3.0).
+        Calculate S/R Zones from multiple data sources (v3.0, v4.0).
 
         Combines:
         - Bollinger Bands (BB Upper/Lower)
@@ -2387,6 +2414,9 @@ ORDER FLOW (Binance Taker Data):
         - v3.0: Swing Points (from OHLC bars)
         - v3.0: ATR-adaptive clustering
         - v3.0: Touch Count scoring
+        - v4.0: MTF swing detection (4H, 1D)
+        - v4.0: Pivot Points (Daily + Weekly)
+        - v4.0: Volume Profile (VPOC, VAH, VAL)
 
         Parameters
         ----------
@@ -2399,6 +2429,16 @@ ORDER FLOW (Binance Taker Data):
         bars_data : List[Dict], optional
             v3.0: OHLC bar data for swing detection and touch count
             [{'high': float, 'low': float, 'close': float}, ...]
+        bars_data_4h : List[Dict], optional
+            v4.0: 4H OHLCV bars for MTF swing detection
+        bars_data_1d : List[Dict], optional
+            v4.0: 1D OHLCV bars for MTF swing detection
+        daily_bar : Dict, optional
+            v4.0: Most recent completed daily bar for pivot calculation
+        weekly_bar : Dict, optional
+            v4.0: Aggregated weekly bar for pivot calculation
+        atr_value : float, optional
+            v4.0: ATR value for buffer calculation
 
         Returns
         -------
@@ -2443,6 +2483,7 @@ ORDER FLOW (Binance Taker Data):
                 }
 
         # Calculate S/R zones with detailed report (v3.0: bars_data for swing/touch)
+        # v4.0: Pass MTF bars for pivot points + volume profile
         try:
             result = self.sr_calculator.calculate_with_detailed_report(
                 current_price=current_price,
@@ -2450,6 +2491,11 @@ ORDER FLOW (Binance Taker Data):
                 sma_data=sma_data,
                 orderbook_anomalies=orderbook_anomalies,
                 bars_data=bars_data,
+                bars_data_4h=bars_data_4h,
+                bars_data_1d=bars_data_1d,
+                daily_bar=daily_bar,
+                weekly_bar=weekly_bar,
+                atr_value=atr_value,
             )
 
             # Log S/R zone detection

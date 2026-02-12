@@ -30,6 +30,13 @@ trading_logic:
   default_tp_pct: 0.03            # 默认止盈 3%
   min_rr_ratio: 1.5               # 最小风险收益比 (R/R < 1.5:1 拒绝 AI SL/TP，回退到技术分析)
 
+  # v4.0: SL/TP 方法 ("legacy" = 旧版百分比, "sr_based" = S/R zone 驱动)
+  sltp_method: "legacy"           # R4 G10: 默认 legacy，Phase H 显式切换到 sr_based
+  atr_buffer_multiplier: 0.5      # ATR 缓冲倍数 (SL = S/R zone ± ATR * multiplier)
+  dynamic_sltp_update: true       # 每 15 分钟动态更新 SL/TP
+  dynamic_update_threshold_pct: 0.002  # 变化超过 0.2% 才更新 (避免频繁修改)
+  sl_only_favorable: true         # SL 只能向有利方向移动
+
   # 按信心级别的止盈配置
   tp_pct_by_confidence:
     high: 0.03                    # 高信心: 3%
@@ -580,6 +587,42 @@ sr_zones:
   # Zone 通用配置
   # ---------------------------------------------------------------------------
   zone_expand_pct: 0.1                  # Zone 边界扩展 (上下各 0.1%)
+
+  # ---------------------------------------------------------------------------
+  # v4.0: 投射层 (Pivot Points — 数学投射，ATH 时提供上方阻力)
+  # ---------------------------------------------------------------------------
+  pivots:
+    enabled: true                       # 启用 Pivot Point 投射
+    daily: true                         # 日线 Pivot
+    weekly: true                        # 周线 Pivot
+    projected_max_strength: "MEDIUM"    # PROJECTED 类型 zone 强度上限
+
+  # ---------------------------------------------------------------------------
+  # v4.0: Volume Profile (确认层 — 独立于检测层的微观结构确认)
+  # ---------------------------------------------------------------------------
+  volume_profile:
+    enabled: true                       # 启用 Volume Profile
+    bars_source: "15m"                  # 数据源时间框架
+    lookback_bars: 96                   # 回看 bar 数 (96 × 15min = 24h)
+    value_area_pct: 70                  # Value Area 百分比 (标准 TPO 70%)
+    min_bins: 30                        # 最小价格分区数
+    max_bins: 80                        # 最大价格分区数
+
+  # ---------------------------------------------------------------------------
+  # v4.0: Round Number 配置
+  # ---------------------------------------------------------------------------
+  round_number:
+    btc_step: 5000                      # BTC 心理关口步长 ($5k: Osler 2003)
+    count: 3                            # 上下各生成 N 个关口
+
+  # ---------------------------------------------------------------------------
+  # v4.0: 聚合规则 (同源封顶 + 多源奖励 + 总权重上限)
+  # ---------------------------------------------------------------------------
+  aggregation:
+    same_data_weight_cap: 2.5           # 同源候选权重和上限 (防止单一数据源主导)
+    max_zone_weight: 6.0                # Zone 总权重上限
+    confluence_bonus_2_sources: 0.2     # 2 种来源类型交汇奖励
+    confluence_bonus_3_sources: 0.5     # 3+ 种来源类型交汇奖励
 
   # ---------------------------------------------------------------------------
   # 硬风控 (默认禁用，由 AI 自主决策)

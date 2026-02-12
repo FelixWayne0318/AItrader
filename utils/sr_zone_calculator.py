@@ -54,9 +54,11 @@ class SRLevel:
 
 class SRSourceType:
     """S/R 来源类型"""
-    ORDER_FLOW = "ORDER_FLOW"     # 订单流 (Order Wall) - 最实时
-    TECHNICAL = "TECHNICAL"       # 技术指标 (SMA, BB) - 广泛认可
-    STRUCTURAL = "STRUCTURAL"     # 结构性 (前高/前低, Pivot, Swing Point) - 历史验证
+    ORDER_FLOW = "ORDER_FLOW"       # 订单流 (Order Wall) - 最实时
+    TECHNICAL = "TECHNICAL"         # 技术指标 (SMA, BB) - 广泛认可
+    STRUCTURAL = "STRUCTURAL"       # 结构性 (前高/前低, Swing Point) - 历史验证
+    PROJECTED = "PROJECTED"         # v4.0: 数学投射 (Pivot Points) - 无历史确认
+    PSYCHOLOGICAL = "PSYCHOLOGICAL" # v4.0: 心理关口 (Round Numbers)
 
 
 @dataclass
@@ -70,6 +72,8 @@ class SRCandidate:
     # v2.0 新增
     level: str = SRLevel.MINOR           # 时间框架级别
     source_type: str = SRSourceType.TECHNICAL  # 来源类型
+    # v4.0 新增: 用于同源封顶 — 同 timeframe 的候选权重和不超过 SAME_DATA_WEIGHT_CAP
+    timeframe: str = ""  # "1d", "4h", "15m", "daily_pivot", "weekly_pivot", "15m_vp", "realtime", "static"
 
 
 @dataclass
@@ -236,6 +240,10 @@ class SRZoneCalculator:
         self.optimal_touches = optimal_touches
         self.decay_after_touches = decay_after_touches
 
+        # v4.0: Aggregation rules (same-source cap, multi-source bonus, total weight cap)
+        self._same_data_weight_cap = 2.5
+        self._max_zone_weight = 6.0
+
         self.logger = logger or logging.getLogger(__name__)
 
     # =========================================================================
@@ -331,6 +339,7 @@ class SRZoneCalculator:
                     extra={'bar_index': i, 'bars_ago': bars_ago, 'age_factor': age_factor},
                     level=SRLevel.INTERMEDIATE,
                     source_type=SRSourceType.STRUCTURAL,
+                    timeframe="15m",  # v4.0 (B3)
                 ))
 
             if is_swing_low:
@@ -348,6 +357,7 @@ class SRZoneCalculator:
                     extra={'bar_index': i, 'bars_ago': bars_ago, 'age_factor': age_factor},
                     level=SRLevel.INTERMEDIATE,
                     source_type=SRSourceType.STRUCTURAL,
+                    timeframe="15m",  # v4.0 (B3)
                 ))
 
         self.logger.debug(
@@ -469,7 +479,8 @@ class SRZoneCalculator:
                 weight=self.WEIGHTS['Round_Number'],
                 side=side,
                 level=SRLevel.MINOR,
-                source_type=SRSourceType.STRUCTURAL,
+                source_type=SRSourceType.PSYCHOLOGICAL,  # v4.0 (B3): reclassified
+                timeframe="static",  # v4.0 (B3)
             ))
 
         return candidates
@@ -582,6 +593,12 @@ class SRZoneCalculator:
         # v3.0: New parameters (backward compatible)
         bars_data: Optional[List[Dict[str, Any]]] = None,
         atr_value: Optional[float] = None,
+        # v4.0: MTF bars and additional data sources
+        bars_data_4h: Optional[List[Dict[str, Any]]] = None,
+        bars_data_1d: Optional[List[Dict[str, Any]]] = None,
+        daily_bar: Optional[Dict[str, Any]] = None,
+        weekly_bar: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         计算 S/R Zones
@@ -600,9 +617,16 @@ class SRZoneCalculator:
             Pivot Points {'r1': float, 's1': float, ...}
         bars_data : List[Dict], optional
             v3.0: OHLC bar data for swing detection and touch count
-            [{'high': float, 'low': float, 'close': float, 'open': float}, ...]
         atr_value : float, optional
             v3.0: ATR value for adaptive clustering. If None, calculated from bars_data.
+        bars_data_4h : List[Dict], optional
+            v4.0: 4H OHLC bars for MTF swing detection
+        bars_data_1d : List[Dict], optional
+            v4.0: 1D OHLC bars for MTF swing detection
+        daily_bar : Dict, optional
+            v4.0: Most recent completed daily bar for pivot calculation
+        weekly_bar : Dict, optional
+            v4.0: Most recent completed weekly bar for pivot calculation
 
         Returns
         -------
@@ -630,10 +654,14 @@ class SRZoneCalculator:
         if effective_atr is None:
             effective_atr = 0.0
 
-        # Step 1: 收集所有候选 (v3.0: 包含 Swing Points)
+        # Step 1: 收集所有候选 (v3.0: Swing Points, v4.0: MTF + Pivots + VP)
         candidates = self._collect_candidates(
             current_price, bb_data, sma_data, orderbook_anomalies, pivot_data,
             bars_data=bars_data,
+            bars_data_4h=bars_data_4h,
+            bars_data_1d=bars_data_1d,
+            daily_bar=daily_bar,
+            weekly_bar=weekly_bar,
         )
 
         if not candidates:
@@ -702,16 +730,29 @@ class SRZoneCalculator:
         total_weight: float,
         has_order_wall: bool,
         wall_size_btc: float,
+        projected_only: bool = False,
     ) -> str:
-        """Evaluate zone strength from weight and wall size."""
+        """
+        Evaluate zone strength from weight and wall size.
+
+        v4.0 (D3): If zone is PROJECTED-only (all candidates are PROJECTED type),
+        cap strength at MEDIUM. PROJECTED zones have no historical trade confirmation.
+        """
         high_strength_btc = self.ORDER_WALL_THRESHOLDS['high_strength_btc']
         has_significant_wall = has_order_wall and wall_size_btc >= high_strength_btc
 
         if has_significant_wall or total_weight >= self.STRENGTH_THRESHOLDS['HIGH']:
-            return 'HIGH'
+            strength = 'HIGH'
         elif total_weight >= self.STRENGTH_THRESHOLDS['MEDIUM']:
-            return 'MEDIUM'
-        return 'LOW'
+            strength = 'MEDIUM'
+        else:
+            strength = 'LOW'
+
+        # v4.0: PROJECTED-only zones capped at MEDIUM
+        if projected_only and strength == 'HIGH':
+            strength = 'MEDIUM'
+
+        return strength
 
     def _collect_candidates(
         self,
@@ -722,14 +763,70 @@ class SRZoneCalculator:
         pivot_data: Optional[Dict],
         # v3.0: New parameter
         bars_data: Optional[List[Dict[str, Any]]] = None,
+        # v4.0: MTF bars and additional data sources
+        bars_data_4h: Optional[List[Dict[str, Any]]] = None,
+        bars_data_1d: Optional[List[Dict[str, Any]]] = None,
+        daily_bar: Optional[Dict[str, Any]] = None,
+        weekly_bar: Optional[Dict[str, Any]] = None,
     ) -> List[SRCandidate]:
-        """收集所有 S/R 候选价位 (v3.0: 包含 Swing Points)"""
+        """
+        收集所有 S/R 候选价位.
+
+        v3.0: Swing Points
+        v4.0: MTF swing detection (1D, 4H, 15M), Pivot Points, Volume Profile
+              Each source is wrapped in try/except for per-layer error isolation.
+        """
         candidates = []
 
-        # ===== v3.0: Swing Points (STRUCTURAL type) =====
-        if self.swing_detection_enabled and bars_data:
-            swing_candidates = self._detect_swing_points(bars_data, current_price)
-            candidates.extend(swing_candidates)
+        # ===== 检测层: MTF Swing Points (per-layer error isolation) =====
+        if self.swing_detection_enabled:
+            # v4.0: 1D Swing (highest weight, MAJOR level)
+            if bars_data_1d:
+                try:
+                    for c in self._detect_swing_points(bars_data_1d, current_price):
+                        c.weight = 2.0 * (c.extra.get('age_factor', 1.0))
+                        c.level = SRLevel.MAJOR
+                        c.timeframe = "1d"
+                        candidates.append(c)
+                except Exception as e:
+                    self.logger.warning(f"1D Swing detection failed: {e}")
+
+            # v4.0: 4H Swing (intermediate weight)
+            if bars_data_4h:
+                try:
+                    for c in self._detect_swing_points(bars_data_4h, current_price):
+                        c.weight = 1.5 * (c.extra.get('age_factor', 1.0))
+                        c.level = SRLevel.INTERMEDIATE
+                        c.timeframe = "4h"
+                        candidates.append(c)
+                except Exception as e:
+                    self.logger.warning(f"4H Swing detection failed: {e}")
+
+            # 15M Swing (existing behavior, with timeframe tag)
+            if bars_data:
+                try:
+                    swing_candidates = self._detect_swing_points(bars_data, current_price)
+                    candidates.extend(swing_candidates)
+                except Exception as e:
+                    self.logger.warning(f"15M Swing detection failed: {e}")
+
+        # ===== 投射层: Pivot Points (v4.0, per-layer error isolation) =====
+        if daily_bar or weekly_bar:
+            try:
+                from utils.sr_pivot_calculator import calculate_pivots
+                pivot_candidates = calculate_pivots(daily_bar, weekly_bar, current_price)
+                candidates.extend(pivot_candidates)
+            except Exception as e:
+                self.logger.warning(f"Pivot calculation failed: {e}")
+
+        # ===== 确认层: Volume Profile (v4.0, per-layer error isolation) =====
+        if bars_data and len(bars_data) >= 10:
+            try:
+                from utils.sr_volume_profile import calculate_volume_profile
+                vp_candidates = calculate_volume_profile(bars_data, current_price)
+                candidates.extend(vp_candidates)
+            except Exception as e:
+                self.logger.warning(f"Volume Profile calculation failed: {e}")
 
         # Bollinger Bands (15M = MINOR level)
         if bb_data:
@@ -744,6 +841,7 @@ class SRZoneCalculator:
                     side='resistance',
                     level=SRLevel.MINOR,
                     source_type=SRSourceType.TECHNICAL,
+                    timeframe="15m",  # v4.0 (B3)
                 ))
 
             if bb_lower and bb_lower < current_price:
@@ -754,6 +852,7 @@ class SRZoneCalculator:
                     side='support',
                     level=SRLevel.MINOR,
                     source_type=SRSourceType.TECHNICAL,
+                    timeframe="15m",  # v4.0 (B3)
                 ))
 
         # SMA (SMA_50 = INTERMEDIATE, SMA_200 = MAJOR)
@@ -770,17 +869,19 @@ class SRZoneCalculator:
                     side=side,
                     level=SRLevel.INTERMEDIATE,
                     source_type=SRSourceType.TECHNICAL,
+                    timeframe="15m",  # v4.0 (B3)
                 ))
 
             if sma_200 and sma_200 > 0:
                 side = 'support' if sma_200 < current_price else 'resistance'
                 candidates.append(SRCandidate(
                     price=sma_200,
-                    source='SMA_200',
+                    source='SMA_200_15M',  # v4.0 (B5): clarify this is 15M SMA_200 (≈50h, not 200 days)
                     weight=self.WEIGHTS['SMA_200'],
                     side=side,
                     level=SRLevel.MAJOR,
                     source_type=SRSourceType.TECHNICAL,
+                    timeframe="15m",  # v4.0 (B3)
                 ))
 
         # Order Book Walls (MINOR level, ORDER_FLOW type - 最实时)
@@ -824,6 +925,7 @@ class SRZoneCalculator:
                     },
                     level=SRLevel.MINOR,
                     source_type=SRSourceType.ORDER_FLOW,
+                    timeframe="realtime",  # v4.0 (B3)
                 ))
 
             # Ask walls = Resistance
@@ -861,9 +963,10 @@ class SRZoneCalculator:
                     },
                     level=SRLevel.MINOR,
                     source_type=SRSourceType.ORDER_FLOW,
+                    timeframe="realtime",  # v4.0 (B3)
                 ))
 
-        # Pivot Points (STRUCTURAL type)
+        # Pivot Points (PROJECTED type — v4.0: reclassified from STRUCTURAL)
         if pivot_data:
             for key, price in pivot_data.items():
                 if price and price > 0:
@@ -874,7 +977,8 @@ class SRZoneCalculator:
                             weight=self.WEIGHTS['Pivot'],
                             side='support',
                             level=SRLevel.INTERMEDIATE,
-                            source_type=SRSourceType.STRUCTURAL,
+                            source_type=SRSourceType.PROJECTED,  # v4.0 (B3)
+                            timeframe="daily_pivot",  # v4.0 (B3)
                         ))
                     elif 'r' in key.lower():  # r1, r2, r3 = resistance
                         candidates.append(SRCandidate(
@@ -883,7 +987,8 @@ class SRZoneCalculator:
                             weight=self.WEIGHTS['Pivot'],
                             side='resistance',
                             level=SRLevel.INTERMEDIATE,
-                            source_type=SRSourceType.STRUCTURAL,
+                            source_type=SRSourceType.PROJECTED,  # v4.0 (B3)
+                            timeframe="daily_pivot",  # v4.0 (B3)
                         ))
 
         # v3.1: Round Number Psychological Levels
@@ -966,8 +1071,29 @@ class SRZoneCalculator:
         # 来源列表
         sources = [c.source for c in cluster]
 
-        # 总权重
-        total_weight = sum(c.weight for c in cluster)
+        # v4.0 (D2): Same-source weight capping + multi-source bonus + total cap
+        # Step 1: Group by timeframe, cap each group
+        same_data_weight_cap = getattr(self, '_same_data_weight_cap', 2.5)
+        weight_by_timeframe = {}
+        for c in cluster:
+            tf = c.timeframe or "unknown"
+            weight_by_timeframe.setdefault(tf, 0.0)
+            weight_by_timeframe[tf] = min(
+                weight_by_timeframe[tf] + c.weight,
+                same_data_weight_cap
+            )
+        total_weight = sum(weight_by_timeframe.values())
+
+        # Step 2: Multi-source independence bonus
+        unique_source_types = len(set(c.source_type for c in cluster))
+        if unique_source_types >= 3:
+            total_weight += 0.5
+        elif unique_source_types >= 2:
+            total_weight += 0.2
+
+        # Step 3: Total weight cap
+        max_zone_weight = getattr(self, '_max_zone_weight', 6.0)
+        total_weight = min(total_weight, max_zone_weight)
 
         # 是否有 Order Wall
         has_order_wall = any('Order_Wall' in c.source for c in cluster)
@@ -990,8 +1116,10 @@ class SRZoneCalculator:
         # v3.0: Check for swing points
         has_swing_point = any('Swing_' in c.source for c in cluster)
 
-        # 计算强度
-        strength = self._evaluate_strength(total_weight, has_order_wall, wall_size_btc)
+        # v4.0 (D3): Evaluate strength with PROJECTED cap
+        has_projected_only = all(c.source_type == SRSourceType.PROJECTED for c in cluster)
+        strength = self._evaluate_strength(total_weight, has_order_wall, wall_size_btc,
+                                           projected_only=has_projected_only)
 
         # 距离当前价格
         if side == 'support':
@@ -1006,12 +1134,15 @@ class SRZoneCalculator:
             if level_priority.get(c.level, 0) > level_priority.get(zone_level, 0):
                 zone_level = c.level
 
-        # v2.0: 确定主要来源类型 (ORDER_FLOW > STRUCTURAL > TECHNICAL)
+        # v2.0: 确定主要来源类型 (ORDER_FLOW > STRUCTURAL > PROJECTED > TECHNICAL > PSYCHOLOGICAL)
         # v3.0: STRUCTURAL priority raised (swing points are strong signals)
+        # v4.0 (B4): Added PROJECTED and PSYCHOLOGICAL
         type_priority = {
-            SRSourceType.ORDER_FLOW: 3,
-            SRSourceType.STRUCTURAL: 2,
+            SRSourceType.ORDER_FLOW: 4,
+            SRSourceType.STRUCTURAL: 3,
+            SRSourceType.PROJECTED: 2,
             SRSourceType.TECHNICAL: 1,
+            SRSourceType.PSYCHOLOGICAL: 0,
         }
         zone_source_type = SRSourceType.TECHNICAL
         for c in cluster:
@@ -1415,9 +1546,15 @@ class SRZoneCalculator:
         # v3.0: New parameters
         bars_data: Optional[List[Dict[str, Any]]] = None,
         atr_value: Optional[float] = None,
+        # v4.0: MTF bars
+        bars_data_4h: Optional[List[Dict[str, Any]]] = None,
+        bars_data_1d: Optional[List[Dict[str, Any]]] = None,
+        daily_bar: Optional[Dict[str, Any]] = None,
+        weekly_bar: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """
-        计算 S/R Zones 并生成详细 AI 报告 (v3.0)
+        计算 S/R Zones 并生成详细 AI 报告 (v3.0, v4.0 MTF)
 
         这是 calculate() 的增强版，额外返回:
         - ai_detailed_report: 详细报告供 AI 验证
@@ -1432,6 +1569,10 @@ class SRZoneCalculator:
             pivot_data=pivot_data,
             bars_data=bars_data,
             atr_value=atr_value,
+            bars_data_4h=bars_data_4h,
+            bars_data_1d=bars_data_1d,
+            daily_bar=daily_bar,
+            weekly_bar=weekly_bar,
         )
 
         # 生成详细报告
