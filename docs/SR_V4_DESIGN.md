@@ -1,6 +1,10 @@
-# S/R v4.0 + SL/TP 全链路重构 — 统一设计方案 (修订版 R2)
+# S/R v4.0 + SL/TP 全链路重构 — 统一设计方案 (修订版 R3)
 
-> 修订历史: R1 初版 → R2 整合三大风险修正 + 5 大订单 Bug 修复 + SL/TP 一致性重构
+> 修订历史:
+> - R1: 初版 S/R v4.0 方案
+> - R2: 整合三大风险修正 + 5 大订单 Bug 修复 + SL/TP 一致性重构
+> - R3: 补全 12 个集成细节 — 数据类型定义、完整调用链、配置传播、错误隔离、Bug-9 异步修正
+>
 > 学术基础: Spitsin (2025), Chung & Bellotti (2021), Osler (2003), CME Market Profile
 
 ---
@@ -36,10 +40,16 @@
 - **Binance API 优先**: `_get_current_position_data()` 优先 API 而非缓存
 - **OCO 手动取消**: `on_order_filled()` 取消对方订单
 - **历史 bar 预加载**: `_prefetch_multi_timeframe_bars()` 启动时加载 220 根 1D bar（冷启动已解决）
-- **ATR 自适应聚类**: zone 合并阈值随波动率调整
+- **ATR 自适应聚类**: zone 合并阈值随波动率调整 (贪婪顺序合并，ATR 阈值补偿)
 - **Touch Count 评分**: 2-3 次最优，4+ 次递减 (Chung 2021)
 - **时间衰减**: `age_factor = max(0.5, 1.0 - bars_ago/max_age * 0.5)` (已实现)
 - **S/R Flip**: 突破的阻力变支撑 (v3.1 已实现)
+
+> **关于 Spitsin L1 聚类 vs 当前贪婪合并:**
+> Spitsin (2025) 使用 L1-norm (Manhattan distance) 聚类找最优 zone 中心，对异常值更稳健。
+> 当前系统使用贪婪顺序合并 (价格排序后间距 < ATR 阈值合并)，算法更简单、更快。
+> **有意取舍**: ATR 自适应阈值部分补偿了贪婪合并的精度不足。L1 聚类作为后续优化项
+> 保留 (可通过 A/B 测试评估差异)，当前阶段不引入以控制复杂度。
 
 ---
 
@@ -61,11 +71,12 @@
 2. **S/R 驱动 SL/TP** — SL 锚定在 S/R zone 上 + ATR 缓冲，不是固定百分比
 3. **15 分钟闭环** — 每个分析周期重新评估 SL/TP，不依赖陈旧的开仓价
 4. **提交前验证** — SL/TP 必须通过当前价验证，不只是入场价验证
-5. **优雅降级** — 任何层失败时有明确的回退路径
+5. **优雅降级** — 任何层失败时有明确的回退路径，per-layer 错误隔离
 
 > **注**: Spitsin (2025) 发表于 Contemporary Mathematics (IF ~0.7)，样本为美股 (AAPL/MSFT/TSLA)。
 > BTC 永续合约有 24/7 交易、杠杆清算、资金费率等独特性。
 > 论文的 P=0.81-0.88 是参考基线而非直接预期目标。
+> AI 可参考的量化先验: "成交量确认的 S/R 历史反弹率约 85% (Spitsin 2025, 美股基线)"。
 
 ---
 
@@ -117,61 +128,184 @@
 | 确认层 OrderWall | 实时盘口 | `BinanceOrderBookClient` | ✅ 完全独立 |
 | 辅助 Round# | 当前价格 | 计算得出 | ✅ |
 
-### 3.3 候选来源和权重
+### 3.3 数据类型定义变更 (R3 新增)
+
+**当前 `SRSourceType` (sr_zone_calculator.py L55-59) 缺少 `PROJECTED` 和 `PSYCHOLOGICAL`。**
+
+```python
+# ===== 修改 sr_zone_calculator.py L55-59 =====
+class SRSourceType:
+    """S/R 来源类型"""
+    ORDER_FLOW = "ORDER_FLOW"       # 订单流 (Order Wall) - 最实时
+    TECHNICAL = "TECHNICAL"         # 技术指标 (SMA, BB) - 广泛认可
+    STRUCTURAL = "STRUCTURAL"       # 结构性 (前高/前低, Swing Point) - 历史验证
+    PROJECTED = "PROJECTED"         # v4.0 新增: 数学投射 (Pivot Points) - 无历史确认
+    PSYCHOLOGICAL = "PSYCHOLOGICAL" # v4.0 新增: 心理关口 (Round Numbers)
+```
+
+**当前 `SRCandidate` (L62-72) 缺少 `timeframe` 字段，无法实现同源封顶。**
+
+```python
+# ===== 修改 sr_zone_calculator.py L62-72 =====
+@dataclass
+class SRCandidate:
+    """S/R 候选价位"""
+    price: float
+    source: str
+    weight: float
+    side: str
+    extra: Dict = field(default_factory=dict)
+    level: str = SRLevel.MINOR
+    source_type: str = SRSourceType.TECHNICAL
+    timeframe: str = ""  # v4.0 新增: "1d", "4h", "15m", "daily_pivot", "weekly_pivot"
+```
+
+**`timeframe` 字段赋值规则：**
+
+| 候选来源 | timeframe 值 | 说明 |
+|---------|-------------|------|
+| 1D Swing | `"1d"` | 日线 swing point |
+| 4H Swing | `"4h"` | 4H swing point |
+| 15M Swing | `"15m"` | 15M swing point |
+| Daily Pivot | `"daily_pivot"` | 日线 Pivot |
+| Weekly Pivot | `"weekly_pivot"` | 周线 Pivot |
+| VP (VPOC/VAH/VAL) | `"15m_vp"` | 15M Volume Profile |
+| Order Wall | `"realtime"` | 实时盘口 |
+| SMA/BB | `"15m"` | 当前 15M 指标 |
+| Round Number | `"static"` | 静态计算 |
+
+**同源判定规则：`timeframe` 字段相同即为"同源"。**
+- 1D Swing + 4H Swing = 不同源 (✅ 不封顶)
+- 1D Swing + 1D Swing = 同源 (⚠️ 封顶 2.5)
+- Daily Pivot R1 + Daily Pivot R2 = 同源 (⚠️ 封顶 2.5)
+- Daily Pivot + Weekly Pivot = 不同源 (✅ 不封顶)
+
+### 3.4 候选来源和权重
 
 ```
 _collect_candidates()
   │
   │ ===== 检测层 (STRUCTURAL) =====
   │
-  ├ 1D Swing (成交量加权)           权重 2.0  level=MAJOR
-  ├ 4H Swing (成交量加权)           权重 1.5  level=INTERMEDIATE
-  ├ 15M Swing (成交量加权)          权重 0.8  level=MINOR
-  │   └ 成交量加权: 百分位数连续缩放 (见 3.4)
+  ├ 1D Swing (成交量加权)           权重 2.0  level=MAJOR      timeframe="1d"
+  ├ 4H Swing (成交量加权)           权重 1.5  level=INTERMEDIATE timeframe="4h"
+  ├ 15M Swing (成交量加权)          权重 0.8  level=MINOR      timeframe="15m"
+  │   └ 成交量加权: 百分位数连续缩放 (见 3.6)
   │
   │ ===== 投射层 (PROJECTED, 强度上限 MEDIUM) =====
   │
-  ├ Daily Pivot (PP/R1/R2/R3/S1/S2/S3)   权重 1.0  level=MAJOR
-  ├ Weekly Pivot (PP/R1/R2/S1/S2)         权重 1.2  level=MAJOR
-  │   └ Weekly Pivot 在连续突破多日时仍有投射能力 (日线 range 更大)
+  ├ Daily Pivot (PP/R1/R2/R3/S1/S2/S3)   权重 1.0  level=MAJOR  timeframe="daily_pivot"
+  ├ Weekly Pivot (PP/R1/R2/S1/S2)         权重 1.2  level=MAJOR  timeframe="weekly_pivot"
   │
   │ ===== 确认层 (STRUCTURAL, 独立数据源) =====
   │
-  ├ Volume Profile VPOC/VAH/VAL           权重 1.3  level=INTERMEDIATE
+  ├ Volume Profile VPOC/VAH/VAL           权重 1.3  level=INTERMEDIATE timeframe="15m_vp"
   │   └ 基于 15M 近 24h bars (与检测层 1D/4H 解耦)
   │   └ Range Uniform Distribution (按 OHLC 范围比例分配 volume)
   │
-  ├ Order Wall (实时盘口)                 权重 0.8  level=MINOR
+  ├ Order Wall (实时盘口)                 权重 0.8  level=MINOR  timeframe="realtime"
   │
   │ ===== 辅助 (PSYCHOLOGICAL) =====
   │
-  └ Round Number (BTC: $5000 步长)        权重 0.5  level=MINOR
+  └ Round Number (BTC: $5000 步长)        权重 0.5  level=MINOR  timeframe="static"
 ```
 
 **权重说明：这些是初始估计值，需通过离线回测校准。设计原则：高时间框架 > 低时间框架，历史验证 > 投射。**
 
-**投射层强度封顶规则：**
+### 3.5 聚合规则 (R3 补全执行细节)
+
+**三条规则在 `_create_zone()` 中顺序执行：**
+
 ```python
-PROJECTED_MAX_STRENGTH = 'MEDIUM'  # 投射来源最高 MEDIUM
-# 仅当投射层 zone 与 ORDER_FLOW 或 STRUCTURAL 来源聚合时，才可升为 HIGH
+def _create_zone(self, cluster: List[SRCandidate], current_price: float) -> SRZone:
+    """
+    从候选簇创建 S/R Zone。
+    v4.0: 新增同源封顶、多源奖励、PROJECTED 强度封顶、总权重上限。
+    """
+    # ========== 步骤 1: 同源聚合封顶 (在求和时执行) ==========
+    # 按 timeframe 分组，每组权重和不超过 SAME_DATA_WEIGHT_CAP
+    SAME_DATA_WEIGHT_CAP = 2.5
+
+    weight_by_timeframe = {}
+    for c in cluster:
+        tf = c.timeframe or "unknown"
+        weight_by_timeframe.setdefault(tf, 0.0)
+        weight_by_timeframe[tf] = min(
+            weight_by_timeframe[tf] + c.weight,
+            SAME_DATA_WEIGHT_CAP
+        )
+
+    # 总权重 = 各时间框架封顶后的权重之和
+    total_weight = sum(weight_by_timeframe.values())
+
+    # ========== 步骤 2: 多源独立性奖励 ==========
+    unique_source_types = len(set(c.source_type for c in cluster))
+    if unique_source_types >= 3:
+        total_weight += 0.5   # STRUCTURAL + ORDER_FLOW + PROJECTED 等
+    elif unique_source_types >= 2:
+        total_weight += 0.2
+
+    # ========== 步骤 3: 总权重上限 (防止极端分数差距) ==========
+    MAX_ZONE_WEIGHT = 6.0
+    total_weight = min(total_weight, MAX_ZONE_WEIGHT)
+
+    # ========== 步骤 4: 评估强度 (含 PROJECTED 封顶) ==========
+    strength = self._evaluate_strength_v4(total_weight, cluster)
+
+    # ... 构建 SRZone ...
 ```
 
-**同源聚合封顶：**
+**步骤 4 的 `_evaluate_strength_v4` 详细逻辑：**
+
 ```python
-# 同一 zone 中来自同一数据时间框架的候选，合并后权重不超过:
-SAME_DATA_WEIGHT_CAP = 2.5
+def _evaluate_strength_v4(self, total_weight: float, cluster: List[SRCandidate]) -> str:
+    """
+    评估 zone 强度，增加 PROJECTED 封顶逻辑。
+
+    规则:
+    - total_weight >= 3.0 → HIGH (除非被 PROJECTED 封顶)
+    - total_weight >= 1.5 → MEDIUM
+    - 其他 → LOW
+
+    PROJECTED 封顶:
+    - 如果 zone 的所有候选都是 PROJECTED 类型 → 强度上限 MEDIUM
+    - 如果有任何 STRUCTURAL 或 ORDER_FLOW 候选确认 → 解除封顶 (允许 HIGH)
+    """
+    # 基础强度判断 (同 v3.1)
+    has_order_wall = any(c.source_type == SRSourceType.ORDER_FLOW for c in cluster)
+    wall_btc = sum(c.extra.get('wall_size_btc', 0) for c in cluster if c.source_type == SRSourceType.ORDER_FLOW)
+
+    if total_weight >= self.STRENGTH_THRESHOLDS['HIGH'] or wall_btc >= 100.0:
+        base_strength = 'HIGH'
+    elif total_weight >= self.STRENGTH_THRESHOLDS['MEDIUM']:
+        base_strength = 'MEDIUM'
+    else:
+        base_strength = 'LOW'
+
+    # PROJECTED 封顶规则
+    source_types_in_zone = set(c.source_type for c in cluster)
+    has_confirmed = bool(source_types_in_zone & {SRSourceType.STRUCTURAL, SRSourceType.ORDER_FLOW})
+
+    if not has_confirmed and SRSourceType.PROJECTED in source_types_in_zone:
+        # Zone 仅由 PROJECTED (+ 可能的 TECHNICAL/PSYCHOLOGICAL) 组成
+        # 无历史交易确认 → 强度封顶 MEDIUM
+        if base_strength == 'HIGH':
+            base_strength = 'MEDIUM'
+
+    return base_strength
 ```
 
-**多源独立性奖励：**
+**强度阈值 (维持 v3.1 值)：**
+
 ```python
-unique_source_types = len(set(c.source_type for c in cluster))
-if unique_source_types >= 3:    # STRUCTURAL + ORDER_FLOW + PROJECTED 等
-    confluence_bonus = 0.5
-elif unique_source_types >= 2:
-    confluence_bonus = 0.2
+STRENGTH_THRESHOLDS = {
+    'HIGH':   3.0,   # 维持 v3.1 值 (不贸然提高，待回测校准)
+    'MEDIUM': 1.5,   # 维持 v3.1 值
+    'LOW':    0.0,
+}
 ```
 
-### 3.4 成交量加权算法 (百分位数连续缩放)
+### 3.6 成交量加权算法 (百分位数连续缩放)
 
 **R1 版本问题**: `volume > MA(20) × 1.0` 是二元过滤，不区分"稍高于 MA"和"5 倍 MA"。
 
@@ -206,7 +340,7 @@ def _volume_weight_factor(self, bar_volume: float, all_volumes: List[float]) -> 
 # weight = base_weight * age_factor * vol_factor
 ```
 
-### 3.5 Volume Profile 算法 (Range Uniform Distribution)
+### 3.7 Volume Profile 算法 (Range Uniform Distribution)
 
 **R1 版本问题**: 仅按 close 分配 volume，VPOC 系统性偏移。
 
@@ -240,7 +374,7 @@ def _calculate_volume_profile(self, bars_15m: List[Dict], current_price: float):
     # VPOC, VAH, VAL 计算同 R1 ...
 ```
 
-### 3.6 Pivot Points (Daily + Weekly)
+### 3.8 Pivot Points (Daily + Weekly)
 
 ```python
 def _calculate_pivots(self, daily_bar: Dict, weekly_bar: Optional[Dict],
@@ -256,9 +390,9 @@ def _calculate_pivots(self, daily_bar: Dict, weekly_bar: Optional[Dict],
     """
     candidates = []
 
-    for bar, period, base_weight in [
-        (daily_bar, 'Daily', 1.0),
-        (weekly_bar, 'Weekly', 1.2),
+    for bar, period, base_weight, tf in [
+        (daily_bar, 'Daily', 1.0, 'daily_pivot'),
+        (weekly_bar, 'Weekly', 1.2, 'weekly_pivot'),
     ]:
         if not bar:
             continue
@@ -282,7 +416,8 @@ def _calculate_pivots(self, daily_bar: Dict, weekly_bar: Optional[Dict],
                 weight=base_weight,
                 side=side,
                 level=SRLevel.MAJOR,
-                source_type=SRSourceType.PROJECTED,  # ← 关键: 标记为投射
+                source_type=SRSourceType.PROJECTED,
+                timeframe=tf,  # v4.0: 用于同源封顶
             ))
 
     return candidates
@@ -290,7 +425,10 @@ def _calculate_pivots(self, daily_bar: Dict, weekly_bar: Optional[Dict],
 
 **Weekly Pivot 数据来源：** 从 `trend_manager` 的 1D bars 中聚合最近 5 根获取周 H/L/C。无需额外数据源。
 
-### 3.7 AI 报告中的 PROJECTED 标注
+### 3.9 AI 报告中的 PROJECTED 标注
+
+AI 报告模板变更在 `generate_ai_detailed_report()` 中实现。
+Bull/Bear/Judge/Risk Manager 四个 agent 都通过 `sr_zones_for_risk` 接收同一份报告。
 
 ```
 【CALCULATED S/R ZONES】
@@ -306,19 +444,108 @@ SUPPORT ZONES:
       Touch Count: 3 (optimal)
    [S2] $95,000 (-2.1%) [MAJOR|HIGH] ✅ CONFIRMED
       Source: Swing_1D (S/R flip) + Round_Number ($95k)
+
+📊 S/R 历史反弹率参考: ~85% (Spitsin 2025, 美股基线; BTC 需验证)
 ```
 
-### 3.8 强度阈值
+### 3.10 编排器 `_collect_candidates()` 完整调用 (R3 新增)
+
+**编排器 `sr_zone_calculator.py` 的 `_collect_candidates()` 需要调用所有检测模块。
+每个模块调用用 try/except 包裹，确保单一模块失败不影响其他模块。**
 
 ```python
-STRENGTH_THRESHOLDS = {
-    'HIGH':   3.0,   # 维持 v3.1 值 (不贸然提高，待回测校准)
-    'MEDIUM': 1.5,   # 维持 v3.1 值
-    'LOW':    0.0,
-}
-```
+def _collect_candidates(
+    self,
+    current_price: float,
+    bb_data: Optional[Dict],
+    sma_data: Optional[Dict],
+    orderbook_anomalies: Optional[Dict],
+    bars_data_15m: Optional[List[Dict]] = None,
+    bars_data_4h: Optional[List[Dict]] = None,
+    bars_data_1d: Optional[List[Dict]] = None,
+    daily_bar: Optional[Dict] = None,
+    weekly_bar: Optional[Dict] = None,
+    atr_value: float = 0,
+) -> List[SRCandidate]:
+    """
+    收集所有来源的 S/R 候选。
+    v4.0: 每个来源独立 try/except — 单一模块失败不影响其他模块。
+    """
+    candidates = []
 
-**理由**: R1 提议提高到 3.5/2.0，但没有回测支撑。维持现有值，后续通过离线回测工具校准。
+    # ===== 检测层: MTF Swing Points (per-layer error isolation) =====
+    if self.swing_detection_enabled:
+        # 1D Swing
+        if bars_data_1d:
+            try:
+                candidates.extend(
+                    self.swing_detector.detect(bars_data_1d, timeframe="1d",
+                                               base_weight=2.0, level=SRLevel.MAJOR)
+                )
+            except Exception as e:
+                self.logger.warning(f"1D Swing detection failed: {e}")
+
+        # 4H Swing
+        if bars_data_4h:
+            try:
+                candidates.extend(
+                    self.swing_detector.detect(bars_data_4h, timeframe="4h",
+                                               base_weight=1.5, level=SRLevel.INTERMEDIATE)
+                )
+            except Exception as e:
+                self.logger.warning(f"4H Swing detection failed: {e}")
+
+        # 15M Swing (保持兼容)
+        if bars_data_15m:
+            try:
+                candidates.extend(
+                    self.swing_detector.detect(bars_data_15m, timeframe="15m",
+                                               base_weight=0.8, level=SRLevel.MINOR)
+                )
+            except Exception as e:
+                self.logger.warning(f"15M Swing detection failed: {e}")
+
+    # ===== 投射层: Pivot Points =====
+    if self.config.get('pivots', {}).get('enabled', True):
+        try:
+            candidates.extend(
+                self.pivot_calculator.calculate(daily_bar, weekly_bar, current_price)
+            )
+        except Exception as e:
+            self.logger.warning(f"Pivot calculation failed: {e}")
+
+    # ===== 确认层: Volume Profile =====
+    if self.config.get('volume_profile', {}).get('enabled', True):
+        try:
+            candidates.extend(
+                self.volume_profile.calculate(bars_data_15m, current_price)
+            )
+        except Exception as e:
+            self.logger.warning(f"Volume Profile failed: {e}")
+
+    # ===== 现有来源: BB, SMA, OrderWall, Round# (保持不变) =====
+    try:
+        candidates.extend(self._bb_candidates(bb_data, current_price))
+    except Exception as e:
+        self.logger.warning(f"BB candidates failed: {e}")
+
+    try:
+        candidates.extend(self._sma_candidates(sma_data, current_price))
+    except Exception as e:
+        self.logger.warning(f"SMA candidates failed: {e}")
+
+    try:
+        candidates.extend(self._orderwall_candidates(orderbook_anomalies, current_price))
+    except Exception as e:
+        self.logger.warning(f"OrderWall candidates failed: {e}")
+
+    try:
+        candidates.extend(self._round_number_candidates(current_price))
+    except Exception as e:
+        self.logger.warning(f"Round number candidates failed: {e}")
+
+    return candidates
+```
 
 ---
 
@@ -336,7 +563,7 @@ SL/TP 必须基于 S/R zones + ATR 缓冲，不是固定百分比。
 
 **当前问题**: 开仓用 `calculate_technical_sltp()` (S/R-based)，动态更新用 `_update_trailing_stops()` (固定百分比)。两套完全不同的逻辑。
 
-**修复: 新增 `calculate_sr_based_sltp()` — 唯一的 SL/TP 计算入口。**
+**修复: 新增 `calculate_sr_based_sltp()` — 位于 `utils/sr_sltp_calculator.py`。**
 
 ```python
 def calculate_sr_based_sltp(
@@ -357,38 +584,33 @@ def calculate_sr_based_sltp(
     - ATR 缓冲防止噪音触发 (比固定百分比更自适应)
 
     用于:
-    - 开仓时初始 SL/TP (替代部分 calculate_technical_sltp 逻辑)
-    - 每 15 分钟动态更新 (替代 trailing stop 的固定百分比)
+    - 开仓时初始 SL/TP (替代 calculate_technical_sltp 的 S/R 部分)
+    - 每 15 分钟动态更新 (替代 _dynamic_sltp_update 的 _validate_sltp_for_entry 调用)
     """
     nearest_support = sr_zones.get('nearest_support')
     nearest_resistance = sr_zones.get('nearest_resistance')
     atr_buffer = atr_value * atr_buffer_multiplier
 
     if side == 'BUY':
-        # SL: 最近支撑下方 + ATR 缓冲
         if nearest_support:
             sl = nearest_support.price_center - atr_buffer
         else:
-            sl = current_price * (1 - 0.02)  # 2% 默认回退
+            sl = current_price * (1 - 0.02)
 
-        # TP: 最近阻力
         if nearest_resistance:
             tp = nearest_resistance.price_center
         else:
-            tp = current_price * (1 + 0.03)  # 3% 默认回退
+            tp = current_price * (1 + 0.03)
 
-        # 安全检查: SL 必须低于当前价
         if sl >= current_price:
             sl = current_price - atr_buffer * 2
 
     elif side == 'SELL':
-        # SL: 最近阻力上方 + ATR 缓冲
         if nearest_resistance:
             sl = nearest_resistance.price_center + atr_buffer
         else:
             sl = current_price * (1 + 0.02)
 
-        # TP: 最近支撑
         if nearest_support:
             tp = nearest_support.price_center
         else:
@@ -397,7 +619,6 @@ def calculate_sr_based_sltp(
         if sl <= current_price:
             sl = current_price + atr_buffer * 2
 
-    # R/R 验证
     risk = abs(current_price - sl)
     reward = abs(tp - current_price)
     rr_ratio = reward / risk if risk > 0 else 0
@@ -408,65 +629,168 @@ def calculate_sr_based_sltp(
     return sl, tp, f"R/R {rr_ratio:.2f}:1 ✅"
 ```
 
-### 4.3 15 分钟动态 SL/TP 更新闭环
+### 4.3 SL/TP 完整调用链 — 开仓路径 + 维护路径 (R3 新增)
 
-**当前问题**: TP 完全不更新; SL 只通过 trailing stop (固定百分比) 更新。
+**当前系统有两条 SL/TP 路径。R3 明确统一两条路径。**
 
-**修复: 在 `on_timer()` 中增加 SL/TP 重新评估。**
+```
+路径 A: 开仓 (_validate_sltp_for_entry, 在 on_position_opened 之前调用)
+────────────────────────────────────────────────────────────────────
+当前 (v4.12):
+  validate_multiagent_sltp()  → 如果 AI 的 SL/TP 通过 R/R 验证 → 用 AI 的
+                               → 如果不通过 → calculate_technical_sltp() (旧版)
+
+v4.0 修改:
+  validate_multiagent_sltp()  → 如果通过 → 用 AI 的 (不变)
+                               → 如果不通过 → calculate_sr_based_sltp() (新版, 替代旧版)
+                                              → 如果 R/R 不满足 → 回退到 calculate_technical_sltp() (兜底)
+
+具体代码位置: deepseek_strategy.py L3691 的 calculate_technical_sltp() 调用改为:
+  # v4.0: 优先使用 S/R-based SL/TP
+  if self.sltp_method == 'sr_based' and hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
+      sr_sl, sr_tp, reason = calculate_sr_based_sltp(
+          current_price=entry_price,
+          side=side.name,
+          sr_zones=self.latest_sr_zones_data,
+          atr_value=self._cached_atr_value,
+          min_rr_ratio=self.min_rr_ratio,
+          atr_buffer_multiplier=self.atr_buffer_multiplier,
+      )
+      if sr_sl and sr_tp:
+          stop_loss_price, tp_price = sr_sl, sr_tp
+      else:
+          # S/R-based R/R 不满足 → 回退旧版
+          stop_loss_price, tp_price, calc_method = calculate_technical_sltp(...)
+  else:
+      # legacy 模式或无 S/R 数据
+      stop_loss_price, tp_price, calc_method = calculate_technical_sltp(...)
+
+
+路径 B: 维护 (每 15 分钟动态更新, on_timer 中调用)
+────────────────────────────────────────────────────────────────────
+当前 (v4.12):
+  _dynamic_sltp_update() → _validate_sltp_for_entry() → 间接用旧版计算
+
+v4.0 修改:
+  _reevaluate_sltp_for_existing_position()  ← ⚠️ 替代 _dynamic_sltp_update()
+    → 直接调用 calculate_sr_based_sltp() (同路径 A 的计算函数)
+    → SL 只能向有利方向移动
+    → 与 trailing stop 取有利值
+```
+
+**关键: `_reevaluate_sltp_for_existing_position()` 替代 `_dynamic_sltp_update()`，不是共存。**
+
+在 `on_timer()` L1915-1917:
 
 ```python
-# 在 on_timer() 中，AI 分析完成后:
-def _reevaluate_sltp_for_existing_position(self, current_position, sr_zones, atr):
+# 当前 (v4.12):
+if self.enable_auto_sl_tp:
+    self._dynamic_sltp_update()
+
+# v4.0 修改为:
+if self.enable_auto_sl_tp and self.dynamic_sltp_update_enabled:
+    self._reevaluate_sltp_for_existing_position()
+elif self.enable_auto_sl_tp:
+    self._dynamic_sltp_update()  # legacy 回退
+```
+
+### 4.4 15 分钟动态 SL/TP 更新闭环
+
+**替代 `_dynamic_sltp_update()` (L4378-4478)。使用同一个 `calculate_sr_based_sltp()` 函数。**
+
+```python
+def _reevaluate_sltp_for_existing_position(self):
     """
-    每 15 分钟基于最新 S/R zones 重新评估 SL/TP
+    每 15 分钟基于最新 S/R zones 重新评估 SL/TP。
+    替代旧版 _dynamic_sltp_update()。
 
     规则:
-    1. 用 calculate_sr_based_sltp() 计算新 SL/TP (同开仓逻辑)
+    1. 用 calculate_sr_based_sltp() 计算新 SL/TP (同开仓路径 A)
     2. SL 只能向有利方向移动 (LONG: 只能上移, SHORT: 只能下移)
     3. TP 可以双向调整 (新 S/R 可能比旧的更近或更远)
     4. 变化超过 threshold 才实际更新 (避免频繁修改)
     5. 提交前验证: new_sl 必须未被当前价触发
+    6. 与 trailing stop 取有利值 (trailing 更高则用 trailing)
     """
-    side = current_position['side']  # 'LONG' or 'SHORT'
-    current_price = self._cached_current_price
+    try:
+        current_position = self._get_current_position_data()
+        if not current_position:
+            return
 
-    new_sl, new_tp, reason = calculate_sr_based_sltp(
-        current_price=current_price,
-        side='BUY' if side == 'LONG' else 'SELL',
-        sr_zones=sr_zones,
-        atr_value=atr,
-    )
+        side = current_position.get('side', '').lower()
+        quantity = abs(float(current_position.get('quantity', 0)))
+        if quantity <= 0 or side not in ('long', 'short'):
+            return
 
-    if new_sl is None:
-        return  # R/R 不满足，保持现有 SL/TP
+        # 读取最新 S/R zones (本周期刚在 multi_agent.analyze() 中计算)
+        sr_zones = self.latest_sr_zones_data
+        if not sr_zones:
+            return
 
-    state = self.trailing_stop_state.get(instrument_key, {})
-    old_sl = state.get('current_sl_price')
-    old_tp = state.get('current_tp_price')
+        instrument_key = str(self.instrument_id)
+        state = self.trailing_stop_state.get(instrument_key)
+        if not state:
+            return
 
-    # 规则 2: SL 只能向有利方向移动
-    if side == 'LONG' and old_sl and new_sl < old_sl:
-        new_sl = old_sl  # LONG 的 SL 不能下移
-    if side == 'SHORT' and old_sl and new_sl > old_sl:
-        new_sl = old_sl  # SHORT 的 SL 不能上移
+        old_sl = state.get("current_sl_price")
+        old_tp = state.get("current_tp_price")
+        if not old_sl or old_sl <= 0:
+            return
 
-    # 规则 4: 变化超过阈值才更新
-    sl_changed = old_sl is None or abs(new_sl - old_sl) / old_sl > 0.002  # 0.2%
-    tp_changed = old_tp is None or abs(new_tp - old_tp) / old_tp > 0.002
+        current_price = self._cached_current_price
 
-    # 规则 5: 提交前验证当前价
-    if side == 'LONG' and new_sl >= current_price:
-        return  # 会立即触发
-    if side == 'SHORT' and new_sl <= current_price:
-        return  # 会立即触发
+        # 步骤 1: 用统一函数计算
+        new_sl, new_tp, reason = calculate_sr_based_sltp(
+            current_price=current_price,
+            side='BUY' if side == 'long' else 'SELL',
+            sr_zones=sr_zones,
+            atr_value=self._cached_atr_value,
+            min_rr_ratio=self.min_rr_ratio,
+            atr_buffer_multiplier=self.atr_buffer_multiplier,
+        )
 
-    if sl_changed or tp_changed:
+        if new_sl is None:
+            return  # R/R 不满足，保持现有
+
+        # 步骤 2: SL 只能向有利方向
+        if side == 'long' and new_sl < old_sl:
+            new_sl = old_sl
+        if side == 'short' and new_sl > old_sl:
+            new_sl = old_sl
+
+        # 步骤 5: 提交前验证当前价
+        if side == 'long' and new_sl >= current_price:
+            return
+        if side == 'short' and new_sl <= current_price:
+            return
+
+        # 步骤 6: 与 trailing stop 取有利值
+        if self.enable_trailing_stop and state.get("trailing_active"):
+            trailing_sl = state.get("current_sl_price", 0)
+            if side == 'long':
+                new_sl = max(new_sl, trailing_sl)
+            else:
+                new_sl = min(new_sl, trailing_sl)
+
+        # 步骤 4: 变化超过阈值才更新
+        sl_changed = abs(new_sl - old_sl) / old_sl > self.dynamic_update_threshold_pct
+        tp_changed = old_tp and old_tp > 0 and abs(new_tp - old_tp) / old_tp > self.dynamic_update_threshold_pct
+
+        if not sl_changed and not tp_changed:
+            return
+
         self._replace_sltp_orders(
-            new_total_quantity=current_position['quantity'],
+            new_total_quantity=quantity,
             position_side=side,
             new_sl_price=new_sl,
             new_tp_price=new_tp,
         )
+
+        # Telegram 通知 (复用旧版逻辑)
+        # ...
+
+    except Exception as e:
+        self.log.warning(f"⚠️ S/R SL/TP reevaluation failed (position still protected): {e}")
 ```
 
 **与 Trailing Stop 的关系:**
@@ -476,13 +800,15 @@ Trailing Stop (on_bar, 每根 bar):
   → 快速响应 (价格快速拉升时立即跟踪)
   → 只移动 SL，不动 TP
   → 简单公式: highest × (1 - distance%)
+  → 独立运行，更新 trailing_stop_state["current_sl_price"]
 
 S/R 动态更新 (on_timer, 每 15 分钟):
   → 深度分析 (基于最新 S/R zones)
   → SL + TP 都可更新
-  → 锚定在结构性价位
+  → 读取 trailing_stop_state 并与 S/R SL 取有利值
+  → 最终结果写回 trailing_stop_state
 
-两者共存，取更有利的 SL:
+两者共存规则 (在 _reevaluate 步骤 6 中):
   final_sl = max(trailing_sl, sr_sl)  # LONG 时取更高的
   final_sl = min(trailing_sl, sr_sl)  # SHORT 时取更低的
 ```
@@ -497,15 +823,12 @@ S/R 动态更新 (on_timer, 每 15 分钟):
 # 在 on_order_expired() 和 on_order_rejected() 中增加:
 def _handle_orphan_order(self, order_id, reason):
     """清理孤儿订单的内部状态"""
-    # 1. 检查仓位是否还存在
     current_position = self._get_current_position_data()
 
     if not current_position:
-        # 仓位已不存在 → 清理所有相关状态
         self._clear_position_state()
         self.log.info("Position closed externally, cleared internal state")
     else:
-        # 仓位存在但订单失败 → 尝试重新提交
         self._resubmit_sltp_if_needed(current_position)
 
 def _clear_position_state(self):
@@ -516,22 +839,62 @@ def _clear_position_state(self):
     self._pending_reversal = None
 ```
 
-### 5.2 修复减仓后 SL/TP 不更新 (Bug #9)
+### 5.2 修复减仓后 SL/TP 不更新 (Bug #9) — R3 修正异步问题
+
+**R2 问题**: 假设 `reduce_success` 同步可知，但 `_submit_order()` (L4620) 是异步的 —
+减仓 MARKET 单提交后立即返回，实际成交通过 `on_position_changed()` (L5552) 回调通知。**
+
+**R3 修正: SL/TP 更新必须在 `on_position_changed()` 中执行，而非 `_reduce_position()` 内联。**
 
 ```python
-# 在 _reduce_position() 成功后:
-def _reduce_position(self, current_position, target_pct):
-    # ... 现有减仓逻辑 ...
+# ===== 修改 _reduce_position() (L4604-4624) =====
+# 当前代码在减仓前取消 SL/TP (L4604-4616)，之后提交减仓 MARKET 单 (L4620)。
+# 问题: 取消了 SL/TP 但减仓还没成交，此时仓位无保护。
+# 修复: 在 _reduce_position 中设置 _pending_reduce 标记:
 
-    # 新增: 减仓后更新 SL/TP 数量
-    if reduce_success:
-        new_quantity = current_position['quantity'] * (1 - target_pct/100)
-        self._replace_sltp_orders(
-            new_total_quantity=new_quantity,
-            position_side=current_position['side'],
-            new_sl_price=current_sl,  # 保持原价
-            new_tp_price=current_tp,  # 保持原价
-        )
+def _reduce_position(self, current_position, target_pct):
+    # ... 现有验证逻辑 ...
+
+    # 取消现有 SL/TP (保持不变)
+    # ... L4604-4616 ...
+
+    # 提交减仓 MARKET 单 (保持不变)
+    self._submit_order(side=reduce_side, quantity=reduce_qty, reduce_only=True)
+
+    # v4.0 新增: 标记等待减仓成交
+    self._pending_reduce_sltp = {
+        'expected_quantity': current_qty - reduce_qty,  # 减仓后预期数量
+        'position_side': current_side,
+        'old_sl': state.get('current_sl_price'),  # 保持原 SL 价格
+        'old_tp': state.get('current_tp_price'),   # 保持原 TP 价格
+    }
+
+
+# ===== 修改 on_position_changed() (L5552+) =====
+def on_position_changed(self, event):
+    # ... 现有日志逻辑 ...
+
+    # v4.0 新增: 减仓成交后重建 SL/TP
+    if hasattr(self, '_pending_reduce_sltp') and self._pending_reduce_sltp:
+        pending = self._pending_reduce_sltp
+        self._pending_reduce_sltp = None  # 清除标记
+
+        new_qty = float(event.quantity)
+        self.log.info(f"🔄 Reduce filled, rebuilding SL/TP for qty={new_qty:.4f}")
+
+        try:
+            self._replace_sltp_orders(
+                new_total_quantity=new_qty,
+                position_side=pending['position_side'],
+                new_sl_price=pending['old_sl'],   # 保持原价
+                new_tp_price=pending['old_tp'],    # 保持原价
+            )
+        except Exception as e:
+            self.log.error(f"❌ Failed to rebuild SL/TP after reduce: {e}")
+            self._submit_emergency_sl(new_qty, pending['position_side'],
+                                      reason="减仓后SL重建失败")
+
+    # ... 现有 trailing stop 更新逻辑 ...
 ```
 
 ### 5.3 修复 SL 未验证当前价 (Bug #10)
@@ -541,11 +904,10 @@ def _reduce_position(self, current_position, target_pct):
 def _validate_sl_against_current_price(self, sl_price, side, current_price):
     """确保 SL 不会立即触发"""
     if side == 'LONG' and sl_price >= current_price:
-        # SL 已在当前价上方 → 用 ATR 缓冲重算
-        sl_price = current_price - self.atr_value * 0.5
+        sl_price = current_price - self._cached_atr_value * 0.5
         self.log.warning(f"SL adjusted: would immediately trigger. New: {sl_price}")
     if side == 'SHORT' and sl_price <= current_price:
-        sl_price = current_price + self.atr_value * 0.5
+        sl_price = current_price + self._cached_atr_value * 0.5
         self.log.warning(f"SL adjusted: would immediately trigger. New: {sl_price}")
     return sl_price
 ```
@@ -553,24 +915,225 @@ def _validate_sl_against_current_price(self, sl_price, side, current_price):
 ### 5.4 修复 GTC 过期无恢复 (Bug #11)
 
 ```python
-# 改进 on_order_expired():
+# 改进 on_order_expired() (L5462+):
 def on_order_expired(self, event):
     # 现有: 日志 + 告警
 
     # 新增: 检查仓位是否仍存在
     current_position = self._get_current_position_data()
     if current_position:
-        # 仓位还在但 SL/TP 过期了 → 仓位无保护!
         self.log.error("CRITICAL: Position exists but SL/TP expired!")
         self._resubmit_sltp_if_needed(current_position)
     else:
-        # 仓位已不存在 → 正常 (SL/TP fill 后的预期过期)
         self._clear_position_state()
 ```
 
 ---
 
-## 六、模块拆分
+## 六、完整数据流链路 (R3 新增)
+
+### 6.1 MTF Bar 提取和传递
+
+**当前问题**: `on_timer()` 只提取 15M bars (L1812)，1D/4H bars 存在于 MTF manager 但未传给 S/R。
+
+**修复位置: `deepseek_strategy.py` on_timer() L1811-L1831**
+
+```python
+# ===== 当前代码 (L1811-1812) =====
+sr_bars_data = self.indicator_manager.get_kline_data(count=120)
+
+# ===== v4.0 修改为 =====
+# 提取 15M bars (确认层 VP + 15M swing)
+sr_bars_15m = self.indicator_manager.get_kline_data(count=96)
+
+# 提取 1D bars (检测层 1D swing + Pivot)
+sr_bars_1d = None
+daily_bar = None
+weekly_bar = None
+if hasattr(self, 'mtf_manager') and self.mtf_manager:
+    trend_mgr = self.mtf_manager.trend_manager
+    if trend_mgr and hasattr(trend_mgr, 'recent_bars') and len(trend_mgr.recent_bars) >= 5:
+        # 转换 NautilusTrader Bar → Dict
+        sr_bars_1d = [
+            {'high': float(b.high), 'low': float(b.low),
+             'close': float(b.close), 'open': float(b.open),
+             'volume': float(b.volume)}
+            for b in trend_mgr.recent_bars
+        ]
+        # 最近完成的日线 bar (用于 Daily Pivot)
+        daily_bar = sr_bars_1d[-1]
+        # 聚合最近 5 根 1D → Weekly bar
+        last_5 = sr_bars_1d[-5:]
+        weekly_bar = {
+            'high': max(b['high'] for b in last_5),
+            'low': min(b['low'] for b in last_5),
+            'close': last_5[-1]['close'],
+        }
+
+# 提取 4H bars (检测层 4H swing)
+sr_bars_4h = None
+if hasattr(self, 'mtf_manager') and self.mtf_manager:
+    decision_mgr = self.mtf_manager.decision_manager
+    if decision_mgr and hasattr(decision_mgr, 'recent_bars') and len(decision_mgr.recent_bars) >= 5:
+        sr_bars_4h = [
+            {'high': float(b.high), 'low': float(b.low),
+             'close': float(b.close), 'open': float(b.open),
+             'volume': float(b.volume)}
+            for b in decision_mgr.recent_bars
+        ]
+```
+
+### 6.2 `analyze()` 接口变更
+
+**修改 `multi_agent_analyzer.py` L409-427 的 `analyze()` 签名:**
+
+```python
+def analyze(
+    self,
+    symbol: str,
+    technical_report: Dict[str, Any],
+    # ... 现有参数不变 ...
+    bars_data: Optional[List[Dict[str, Any]]] = None,
+    # ========== v4.0 新增: MTF bars for S/R ==========
+    bars_data_4h: Optional[List[Dict[str, Any]]] = None,
+    bars_data_1d: Optional[List[Dict[str, Any]]] = None,
+    daily_bar: Optional[Dict[str, Any]] = None,
+    weekly_bar: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+```
+
+**传递到 `_calculate_sr_zones()`:**
+
+```python
+# 修改 _calculate_sr_zones() 签名 (L2373-2378):
+def _calculate_sr_zones(
+    self,
+    current_price: float,
+    technical_data: Optional[Dict[str, Any]],
+    orderbook_data: Optional[Dict[str, Any]],
+    bars_data: Optional[List[Dict[str, Any]]] = None,
+    # ========== v4.0 新增 ==========
+    bars_data_4h: Optional[List[Dict[str, Any]]] = None,
+    bars_data_1d: Optional[List[Dict[str, Any]]] = None,
+    daily_bar: Optional[Dict[str, Any]] = None,
+    weekly_bar: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    # ... 现有 bb_data, sma_data, orderbook 提取 ...
+
+    # v4.0: 传递给 sr_calculator
+    result = self.sr_calculator.calculate_with_detailed_report(
+        current_price=current_price,
+        bb_data=bb_data,
+        sma_data=sma_data,
+        orderbook_anomalies=orderbook_anomalies,
+        bars_data=bars_data,           # 15M (兼容旧参数名)
+        bars_data_4h=bars_data_4h,     # v4.0
+        bars_data_1d=bars_data_1d,     # v4.0
+        daily_bar=daily_bar,           # v4.0
+        weekly_bar=weekly_bar,         # v4.0
+    )
+```
+
+### 6.3 on_timer() 调用链全貌
+
+```python
+# deepseek_strategy.py on_timer() 调用链 (v4.0):
+
+on_timer()
+  │
+  ├─ [数据采集]
+  │   ├─ indicator_manager.get_kline_data(96)     → sr_bars_15m
+  │   ├─ mtf_manager.trend_manager.recent_bars    → sr_bars_1d + daily_bar + weekly_bar
+  │   └─ mtf_manager.decision_manager.recent_bars → sr_bars_4h
+  │
+  ├─ [AI 分析]
+  │   └─ multi_agent.analyze(
+  │         bars_data=sr_bars_15m,
+  │         bars_data_4h=sr_bars_4h,
+  │         bars_data_1d=sr_bars_1d,
+  │         daily_bar=daily_bar,
+  │         weekly_bar=weekly_bar,
+  │         ...
+  │       )
+  │       └─ _calculate_sr_zones(...)
+  │             └─ sr_calculator.calculate_with_detailed_report(...)
+  │                   └─ _collect_candidates(bars_data_15m, bars_data_4h, bars_data_1d,
+  │                   │                      daily_bar, weekly_bar, ...)
+  │                   │    ├─ swing_detector.detect(1d) → STRUCTURAL candidates
+  │                   │    ├─ swing_detector.detect(4h) → STRUCTURAL candidates
+  │                   │    ├─ swing_detector.detect(15m) → STRUCTURAL candidates
+  │                   │    ├─ pivot_calculator.calculate(daily, weekly) → PROJECTED candidates
+  │                   │    ├─ volume_profile.calculate(15m) → STRUCTURAL candidates
+  │                   │    ├─ _bb_candidates() → TECHNICAL candidates
+  │                   │    ├─ _sma_candidates() → TECHNICAL candidates
+  │                   │    ├─ _orderwall_candidates() → ORDER_FLOW candidates
+  │                   │    └─ _round_number_candidates() → PSYCHOLOGICAL candidates
+  │                   └─ _cluster_to_zones() → _create_zone() with v4.0 聚合规则
+  │
+  ├─ [缓存 S/R 结果]
+  │   └─ self.latest_sr_zones_data = multi_agent._sr_zones_cache
+  │
+  ├─ [执行交易]
+  │   └─ _execute_trade()
+  │       └─ _validate_sltp_for_entry()  ← 路径 A (开仓 SL/TP)
+  │           └─ validate_multiagent_sltp() → [fail] → calculate_sr_based_sltp()
+  │                                                     → [fail] → calculate_technical_sltp()
+  │
+  ├─ [OCO 清理]
+  │   └─ _cleanup_oco_orphans()
+  │
+  ├─ [Trailing Stop]
+  │   └─ _update_trailing_stops()  (保持不变, 基于 bar 的快速跟踪)
+  │
+  └─ [S/R 动态 SL/TP]  ← 路径 B (维护 SL/TP)
+      └─ _reevaluate_sltp_for_existing_position()  ← 替代 _dynamic_sltp_update()
+          └─ calculate_sr_based_sltp() (同路径 A 的计算函数)
+```
+
+### 6.4 向后兼容: `bars_data` 参数类型分派
+
+**`sr_zone_calculator.calculate()` 入口增加兼容逻辑:**
+
+```python
+def calculate_with_detailed_report(
+    self,
+    current_price: float,
+    bb_data=None,
+    sma_data=None,
+    orderbook_anomalies=None,
+    bars_data=None,          # 旧参数: 15M bars as List[Dict]
+    bars_data_4h=None,       # v4.0 新增
+    bars_data_1d=None,       # v4.0 新增
+    daily_bar=None,          # v4.0 新增
+    weekly_bar=None,         # v4.0 新增
+    atr_value=None,
+):
+    """
+    向后兼容:
+    - 如果只传 bars_data (List[Dict]) → v3.1 行为，当作 15M bars
+    - 如果同时传 bars_data + bars_data_4h + bars_data_1d → v4.0 行为
+    """
+    # 统一为 15M bars (兼容旧调用方)
+    bars_data_15m = bars_data
+
+    candidates = self._collect_candidates(
+        current_price=current_price,
+        bb_data=bb_data,
+        sma_data=sma_data,
+        orderbook_anomalies=orderbook_anomalies,
+        bars_data_15m=bars_data_15m,
+        bars_data_4h=bars_data_4h,
+        bars_data_1d=bars_data_1d,
+        daily_bar=daily_bar,
+        weekly_bar=weekly_bar,
+        atr_value=atr_value or self._calculate_atr(bars_data_15m),
+    )
+    # ... 聚类、评分、生成报告 ...
+```
+
+---
+
+## 七、模块拆分
 
 **当前 `sr_zone_calculator.py` 1461 行，新增后预计 ~1900 行。需要拆分。**
 
@@ -591,11 +1154,13 @@ utils/
 | `sr_swing_detector.py` | Williams Fractal + MTF + 成交量加权 | ~250 |
 | `sr_volume_profile.py` | VP + Range Distribution + VPOC/VAH/VAL | ~200 |
 | `sr_pivot_calculator.py` | Daily/Weekly Pivot + PROJECTED 标记 | ~150 |
-| `sr_sltp_calculator.py` | 统一 SL/TP + 15 分钟闭环 + 当前价验证 | ~200 |
+| `sr_sltp_calculator.py` | 统一 SL/TP + 当前价验证 | ~200 |
 
 ---
 
-## 七、配置
+## 八、配置及传播链 (R3 补全)
+
+### 8.1 YAML 配置
 
 ```yaml
 # configs/base.yaml 新增/修改
@@ -608,7 +1173,6 @@ sr_zones:
     left_bars: 5
     right_bars: 5
     max_swing_age: 100
-    # v4.0: 成交量加权 (百分位数连续缩放, 无额外参数)
     volume_weighting: true
 
   # v4.0: 投射层
@@ -616,13 +1180,13 @@ sr_zones:
     enabled: true
     daily: true
     weekly: true
-    projected_max_strength: "MEDIUM"    # 投射来源强度上限
+    projected_max_strength: "MEDIUM"
 
   # v4.0: Volume Profile (确认层)
   volume_profile:
     enabled: true
-    bars_source: "15m"                  # 使用 15M bars (与检测层解耦)
-    lookback_bars: 96                   # 24 小时
+    bars_source: "15m"
+    lookback_bars: 96
     value_area_pct: 70
     min_bins: 30
     max_bins: 80
@@ -634,84 +1198,157 @@ sr_zones:
 
   # v4.0: 聚合规则
   aggregation:
-    same_data_weight_cap: 2.5           # 同源聚合权重上限
-    confluence_bonus_2_sources: 0.2     # 2 种独立来源 bonus
-    confluence_bonus_3_sources: 0.5     # 3+ 种独立来源 bonus
+    same_data_weight_cap: 2.5
+    max_zone_weight: 6.0
+    confluence_bonus_2_sources: 0.2
+    confluence_bonus_3_sources: 0.5
 
 # SL/TP 统一配置
 trading_logic:
-  sltp_method: "sr_based"               # v4.0: 改为 S/R 驱动
-  atr_buffer_multiplier: 0.5            # SL = S/R zone ± ATR × 0.5
+  sltp_method: "sr_based"               # v4.0: "sr_based" 或 "legacy"
+  atr_buffer_multiplier: 0.5
   min_rr_ratio: 1.5
-  min_sl_distance_pct: 0.01             # 1% 最小 SL 距离 (安全网)
+  min_sl_distance_pct: 0.01
   dynamic_sltp_update: true             # 每 15 分钟动态更新
-  dynamic_update_threshold_pct: 0.002   # 0.2% 变化阈值才实际更新
-  sl_only_favorable: true               # SL 只能向有利方向移动
+  dynamic_update_threshold_pct: 0.002
+  sl_only_favorable: true
+```
+
+### 8.2 配置传播链 (R3 补全)
+
+**`sr_zones.*` 子配置**: 已有完整链路，作为 Dict 透传。
+
+```
+ConfigManager.get('sr_zones') → main_live.py L192 (sr_zones_config=...)
+  → DeepSeekAIStrategyConfig.sr_zones_config (Dict)
+  → strategy.__init__ L451 → MultiAgentAnalyzer(sr_zones_config=...)
+  → SRZoneCalculator(config=sr_zones_config)
+  ✅ 新增子 key (pivots, volume_profile, aggregation) 自动透传
+```
+
+**`trading_logic.*` 新字段**: 当前链路断裂，需要补全。
+
+```python
+# ===== 修改 1: main_live.py 加载 trading_logic 新字段 =====
+# 在 L192 附近增加:
+sltp_method=config_manager.get('trading_logic', 'sltp_method', default='sr_based'),
+atr_buffer_multiplier=config_manager.get('trading_logic', 'atr_buffer_multiplier', default=0.5),
+dynamic_sltp_update=config_manager.get('trading_logic', 'dynamic_sltp_update', default=True),
+dynamic_update_threshold_pct=config_manager.get('trading_logic', 'dynamic_update_threshold_pct', default=0.002),
+
+# ===== 修改 2: DeepSeekAIStrategyConfig (L85-133) 增加字段 =====
+@dataclass(frozen=True)
+class DeepSeekAIStrategyConfig:
+    # ... 现有字段 ...
+
+    # v4.0: SL/TP method
+    sltp_method: str = "sr_based"
+    atr_buffer_multiplier: float = 0.5
+    dynamic_sltp_update: bool = True
+    dynamic_update_threshold_pct: float = 0.002
+
+# ===== 修改 3: strategy.__init__ (L272-275 附近) 存储字段 =====
+self.sltp_method = config.sltp_method
+self.atr_buffer_multiplier = config.atr_buffer_multiplier
+self.dynamic_sltp_update_enabled = config.dynamic_sltp_update
+self.dynamic_update_threshold_pct = config.dynamic_update_threshold_pct
+self.min_rr_ratio = config.min_rr_ratio  # 已有，从 trading_logic 读取
+```
+
+**完整传播链 (修复后):**
+
+```
+ConfigManager.get('trading_logic', 'sltp_method')
+  → main_live.py: sltp_method=...
+  → DeepSeekAIStrategyConfig.sltp_method
+  → strategy.__init__: self.sltp_method = config.sltp_method
+  → _validate_sltp_for_entry(): if self.sltp_method == 'sr_based': ...
+  → _reevaluate_sltp_for_existing_position(): self.atr_buffer_multiplier
+  ✅ 完整链路
 ```
 
 ---
 
-## 八、向后兼容
+## 九、向后兼容
 
-| 场景 | 行为 |
-|------|------|
-| MTF 未启用 | 回退到只用 15M bars (v3.1 行为) |
-| `trend_manager` 未初始化 | 跳过日线 swing 和 Weekly Pivot |
-| `decision_manager` 未初始化 | 跳过 4H swing |
-| `bars_data` 传入是 `List` 而非 `Dict` | 兼容 v3.1: 当作 15M bars |
-| `sltp_method: "legacy"` | 使用旧版 `calculate_technical_sltp()` |
-| `dynamic_sltp_update: false` | 仅使用 trailing stop (旧行为) |
+| 场景 | 行为 | 实现方式 |
+|------|------|---------|
+| MTF 未启用 | 只用 15M bars (v3.1 行为) | `bars_data_1d/4h=None` → `_collect_candidates` 跳过相应 swing 检测 |
+| `trend_manager` 未初始化 | 跳过日线 swing 和 Weekly Pivot | `if trend_mgr and len(trend_mgr.recent_bars) >= 5:` 检查 |
+| `decision_manager` 未初始化 | 跳过 4H swing | 同上 |
+| `bars_data` 传入是 `List` (旧调用) | 当作 15M bars | `bars_data_15m = bars_data` (6.4 节) |
+| `sltp_method: "legacy"` | 使用旧版 `calculate_technical_sltp()` | 路径 A 中 `if self.sltp_method == 'sr_based':` 分支 |
+| `dynamic_sltp_update: false` | 使用旧版 `_dynamic_sltp_update()` | on_timer() 中 `if self.dynamic_sltp_update_enabled:` 分支 |
 
 ---
 
-## 九、实施步骤
+## 十、实施步骤
 
 | 阶段 | 步骤 | 内容 | 影响范围 |
 |------|------|------|---------|
-| **A: 订单安全修复** | A1 | `on_order_expired()` / `on_order_rejected()` 增加状态清理和恢复 | `deepseek_strategy.py` |
-| | A2 | `on_position_opened()` 增加 SL vs current_price 验证 | `deepseek_strategy.py` |
-| | A3 | `_reduce_position()` 后更新 SL/TP 数量 | `deepseek_strategy.py` |
-| **B: 模块拆分** | B1 | 创建 `sr_swing_detector.py` 提取 swing 检测逻辑 | 纯重构 |
-| | B2 | 创建 `sr_volume_profile.py` (Range Uniform Distribution) | 新文件 |
-| | B3 | 创建 `sr_pivot_calculator.py` (Daily + Weekly) | 新文件 |
-| | B4 | 创建 `sr_sltp_calculator.py` (`calculate_sr_based_sltp`) | 新文件 |
-| **C: S/R v4.0** | C1 | `_detect_swing_points()` 增加 timeframe 参数 + 成交量加权 | 修改 |
-| | C2 | `_collect_candidates()` 集成新来源 + PROJECTED 标记 | 修改 |
-| | C3 | `calculate()` 接受 `bars_data_mtf` + `daily_bar` + `weekly_bar` | 修改 (兼容) |
-| | C4 | 权重表 + 聚合规则更新 | 修改 |
-| | C5 | AI 报告模板增加 PROJECTED 标注 | 修改 |
-| **D: SL/TP 闭环** | D1 | `deepseek_strategy.py`: 收集 MTF bars 传入 S/R | 修改 |
-| | D2 | `on_timer()` 增加 `_reevaluate_sltp_for_existing_position()` | 修改 |
-| | D3 | Trailing stop 与 S/R 动态更新取有利值 | 修改 |
-| **E: 配置** | E1 | `configs/base.yaml` 添加 v4.0 配置 | 修改 |
+| **A: 订单安全修复** | A1 | `on_order_expired()` / `on_order_rejected()` 增加 `_handle_orphan_order` | `deepseek_strategy.py` |
+| | A2 | `on_position_opened()` 增加 `_validate_sl_against_current_price` | `deepseek_strategy.py` |
+| | A3 | `_reduce_position()` 设 `_pending_reduce_sltp` + `on_position_changed()` 重建 SL/TP | `deepseek_strategy.py` |
+| **B: 数据类型** | B1 | `SRSourceType` 增加 `PROJECTED` / `PSYCHOLOGICAL` | `sr_zone_calculator.py` |
+| | B2 | `SRCandidate` 增加 `timeframe` 字段 | `sr_zone_calculator.py` |
+| **C: 模块拆分** | C1 | 创建 `sr_swing_detector.py` 提取 swing 检测逻辑 | 纯重构 |
+| | C2 | 创建 `sr_volume_profile.py` (Range Uniform Distribution) | 新文件 |
+| | C3 | 创建 `sr_pivot_calculator.py` (Daily + Weekly) | 新文件 |
+| | C4 | 创建 `sr_sltp_calculator.py` (`calculate_sr_based_sltp`) | 新文件 |
+| **D: S/R v4.0** | D1 | `_collect_candidates()` 集成新来源 + per-layer try/except | 修改 |
+| | D2 | `_create_zone()` 增加同源封顶 + 多源奖励 + 总权重上限 | 修改 |
+| | D3 | `_evaluate_strength_v4()` 增加 PROJECTED 封顶 | 修改 |
+| | D4 | `calculate_with_detailed_report()` 增加新参数 + 向后兼容 | 修改 |
+| | D5 | AI 报告模板 `generate_ai_detailed_report()` 增加 PROJECTED 标注 | 修改 |
+| **E: 数据流** | E1 | `deepseek_strategy.on_timer()` 提取 MTF bars 传入 analyze | 修改 |
+| | E2 | `analyze()` + `_calculate_sr_zones()` 增加新参数 | `multi_agent_analyzer.py` |
+| **F: SL/TP 闭环** | F1 | `_validate_sltp_for_entry()` 集成 `calculate_sr_based_sltp()` 三级回退 | `deepseek_strategy.py` |
+| | F2 | 新增 `_reevaluate_sltp_for_existing_position()` 替代 `_dynamic_sltp_update()` | `deepseek_strategy.py` |
+| | F3 | on_timer() 中替换调用点 | `deepseek_strategy.py` |
+| **G: 配置** | G1 | `configs/base.yaml` 添加 v4.0 配置 | 修改 |
+| | G2 | `main_live.py` 加载 trading_logic 新字段 | 修改 |
+| | G3 | `DeepSeekAIStrategyConfig` 增加新字段 | `deepseek_strategy.py` |
 
-**建议实施顺序: A → B → C → D → E (先修 Bug, 再拆模块, 再加功能)**
+**建议实施顺序: A → B → C → D → E → F → G**
+(先修 Bug, 再改类型, 再拆模块, 再加功能, 再接数据, 再闭环 SL/TP, 最后配置)
 
 ---
 
-## 十、验证计划
+## 十一、验证计划
 
-### 10.1 订单安全验证 (阶段 A)
+### 11.1 订单安全验证 (阶段 A)
 
 1. **模拟手动平仓**: 在 Binance APP 手动平仓，观察系统是否正确清理状态
-2. **模拟减仓**: 使用 `/partial_close 50`，验证 SL/TP 数量更新
+2. **模拟减仓**: 使用 `/partial_close 50`，验证 `on_position_changed` 触发后 SL/TP 数量更新
 3. **模拟价格快速移动**: SL 设在入场价 -1%，但当前价已跌 2%，验证 SL 自动调整
 
-### 10.2 S/R 质量验证 (阶段 C)
+### 11.2 数据类型验证 (阶段 B)
+
+1. **PROJECTED 枚举**: 确认 `SRSourceType.PROJECTED` 可正确赋值
+2. **timeframe 字段**: 确认候选的 `timeframe` 正确标记，同源封顶正确执行
+
+### 11.3 S/R 质量验证 (阶段 D)
 
 1. **ATH 场景**: 手动设 current_price > 所有 bars 最高价，确认上方有 Pivot 投射
 2. **MTF 一致性**: 验证 1D swing 被标为 MAJOR，15M swing 为 MINOR
 3. **VP 解耦验证**: VP 和 Swing 的 zone 重合时权重不超过 `same_data_weight_cap`
 4. **PROJECTED 标注**: 确认 Pivot 来源的 zone 强度不超过 MEDIUM
+5. **错误隔离**: 人为让 pivot_calculator raise Exception，确认 swing/VP 候选不受影响
 
-### 10.3 SL/TP 闭环验证 (阶段 D)
+### 11.4 数据流验证 (阶段 E)
+
+1. **MTF bar 提取**: 确认 `trend_manager.recent_bars` 正确转换为 Dict 列表
+2. **参数传递**: 确认 1D/4H bars 到达 `_collect_candidates()`
+
+### 11.5 SL/TP 闭环验证 (阶段 F)
 
 1. **开仓+动态一致性**: 开仓 SL/TP 和 15 分钟后重算的结果在 S/R 不变时应一致
 2. **SL 有利方向**: LONG 仓位的 SL 只能上移
 3. **TP 可双向**: 新 S/R 出现时 TP 可以调整
 4. **Trailing + S/R 取有利值**: 两者都触发时取更有利的 SL
+5. **Legacy 回退**: 设 `sltp_method: "legacy"`，确认使用旧版逻辑
 
-### 10.4 离线回测工具 (后续)
+### 11.6 离线回测工具 (后续)
 
 ```bash
 # 用历史 bars 计算 S/R，然后检查后续价格是否在 zone 处反弹
@@ -719,13 +1356,19 @@ python3 scripts/backtest_sr_quality.py --symbol BTCUSDT --days 30
 # 输出: Precision, Recall, 各来源贡献度
 ```
 
+**回测工具定义:**
+- **"反弹"**: 价格进入 zone (price_low ~ price_high) 后，12 根 bar 内反向移动 >= 0.5%
+- **Precision**: 真反弹次数 / zone 触碰总次数
+- **目标函数**: 最大化 Precision × weight_sum (加权精度)
+- **校准方法**: 网格搜索 weight 比率 (约束: 1D > 4H > 15M, 权重 > 0)
+
 ---
 
-## 十一、学术参考
+## 十二、学术参考
 
 | 编号 | 论文/来源 | 贡献 | 适用性说明 |
 |------|----------|------|-----------|
-| [1] | Spitsin et al. (2025) Contemporary Mathematics 6(6) | 成交量加权极值 + L1 聚类 | 美股样本 (AAPL/MSFT/TSLA)，P 值为参考基线 |
+| [1] | Spitsin et al. (2025) Contemporary Mathematics 6(6) | 成交量加权极值 + L1 聚类 | 美股样本; 本方案采用成交量加权, 有意暂缓 L1 聚类 (见 1.3 注) |
 | [2] | Chung & Bellotti (2021) arXiv:2101.07410 | 触碰记忆效应 + 时间衰减 | 系统已实现 age_factor + touch_count |
 | [3] | Osler (2003) Journal of Finance | 整数位订单聚集效应 | 直接适用于 BTC ($5k/$10k) |
 | [4] | Chan et al. (2022) MDPI Mathematics 10(20):3888 | S/R 特征 → ML 盈利 +65% | Swing 检测方法参考 |
