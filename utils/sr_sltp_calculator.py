@@ -1,10 +1,16 @@
 """
-v4.2: S/R-Based SL/TP Calculator
+v4.3: S/R-Based SL/TP Calculator
 
 核心逻辑:
 1. SL = 关键支撑/阻力位 + ATR缓冲 (缓冲保护，防止假突破触发)
 2. TP = 关键阻力/支撑位 (直接锚定，不减缓冲)
 3. R/R >= 1.5 才接受，否则尝试次级 zone → Measured Move → 拒绝
+4. 无百分比兜底 — 没有 S/R zone 时拒绝交易 (S/R veto is final)
+
+v4.3 改进 (vs v4.2):
+- 移除 SL 百分比兜底: 无 S/R zone 时直接拒绝 (不用任意 2% SL)
+- 移除 TP 百分比兜底: 只有 S/R zone + Measured Move 两种路径
+- 设计原则: "S/R drives SL/TP" — 没有 S/R 支撑则不交易
 
 v4.2 改进 (vs v4.1):
 - SL anchor 选择感知 zone 质量: source_type + touch_count + has_swing_point
@@ -246,18 +252,21 @@ def calculate_sr_based_sltp(
     atr_value: float = 0.0,
     min_rr_ratio: float = 1.5,
     atr_buffer_multiplier: float = 0.5,
-    default_sl_pct: float = 0.02,
-    default_tp_pct: float = 0.03,
+    **kwargs,
 ) -> Tuple[Optional[float], Optional[float], str]:
     """
-    Calculate SL/TP anchored to S/R zones with ATR buffer.
+    v4.3: Calculate SL/TP anchored to S/R zones with ATR buffer.
+
+    No percentage fallback — S/R veto is final. If no valid S/R zone
+    exists for SL or TP, returns (None, None) to reject the trade.
 
     Algorithm:
     1. Select SL anchor: strongest S/R zone in protective direction
+       → No zone found → REJECT (no arbitrary percentage SL)
     2. SL = anchor ± ATR buffer (behind zone, absorb false breakouts)
-    3. Select TP target: S/R zone directly (no buffer subtraction)
-    4. Validate R/R >= min_rr_ratio
-    5. If R/R poor: try next zone → Measured Move → reject
+    3. Select TP target: iterate S/R zones until R/R >= min_rr_ratio
+       → No zone passes → try Measured Move (Bulkowski 2021)
+       → Still no valid TP → REJECT (no arbitrary percentage TP)
 
     Parameters
     ----------
@@ -269,15 +278,11 @@ def calculate_sr_based_sltp(
         S/R zone data from SRZoneCalculator.calculate().
         Keys: 'support_zones', 'resistance_zones', 'nearest_support', 'nearest_resistance'.
     atr_value : float
-        Current ATR value for buffer calculation. 0 = use percentage fallback.
+        Current ATR value for buffer calculation. 0 = use 0.5% price fallback.
     min_rr_ratio : float
         Minimum Risk/Reward ratio required. Default 1.5.
     atr_buffer_multiplier : float
         ATR multiplier for SL buffer. Default 0.5.
-    default_sl_pct : float
-        Fallback SL percentage if no S/R zones. Default 2%.
-    default_tp_pct : float
-        Fallback TP percentage if no S/R zones. Default 3%.
 
     Returns
     -------
@@ -316,37 +321,29 @@ def calculate_sr_based_sltp(
     if atr_value > 0:
         buffer = atr_value * atr_buffer_multiplier
     else:
-        buffer = current_price * 0.005  # 0.5% fallback
+        buffer = current_price * 0.005  # 0.5% fallback for buffer only
 
     # ====================================================================
     # Step 1: Select SL anchor (strongest zone in protective direction)
-    # v4.2: Uses source_type + touch_count + has_swing_point scoring
+    # v4.3: No percentage fallback — no zone means no trade
     # ====================================================================
     sl_anchor = _select_sl_anchor(sl_zones, current_price, is_long, atr_value)
-    method_parts = []
 
-    if sl_anchor:
-        # SL = anchor ± ATR buffer (behind the zone)
-        if is_long:
-            sl_price = sl_anchor - buffer
-        else:
-            sl_price = sl_anchor + buffer
-        method_parts.append("sl:sr_zone")
+    if not sl_anchor:
+        direction = "support" if is_long else "resistance"
+        return None, None, f"no S/R zone for SL anchor ({direction} side empty)"
+
+    # SL = anchor ± ATR buffer (behind the zone)
+    if is_long:
+        sl_price = sl_anchor - buffer
     else:
-        # Percentage fallback
-        if is_long:
-            sl_price = current_price * (1 - default_sl_pct)
-        else:
-            sl_price = current_price * (1 + default_sl_pct)
-        method_parts.append("sl:pct_fallback")
+        sl_price = sl_anchor + buffer
 
     # Validate SL is on correct side
     if is_long and sl_price >= current_price:
         sl_price = current_price - buffer * 2
-        method_parts.append("sl:adjusted")
     if not is_long and sl_price <= current_price:
         sl_price = current_price + buffer * 2
-        method_parts.append("sl:adjusted")
 
     risk = abs(current_price - sl_price)
     if risk <= 0:
@@ -354,7 +351,7 @@ def calculate_sr_based_sltp(
 
     # ====================================================================
     # Step 2: Select TP target — iterate zones until R/R satisfied
-    # v4.2: Candidates sorted by quality-adjusted distance
+    # v4.3: Only S/R zones + Measured Move, no percentage fallback
     # ====================================================================
     tp_candidates = _collect_tp_candidates(tp_zones, current_price, is_long)
 
@@ -371,7 +368,7 @@ def calculate_sr_based_sltp(
             tp_method = f"tp:sr_zone[{i}]" if i == 0 else f"tp:sr_zone_secondary[{i}]"
             break
 
-    # If no zone gave good R/R → try Measured Move
+    # If no zone gave good R/R → try Measured Move (Bulkowski 2021: 85% hit rate)
     if tp_price is None and tp_candidates and sl_anchor:
         nearest_tp_zone = tp_candidates[0]
         mm_target = _measured_move_target(
@@ -384,31 +381,19 @@ def calculate_sr_based_sltp(
                 tp_price = mm_target
                 tp_method = "tp:measured_move"
 
-    # If still nothing → percentage fallback, but still validate R/R
-    if tp_price is None:
-        if is_long:
-            pct_tp = current_price * (1 + default_tp_pct)
-        else:
-            pct_tp = current_price * (1 - default_tp_pct)
-
-        reward = abs(pct_tp - current_price)
-        rr = reward / risk if risk > 0 else 0
-        if rr >= min_rr_ratio:
-            tp_price = pct_tp
-            tp_method = "tp:pct_fallback"
-
-    # If ALL paths failed R/R check → reject
+    # v4.3: No percentage fallback — if all S/R paths failed, reject
     if tp_price is None:
         best_rr = 0
         if tp_candidates:
             best_rr = abs(tp_candidates[0] - current_price) / risk if risk > 0 else 0
-        return None, None, f"R/R {best_rr:.2f}:1 < {min_rr_ratio}:1, all targets insufficient"
+        return None, None, f"R/R {best_rr:.2f}:1 < {min_rr_ratio}:1, all S/R targets insufficient"
 
-    method_parts.append(tp_method)
+    # Build method description
+    method = f"sl:sr_zone|{tp_method}"
 
     # Final R/R for logging
     final_reward = abs(tp_price - current_price)
     final_rr = final_reward / risk if risk > 0 else 0
-    method_parts.append(f"rr:{final_rr:.2f}")
+    method += f"|rr:{final_rr:.2f}"
 
-    return sl_price, tp_price, "|".join(method_parts)
+    return sl_price, tp_price, method

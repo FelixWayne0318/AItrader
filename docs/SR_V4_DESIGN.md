@@ -37,7 +37,7 @@
 ### 1.3 已有可复用的好设计
 
 - **两阶段订单提交** (v4.13): MARKET entry → `_pending_sltp` → SL/TP 分别提交
-- **R/R >= 1.5 硬门槛**: `validate_multiagent_sltp()` + `calculate_technical_sltp()` 一致执行
+- **R/R >= 1.5 硬门槛**: `validate_multiagent_sltp()` + `calculate_sr_based_sltp()` 一致执行 (v4.3: 无百分比兜底)
 - **Binance API 优先**: `_get_current_position_data()` 优先 API 而非缓存
 - **OCO 手动取消**: `on_order_filled()` 取消对方订单
 - **历史 bar 预加载**: `_prefetch_multi_timeframe_bars()` 启动时加载 220 根 1D bar（冷启动已解决）
@@ -593,11 +593,14 @@ SL/TP 必须基于 S/R zones + ATR 缓冲，不是固定百分比。
 每 15 分钟闭环: 新 S/R → 新 SL/TP → 验证 → 更新。
 ```
 
-### 4.2 统一 SL/TP 计算函数
+### 4.2 统一 SL/TP 计算函数 (v4.3 更新)
 
-**当前问题**: 开仓用 `calculate_technical_sltp()` (S/R-based)，动态更新用 `_update_trailing_stops()` (固定百分比)。两套完全不同的逻辑。
+**修复: `calculate_sr_based_sltp()` — 位于 `utils/sr_sltp_calculator.py`。**
 
-**修复: 新增 `calculate_sr_based_sltp()` — 位于 `utils/sr_sltp_calculator.py`。**
+> **v4.3 重要变更**: 移除所有百分比兜底。无 S/R zone 时直接拒绝交易。
+> - SL: 无 zone → return (None, None) (不用任意 2% SL)
+> - TP: S/R zones + Measured Move 两条路径，无百分比 TP
+> - 设计原则: "S/R drives SL/TP" — 没有 S/R 支撑则不交易
 
 ```python
 def calculate_sr_based_sltp(
@@ -607,60 +610,36 @@ def calculate_sr_based_sltp(
     atr_value: float,       # 当前 ATR
     min_rr_ratio: float = 1.5,
     atr_buffer_multiplier: float = 0.5,
+    **kwargs,               # v4.3: 吸收旧调用方的 default_sl_pct/default_tp_pct
 ) -> Tuple[Optional[float], Optional[float], str]:
     """
-    统一 SL/TP 计算 (基于 S/R zones + ATR 缓冲)
+    v4.3: 统一 SL/TP 计算 (基于 S/R zones + ATR 缓冲, 无百分比兜底)
 
-    原则:
-    - LONG: SL = nearest_support - ATR×buffer, TP = nearest_resistance
-    - SHORT: SL = nearest_resistance + ATR×buffer, TP = nearest_support
-    - R/R >= min_rr_ratio 才有效
-    - ATR 缓冲防止噪音触发 (比固定百分比更自适应)
-
-    用于:
-    - 开仓时初始 SL/TP (替代 calculate_technical_sltp 的 S/R 部分)
-    - 每 15 分钟动态更新 (替代 _dynamic_sltp_update 的 _validate_sltp_for_entry 调用)
+    算法:
+    1. SL anchor = 多因子评分选最优 zone (strength + quality + touch + swing + proximity)
+       → 无 zone → REJECT
+    2. SL = anchor ± ATR buffer
+    3. TP = 逐个检查 S/R zones → Measured Move (Bulkowski 2021) → REJECT
+    4. R/R >= min_rr_ratio 才有效
     """
-    nearest_support = sr_zones.get('nearest_support')
-    nearest_resistance = sr_zones.get('nearest_resistance')
-    atr_buffer = atr_value * atr_buffer_multiplier
+    # Step 1: SL anchor (multi-factor scoring)
+    sl_anchor = _select_sl_anchor(sl_zones, current_price, is_long, atr_value)
+    if not sl_anchor:
+        return None, None, "no S/R zone for SL anchor"
+    sl = sl_anchor - atr_buffer if is_long else sl_anchor + atr_buffer
 
-    if side == 'BUY':
-        if nearest_support:
-            sl = nearest_support.price_center - atr_buffer
+    # Step 2: TP candidates (quality-sorted) → Measured Move → reject
+    for candidate_tp in tp_candidates:
+        if rr >= min_rr_ratio:
+            tp = candidate_tp; break
+    else:
+        mm_target = _measured_move_target(...)  # Bulkowski 2021: 85% hit rate
+        if mm_target and rr >= min_rr_ratio:
+            tp = mm_target
         else:
-            sl = current_price * (1 - 0.02)
+            return None, None, "R/R insufficient, all S/R targets failed"
 
-        if nearest_resistance:
-            tp = nearest_resistance.price_center
-        else:
-            tp = current_price * (1 + 0.03)
-
-        if sl >= current_price:
-            sl = current_price - atr_buffer * 2
-
-    elif side == 'SELL':
-        if nearest_resistance:
-            sl = nearest_resistance.price_center + atr_buffer
-        else:
-            sl = current_price * (1 + 0.02)
-
-        if nearest_support:
-            tp = nearest_support.price_center
-        else:
-            tp = current_price * (1 - 0.03)
-
-        if sl <= current_price:
-            sl = current_price + atr_buffer * 2
-
-    risk = abs(current_price - sl)
-    reward = abs(tp - current_price)
-    rr_ratio = reward / risk if risk > 0 else 0
-
-    if rr_ratio < min_rr_ratio:
-        return None, None, f"R/R {rr_ratio:.2f}:1 < {min_rr_ratio}:1"
-
-    return sl, tp, f"R/R {rr_ratio:.2f}:1 ✅"
+    return sl, tp, method
 ```
 
 ### 4.3 SL/TP 完整调用链 — 开仓路径 + 维护路径 (R3 新增)
@@ -674,13 +653,14 @@ def calculate_sr_based_sltp(
   validate_multiagent_sltp()  → 如果 AI 的 SL/TP 通过 R/R 验证 → 用 AI 的
                                → 如果不通过 → calculate_technical_sltp() (旧版)
 
-v4.0 修改:
+v4.3 修改:
   validate_multiagent_sltp()  → 如果通过 → 用 AI 的 (不变)
-                               → 如果不通过 → calculate_sr_based_sltp() (新版, 替代旧版)
-                                              → 如果 R/R 不满足 → 回退到 calculate_technical_sltp() (兜底)
+                               → 如果不通过 → calculate_sr_based_sltp() (v4.3, 无百分比兜底)
+                                              → 如果 R/R 不满足 → return None (拒绝交易, S/R veto is final)
+                                              → ❌ 不再回退到 calculate_technical_sltp() (v4.2 移除)
 
-具体代码位置: deepseek_strategy.py L3691 的 calculate_technical_sltp() 调用改为:
-  # v4.0: 优先使用 S/R-based SL/TP
+具体代码位置: deepseek_strategy.py `_validate_sltp_for_entry()`:
+  # v4.3: S/R-based SL/TP (无百分比兜底)
   if self.sltp_method == 'sr_based' and hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
       sr_sl, sr_tp, reason = calculate_sr_based_sltp(
           current_price=entry_price,
@@ -693,11 +673,8 @@ v4.0 修改:
       if sr_sl and sr_tp:
           stop_loss_price, tp_price = sr_sl, sr_tp
       else:
-          # S/R-based R/R 不满足 → 回退旧版
-          stop_loss_price, tp_price, calc_method = calculate_technical_sltp(...)
-  else:
-      # legacy 模式或无 S/R 数据
-      stop_loss_price, tp_price, calc_method = calculate_technical_sltp(...)
+          # v4.3: S/R veto is final — 拒绝交易，不回退到百分比兜底
+          return None, None, reason
 
 
 路径 B: 维护 (每 15 分钟动态更新, on_timer 中调用)
@@ -1325,7 +1302,7 @@ on_timer()
   │   └─ _execute_trade()
   │       └─ _validate_sltp_for_entry()  ← 路径 A (开仓 SL/TP)
   │           └─ validate_multiagent_sltp() → [fail] → calculate_sr_based_sltp()
-  │                                                     → [fail] → calculate_technical_sltp()
+  │                                                     → [fail] → return None (拒绝交易)
   │
   ├─ [OCO 清理]
   │   └─ _cleanup_oco_orphans()
@@ -1530,7 +1507,7 @@ ConfigManager.get('trading_logic', 'sltp_method')
 | `trend_manager` 未初始化 | 跳过日线 swing 和 Weekly Pivot | `if trend_mgr and len(trend_mgr.recent_bars) >= 5:` 检查 |
 | `decision_manager` 未初始化 | 跳过 4H swing | 同上 |
 | `bars_data` 传入是 `List` (旧调用) | 当作 15M bars | `bars_data_15m = bars_data` (6.4 节) |
-| `sltp_method: "legacy"` (默认) | 使用旧版 `calculate_technical_sltp()` | 路径 A 中 `if self.sltp_method == 'sr_based':` 分支 |
+| `sltp_method: "legacy"` | 使用旧版 `calculate_technical_sltp()` | 路径 A 中 `if self.sltp_method == 'sr_based':` 分支 (v4.3 默认 sr_based) |
 | `dynamic_sltp_update: false` | 使用旧版 `_dynamic_sltp_update()` | on_timer() 中 `if self.dynamic_sltp_update_enabled:` 分支 |
 | 旧调用方传入 `pivot_data` | 被 `**kwargs` 吸收，不报错 | `calculate()` 和 `calculate_with_detailed_report()` 的 `**kwargs` |
 | `_pending_reduce_sltp` 超时 | 60 秒后自动清理 | `on_position_changed()` 检查 `elapsed > 60` |
