@@ -1,9 +1,10 @@
-# S/R v4.0 + SL/TP 全链路重构 — 统一设计方案 (修订版 R3)
+# S/R v4.0 + SL/TP 全链路重构 — 统一设计方案 (修订版 R4)
 
 > 修订历史:
 > - R1: 初版 S/R v4.0 方案
 > - R2: 整合三大风险修正 + 5 大订单 Bug 修复 + SL/TP 一致性重构
 > - R3: 补全 12 个集成细节 — 数据类型定义、完整调用链、配置传播、错误隔离、Bug-9 异步修正
+> - R4: 补全 13 个 GAP — ATR 缓存、pivot_data 迁移、字段名修正、辅助方法定义、实施顺序修正、安全灰度发布
 >
 > 学术基础: Spitsin (2025), Chung & Bellotti (2021), Osler (2003), CME Market Profile
 
@@ -180,6 +181,20 @@ class SRCandidate:
 - Daily Pivot R1 + Daily Pivot R2 = 同源 (⚠️ 封顶 2.5)
 - Daily Pivot + Weekly Pivot = 不同源 (✅ 不封顶)
 
+> **R4 关键注意 (G6): Phase B+D 必须原子部署。**
+> 如果添加 `timeframe` 字段 (Phase B) 并启用同源封顶 (Phase D)，
+> 但没有同时更新**所有现有候选生成器**设置 `timeframe`，
+> 所有未设置 timeframe 的候选将归入 `"unknown"` 桶并被封顶 2.5 —
+> 这会导致 zone 质量回退到 v3.1 以下。
+>
+> **必须同时修改的现有代码 (Phase B 中一并完成):**
+> - `_detect_swing_points()` L730-732: 给 swing 候选添加 `timeframe="15m"`
+> - `_bb_candidates()` L740-757: 给 BB 候选添加 `timeframe="15m"`
+> - `_sma_candidates()` L764-784: 给 SMA 候选添加 `timeframe="15m"`
+> - `_orderwall_candidates()` L816-864: 给 Order Wall 候选添加 `timeframe="realtime"`
+> - `_generate_round_number_levels()` L466-473: 给 Round Number 候选添加 `timeframe="static"`
+> - 旧版 Pivot (L866-893): 将在 Phase C/D 中删除并由 `sr_pivot_calculator` 替代
+
 ### 3.4 候选来源和权重
 
 ```
@@ -211,6 +226,11 @@ _collect_candidates()
 ```
 
 **权重说明：这些是初始估计值，需通过离线回测校准。设计原则：高时间框架 > 低时间框架，历史验证 > 投射。**
+
+> **R4 修复 (G13)**: SMA_200 source 标签从 `"SMA_200"` 改为 `"SMA_200_15M"`
+> 明确标注这是 15M 周期的 SMA_200 (≈ 50 小时), 不是日线 SMA_200 (≈ 200 天)。
+> 同时在 AI 报告中注明: `"SMA_200 基于 15 分钟周期 (≈ 50 小时, 非日线 200 天)"`。
+> 修改位置: `sr_zone_calculator.py` L777-784 的 `source='SMA_200'` → `source='SMA_200_15M'`。
 
 ### 3.5 聚合规则 (R3 补全执行细节)
 
@@ -252,7 +272,21 @@ def _create_zone(self, cluster: List[SRCandidate], current_price: float) -> SRZo
     # ========== 步骤 4: 评估强度 (含 PROJECTED 封顶) ==========
     strength = self._evaluate_strength_v4(total_weight, cluster)
 
-    # ... 构建 SRZone ...
+    # ========== R4 G7: 更新 type_priority (新增 PROJECTED + PSYCHOLOGICAL) ==========
+    # 当前 L1011-1015 的 type_priority 只有 3 种类型，需扩展:
+    type_priority = {
+        SRSourceType.ORDER_FLOW: 4,      # 最实时
+        SRSourceType.STRUCTURAL: 3,      # 历史验证
+        SRSourceType.PROJECTED: 2,       # v4.0: 数学投射
+        SRSourceType.TECHNICAL: 1,       # 技术指标
+        SRSourceType.PSYCHOLOGICAL: 0,   # v4.0: 心理关口 (最低优先级)
+    }
+    zone_source_type = SRSourceType.TECHNICAL
+    for c in cluster:
+        if type_priority.get(c.source_type, 0) > type_priority.get(zone_source_type, 0):
+            zone_source_type = c.source_type
+
+    # ... 构建 SRZone (zone_source_type 用于 SRZone.source_type) ...
 ```
 
 **步骤 4 的 `_evaluate_strength_v4` 详细逻辑：**
@@ -765,7 +799,7 @@ def _reevaluate_sltp_for_existing_position(self):
             return
 
         # 步骤 6: 与 trailing stop 取有利值
-        if self.enable_trailing_stop and state.get("trailing_active"):
+        if self.enable_trailing_stop and state.get("activated"):
             trailing_sl = state.get("current_sl_price", 0)
             if side == 'long':
                 new_sl = max(new_sl, trailing_sl)
@@ -813,6 +847,12 @@ S/R 动态更新 (on_timer, 每 15 分钟):
   final_sl = min(trailing_sl, sr_sl)  # SHORT 时取更低的
 ```
 
+> **R4 修复 (G4)**: trailing_stop_state 中激活标志字段名为 `"activated"` (L4816, L5721, L5735)，
+> **不是** `"trailing_active"`。R3 和现有 `_dynamic_sltp_update` L4427 都用了错误的字段名
+> `state.get("trailing_active")`，导致 trailing 集成始终被跳过 (返回 None = falsy)。
+> R4 已全部修正为 `state.get("activated")`。
+> **注意**: 现有 `_dynamic_sltp_update` L4427 也需要修正 (无论是否实施 v4.0)。
+
 ---
 
 ## 五、订单安全修复
@@ -820,7 +860,10 @@ S/R 动态更新 (on_timer, 每 15 分钟):
 ### 5.1 修复手动平仓后报错 (Bug #8)
 
 ```python
-# 在 on_order_expired() 和 on_order_rejected() 中增加:
+# 在 on_order_expired() 和 on_order_rejected() 和 on_order_canceled() 中增加:
+# ⚠️ R4 (G9): on_order_canceled 也需要覆盖 — Binance algoOrder 被取消时
+# NT 可能触发 canceled 而非 expired
+
 def _handle_orphan_order(self, order_id, reason):
     """清理孤儿订单的内部状态"""
     current_position = self._get_current_position_data()
@@ -832,11 +875,59 @@ def _handle_orphan_order(self, order_id, reason):
         self._resubmit_sltp_if_needed(current_position)
 
 def _clear_position_state(self):
-    """清理所有仓位相关的内部状态"""
+    """清理所有仓位相关的内部状态 (R4 补全 G5 — 完整实现)"""
     instrument_key = str(self.instrument_id)
     self.trailing_stop_state.pop(instrument_key, None)
     self._pending_sltp = None
     self._pending_reversal = None
+    self._pending_reduce_sltp = None   # v4.0 新增
+    self.latest_signal_data = None     # 清除旧信号
+    self.log.info("🧹 Position state cleared (external close detected)")
+
+def _resubmit_sltp_if_needed(self, current_position):
+    """
+    检测仓位仍存在但 SL/TP 缺失时，重新提交保护订单。
+    (R4 补全 G5 — 完整实现)
+
+    调用场景:
+    - Bug #8: 手动平仓导致 SL/TP expired/rejected，但仓位通过其他方式重建
+    - Bug #11: GTC 过期后仓位仍在
+
+    策略: 使用 _submit_emergency_sl 提交紧急止损 (2% 固定距离)，
+    因为此时可能没有最新的 S/R zones 数据。
+    """
+    try:
+        position_side = current_position.get('side', '').lower()
+        quantity = abs(float(current_position.get('quantity', 0)))
+        if quantity <= 0 or position_side not in ('long', 'short'):
+            return
+
+        # 检查是否已有活跃 SL 订单
+        instrument_key = str(self.instrument_id)
+        state = self.trailing_stop_state.get(instrument_key)
+        if state and state.get("sl_order_id"):
+            # SL 订单可能仍有效，不重复提交
+            self.log.info("🔍 SL order may still be active, skipping resubmit")
+            return
+
+        # 没有活跃 SL → 提交紧急止损
+        self.log.warning(f"⚠️ No active SL detected, submitting emergency SL")
+        self._submit_emergency_sl(quantity, position_side,
+                                  reason="SL/TP expired/rejected, 仓位仍存在")
+
+        # 发送 Telegram 告警
+        if self.telegram_bot and self.enable_telegram:
+            try:
+                alert_msg = self.telegram_bot.format_error_alert({
+                    'level': 'CRITICAL',
+                    'message': f"SL/TP 过期/被拒 — 已提交紧急止损",
+                    'context': f"Side: {position_side}, Qty: {quantity:.4f}",
+                })
+                self.telegram_bot.send_message_sync(alert_msg)
+            except Exception:
+                pass
+    except Exception as e:
+        self.log.error(f"❌ Failed to resubmit SL/TP: {e}")
 ```
 
 ### 5.2 修复减仓后 SL/TP 不更新 (Bug #9) — R3 修正异步问题
@@ -861,12 +952,16 @@ def _reduce_position(self, current_position, target_pct):
     # 提交减仓 MARKET 单 (保持不变)
     self._submit_order(side=reduce_side, quantity=reduce_qty, reduce_only=True)
 
-    # v4.0 新增: 标记等待减仓成交
+    # v4.0 新增: 标记等待减仓成交 (R4 G8: 增加时间戳和互斥检查)
+    import time
+    assert not self._pending_sltp, "Cannot reduce while _pending_sltp is active"  # R4 G12: 互斥断言
     self._pending_reduce_sltp = {
         'expected_quantity': current_qty - reduce_qty,  # 减仓后预期数量
         'position_side': current_side,
         'old_sl': state.get('current_sl_price'),  # 保持原 SL 价格
         'old_tp': state.get('current_tp_price'),   # 保持原 TP 价格
+        'timestamp': time.time(),                   # R4 G8: 超时检测用
+        'reduce_order_side': reduce_side.name,      # R4 G8: 事件关联用
     }
 
 
@@ -874,12 +969,32 @@ def _reduce_position(self, current_position, target_pct):
 def on_position_changed(self, event):
     # ... 现有日志逻辑 ...
 
-    # v4.0 新增: 减仓成交后重建 SL/TP
+    # v4.0 新增: 减仓成交后重建 SL/TP (R4 G8: 增加超时和事件关联检查)
     if hasattr(self, '_pending_reduce_sltp') and self._pending_reduce_sltp:
         pending = self._pending_reduce_sltp
-        self._pending_reduce_sltp = None  # 清除标记
+        import time
+        elapsed = time.time() - pending.get('timestamp', 0)
 
+        # R4 G8: 超时清理 (60 秒内未触发说明减仓单可能被拒)
+        if elapsed > 60:
+            self.log.warning(f"⚠️ _pending_reduce_sltp expired ({elapsed:.0f}s), clearing stale state")
+            self._pending_reduce_sltp = None
+            return  # 不处理，等下一个 on_timer 周期的 _resubmit_sltp_if_needed
+
+        # R4 G8: 事件关联检查 — 确认是减仓导致的 position change
         new_qty = float(event.quantity)
+        expected_qty = pending.get('expected_quantity', 0)
+        qty_matches = abs(new_qty - expected_qty) / max(expected_qty, 0.0001) < 0.05  # 5% 容差
+
+        if not qty_matches:
+            # 可能是其他原因导致的 position change (如 SL 触发)
+            self.log.warning(
+                f"⚠️ Position change qty {new_qty:.4f} != expected {expected_qty:.4f}, "
+                f"not consuming _pending_reduce_sltp"
+            )
+            return
+
+        self._pending_reduce_sltp = None  # 清除标记
         self.log.info(f"🔄 Reduce filled, rebuilding SL/TP for qty={new_qty:.4f}")
 
         try:
@@ -983,7 +1098,50 @@ if hasattr(self, 'mtf_manager') and self.mtf_manager:
         ]
 ```
 
-### 6.2 `analyze()` 接口变更
+### 6.2 ATR 缓存变量: `_cached_atr_value` (R4 新增 — 修复 G1)
+
+**R3 问题**: `_cached_atr_value` 在 3 处引用 (Section 4.3, 4.4, 5.3) 但从未定义初始化和更新逻辑。
+当前代码中只有 `_cached_current_price` (L312)，没有 `_cached_atr_value`。
+
+**修复: 在策略初始化中添加，在 on_timer 数据采集阶段更新。**
+
+```python
+# ===== 修改 1: deepseek_strategy.py __init__ (L312 附近) =====
+self._cached_current_price: float = 0.0
+self._cached_atr_value: float = 0.0    # v4.0 新增: S/R SL/TP 计算用
+
+# ===== 修改 2: on_timer() 数据采集阶段 (L1811+ 附近, 在 MTF bar 提取之后) =====
+# 在提取 sr_bars_15m 后立即计算 ATR
+sr_bars_15m = self.indicator_manager.get_kline_data(count=96)
+
+# v4.0: 缓存 ATR (基于 15M bars, 与 sr_zone_calculator 一致)
+if sr_bars_15m:
+    from utils.sr_zone_calculator import SRZoneCalculator
+    self._cached_atr_value = SRZoneCalculator._calculate_atr_from_bars(sr_bars_15m)
+```
+
+**设计决策:**
+- **用 15M bars 计算 ATR** — 与 `sr_zone_calculator.py` L629 一致 (`_calculate_atr_from_bars(bars_data)`)
+- **在 on_timer 头部更新** — 确保同一周期内 `_reevaluate_sltp` 和 `_validate_sltp_for_entry` 读到相同值
+- **使用 `@staticmethod`** — `_calculate_atr_from_bars` 已是静态方法 (L363)，可直接调用
+- **`__init__` 中默认 0.0** — 首次 on_timer 之前调用 `calculate_sr_based_sltp()` 时，ATR=0 会走 fallback 路径
+
+**生命周期:**
+
+```
+__init__: _cached_atr_value = 0.0
+     ↓
+on_timer() 数据采集:
+  sr_bars_15m = get_kline_data(96)
+  _cached_atr_value = _calculate_atr_from_bars(sr_bars_15m)  ← 每 15 分钟更新
+     ↓
+on_timer() 后续使用:
+  _validate_sltp_for_entry()  → 读 _cached_atr_value
+  _reevaluate_sltp_for_existing_position() → 读 _cached_atr_value
+  _validate_sl_against_current_price() → 读 _cached_atr_value
+```
+
+### 6.3 `analyze()` 接口变更
 
 **修改 `multi_agent_analyzer.py` L409-427 的 `analyze()` 签名:**
 
@@ -1034,7 +1192,96 @@ def _calculate_sr_zones(
     )
 ```
 
-### 6.3 on_timer() 调用链全貌
+### 6.5 `pivot_data` 参数迁移: `calculate()` + `calculate_with_detailed_report()` (R4 新增 — 修复 G2)
+
+**R3 问题**: R3 只修改了 `_collect_candidates()` 签名 (删除 `pivot_data`，新增 MTF 参数)，
+但遗漏了中间层 `calculate()` (L575-585) 和 `calculate_with_detailed_report()` (L1408-1417)。
+当前三层签名都有 `pivot_data` 参数。如果只改内层会导致 `TypeError`。
+
+**修复: 三层签名必须同步修改。**
+
+```python
+# ===== 当前三层调用链 (v3.1) =====
+#
+# calculate(current_price, bb_data, sma_data, orderbook_anomalies, pivot_data, bars_data, atr_value)
+#     ↓ L634-637:
+#     _collect_candidates(current_price, bb_data, sma_data, orderbook_anomalies, pivot_data, bars_data=bars_data)
+#
+# calculate_with_detailed_report(current_price, bb_data, sma_data, orderbook_anomalies, pivot_data, bars_data, atr_value)
+#     ↓ L1427-1435:
+#     self.calculate(current_price, bb_data, sma_data, orderbook_anomalies, pivot_data, bars_data, atr_value)
+
+# ===== v4.0 修改后 (统一移除 pivot_data，新增 MTF 参数) =====
+
+# 层 1: calculate()
+def calculate(
+    self,
+    current_price: float,
+    bb_data=None,
+    sma_data=None,
+    orderbook_anomalies=None,
+    # v4.0: pivot_data 已移除 — Pivot 改由 sr_pivot_calculator 内部计算
+    bars_data=None,              # 15M bars (兼容旧参数名)
+    atr_value=None,
+    bars_data_4h=None,           # v4.0
+    bars_data_1d=None,           # v4.0
+    daily_bar=None,              # v4.0
+    weekly_bar=None,             # v4.0
+    **kwargs,                    # 吸收旧调用方传的 pivot_data
+) -> Dict[str, Any]:
+    # ... 内部调用:
+    candidates = self._collect_candidates(
+        current_price=current_price,
+        bb_data=bb_data,
+        sma_data=sma_data,
+        orderbook_anomalies=orderbook_anomalies,
+        bars_data_15m=bars_data,
+        bars_data_4h=bars_data_4h,
+        bars_data_1d=bars_data_1d,
+        daily_bar=daily_bar,
+        weekly_bar=weekly_bar,
+        atr_value=effective_atr,
+    )
+
+# 层 2: calculate_with_detailed_report()
+def calculate_with_detailed_report(
+    self,
+    current_price: float,
+    bb_data=None, sma_data=None, orderbook_anomalies=None,
+    bars_data=None, atr_value=None,
+    bars_data_4h=None, bars_data_1d=None,
+    daily_bar=None, weekly_bar=None,
+    **kwargs,                    # 吸收旧调用方传的 pivot_data
+) -> Dict[str, Any]:
+    result = self.calculate(
+        current_price=current_price, bb_data=bb_data, sma_data=sma_data,
+        orderbook_anomalies=orderbook_anomalies, bars_data=bars_data, atr_value=atr_value,
+        bars_data_4h=bars_data_4h, bars_data_1d=bars_data_1d,
+        daily_bar=daily_bar, weekly_bar=weekly_bar,
+    )
+    # ... 生成详细报告 ...
+
+# 层 3: _collect_candidates() — 已在 R3 Section 3.10 定义
+```
+
+**向后兼容策略:**
+- `**kwargs` 吸收旧调用方传入的 `pivot_data=xxx` — 不报错，只是忽略
+- 旧的 `_collect_candidates()` 中 L866-893 的 `if pivot_data:` 代码段**需删除**
+- `multi_agent_analyzer.py` L2447-2453 当前不传 `pivot_data`，**不受影响**
+
+**需同步删除的旧代码** (`sr_zone_calculator.py` L866-893):
+
+```python
+# ===== 删除以下代码段 =====
+# Pivot Points (STRUCTURAL type)
+if pivot_data:
+    for key, price in pivot_data.items():
+        # ... 旧版 Pivot 处理 ...
+```
+
+此功能由 `sr_pivot_calculator.calculate(daily_bar, weekly_bar, current_price)` 替代 (Section 3.8)。
+
+### 6.6 on_timer() 调用链全貌
 
 ```python
 # deepseek_strategy.py on_timer() 调用链 (v4.0):
@@ -1044,7 +1291,8 @@ on_timer()
   ├─ [数据采集]
   │   ├─ indicator_manager.get_kline_data(96)     → sr_bars_15m
   │   ├─ mtf_manager.trend_manager.recent_bars    → sr_bars_1d + daily_bar + weekly_bar
-  │   └─ mtf_manager.decision_manager.recent_bars → sr_bars_4h
+  │   ├─ mtf_manager.decision_manager.recent_bars → sr_bars_4h
+  │   └─ _cached_atr_value = _calculate_atr_from_bars(sr_bars_15m)  ← R4 新增
   │
   ├─ [AI 分析]
   │   └─ multi_agent.analyze(
@@ -1065,7 +1313,7 @@ on_timer()
   │                   │    ├─ pivot_calculator.calculate(daily, weekly) → PROJECTED candidates
   │                   │    ├─ volume_profile.calculate(15m) → STRUCTURAL candidates
   │                   │    ├─ _bb_candidates() → TECHNICAL candidates
-  │                   │    ├─ _sma_candidates() → TECHNICAL candidates
+  │                   │    ├─ _sma_candidates("SMA_200_15M") → TECHNICAL candidates  ← R4: 加后缀
   │                   │    ├─ _orderwall_candidates() → ORDER_FLOW candidates
   │                   │    └─ _round_number_candidates() → PSYCHOLOGICAL candidates
   │                   └─ _cluster_to_zones() → _create_zone() with v4.0 聚合规则
@@ -1082,15 +1330,20 @@ on_timer()
   ├─ [OCO 清理]
   │   └─ _cleanup_oco_orphans()
   │
-  ├─ [Trailing Stop]
-  │   └─ _update_trailing_stops()  (保持不变, 基于 bar 的快速跟踪)
+  ├─ [S/R 动态 SL/TP]  ← 路径 B (维护 SL/TP) — R4: 移到 trailing 之前 (修复 G11)
+  │   └─ _reevaluate_sltp_for_existing_position()  ← 替代 _dynamic_sltp_update()
+  │       └─ calculate_sr_based_sltp() → 写入 trailing_stop_state
   │
-  └─ [S/R 动态 SL/TP]  ← 路径 B (维护 SL/TP)
-      └─ _reevaluate_sltp_for_existing_position()  ← 替代 _dynamic_sltp_update()
-          └─ calculate_sr_based_sltp() (同路径 A 的计算函数)
+  └─ [Trailing Stop]  ← R4: 移到最后，读取 _reevaluate 写入的 SL 值
+      └─ _update_trailing_stops()
+          └─ 如果本周期 _reevaluate 已更新 SL → 与 trailing SL 比较，取有利值
 ```
 
-### 6.4 向后兼容: `bars_data` 参数类型分派
+> **R4 修改 (G11)**: `_reevaluate_sltp` 移到 `_update_trailing_stops` 之前。
+> 原因: 避免同一周期两次 cancel+recreate SL 订单。`_reevaluate` 先基于 S/R zones 计算新 SL/TP
+> 并写入 `trailing_stop_state`，`_update_trailing_stops` 再基于价格高点微调，两者只产生一次订单操作。
+
+### 6.7 向后兼容: `bars_data` 参数类型分派
 
 **`sr_zone_calculator.calculate()` 入口增加兼容逻辑:**
 
@@ -1205,7 +1458,7 @@ sr_zones:
 
 # SL/TP 统一配置
 trading_logic:
-  sltp_method: "sr_based"               # v4.0: "sr_based" 或 "legacy"
+  sltp_method: "legacy"                  # v4.0: "legacy" (默认) 或 "sr_based" — R4 G10: 默认 legacy，显式启用
   atr_buffer_multiplier: 0.5
   min_rr_ratio: 1.5
   min_sl_distance_pct: 0.01
@@ -1231,7 +1484,7 @@ ConfigManager.get('sr_zones') → main_live.py L192 (sr_zones_config=...)
 ```python
 # ===== 修改 1: main_live.py 加载 trading_logic 新字段 =====
 # 在 L192 附近增加:
-sltp_method=config_manager.get('trading_logic', 'sltp_method', default='sr_based'),
+sltp_method=config_manager.get('trading_logic', 'sltp_method', default='legacy'),
 atr_buffer_multiplier=config_manager.get('trading_logic', 'atr_buffer_multiplier', default=0.5),
 dynamic_sltp_update=config_manager.get('trading_logic', 'dynamic_sltp_update', default=True),
 dynamic_update_threshold_pct=config_manager.get('trading_logic', 'dynamic_update_threshold_pct', default=0.002),
@@ -1242,7 +1495,7 @@ class DeepSeekAIStrategyConfig:
     # ... 现有字段 ...
 
     # v4.0: SL/TP method
-    sltp_method: str = "sr_based"
+    sltp_method: str = "legacy"    # R4 G10: 默认 legacy，部署后通过 YAML 显式切到 sr_based
     atr_buffer_multiplier: float = 0.5
     dynamic_sltp_update: bool = True
     dynamic_update_threshold_pct: float = 0.002
@@ -1277,8 +1530,10 @@ ConfigManager.get('trading_logic', 'sltp_method')
 | `trend_manager` 未初始化 | 跳过日线 swing 和 Weekly Pivot | `if trend_mgr and len(trend_mgr.recent_bars) >= 5:` 检查 |
 | `decision_manager` 未初始化 | 跳过 4H swing | 同上 |
 | `bars_data` 传入是 `List` (旧调用) | 当作 15M bars | `bars_data_15m = bars_data` (6.4 节) |
-| `sltp_method: "legacy"` | 使用旧版 `calculate_technical_sltp()` | 路径 A 中 `if self.sltp_method == 'sr_based':` 分支 |
+| `sltp_method: "legacy"` (默认) | 使用旧版 `calculate_technical_sltp()` | 路径 A 中 `if self.sltp_method == 'sr_based':` 分支 |
 | `dynamic_sltp_update: false` | 使用旧版 `_dynamic_sltp_update()` | on_timer() 中 `if self.dynamic_sltp_update_enabled:` 分支 |
+| 旧调用方传入 `pivot_data` | 被 `**kwargs` 吸收，不报错 | `calculate()` 和 `calculate_with_detailed_report()` 的 `**kwargs` |
+| `_pending_reduce_sltp` 超时 | 60 秒后自动清理 | `on_position_changed()` 检查 `elapsed > 60` |
 
 ---
 
@@ -1286,31 +1541,46 @@ ConfigManager.get('trading_logic', 'sltp_method')
 
 | 阶段 | 步骤 | 内容 | 影响范围 |
 |------|------|------|---------|
-| **A: 订单安全修复** | A1 | `on_order_expired()` / `on_order_rejected()` 增加 `_handle_orphan_order` | `deepseek_strategy.py` |
+| **A: 订单安全修复** | A1 | `on_order_expired()` / `on_order_rejected()` / `on_order_canceled()` 增加 `_handle_orphan_order` | `deepseek_strategy.py` |
 | | A2 | `on_position_opened()` 增加 `_validate_sl_against_current_price` | `deepseek_strategy.py` |
-| | A3 | `_reduce_position()` 设 `_pending_reduce_sltp` + `on_position_changed()` 重建 SL/TP | `deepseek_strategy.py` |
-| **B: 数据类型** | B1 | `SRSourceType` 增加 `PROJECTED` / `PSYCHOLOGICAL` | `sr_zone_calculator.py` |
+| | A3 | `_reduce_position()` 设 `_pending_reduce_sltp` + `on_position_changed()` 重建 SL/TP (含超时+关联检查) | `deepseek_strategy.py` |
+| | A4 | 实现 `_resubmit_sltp_if_needed()` + `_clear_position_state()` | `deepseek_strategy.py` |
+| | A5 | 修复 `_dynamic_sltp_update()` L4427: `"trailing_active"` → `"activated"` (现有 bug) | `deepseek_strategy.py` |
+| **B: 数据类型 + 现有候选 timeframe** | B1 | `SRSourceType` 增加 `PROJECTED` / `PSYCHOLOGICAL` | `sr_zone_calculator.py` |
 | | B2 | `SRCandidate` 增加 `timeframe` 字段 | `sr_zone_calculator.py` |
+| | B3 | **所有现有候选生成器**添加 `timeframe` (⚠️ 必须与 B2 原子部署) | `sr_zone_calculator.py` |
+| | B4 | `type_priority` 字典添加 `PROJECTED: 2` + `PSYCHOLOGICAL: 0` | `sr_zone_calculator.py` |
+| | B5 | SMA_200 source 标签改为 `"SMA_200_15M"` | `sr_zone_calculator.py` |
+| **G: 配置** (⚠️ R4 提前到 B 之后) | G1 | `configs/base.yaml` 添加 v4.0 配置 (`sltp_method: "legacy"` 默认) | 修改 |
+| | G2 | `main_live.py` 加载 trading_logic 新字段 | 修改 |
+| | G3 | `DeepSeekAIStrategyConfig` 增加新字段 | `deepseek_strategy.py` |
+| | G4 | `__init__` 添加 `_cached_atr_value = 0.0` + `_pending_reduce_sltp = None` | `deepseek_strategy.py` |
 | **C: 模块拆分** | C1 | 创建 `sr_swing_detector.py` 提取 swing 检测逻辑 | 纯重构 |
 | | C2 | 创建 `sr_volume_profile.py` (Range Uniform Distribution) | 新文件 |
 | | C3 | 创建 `sr_pivot_calculator.py` (Daily + Weekly) | 新文件 |
 | | C4 | 创建 `sr_sltp_calculator.py` (`calculate_sr_based_sltp`) | 新文件 |
-| **D: S/R v4.0** | D1 | `_collect_candidates()` 集成新来源 + per-layer try/except | 修改 |
+| **D: S/R v4.0** | D1 | `_collect_candidates()` 集成新来源 + per-layer try/except + 删除旧 `pivot_data` 代码段 | 修改 |
 | | D2 | `_create_zone()` 增加同源封顶 + 多源奖励 + 总权重上限 | 修改 |
 | | D3 | `_evaluate_strength_v4()` 增加 PROJECTED 封顶 | 修改 |
-| | D4 | `calculate_with_detailed_report()` 增加新参数 + 向后兼容 | 修改 |
-| | D5 | AI 报告模板 `generate_ai_detailed_report()` 增加 PROJECTED 标注 | 修改 |
-| **E: 数据流** | E1 | `deepseek_strategy.on_timer()` 提取 MTF bars 传入 analyze | 修改 |
+| | D4 | `calculate()` + `calculate_with_detailed_report()` 迁移签名 (移除 pivot_data, 加 **kwargs) | 修改 |
+| | D5 | AI 报告模板 `generate_ai_detailed_report()` 增加 PROJECTED/CONFIRMED 标注 | 修改 |
+| **E: 数据流** | E1 | `deepseek_strategy.on_timer()` 提取 MTF bars + 更新 `_cached_atr_value` | 修改 |
 | | E2 | `analyze()` + `_calculate_sr_zones()` 增加新参数 | `multi_agent_analyzer.py` |
 | **F: SL/TP 闭环** | F1 | `_validate_sltp_for_entry()` 集成 `calculate_sr_based_sltp()` 三级回退 | `deepseek_strategy.py` |
 | | F2 | 新增 `_reevaluate_sltp_for_existing_position()` 替代 `_dynamic_sltp_update()` | `deepseek_strategy.py` |
-| | F3 | on_timer() 中替换调用点 | `deepseek_strategy.py` |
-| **G: 配置** | G1 | `configs/base.yaml` 添加 v4.0 配置 | 修改 |
-| | G2 | `main_live.py` 加载 trading_logic 新字段 | 修改 |
-| | G3 | `DeepSeekAIStrategyConfig` 增加新字段 | `deepseek_strategy.py` |
+| | F3 | on_timer() 中替换调用点 (reevaluate 在 trailing 之前) | `deepseek_strategy.py` |
+| **H: 灰度发布** (R4 新增) | H1 | 部署代码，`sltp_method: "legacy"` (默认)，验证无回退 | 运维 |
+| | H2 | `development.yaml`: `sltp_method: "sr_based"`，观察 1-2 天 | 开发环境 |
+| | H3 | `production.yaml`: `sltp_method: "sr_based"`，正式启用 | 生产环境 |
 
-**建议实施顺序: A → B → C → D → E → F → G**
-(先修 Bug, 再改类型, 再拆模块, 再加功能, 再接数据, 再闭环 SL/TP, 最后配置)
+**R4 修正实施顺序: A → B → G → C → D → E → F → H**
+
+> **R3→R4 顺序变更说明 (修复 G3):**
+> - **G 提前到 C 之前** — Phase F (SL/TP 闭环) 依赖 `self.sltp_method`, `self.atr_buffer_multiplier`,
+>   `self.dynamic_sltp_update_enabled`, `self.dynamic_update_threshold_pct` 等实例变量，
+>   这些变量只有 Phase G (配置) 完成后才存在。将 G 提前避免 F 阶段的 `AttributeError`。
+> - **H 新增** — 灰度发布阶段，确保安全上线。默认 `"legacy"` 意味着部署新代码不会自动启用新逻辑。
+> - **B 扩展** — B3 要求所有现有候选生成器同时添加 `timeframe`，确保同源封顶不会误伤现有候选。
 
 ---
 
@@ -1364,7 +1634,29 @@ python3 scripts/backtest_sr_quality.py --symbol BTCUSDT --days 30
 
 ---
 
-## 十二、学术参考
+## 十二、R4 GAP 修复汇总
+
+**R3 评审发现 13 个 GAP (4 个 P0 + 6 个 P1 + 3 个 P2/LOW)，R4 全部修复。**
+
+| GAP | 优先级 | 问题 | R4 修复位置 | 状态 |
+|-----|--------|------|------------|------|
+| G1 | P0 | `_cached_atr_value` 幽灵变量 — 从未定义初始化和更新 | Section 6.2: 初始化 + on_timer 更新逻辑 | ✅ |
+| G2 | P0 | `pivot_data` 删除未同步 `calculate()` 中间层 | Section 6.5: 三层签名同步迁移 + `**kwargs` 兼容 | ✅ |
+| G3 | P0 | 实施顺序 F 依赖 G — A→B→C→D→E→F→G 错误 | Section 十: 修正为 A→B→**G**→C→D→E→F→H | ✅ |
+| G4 | P0 | `"trailing_active"` 字段名错误 → 应为 `"activated"` | Section 4.4 + 全文替换 | ✅ |
+| G5 | P1 | `_resubmit_sltp_if_needed()` + `_clear_position_state()` 未定义 | Section 5.1: 完整实现代码 | ✅ |
+| G6 | P1 | Phase B+D 必须原子: 所有候选生成器必须同时设 `timeframe` | Section 3.3: 注意事项 + B3 步骤 | ✅ |
+| G7 | P1 | `type_priority` 字典缺 PROJECTED/PSYCHOLOGICAL | Section 3.5: 更新后的 type_priority (5 种类型) | ✅ |
+| G8 | P1 | `_pending_reduce_sltp` 无超时 + 无事件关联 | Section 5.2: 60s 超时 + 5% 数量容差检查 | ✅ |
+| G9 | P1 | `_handle_orphan_order` 需覆盖 `on_order_canceled` | Section 5.1: 注释中明确列出三个回调 | ✅ |
+| G10 | P1 | `sltp_method` 默认值应为 `"legacy"` | Section 8.1 + 8.2: 全部改为 `"legacy"` 默认 | ✅ |
+| G11 | P2 | trailing + reevaluate 执行顺序 → 避免双重 cancel+recreate | Section 6.6: reevaluate 移到 trailing 之前 | ✅ |
+| G12 | P2 | `_pending_sltp` 与 `_pending_reduce_sltp` 互斥断言 | Section 5.2: `assert not self._pending_sltp` | ✅ |
+| G13 | LOW | SMA_200 语义标签加 `"_15M"` 后缀 | Section 3.4 + 6.6 调用链 | ✅ |
+
+---
+
+## 十三、学术参考
 
 | 编号 | 论文/来源 | 贡献 | 适用性说明 |
 |------|----------|------|-----------|
