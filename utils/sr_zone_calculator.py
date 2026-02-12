@@ -177,6 +177,11 @@ class SRZoneCalculator:
         touch_threshold_atr: float = 0.3,  # 触碰判定距离 = ATR × threshold
         optimal_touches: Tuple[int, ...] = (2, 3),  # 最优触碰次数
         decay_after_touches: int = 4,   # 超过此次数开始衰减
+        # v4.0: Aggregation rules (from configs/base.yaml: sr_zones.aggregation.*)
+        same_data_weight_cap: float = 2.5,   # 同源封顶
+        max_zone_weight: float = 6.0,        # Zone 总权重上限
+        confluence_bonus_2: float = 0.2,     # 2 种来源类型交汇奖励
+        confluence_bonus_3: float = 0.5,     # 3+ 种来源类型交汇奖励
         logger: logging.Logger = None,
     ):
         """
@@ -240,9 +245,11 @@ class SRZoneCalculator:
         self.optimal_touches = optimal_touches
         self.decay_after_touches = decay_after_touches
 
-        # v4.0: Aggregation rules (same-source cap, multi-source bonus, total weight cap)
-        self._same_data_weight_cap = 2.5
-        self._max_zone_weight = 6.0
+        # v4.0: Aggregation rules (from configs/base.yaml: sr_zones.aggregation.*)
+        self._same_data_weight_cap = same_data_weight_cap
+        self._max_zone_weight = max_zone_weight
+        self._confluence_bonus_2 = confluence_bonus_2
+        self._confluence_bonus_3 = confluence_bonus_3
 
         self.logger = logger or logging.getLogger(__name__)
 
@@ -1104,12 +1111,12 @@ class SRZoneCalculator:
             )
         total_weight = sum(weight_by_timeframe.values())
 
-        # Step 2: Multi-source independence bonus
+        # Step 2: Multi-source independence bonus (from config)
         unique_source_types = len(set(c.source_type for c in cluster))
         if unique_source_types >= 3:
-            total_weight += 0.5
+            total_weight += getattr(self, '_confluence_bonus_3', 0.5)
         elif unique_source_types >= 2:
-            total_weight += 0.2
+            total_weight += getattr(self, '_confluence_bonus_2', 0.2)
 
         # Step 3: Total weight cap
         max_zone_weight = getattr(self, '_max_zone_weight', 6.0)
@@ -1442,10 +1449,16 @@ class SRZoneCalculator:
             lines.append("RESISTANCE ZONES (sorted by distance):")
             for i, zone in enumerate(resistance_zones[:4], 1):  # 最多 4 个
                 marker = ">>>" if zone == nearest_resistance else "   "
-                lines.append(f"{marker}[R{i}] ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% from current)")
-                lines.append(f"      Level: {zone.level} | Strength: {zone.strength} (weight: {zone.total_weight})")
-                lines.append(f"      Sources: {', '.join(zone.sources)}")
-                lines.append(f"      Type: {zone.source_type}")
+                # v4.0 (§3.9): PROJECTED/CONFIRMED annotation
+                proj_tag = ""
+                if zone.source_type == SRSourceType.PROJECTED:
+                    proj_tag = " ⚠️ PROJECTED"
+                elif zone.source_type in (SRSourceType.STRUCTURAL, SRSourceType.ORDER_FLOW):
+                    proj_tag = " ✅ CONFIRMED"
+                lines.append(f"{marker}[R{i}] ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% from current) [{zone.level}|{zone.strength}]{proj_tag}")
+                lines.append(f"      Weight: {zone.total_weight} | Sources: {', '.join(zone.sources)}")
+                if zone.source_type == SRSourceType.PROJECTED:
+                    lines.append(f"      ⚠️ Mathematical projection, NO historical trade confirmation")
                 # v3.0: Swing and touch info
                 if zone.has_swing_point:
                     lines.append(f"      Swing Point: YES (structurally validated)")
@@ -1466,10 +1479,16 @@ class SRZoneCalculator:
             lines.append("SUPPORT ZONES (sorted by distance):")
             for i, zone in enumerate(support_zones[:4], 1):
                 marker = ">>>" if zone == nearest_support else "   "
-                lines.append(f"{marker}[S{i}] ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% from current)")
-                lines.append(f"      Level: {zone.level} | Strength: {zone.strength} (weight: {zone.total_weight})")
-                lines.append(f"      Sources: {', '.join(zone.sources)}")
-                lines.append(f"      Type: {zone.source_type}")
+                # v4.0 (§3.9): PROJECTED/CONFIRMED annotation
+                proj_tag = ""
+                if zone.source_type == SRSourceType.PROJECTED:
+                    proj_tag = " ⚠️ PROJECTED"
+                elif zone.source_type in (SRSourceType.STRUCTURAL, SRSourceType.ORDER_FLOW):
+                    proj_tag = " ✅ CONFIRMED"
+                lines.append(f"{marker}[S{i}] ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% from current) [{zone.level}|{zone.strength}]{proj_tag}")
+                lines.append(f"      Weight: {zone.total_weight} | Sources: {', '.join(zone.sources)}")
+                if zone.source_type == SRSourceType.PROJECTED:
+                    lines.append(f"      ⚠️ Mathematical projection, NO historical trade confirmation")
                 # v3.0: Swing and touch info
                 if zone.has_swing_point:
                     lines.append(f"      Swing Point: YES (structurally validated)")
@@ -1549,8 +1568,9 @@ class SRZoneCalculator:
 
         lines.append("")
         lines.append("=" * 70)
-        lines.append("NOTE: STRUCTURAL data (Swing Points) reflects price action history.")
-        lines.append("ORDER_FLOW reflects real-time order book. TECHNICAL reflects indicators.")
+        lines.append("NOTE: ✅ CONFIRMED = STRUCTURAL (Swing Points) or ORDER_FLOW (real-time order book).")
+        lines.append("⚠️ PROJECTED = mathematical projection (Pivot Points), NO historical confirmation.")
+        lines.append("TECHNICAL = SMA/BB indicators. PSYCHOLOGICAL = round number levels.")
         lines.append("Zones with multiple sources and 2-3 touches are the strongest.")
         lines.append("=" * 70)
 

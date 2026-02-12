@@ -257,6 +257,7 @@ class MultiAgentAnalyzer:
         cluster_cfg = sr_cfg.get('clustering', {})
         scoring_cfg = sr_cfg.get('scoring', {})
         hard_ctrl_cfg = sr_cfg.get('hard_control', {})
+        aggr_cfg = sr_cfg.get('aggregation', {})
 
         self.sr_calculator = SRZoneCalculator(
             cluster_pct=cluster_cfg.get('cluster_pct', 0.5),
@@ -276,6 +277,11 @@ class MultiAgentAnalyzer:
             touch_threshold_atr=scoring_cfg.get('touch_threshold_atr', 0.3),
             optimal_touches=tuple(scoring_cfg.get('optimal_touches', [2, 3])),
             decay_after_touches=scoring_cfg.get('decay_after_touches', 4),
+            # v4.0: Aggregation rules (from base.yaml: sr_zones.aggregation.*)
+            same_data_weight_cap=aggr_cfg.get('same_data_weight_cap', 2.5),
+            max_zone_weight=aggr_cfg.get('max_zone_weight', 6.0),
+            confluence_bonus_2=aggr_cfg.get('confluence_bonus_2_sources', 0.2),
+            confluence_bonus_3=aggr_cfg.get('confluence_bonus_3_sources', 0.5),
             logger=self.logger,
         )
 

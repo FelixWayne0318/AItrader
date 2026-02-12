@@ -3774,7 +3774,7 @@ class DeepSeekAIStrategy(Strategy):
                         side=side.name,
                         sr_zones=self.latest_sr_zones_data,
                         atr_value=self._cached_atr_value,
-                        min_rr_ratio=1.5,
+                        min_rr_ratio=self.min_rr_ratio,
                         atr_buffer_multiplier=self.atr_buffer_multiplier,
                     )
                     if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
@@ -4631,7 +4631,7 @@ class DeepSeekAIStrategy(Strategy):
                 side=side_name,
                 sr_zones=self.latest_sr_zones_data,
                 atr_value=self._cached_atr_value,
-                min_rr_ratio=1.5,
+                min_rr_ratio=self.min_rr_ratio,
                 atr_buffer_multiplier=self.atr_buffer_multiplier,
             )
 
