@@ -1978,17 +1978,18 @@ class DeepSeekAIStrategy(Strategy):
             if self.enable_oco:
                 self._cleanup_oco_orphans()
             
-            # Trailing stop maintenance: check and update trailing stops
-            if self.enable_trailing_stop:
-                self._update_trailing_stops(price_data['price'])
-
-            # v4.12: Dynamic SL/TP update based on current S/R zones
-            # v4.0: Route to S/R-based reevaluation or legacy dynamic update
+            # v4.0 G11: S/R reevaluation BEFORE trailing stop
+            # Reason: avoid 2× cancel+recreate in same cycle.
+            # _reevaluate writes new SL/TP → trailing reads and adjusts if needed.
             if self.enable_auto_sl_tp and self.dynamic_sltp_update_enabled:
                 if self.sltp_method == "sr_based":
                     self._reevaluate_sltp_for_existing_position()
                 else:
                     self._dynamic_sltp_update()
+
+            # Trailing stop maintenance: check and update trailing stops (AFTER reevaluate)
+            if self.enable_trailing_stop:
+                self._update_trailing_stops(price_data['price'])
 
         finally:
             # 🔒 Fix I38: Always release lock when on_timer exits
@@ -4652,6 +4653,14 @@ class DeepSeekAIStrategy(Strategy):
                     final_sl = min(final_sl, trailing_sl)
 
             final_tp = new_tp  # TP can move both ways (R/R already validated)
+
+            # Step 5: Validate SL won't immediately trigger (prevent Binance -2021)
+            if position_side == 'long' and final_sl >= current_price:
+                self.log.debug("📊 S/R reevaluation: SL >= current price for LONG, skipping")
+                return
+            if position_side == 'short' and final_sl <= current_price:
+                self.log.debug("📊 S/R reevaluation: SL <= current price for SHORT, skipping")
+                return
 
             # Check if update is significant enough
             threshold = self.dynamic_update_threshold_pct

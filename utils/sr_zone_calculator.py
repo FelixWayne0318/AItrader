@@ -589,7 +589,6 @@ class SRZoneCalculator:
         bb_data: Optional[Dict[str, float]] = None,
         sma_data: Optional[Dict[str, float]] = None,
         orderbook_anomalies: Optional[Dict] = None,
-        pivot_data: Optional[Dict[str, float]] = None,
         # v3.0: New parameters (backward compatible)
         bars_data: Optional[List[Dict[str, Any]]] = None,
         atr_value: Optional[float] = None,
@@ -598,7 +597,7 @@ class SRZoneCalculator:
         bars_data_1d: Optional[List[Dict[str, Any]]] = None,
         daily_bar: Optional[Dict[str, Any]] = None,
         weekly_bar: Optional[Dict[str, Any]] = None,
-        **kwargs,
+        **kwargs,  # v4.0: absorbs old pivot_data from legacy callers
     ) -> Dict[str, Any]:
         """
         计算 S/R Zones
@@ -613,8 +612,6 @@ class SRZoneCalculator:
             SMA 数据 {'sma_50': float, 'sma_200': float}
         orderbook_anomalies : Dict, optional
             订单簿异常数据 {'bid_anomalies': [...], 'ask_anomalies': [...]}
-        pivot_data : Dict, optional
-            Pivot Points {'r1': float, 's1': float, ...}
         bars_data : List[Dict], optional
             v3.0: OHLC bar data for swing detection and touch count
         atr_value : float, optional
@@ -656,7 +653,7 @@ class SRZoneCalculator:
 
         # Step 1: 收集所有候选 (v3.0: Swing Points, v4.0: MTF + Pivots + VP)
         candidates = self._collect_candidates(
-            current_price, bb_data, sma_data, orderbook_anomalies, pivot_data,
+            current_price, bb_data, sma_data, orderbook_anomalies,
             bars_data=bars_data,
             bars_data_4h=bars_data_4h,
             bars_data_1d=bars_data_1d,
@@ -760,7 +757,6 @@ class SRZoneCalculator:
         bb_data: Optional[Dict],
         sma_data: Optional[Dict],
         orderbook_anomalies: Optional[Dict],
-        pivot_data: Optional[Dict],
         # v3.0: New parameter
         bars_data: Optional[List[Dict[str, Any]]] = None,
         # v4.0: MTF bars and additional data sources
@@ -775,38 +771,70 @@ class SRZoneCalculator:
         v3.0: Swing Points
         v4.0: MTF swing detection (1D, 4H, 15M), Pivot Points, Volume Profile
               Each source is wrapped in try/except for per-layer error isolation.
+              pivot_data parameter removed — Pivot now calculated by sr_pivot_calculator.
         """
         candidates = []
 
         # ===== 检测层: MTF Swing Points (per-layer error isolation) =====
+        # v4.0: Uses sr_swing_detector with Spitsin (2025) volume weighting
         if self.swing_detection_enabled:
+            try:
+                from utils.sr_swing_detector import detect_swing_points
+            except ImportError:
+                detect_swing_points = None
+                self.logger.warning("sr_swing_detector not available, using legacy swing detection")
+
             # v4.0: 1D Swing (highest weight, MAJOR level)
             if bars_data_1d:
                 try:
-                    for c in self._detect_swing_points(bars_data_1d, current_price):
-                        c.weight = 2.0 * (c.extra.get('age_factor', 1.0))
-                        c.level = SRLevel.MAJOR
-                        c.timeframe = "1d"
-                        candidates.append(c)
+                    if detect_swing_points:
+                        candidates.extend(detect_swing_points(
+                            bars_data_1d, current_price, timeframe="1d",
+                            base_weight=2.0, level=SRLevel.MAJOR,
+                            left_bars=self.swing_left_bars, right_bars=self.swing_right_bars,
+                            max_age=self.swing_max_age, volume_weighting=True,
+                        ))
+                    else:
+                        for c in self._detect_swing_points(bars_data_1d, current_price):
+                            c.weight = 2.0 * (c.extra.get('age_factor', 1.0))
+                            c.level = SRLevel.MAJOR
+                            c.timeframe = "1d"
+                            candidates.append(c)
                 except Exception as e:
                     self.logger.warning(f"1D Swing detection failed: {e}")
 
             # v4.0: 4H Swing (intermediate weight)
             if bars_data_4h:
                 try:
-                    for c in self._detect_swing_points(bars_data_4h, current_price):
-                        c.weight = 1.5 * (c.extra.get('age_factor', 1.0))
-                        c.level = SRLevel.INTERMEDIATE
-                        c.timeframe = "4h"
-                        candidates.append(c)
+                    if detect_swing_points:
+                        candidates.extend(detect_swing_points(
+                            bars_data_4h, current_price, timeframe="4h",
+                            base_weight=1.5, level=SRLevel.INTERMEDIATE,
+                            left_bars=self.swing_left_bars, right_bars=self.swing_right_bars,
+                            max_age=self.swing_max_age, volume_weighting=True,
+                        ))
+                    else:
+                        for c in self._detect_swing_points(bars_data_4h, current_price):
+                            c.weight = 1.5 * (c.extra.get('age_factor', 1.0))
+                            c.level = SRLevel.INTERMEDIATE
+                            c.timeframe = "4h"
+                            candidates.append(c)
                 except Exception as e:
                     self.logger.warning(f"4H Swing detection failed: {e}")
 
-            # 15M Swing (existing behavior, with timeframe tag)
+            # 15M Swing (volume-weighted if available)
             if bars_data:
                 try:
-                    swing_candidates = self._detect_swing_points(bars_data, current_price)
-                    candidates.extend(swing_candidates)
+                    if detect_swing_points:
+                        candidates.extend(detect_swing_points(
+                            bars_data, current_price, timeframe="15m",
+                            base_weight=0.8, level=SRLevel.MINOR,
+                            left_bars=self.swing_left_bars, right_bars=self.swing_right_bars,
+                            max_age=self.swing_max_age, volume_weighting=True,
+                        ))
+                    else:
+                        swing_candidates = self._detect_swing_points(bars_data, current_price)
+                        candidates.extend(swing_candidates)
                 except Exception as e:
                     self.logger.warning(f"15M Swing detection failed: {e}")
 
@@ -828,172 +856,164 @@ class SRZoneCalculator:
             except Exception as e:
                 self.logger.warning(f"Volume Profile calculation failed: {e}")
 
+        # ===== 现有来源: BB, SMA, OrderWall, Round# (per-layer error isolation) =====
+
         # Bollinger Bands (15M = MINOR level)
-        if bb_data:
-            bb_upper = bb_data.get('upper')
-            bb_lower = bb_data.get('lower')
+        try:
+            if bb_data:
+                bb_upper = bb_data.get('upper')
+                bb_lower = bb_data.get('lower')
 
-            if bb_upper and bb_upper > current_price:
-                candidates.append(SRCandidate(
-                    price=bb_upper,
-                    source='BB_Upper',
-                    weight=self.WEIGHTS['BB_Upper'],
-                    side='resistance',
-                    level=SRLevel.MINOR,
-                    source_type=SRSourceType.TECHNICAL,
-                    timeframe="15m",  # v4.0 (B3)
-                ))
+                if bb_upper and bb_upper > current_price:
+                    candidates.append(SRCandidate(
+                        price=bb_upper,
+                        source='BB_Upper',
+                        weight=self.WEIGHTS['BB_Upper'],
+                        side='resistance',
+                        level=SRLevel.MINOR,
+                        source_type=SRSourceType.TECHNICAL,
+                        timeframe="15m",  # v4.0 (B3)
+                    ))
 
-            if bb_lower and bb_lower < current_price:
-                candidates.append(SRCandidate(
-                    price=bb_lower,
-                    source='BB_Lower',
-                    weight=self.WEIGHTS['BB_Lower'],
-                    side='support',
-                    level=SRLevel.MINOR,
-                    source_type=SRSourceType.TECHNICAL,
-                    timeframe="15m",  # v4.0 (B3)
-                ))
+                if bb_lower and bb_lower < current_price:
+                    candidates.append(SRCandidate(
+                        price=bb_lower,
+                        source='BB_Lower',
+                        weight=self.WEIGHTS['BB_Lower'],
+                        side='support',
+                        level=SRLevel.MINOR,
+                        source_type=SRSourceType.TECHNICAL,
+                        timeframe="15m",  # v4.0 (B3)
+                    ))
+        except Exception as e:
+            self.logger.warning(f"BB candidates failed: {e}")
 
         # SMA (SMA_50 = INTERMEDIATE, SMA_200 = MAJOR)
-        if sma_data:
-            sma_50 = sma_data.get('sma_50')
-            sma_200 = sma_data.get('sma_200')
+        try:
+            if sma_data:
+                sma_50 = sma_data.get('sma_50')
+                sma_200 = sma_data.get('sma_200')
 
-            if sma_50 and sma_50 > 0:
-                side = 'support' if sma_50 < current_price else 'resistance'
-                candidates.append(SRCandidate(
-                    price=sma_50,
-                    source='SMA_50',
-                    weight=self.WEIGHTS['SMA_50'],
-                    side=side,
-                    level=SRLevel.INTERMEDIATE,
-                    source_type=SRSourceType.TECHNICAL,
-                    timeframe="15m",  # v4.0 (B3)
-                ))
+                if sma_50 and sma_50 > 0:
+                    side = 'support' if sma_50 < current_price else 'resistance'
+                    candidates.append(SRCandidate(
+                        price=sma_50,
+                        source='SMA_50',
+                        weight=self.WEIGHTS['SMA_50'],
+                        side=side,
+                        level=SRLevel.INTERMEDIATE,
+                        source_type=SRSourceType.TECHNICAL,
+                        timeframe="15m",  # v4.0 (B3)
+                    ))
 
-            if sma_200 and sma_200 > 0:
-                side = 'support' if sma_200 < current_price else 'resistance'
-                candidates.append(SRCandidate(
-                    price=sma_200,
-                    source='SMA_200_15M',  # v4.0 (B5): clarify this is 15M SMA_200 (≈50h, not 200 days)
-                    weight=self.WEIGHTS['SMA_200'],
-                    side=side,
-                    level=SRLevel.MAJOR,
-                    source_type=SRSourceType.TECHNICAL,
-                    timeframe="15m",  # v4.0 (B3)
-                ))
+                if sma_200 and sma_200 > 0:
+                    side = 'support' if sma_200 < current_price else 'resistance'
+                    candidates.append(SRCandidate(
+                        price=sma_200,
+                        source='SMA_200_15M',  # v4.0 (B5): clarify this is 15M SMA_200 (≈50h, not 200 days)
+                        weight=self.WEIGHTS['SMA_200'],
+                        side=side,
+                        level=SRLevel.MAJOR,
+                        source_type=SRSourceType.TECHNICAL,
+                        timeframe="15m",  # v4.0 (B3)
+                    ))
+        except Exception as e:
+            self.logger.warning(f"SMA candidates failed: {e}")
 
         # Order Book Walls (MINOR level, ORDER_FLOW type - 最实时)
         # v2.1: 添加严格过滤条件，避免盘口普通订单被误识别为 S/R
-        if orderbook_anomalies:
-            min_btc = self.ORDER_WALL_THRESHOLDS['min_btc']
-            min_distance_pct = self.ORDER_WALL_THRESHOLDS['min_distance_pct']
+        try:
+            if orderbook_anomalies:
+                min_btc = self.ORDER_WALL_THRESHOLDS['min_btc']
+                min_distance_pct = self.ORDER_WALL_THRESHOLDS['min_distance_pct']
 
-            # Bid walls = Support
-            for wall in orderbook_anomalies.get('bid_anomalies', []):
-                wall_price = wall.get('price', 0)
-                wall_btc = wall.get('volume_btc', 0)
+                # Bid walls = Support
+                for wall in orderbook_anomalies.get('bid_anomalies', []):
+                    wall_price = wall.get('price', 0)
+                    wall_btc = wall.get('volume_btc', 0)
 
-                # v2.1: 过滤条件
-                if wall_price <= 0 or wall_price >= current_price:
-                    continue
+                    # v2.1: 过滤条件
+                    if wall_price <= 0 or wall_price >= current_price:
+                        continue
 
-                # 检查最小 BTC 阈值
-                if wall_btc < min_btc:
-                    self.logger.debug(
-                        f"Skipping bid wall at ${wall_price:.0f}: {wall_btc:.1f} BTC < {min_btc} BTC threshold"
-                    )
-                    continue
+                    # 检查最小 BTC 阈值
+                    if wall_btc < min_btc:
+                        self.logger.debug(
+                            f"Skipping bid wall at ${wall_price:.0f}: {wall_btc:.1f} BTC < {min_btc} BTC threshold"
+                        )
+                        continue
 
-                # 检查最小距离阈值
-                distance_pct = (current_price - wall_price) / current_price * 100
-                if distance_pct < min_distance_pct:
-                    self.logger.debug(
-                        f"Skipping bid wall at ${wall_price:.0f}: {distance_pct:.2f}% < {min_distance_pct}% min distance"
-                    )
-                    continue
+                    # 检查最小距离阈值
+                    distance_pct = (current_price - wall_price) / current_price * 100
+                    if distance_pct < min_distance_pct:
+                        self.logger.debug(
+                            f"Skipping bid wall at ${wall_price:.0f}: {distance_pct:.2f}% < {min_distance_pct}% min distance"
+                        )
+                        continue
 
-                candidates.append(SRCandidate(
-                    price=wall_price,
-                    source=f"Order_Wall_${wall_price:.0f}",
-                    weight=self.WEIGHTS['Order_Wall'],
-                    side='support',
-                    extra={
-                        'size_btc': wall_btc,
-                        'multiplier': wall.get('multiplier', 1),
-                    },
-                    level=SRLevel.MINOR,
-                    source_type=SRSourceType.ORDER_FLOW,
-                    timeframe="realtime",  # v4.0 (B3)
-                ))
+                    candidates.append(SRCandidate(
+                        price=wall_price,
+                        source=f"Order_Wall_${wall_price:.0f}",
+                        weight=self.WEIGHTS['Order_Wall'],
+                        side='support',
+                        extra={
+                            'size_btc': wall_btc,
+                            'multiplier': wall.get('multiplier', 1),
+                        },
+                        level=SRLevel.MINOR,
+                        source_type=SRSourceType.ORDER_FLOW,
+                        timeframe="realtime",  # v4.0 (B3)
+                    ))
 
-            # Ask walls = Resistance
-            for wall in orderbook_anomalies.get('ask_anomalies', []):
-                wall_price = wall.get('price', 0)
-                wall_btc = wall.get('volume_btc', 0)
+                # Ask walls = Resistance
+                for wall in orderbook_anomalies.get('ask_anomalies', []):
+                    wall_price = wall.get('price', 0)
+                    wall_btc = wall.get('volume_btc', 0)
 
-                # v2.1: 过滤条件
-                if wall_price <= 0 or wall_price <= current_price:
-                    continue
+                    # v2.1: 过滤条件
+                    if wall_price <= 0 or wall_price <= current_price:
+                        continue
 
-                # 检查最小 BTC 阈值
-                if wall_btc < min_btc:
-                    self.logger.debug(
-                        f"Skipping ask wall at ${wall_price:.0f}: {wall_btc:.1f} BTC < {min_btc} BTC threshold"
-                    )
-                    continue
+                    # 检查最小 BTC 阈值
+                    if wall_btc < min_btc:
+                        self.logger.debug(
+                            f"Skipping ask wall at ${wall_price:.0f}: {wall_btc:.1f} BTC < {min_btc} BTC threshold"
+                        )
+                        continue
 
-                # 检查最小距离阈值
-                distance_pct = (wall_price - current_price) / current_price * 100
-                if distance_pct < min_distance_pct:
-                    self.logger.debug(
-                        f"Skipping ask wall at ${wall_price:.0f}: {distance_pct:.2f}% < {min_distance_pct}% min distance"
-                    )
-                    continue
+                    # 检查最小距离阈值
+                    distance_pct = (wall_price - current_price) / current_price * 100
+                    if distance_pct < min_distance_pct:
+                        self.logger.debug(
+                            f"Skipping ask wall at ${wall_price:.0f}: {distance_pct:.2f}% < {min_distance_pct}% min distance"
+                        )
+                        continue
 
-                candidates.append(SRCandidate(
-                    price=wall_price,
-                    source=f"Order_Wall_${wall_price:.0f}",
-                    weight=self.WEIGHTS['Order_Wall'],
-                    side='resistance',
-                    extra={
-                        'size_btc': wall_btc,
-                        'multiplier': wall.get('multiplier', 1),
-                    },
-                    level=SRLevel.MINOR,
-                    source_type=SRSourceType.ORDER_FLOW,
-                    timeframe="realtime",  # v4.0 (B3)
-                ))
+                    candidates.append(SRCandidate(
+                        price=wall_price,
+                        source=f"Order_Wall_${wall_price:.0f}",
+                        weight=self.WEIGHTS['Order_Wall'],
+                        side='resistance',
+                        extra={
+                            'size_btc': wall_btc,
+                            'multiplier': wall.get('multiplier', 1),
+                        },
+                        level=SRLevel.MINOR,
+                        source_type=SRSourceType.ORDER_FLOW,
+                        timeframe="realtime",  # v4.0 (B3)
+                    ))
+        except Exception as e:
+            self.logger.warning(f"OrderWall candidates failed: {e}")
 
-        # Pivot Points (PROJECTED type — v4.0: reclassified from STRUCTURAL)
-        if pivot_data:
-            for key, price in pivot_data.items():
-                if price and price > 0:
-                    if 's' in key.lower():  # s1, s2, s3 = support
-                        candidates.append(SRCandidate(
-                            price=price,
-                            source=f"Pivot_{key.upper()}",
-                            weight=self.WEIGHTS['Pivot'],
-                            side='support',
-                            level=SRLevel.INTERMEDIATE,
-                            source_type=SRSourceType.PROJECTED,  # v4.0 (B3)
-                            timeframe="daily_pivot",  # v4.0 (B3)
-                        ))
-                    elif 'r' in key.lower():  # r1, r2, r3 = resistance
-                        candidates.append(SRCandidate(
-                            price=price,
-                            source=f"Pivot_{key.upper()}",
-                            weight=self.WEIGHTS['Pivot'],
-                            side='resistance',
-                            level=SRLevel.INTERMEDIATE,
-                            source_type=SRSourceType.PROJECTED,  # v4.0 (B3)
-                            timeframe="daily_pivot",  # v4.0 (B3)
-                        ))
+        # v4.0: Old pivot_data block removed — Pivots now calculated by sr_pivot_calculator
+        # (called in 投射层 section above with daily_bar + weekly_bar)
 
         # v3.1: Round Number Psychological Levels
-        round_candidates = self._generate_round_number_levels(current_price)
-        candidates.extend(round_candidates)
+        try:
+            round_candidates = self._generate_round_number_levels(current_price)
+            candidates.extend(round_candidates)
+        except Exception as e:
+            self.logger.warning(f"Round number candidates failed: {e}")
 
         return candidates
 
@@ -1542,7 +1562,6 @@ class SRZoneCalculator:
         bb_data: Optional[Dict[str, float]] = None,
         sma_data: Optional[Dict[str, float]] = None,
         orderbook_anomalies: Optional[Dict] = None,
-        pivot_data: Optional[Dict[str, float]] = None,
         # v3.0: New parameters
         bars_data: Optional[List[Dict[str, Any]]] = None,
         atr_value: Optional[float] = None,
@@ -1551,7 +1570,7 @@ class SRZoneCalculator:
         bars_data_1d: Optional[List[Dict[str, Any]]] = None,
         daily_bar: Optional[Dict[str, Any]] = None,
         weekly_bar: Optional[Dict[str, Any]] = None,
-        **kwargs,
+        **kwargs,  # v4.0: absorbs old pivot_data from legacy callers
     ) -> Dict[str, Any]:
         """
         计算 S/R Zones 并生成详细 AI 报告 (v3.0, v4.0 MTF)
@@ -1566,7 +1585,6 @@ class SRZoneCalculator:
             bb_data=bb_data,
             sma_data=sma_data,
             orderbook_anomalies=orderbook_anomalies,
-            pivot_data=pivot_data,
             bars_data=bars_data,
             atr_value=atr_value,
             bars_data_4h=bars_data_4h,
@@ -1594,8 +1612,9 @@ class SRZoneCalculator:
             'bb_data': bb_data,
             'sma_data': sma_data,
             'orderbook_anomalies': orderbook_anomalies,
-            'pivot_data': pivot_data,
             'bars_count': len(bars_data) if bars_data else 0,
+            'bars_count_4h': len(bars_data_4h) if bars_data_4h else 0,
+            'bars_count_1d': len(bars_data_1d) if bars_data_1d else 0,
             'atr_value': atr_value,
         }
 
