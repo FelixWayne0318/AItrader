@@ -31,7 +31,7 @@ trading_logic:
   min_rr_ratio: 1.5               # 最小风险收益比 (R/R < 1.5:1 拒绝 AI SL/TP，回退到技术分析)
 
   # v4.0: SL/TP 方法 ("legacy" = 旧版百分比, "sr_based" = S/R zone 驱动)
-  sltp_method: "legacy"           # R4 G10: 默认 legacy，Phase H 显式切换到 sr_based
+  sltp_method: "sr_based"         # v4.0 activated: S/R zone 驱动 SL/TP
   atr_buffer_multiplier: 0.5      # ATR 缓冲倍数 (SL = S/R zone ± ATR * multiplier)
   dynamic_sltp_update: true       # 每 15 分钟动态更新 SL/TP
   dynamic_update_threshold_pct: 0.002  # 变化超过 0.2% 才更新 (避免频繁修改)
