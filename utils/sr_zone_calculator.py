@@ -182,6 +182,9 @@ class SRZoneCalculator:
         max_zone_weight: float = 6.0,        # Zone 总权重上限
         confluence_bonus_2: float = 0.2,     # 2 种来源类型交汇奖励
         confluence_bonus_3: float = 0.5,     # 3+ 种来源类型交汇奖励
+        # v4.0: Round Number config (from configs/base.yaml: sr_zones.round_number.*)
+        round_number_btc_step: int = 5000,   # BTC 心理关口步长 (Osler 2003: $5k)
+        round_number_count: int = 3,         # 上下各生成 N 个关口
         logger: logging.Logger = None,
     ):
         """
@@ -250,6 +253,10 @@ class SRZoneCalculator:
         self._max_zone_weight = max_zone_weight
         self._confluence_bonus_2 = confluence_bonus_2
         self._confluence_bonus_3 = confluence_bonus_3
+
+        # v4.0: Round Number config (from configs/base.yaml: sr_zones.round_number.*)
+        self._round_number_btc_step = round_number_btc_step
+        self._round_number_count = round_number_count
 
         self.logger = logger or logging.getLogger(__name__)
 
@@ -431,13 +438,14 @@ class SRZoneCalculator:
     def _generate_round_number_levels(
         self,
         current_price: float,
-        count: int = 3,
+        count: int = None,
     ) -> List[SRCandidate]:
         """
         Generate round-number psychological S/R levels near current price.
 
         Round numbers attract limit orders and act as psychological barriers.
-        Reference: Osler (2000) "Support for Resistance" - FRB NY
+        Reference: Osler (2003) "Currency Orders and Exchange Rate Dynamics"
+        - $5k/$10k levels for BTC are significant (Osler 2003)
 
         Parameters
         ----------
@@ -445,6 +453,7 @@ class SRZoneCalculator:
             Current price.
         count : int
             Number of levels above and below to generate.
+            If None, uses self._round_number_count (from config).
 
         Returns
         -------
@@ -455,9 +464,13 @@ class SRZoneCalculator:
         if current_price <= 0:
             return candidates
 
+        if count is None:
+            count = self._round_number_count
+
         # Determine round-number step based on price magnitude
+        # v4.0: BTC step from config (Osler 2003: $5k significant, $1k too fine)
         if current_price >= 10000:
-            step = 1000       # BTC: $71000, $72000, $73000...
+            step = self._round_number_btc_step  # BTC: $95000, $100000, $105000... (default $5k)
         elif current_price >= 1000:
             step = 100        # ETH: $3100, $3200...
         elif current_price >= 100:
@@ -1385,9 +1398,9 @@ class SRZoneCalculator:
             sma_50 = sma_data.get('sma_50')
             sma_200 = sma_data.get('sma_200')
             if sma_50:
-                lines.append(f"  • SMA_50:    ${sma_50:,.2f}")
+                lines.append(f"  • SMA_50 (15M-based, ~12.5h):  ${sma_50:,.2f}")
             if sma_200:
-                lines.append(f"  • SMA_200:   ${sma_200:,.2f}")
+                lines.append(f"  • SMA_200 (15M-based, ~50h):   ${sma_200:,.2f}  ⚠️ NOT daily SMA_200")
         else:
             lines.append("  • SMA: Not available")
 

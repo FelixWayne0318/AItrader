@@ -1829,7 +1829,8 @@ class DeepSeekAIStrategy(Strategy):
                         self.log.warning(f"⚠️ Binance derivatives fetch failed: {e}")
 
                 # v3.0: Get extended bars for S/R Swing Point detection
-                sr_bars_data = self.indicator_manager.get_kline_data(count=120)
+                # v4.0: Increased from 120 (30h) to 200 (50h) for robust swing detection + VP
+                sr_bars_data = self.indicator_manager.get_kline_data(count=200)
 
                 # v4.0 (E1): Update cached ATR value from 15M bars
                 if sr_bars_data and len(sr_bars_data) >= 14:

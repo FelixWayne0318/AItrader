@@ -258,6 +258,7 @@ class MultiAgentAnalyzer:
         scoring_cfg = sr_cfg.get('scoring', {})
         hard_ctrl_cfg = sr_cfg.get('hard_control', {})
         aggr_cfg = sr_cfg.get('aggregation', {})
+        round_cfg = sr_cfg.get('round_number', {})
 
         self.sr_calculator = SRZoneCalculator(
             cluster_pct=cluster_cfg.get('cluster_pct', 0.5),
@@ -282,6 +283,9 @@ class MultiAgentAnalyzer:
             max_zone_weight=aggr_cfg.get('max_zone_weight', 6.0),
             confluence_bonus_2=aggr_cfg.get('confluence_bonus_2_sources', 0.2),
             confluence_bonus_3=aggr_cfg.get('confluence_bonus_3_sources', 0.5),
+            # v4.0: Round Number config (from base.yaml: sr_zones.round_number.*)
+            round_number_btc_step=round_cfg.get('btc_step', 5000),
+            round_number_count=round_cfg.get('count', 3),
             logger=self.logger,
         )
 
