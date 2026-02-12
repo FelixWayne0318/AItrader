@@ -876,69 +876,11 @@ class SRZoneCalculator:
             except Exception as e:
                 self.logger.warning(f"Volume Profile calculation failed: {e}")
 
-        # ===== 现有来源: BB, SMA, OrderWall, Round# (per-layer error isolation) =====
-
-        # Bollinger Bands (15M = MINOR level)
-        try:
-            if bb_data:
-                bb_upper = bb_data.get('upper')
-                bb_lower = bb_data.get('lower')
-
-                if bb_upper and bb_upper > current_price:
-                    candidates.append(SRCandidate(
-                        price=bb_upper,
-                        source='BB_Upper',
-                        weight=self.WEIGHTS['BB_Upper'],
-                        side='resistance',
-                        level=SRLevel.MINOR,
-                        source_type=SRSourceType.TECHNICAL,
-                        timeframe="15m",  # v4.0 (B3)
-                    ))
-
-                if bb_lower and bb_lower < current_price:
-                    candidates.append(SRCandidate(
-                        price=bb_lower,
-                        source='BB_Lower',
-                        weight=self.WEIGHTS['BB_Lower'],
-                        side='support',
-                        level=SRLevel.MINOR,
-                        source_type=SRSourceType.TECHNICAL,
-                        timeframe="15m",  # v4.0 (B3)
-                    ))
-        except Exception as e:
-            self.logger.warning(f"BB candidates failed: {e}")
-
-        # SMA (SMA_50 = INTERMEDIATE, SMA_200 = MAJOR)
-        try:
-            if sma_data:
-                sma_50 = sma_data.get('sma_50')
-                sma_200 = sma_data.get('sma_200')
-
-                if sma_50 and sma_50 > 0:
-                    side = 'support' if sma_50 < current_price else 'resistance'
-                    candidates.append(SRCandidate(
-                        price=sma_50,
-                        source='SMA_50',
-                        weight=self.WEIGHTS['SMA_50'],
-                        side=side,
-                        level=SRLevel.INTERMEDIATE,
-                        source_type=SRSourceType.TECHNICAL,
-                        timeframe="15m",  # v4.0 (B3)
-                    ))
-
-                if sma_200 and sma_200 > 0:
-                    side = 'support' if sma_200 < current_price else 'resistance'
-                    candidates.append(SRCandidate(
-                        price=sma_200,
-                        source='SMA_200_15M',  # v4.0 (B5): clarify this is 15M SMA_200 (≈50h, not 200 days)
-                        weight=self.WEIGHTS['SMA_200'],
-                        side=side,
-                        level=SRLevel.MAJOR,
-                        source_type=SRSourceType.TECHNICAL,
-                        timeframe="15m",  # v4.0 (B3)
-                    ))
-        except Exception as e:
-            self.logger.warning(f"SMA candidates failed: {e}")
+        # ===== 现有来源: OrderWall, Round# (per-layer error isolation) =====
+        # v4.2: BB/SMA 从 S/R 聚合中移除 (学术依据)
+        # - Bollinger 本人 Rule 7: "price can walk up/down the bands" → 非 S/R
+        # - 0/6 学术论文 (Osler, Spitsin, Chan, Chung, De Angelis, Henderson) 将 BB/SMA 作为 S/R
+        # - BB/SMA 保留在 AI detailed report 的 RAW DATA SOURCES 中供 AI 参考
 
         # Order Book Walls (MINOR level, ORDER_FLOW type - 最实时)
         # v2.1: 添加严格过滤条件，避免盘口普通订单被误识别为 S/R
