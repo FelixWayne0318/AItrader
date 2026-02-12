@@ -44,7 +44,6 @@ from utils.binance_derivatives_client import BinanceDerivativesClient
 from strategy.trading_logic import (
     calculate_position_size,
     validate_multiagent_sltp,
-    calculate_technical_sltp,
 )
 
 
@@ -3675,11 +3674,16 @@ class DeepSeekAIStrategy(Strategy):
         confidence: str,
     ) -> Optional[Tuple[float, float, float]]:
         """
-        v4.11: Validate SL/TP for any entry (new position OR add to position).
+        v4.2: Validate SL/TP for any entry (new position OR add to position).
 
-        Extracts the R/R validation logic from _submit_bracket_order so it can be
-        reused for both opening and adding to positions. Uses current real-time price
-        + AI's latest SL/TP + S/R zones, same as the bracket order path.
+        Level 1: AI SL/TP → validate_multiagent_sltp() (R/R check)
+        Level 2: S/R-based → calculate_sr_based_sltp() (R/R >= min_rr_ratio)
+        Level 3: REMOVED (v4.2) — S/R veto is final, no percentage fallback
+
+        When sltp_method == "sr_based", this acts as a natural S/R proximity filter:
+        - Price near support → LONG R/R good → trade passes
+        - Price near resistance → SHORT R/R good → trade passes
+        - Price in middle → R/R poor for both directions → trade rejected (returns None)
 
         Parameters
         ----------
@@ -3692,7 +3696,7 @@ class DeepSeekAIStrategy(Strategy):
         -------
         Optional[Tuple[float, float, float]]
             (stop_loss_price, take_profit_price, entry_price) if valid,
-            None if R/R validation fails
+            None if R/R validation fails (trade should be blocked)
         """
         if not self.latest_signal_data or not self.latest_technical_data:
             self.log.warning("⚠️ No signal/technical data for SL/TP validation")
@@ -3783,21 +3787,35 @@ class DeepSeekAIStrategy(Strategy):
                         tp_price = sr_tp
                         sr_fallback_used = True
                         self.log.info(f"📍 S/R-based SL/TP: {sr_method}")
+                    else:
+                        self.log.warning(
+                            f"🚫 S/R-based SL/TP rejected: {sr_method} "
+                            f"(R/R < {self.min_rr_ratio}:1 or no valid zones)"
+                        )
                 except Exception as e:
-                    self.log.debug(f"S/R-based SL/TP calculation failed: {e}")
+                    self.log.warning(f"⚠️ S/R-based SL/TP calculation error: {e}")
 
-            # Level 3 — Percentage-based fallback (legacy)
+            # v4.2: Level 3 removed — S/R veto is final
+            # When S/R calculator rejects (R/R < min_rr_ratio), the trade is rejected.
+            # Rationale: percentage fallback defeats S/R's purpose — if price is in
+            # no-man's-land between S/R zones, the correct action is HOLD, not trade
+            # with arbitrary 2%/3% SL/TP that ignores market structure.
             if not sr_fallback_used:
-                stop_loss_price, tp_price, calc_method = calculate_technical_sltp(
-                    side=side.name,
-                    entry_price=entry_price,
-                    support=support,
-                    resistance=resistance,
-                    confidence=confidence,
-                    use_support_resistance=self.sl_use_support_resistance,
-                    sl_buffer_pct=self.sl_buffer_pct,
+                # P2: Log S/R proximity context for debugging
+                proximity_info = ""
+                if support > 0:
+                    support_dist_pct = ((entry_price - support) / entry_price) * 100
+                    proximity_info += f" Support=${support:,.0f} ({support_dist_pct:+.1f}%)"
+                if resistance > 0:
+                    resistance_dist_pct = ((resistance - entry_price) / entry_price) * 100
+                    proximity_info += f" Resistance=${resistance:,.0f} ({resistance_dist_pct:+.1f}%)"
+                self.log.warning(
+                    f"🚫 SL/TP validation failed: S/R-based calculation rejected, "
+                    f"percentage fallback disabled (v4.2). "
+                    f"Price=${entry_price:,.2f}{proximity_info}. "
+                    f"Trade blocked — price likely in no-man's-land between S/R zones."
                 )
-                self.log.info(f"📍 {calc_method}")
+                return None
 
         if side == OrderSide.BUY:
             rr = (tp_price - entry_price) / (entry_price - stop_loss_price) if entry_price > stop_loss_price else 0
@@ -4584,7 +4602,7 @@ class DeepSeekAIStrategy(Strategy):
 
     def _reevaluate_sltp_for_existing_position(self):
         """
-        v4.0: Reevaluate SL/TP using S/R zones for existing positions.
+        v4.2: Reevaluate SL/TP using S/R zones for existing positions.
 
         Called every on_timer cycle when sltp_method == "sr_based".
         Uses calculate_sr_based_sltp() directly for faster, more accurate updates.
@@ -4594,6 +4612,7 @@ class DeepSeekAIStrategy(Strategy):
         - TP can move both ways but must maintain R/R >= 1.5:1
         - Trailing stop coexists: final SL = max(trailing SL, S/R SL)
         - Skip if change < dynamic_update_threshold_pct
+        - v4.2: When S/R returns None, log warning + Telegram alert (was silent)
         """
         try:
             current_position = self._get_current_position_data()
@@ -4637,7 +4656,35 @@ class DeepSeekAIStrategy(Strategy):
             )
 
             if not new_sl or not new_tp or new_sl <= 0 or new_tp <= 0:
-                return  # S/R calculation failed, keep existing SL/TP
+                # v4.2: Warn when S/R reevaluation fails (was silent before)
+                # This means price has moved to a zone where S/R cannot produce valid R/R,
+                # which is an important signal for risk management
+                self.log.warning(
+                    f"⚠️ S/R SL/TP reevaluation returned None: {sr_method}. "
+                    f"Position protected by existing SL=${old_sl:,.2f}"
+                    + (f" TP=${old_tp:,.2f}" if old_tp and old_tp > 0 else "")
+                )
+                # Send Telegram alert (rate-limit: only if not sent in last 15 min)
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        alert_key = '_sr_reeval_fail_last_alert'
+                        import time
+                        now = time.time()
+                        last_alert = getattr(self, alert_key, 0)
+                        if now - last_alert > 900:  # 15 min cooldown
+                            setattr(self, alert_key, now)
+                            self.telegram_bot.send_message_sync(
+                                f"⚠️ S/R 动态重评估失败\n"
+                                f"方向: {position_side.upper()}\n"
+                                f"当前价: ${current_price:,.2f}\n"
+                                f"原因: {sr_method}\n"
+                                f"现有保护: SL=${old_sl:,.2f}"
+                                + (f" TP=${old_tp:,.2f}" if old_tp and old_tp > 0 else "")
+                                + f"\n⚡ 仓位仍受保护，但 S/R 结构已恶化"
+                            )
+                    except Exception:
+                        pass
+                return
 
             # Safety: SL only moves in favorable direction
             if position_side == 'long':
