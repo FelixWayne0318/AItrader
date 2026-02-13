@@ -302,6 +302,8 @@ class AIDataAssembler:
 
             result["funding_rate"] = {
                 "value": funding_rate,              # 已结算费率 (向后兼容)
+                "current": funding_rate,             # 消费者兼容 (与 Coinalyze 降级路径一致)
+                "current_pct": funding_pct,          # 消费者兼容 (format_complete_report + multi_agent_analyzer 读此字段)
                 "settled": funding_rate,             # 已结算费率 (明确语义)
                 "settled_pct": funding_pct,          # 已结算费率 (%)
                 "interpretation": self._interpret_funding(funding_rate),
