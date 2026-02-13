@@ -4349,12 +4349,52 @@
       "pattern_type": "contains",
       "created": "2026-02-13T10:39:37.258857",
       "auto_generated": true
+    },
+    {
+      "id": "31ddbd1370e1",
+      "commit": "1767036",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "feat: S/R evaluation improvements — zone cross-validation, ATR-adaptive hard control",
+      "pattern": "hard_control_threshold_mode=hard_ctrl_cfg.get('threshold_mode', 'fixed'),",
+      "pattern_type": "contains",
+      "created": "2026-02-13T15:10:51.719184",
+      "auto_generated": true
+    },
+    {
+      "id": "7b674f0618ed",
+      "commit": "1767036",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "feat: S/R evaluation improvements — zone cross-validation, ATR-adaptive hard control",
+      "pattern": "from utils.config_manager import ConfigManager",
+      "pattern_type": "import",
+      "created": "2026-02-13T15:10:51.772772",
+      "auto_generated": true
+    },
+    {
+      "id": "8ff82a040ebc",
+      "commit": "1767036",
+      "file": "strategy/trading_logic.py",
+      "message": "feat: S/R evaluation improvements — zone cross-validation, ATR-adaptive hard control",
+      "pattern": "from TechnicalIndicatorManager's 20-bar lookback) and provides a",
+      "pattern_type": "import",
+      "created": "2026-02-13T15:10:51.789237",
+      "auto_generated": true
+    },
+    {
+      "id": "d0b11c694e73",
+      "commit": "1767036",
+      "file": "utils/sr_zone_calculator.py",
+      "message": "feat: S/R evaluation improvements — zone cross-validation, ATR-adaptive hard control",
+      "pattern": "_get_hard_control_threshold",
+      "pattern_type": "function_exists",
+      "created": "2026-02-13T15:10:51.808705",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-13T10:39:37.259106",
-    "count": 435,
+    "updated": "2026-02-13T15:10:52.701373",
+    "count": 439,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
