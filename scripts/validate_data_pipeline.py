@@ -1748,6 +1748,203 @@ def test_consumer_field_contracts(results: TestResults):
         results.fail("消费者字段契约测试异常", str(e)[:100])
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Test 20: 生产代码计算正确性 (已知输入 → 预期输出)
+# ─────────────────────────────────────────────────────────────────────
+
+def test_production_calculations(results: TestResults):
+    """
+    用已知 mock 输入调用真实生产代码，验证输出值是否正确。
+
+    与 Test 8 (离线公式) 的区别:
+    - Test 8: 测试脚本自己的公式逻辑 (mock → 脚本代码 → 验证)
+    - Test 20: 测试生产代码的公式逻辑 (mock → AIDataAssembler → 验证)
+
+    能检测: 乘除错误、单位转换错误、rounding 错误、比较方向错误
+    """
+    print("\n─── Test 20: 生产代码计算正确性 ───")
+
+    try:
+        from utils.ai_data_assembler import AIDataAssembler
+
+        # --- 已知输入值 (mock) ---
+        MOCK_OI_BTC = 500.0
+        MOCK_PRICE = 100000.0
+        MOCK_LIQ_LONG_BTC = 1.5
+        MOCK_LIQ_SHORT_BTC = 2.0
+        MOCK_FUNDING_RATE = 0.00058  # decimal
+        MOCK_FUNDING_PCT = 0.058     # percent (= 0.00058 * 100, rounded 4)
+        MOCK_MARK_PRICE = 100000.0
+        MOCK_INDEX_PRICE = 99950.0
+        # History: [0.0003, 0.0004, 0.00058] → 0.00058 > 0.0003*1.1 → RISING
+        MOCK_HISTORY_RATES = [0.00030, 0.00040, 0.00058]
+
+        class MockBinanceKlines:
+            def get_funding_rate(self):
+                return {
+                    'funding_rate': MOCK_FUNDING_RATE,
+                    'funding_rate_pct': round(MOCK_FUNDING_RATE * 100, 4),
+                    'predicted_rate': 0.00001,
+                    'predicted_rate_pct': 0.001,
+                    'next_funding_time': int(time.time() * 1000) + 3600000,
+                    'next_funding_countdown_min': 60,
+                    'mark_price': MOCK_MARK_PRICE,
+                    'index_price': MOCK_INDEX_PRICE,
+                    'premium_index': (MOCK_MARK_PRICE - MOCK_INDEX_PRICE) / MOCK_INDEX_PRICE,
+                }
+
+            def get_funding_rate_history(self, limit=10):
+                return [
+                    {'fundingRate': str(r), 'fundingTime': i * 1000}
+                    for i, r in enumerate(MOCK_HISTORY_RATES)
+                ]
+
+            def get_klines(self, **kwargs):
+                return None
+
+        class MockOrderFlow:
+            def process_klines(self, klines):
+                return {'buy_ratio': 0.55, 'cvd_trend': 'RISING',
+                        'avg_trade_size': 1500, 'data_source': 'mock'}
+
+            def _default_result(self):
+                return {'buy_ratio': 0.5, 'cvd_trend': 'NEUTRAL',
+                        'avg_trade_size': 0, 'data_source': 'default'}
+
+        class MockCoinalyze:
+            def fetch_all_with_history(self, **kwargs):
+                return {
+                    'open_interest': {'value': MOCK_OI_BTC},
+                    'liquidations': {'history': [
+                        {'l': MOCK_LIQ_LONG_BTC, 's': MOCK_LIQ_SHORT_BTC}
+                    ]},
+                    'funding_rate': {'value': 0.0003},
+                    'trends': {},
+                }
+
+            def is_enabled(self):
+                return True
+
+        class MockSentiment:
+            def fetch(self):
+                return {
+                    'positive_ratio': 0.55, 'negative_ratio': 0.45,
+                    'net_sentiment': 0.1, 'long_short_ratio': 1.22,
+                    'source': 'mock', 'history': [],
+                }
+
+        assembler = AIDataAssembler(
+            binance_kline_client=MockBinanceKlines(),
+            order_flow_processor=MockOrderFlow(),
+            coinalyze_client=MockCoinalyze(),
+            sentiment_client=MockSentiment(),
+        )
+
+        assembled = assembler.assemble(
+            technical_data={'price': MOCK_PRICE, 'atr': 500},
+            symbol='BTCUSDT',
+        )
+
+        derivatives = assembled.get('derivatives', {})
+        fr = derivatives.get('funding_rate') or {}
+        oi = derivatives.get('open_interest') or {}
+        liq = derivatives.get('liquidations') or {}
+
+        def assert_close(actual, expected, name, tolerance=0.01):
+            """验证浮点数接近预期值"""
+            if actual is None:
+                results.fail(f"计算: {name}", f"结果为 None (预期 {expected})")
+                return False
+            if abs(actual - expected) <= tolerance:
+                results.ok(f"计算: {name}", f"{actual} ≈ {expected}")
+                return True
+            else:
+                results.fail(
+                    f"计算: {name}",
+                    f"实际={actual}, 预期={expected}, 差={actual - expected}"
+                )
+                return False
+
+        # ═══ OI 转换: BTC → USD ═══
+        # 500 BTC × $100,000 = $50,000,000
+        expected_oi_usd = MOCK_OI_BTC * MOCK_PRICE
+        assert_close(oi.get('total_usd'), expected_oi_usd,
+                     f"OI USD = {MOCK_OI_BTC} BTC × ${MOCK_PRICE:,.0f}", tolerance=1)
+
+        assert_close(oi.get('total_btc'), MOCK_OI_BTC,
+                     f"OI BTC 透传 = {MOCK_OI_BTC}", tolerance=0.01)
+
+        # ═══ Liquidation 转换: BTC → USD ═══
+        # Long: 1.5 BTC × $100,000 = $150,000
+        # Short: 2.0 BTC × $100,000 = $200,000
+        expected_liq_long = MOCK_LIQ_LONG_BTC * MOCK_PRICE
+        expected_liq_short = MOCK_LIQ_SHORT_BTC * MOCK_PRICE
+        expected_liq_total = expected_liq_long + expected_liq_short
+
+        assert_close(liq.get('long_usd'), expected_liq_long,
+                     f"Liq Long = {MOCK_LIQ_LONG_BTC} BTC × ${MOCK_PRICE:,.0f}", tolerance=1)
+        assert_close(liq.get('short_usd'), expected_liq_short,
+                     f"Liq Short = {MOCK_LIQ_SHORT_BTC} BTC × ${MOCK_PRICE:,.0f}", tolerance=1)
+        assert_close(liq.get('total_usd'), expected_liq_total,
+                     f"Liq Total = ${expected_liq_total:,.0f}", tolerance=1)
+
+        # ═══ Funding Rate 单位转换 ═══
+        # 0.00058 × 100 = 0.058%
+        assert_close(fr.get('current_pct'), MOCK_FUNDING_PCT,
+                     f"FR % = {MOCK_FUNDING_RATE} × 100 = {MOCK_FUNDING_PCT}%", tolerance=0.0001)
+
+        assert_close(fr.get('value'), MOCK_FUNDING_RATE,
+                     f"FR decimal 透传 = {MOCK_FUNDING_RATE}", tolerance=0.000001)
+
+        # ═══ Funding Rate 趋势方向 ═══
+        # [0.0003, 0.0004, 0.00058]: 最新 0.00058 > 最旧 0.0003 × 1.1 = 0.00033 → RISING
+        actual_trend = fr.get('trend')
+        if actual_trend == 'RISING':
+            results.ok(
+                "计算: FR Trend",
+                f"[{', '.join(str(r) for r in MOCK_HISTORY_RATES)}] → RISING ✓"
+            )
+        else:
+            results.fail(
+                "计算: FR Trend",
+                f"预期 RISING, 实际 {actual_trend} "
+                f"(rates: {MOCK_HISTORY_RATES})"
+            )
+
+        # ═══ Funding Rate 解读 ═══
+        # 0.00058 > 0.0005 → BULLISH (not VERY_BULLISH since < 0.001)
+        actual_interp = fr.get('interpretation')
+        if actual_interp == 'BULLISH':
+            results.ok("计算: FR Interpretation", f"{MOCK_FUNDING_RATE} → BULLISH ✓")
+        else:
+            results.fail(
+                "计算: FR Interpretation",
+                f"预期 BULLISH, 实际 {actual_interp}"
+            )
+
+        # ═══ History 记录数和排序 ═══
+        history = fr.get('history', [])
+        if len(history) == len(MOCK_HISTORY_RATES):
+            results.ok("计算: FR History 数量", f"{len(history)} 条")
+        else:
+            results.fail(
+                "计算: FR History 数量",
+                f"预期 {len(MOCK_HISTORY_RATES)}, 实际 {len(history)}"
+            )
+
+        # ═══ Premium Index 计算 ═══
+        # (100000 - 99950) / 99950 ≈ 0.000500
+        expected_pi = (MOCK_MARK_PRICE - MOCK_INDEX_PRICE) / MOCK_INDEX_PRICE
+        assert_close(fr.get('premium_index'), expected_pi,
+                     f"PI = ({MOCK_MARK_PRICE}-{MOCK_INDEX_PRICE})/{MOCK_INDEX_PRICE}",
+                     tolerance=0.000001)
+
+    except ImportError as e:
+        results.warn("AIDataAssembler 不可导入", f"跳过计算验证: {e}")
+    except Exception as e:
+        results.fail("计算正确性测试异常", str(e)[:100])
+
+
 def main():
     parser = argparse.ArgumentParser(description="端到端数据流水线验证 v2.0")
     parser.add_argument('--quick', action='store_true', help="快速模式 (跳过慢速 API)")
@@ -1782,6 +1979,7 @@ def main():
         test_data_assembler_structure(results)   # Test 17
         test_sma_label_disambiguation(results)   # Test 18
         test_consumer_field_contracts(results)   # Test 19
+        test_production_calculations(results)    # Test 20
     else:
         # ═══ 在线模式: API + 逻辑验证 ═══
 
