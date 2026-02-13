@@ -3450,6 +3450,8 @@ class DeepSeekAIStrategy(Strategy):
                             'change_qty': abs(size_diff),
                             'current_price': cached_price,
                             'unrealized_pnl': current_pos.get('unrealized_pnl') if current_pos else None,
+                            'sl_price': new_sl_price,
+                            'tp_price': new_tp_price,
                         })
                         self.telegram_bot.send_message_sync(scaling_msg)
                     except Exception as e:
@@ -3515,6 +3517,13 @@ class DeepSeekAIStrategy(Strategy):
                     try:
                         with self._state_lock:
                             cached_price = self._cached_current_price
+                        # Get SL/TP from sltp_state for display
+                        reduce_sl = None
+                        reduce_tp = None
+                        instrument_key = str(self.instrument_id)
+                        if instrument_key in self.sltp_state:
+                            reduce_sl = self.sltp_state[instrument_key].get('current_sl_price')
+                            reduce_tp = self.sltp_state[instrument_key].get('current_tp_price')
                         scaling_msg = self.telegram_bot.format_scaling_notification({
                             'action': 'REDUCE',
                             'side': target_side,
@@ -3522,6 +3531,8 @@ class DeepSeekAIStrategy(Strategy):
                             'new_qty': target_quantity,
                             'change_qty': actual_reduce,
                             'current_price': cached_price,
+                            'sl_price': reduce_sl,
+                            'tp_price': reduce_tp,
                         })
                         self.telegram_bot.send_message_sync(scaling_msg)
                     except Exception as e:
@@ -5530,6 +5541,7 @@ class DeepSeekAIStrategy(Strategy):
                     tp_price = state.get("current_tp_price")
 
                 # v4.2: Retrieve S/R Zone data (v3.8 fix: extract price_center)
+                # v4.15: Include full zone arrays for unified S/R display
                 sr_zone_data = None
                 nearest_sup_price = None
                 nearest_res_price = None
@@ -5538,9 +5550,21 @@ class DeepSeekAIStrategy(Strategy):
                     nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
                     nearest_sup_price = nearest_sup.price_center if nearest_sup else None
                     nearest_res_price = nearest_res.price_center if nearest_res else None
+
+                    def _zone_to_dict(zone):
+                        return {
+                            'price': zone.price_center,
+                            'strength': getattr(zone, 'strength', 'LOW'),
+                            'level': getattr(zone, 'level', 'MINOR'),
+                        }
+
+                    support_zones = self.latest_sr_zones_data.get('support_zones', [])
+                    resistance_zones = self.latest_sr_zones_data.get('resistance_zones', [])
                     sr_zone_data = {
                         'nearest_support': nearest_sup_price,
                         'nearest_resistance': nearest_res_price,
+                        'support_zones': [_zone_to_dict(z) for z in support_zones[:3]],
+                        'resistance_zones': [_zone_to_dict(z) for z in resistance_zones[:3]],
                     }
 
                 # v3.17: Calculate entry quality based on distance from S/R Zone
