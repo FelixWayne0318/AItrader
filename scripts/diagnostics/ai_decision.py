@@ -6,6 +6,12 @@ Handles MultiAgent AI analysis and decision-making:
 - Sequential AI call execution (6 DeepSeek API calls)
 - Prompt structure verification
 - Bull/Bear debate transcript display
+
+IMPORTANT: Data fetching uses INLINE calls (matching production on_timer()),
+NOT AIDataAssembler. Key differences from AIDataAssembler:
+- Coinalyze: fetch_all() (production) vs fetch_all_with_history() (assembler)
+- S/R bars: 200 count (production) vs no S/R bars (assembler)
+- ATR value: calculated from S/R bars (production) vs not calculated (assembler)
 """
 
 from typing import Any, Dict, Optional
@@ -82,15 +88,17 @@ class AIInputDataValidator(DiagnosticStep):
         """
         Fetch ALL external data before printing — 100% matches live on_timer() flow.
 
-        Live system data fetch order (deepseek_strategy.py:1620-1731):
+        IMPORTANT: Uses INLINE data fetching, NOT AIDataAssembler.
+        Production on_timer() (deepseek_strategy.py:1724-1813) fetches data inline:
         1. Order flow (Binance klines → OrderFlowProcessor)
-        2. Derivatives (Coinalyze OI/Funding/Liquidations)
+        2. Derivatives (Coinalyze fetch_all(), NOT fetch_all_with_history())
         3. Order book (if enabled)
-        4. Binance derivatives (Top Traders, Taker Ratio) ← was MISSING
-        5. S/R bars (120 bars for Swing Point detection) ← was MISSING
-        6. kline_ohlcv (20 bars OHLCV for AI) ← was MISSING
-        7. historical_context (35-bar trend data)
-        8. S/R Zones calculation
+        4. Binance derivatives (Top Traders, Taker Ratio)
+        5. S/R bars (200 bars for Swing Point detection)
+        6. ATR value (from SRZoneCalculator._calculate_atr_from_bars)
+        7. kline_ohlcv (20 bars OHLCV for AI)
+        8. historical_context (35-bar trend data)
+        9. S/R Zones calculation
         """
         import os
         timings = self.ctx.step_timings
@@ -99,13 +107,30 @@ class AIInputDataValidator(DiagnosticStep):
             from utils.binance_kline_client import BinanceKlineClient
             from utils.order_flow_processor import OrderFlowProcessor
             from utils.coinalyze_client import CoinalyzeClient
-            from utils.ai_data_assembler import AIDataAssembler
             from utils.sentiment_client import SentimentDataFetcher
 
             kline_client = BinanceKlineClient(timeout=10)
             processor = OrderFlowProcessor(logger=None)
 
-            # Get Coinalyze config
+            # ========== 1. Order flow (matches live L1724-1744) ==========
+            try:
+                with step_timer("OrderFlow: BinanceKlines+Process", timings):
+                    raw_klines = kline_client.get_klines(
+                        symbol=self.ctx.symbol,
+                        interval="15m",
+                        limit=50,
+                    )
+                    if raw_klines:
+                        self.ctx.order_flow_report = processor.process_klines(raw_klines)
+                    else:
+                        print("  ⚠️ Failed to get Binance klines for order flow")
+            except Exception as e:
+                print(f"  ⚠️ Order flow processing failed: {e}")
+
+            # ========== 2. Derivatives — fetch_all() like production (matches live L1746-1762) ==========
+            # IMPORTANT: Production uses fetch_all(), NOT fetch_all_with_history()
+            # fetch_all() returns: {open_interest, liquidations, funding_rate, enabled}
+            # fetch_all_with_history() returns extra: trends, *_history (NOT used in production)
             coinalyze_cfg = self.ctx.base_config.get('order_flow', {}).get('coinalyze', {})
             coinalyze_api_key = coinalyze_cfg.get('api_key') or os.getenv('COINALYZE_API_KEY')
 
@@ -116,13 +141,16 @@ class AIInputDataValidator(DiagnosticStep):
                 logger=None
             )
 
-            sentiment_client = SentimentDataFetcher()
+            if coinalyze_client.is_enabled():
+                try:
+                    with step_timer("Coinalyze.fetch_all()", timings):
+                        self.ctx.derivatives_report = coinalyze_client.fetch_all()
+                except Exception as e:
+                    print(f"  ⚠️ Derivatives fetch failed: {e}")
 
-            # ========== Order book client (v3.7) ==========
+            # ========== 3. Order book (matches live L1764-1797) ==========
             order_book_cfg = self.ctx.base_config.get('order_book', {})
             order_book_enabled = order_book_cfg.get('enabled', False)
-            binance_orderbook = None
-            orderbook_processor = None
 
             if order_book_enabled:
                 try:
@@ -156,11 +184,30 @@ class AIInputDataValidator(DiagnosticStep):
                         history_size=ob_proc_cfg.get('history', {}).get('size', 10),
                         logger=None
                     )
+
+                    with step_timer("OrderBook: fetch+process", timings):
+                        raw_orderbook = binance_orderbook.get_order_book(
+                            symbol=self.ctx.symbol,
+                            limit=100,
+                        )
+                        if raw_orderbook:
+                            td = self.ctx.technical_data or {}
+                            self.ctx.orderbook_report = orderbook_processor.process(
+                                order_book=raw_orderbook,
+                                current_price=self.ctx.current_price,
+                                volatility=td.get('bb_bandwidth', 0.02),
+                            )
+                            ob_status = self.ctx.orderbook_report.get('_status', {})
+                            if ob_status.get('code') != 'OK':
+                                print(f"  ℹ️ Order book status: {ob_status.get('code')} - {ob_status.get('message')}")
+                        else:
+                            print("  ⚠️ Failed to get order book data")
                 except ImportError as e:
                     print(f"  ⚠️ Order book modules not available: {e}")
+                except Exception as e:
+                    print(f"  ⚠️ Order book processing failed: {e}")
 
-            # ========== Binance Derivatives client (v3.21) ==========
-            binance_derivatives_client = None
+            # ========== 4. Binance Derivatives (matches live L1799-1813) ==========
             try:
                 from utils.binance_derivatives_client import BinanceDerivativesClient
                 bd_cfg = self.ctx.base_config.get('binance_derivatives', {})
@@ -169,63 +216,17 @@ class AIInputDataValidator(DiagnosticStep):
                     logger=None,
                     config=self.ctx.base_config,
                 )
+                with step_timer("BinanceDerivatives.fetch_all()", timings):
+                    bd_data = binance_derivatives_client.fetch_all()
+                if bd_data:
+                    self.ctx.binance_derivatives_data = bd_data
             except ImportError as e:
                 print(f"  ⚠️ BinanceDerivativesClient not available: {e}")
-
-            # ========== AIDataAssembler (matches live system) ==========
-            assembler = AIDataAssembler(
-                binance_kline_client=kline_client,
-                order_flow_processor=processor,
-                coinalyze_client=coinalyze_client,
-                sentiment_client=sentiment_client,
-                binance_derivatives_client=binance_derivatives_client,
-                binance_orderbook_client=binance_orderbook,
-                orderbook_processor=orderbook_processor,
-                logger=None
-            )
-
-            with step_timer("AIDataAssembler.assemble()", timings):
-                assembled_data = assembler.assemble(
-                    technical_data=self.ctx.technical_data,
-                    position_data=self.ctx.current_position,
-                    symbol=self.ctx.symbol,
-                    interval=self.ctx.interval
-                )
-
-            # Store ALL data in context (matches live system exactly)
-            self.ctx.order_flow_report = assembled_data.get('order_flow')
-            self.ctx.derivatives_report = assembled_data.get('derivatives')
-            self.ctx.orderbook_report = assembled_data.get('order_book')
-
-            # v3.21: Binance Derivatives (Top Traders, Taker Ratio)
-            if assembled_data.get('binance_derivatives'):
-                self.ctx.binance_derivatives_data = assembled_data.get('binance_derivatives')
-            elif binance_derivatives_client:
-                # Fallback: fetch directly if assembler didn't include it
-                try:
-                    with step_timer("BinanceDerivatives.fetch_all()", timings):
-                        bd_data = binance_derivatives_client.fetch_all()
-                    if bd_data:
-                        self.ctx.binance_derivatives_data = bd_data
-                except Exception as bd_err:
-                    print(f"  ⚠️ Binance derivatives fetch failed: {bd_err}")
-
-            # Order book status logging
-            ob_data = assembled_data.get('order_book')
-            if ob_data:
-                ob_status = ob_data.get('_status', {})
-                ob_code = ob_status.get('code', 'UNKNOWN')
-                if ob_code != 'OK':
-                    ob_msg = ob_status.get('message', 'No message')
-                    print(f"  ℹ️ Order book status: {ob_code} - {ob_msg}")
-            else:
-                metadata = assembled_data.get('_metadata', {})
-                ob_enabled = metadata.get('orderbook_enabled', False)
-                ob_status = metadata.get('orderbook_status', 'UNKNOWN')
-                print(f"  ℹ️ Order book data is None (enabled={ob_enabled}, status={ob_status})")
+            except Exception as bd_err:
+                print(f"  ⚠️ Binance derivatives fetch failed: {bd_err}")
 
         except Exception as e:
-            print(f"  ⚠️ AIDataAssembler 数据获取失败: {e}")
+            print(f"  ⚠️ 外部数据获取失败: {e}")
             import traceback
             traceback.print_exc()
 
@@ -240,14 +241,30 @@ class AIInputDataValidator(DiagnosticStep):
             except Exception as e:
                 print(f"  ⚠️ kline_ohlcv 获取失败: {e}")
 
-            # v3.0: S/R bars (120 bars for Swing Point detection) — live line 1712
+            # v4.0: S/R bars (200 bars for Swing Point detection) — live line 1817
             try:
-                sr_bars = self.ctx.indicator_manager.get_kline_data(count=120)
+                sr_bars = self.ctx.indicator_manager.get_kline_data(count=200)
                 if sr_bars:
                     self.ctx.sr_bars_data = sr_bars
                     print(f"  ℹ️ sr_bars_data: {len(sr_bars)} bars for S/R detection")
             except Exception as e:
                 print(f"  ⚠️ sr_bars_data 获取失败: {e}")
+
+            # v4.0 (E1): ATR value from S/R bars — matches live line 1819-1827
+            try:
+                if self.ctx.sr_bars_data and len(self.ctx.sr_bars_data) >= 14:
+                    from utils.sr_zone_calculator import SRZoneCalculator
+                    atr_val = SRZoneCalculator._calculate_atr_from_bars(self.ctx.sr_bars_data)
+                    if atr_val and atr_val > 0:
+                        self.ctx.atr_value = atr_val
+                        print(f"  ℹ️ atr_value: ${atr_val:,.2f} (from {len(self.ctx.sr_bars_data)} bars)")
+                    else:
+                        self.ctx.atr_value = None
+                else:
+                    self.ctx.atr_value = None
+            except Exception as e:
+                print(f"  ⚠️ ATR 计算失败: {e}")
+                self.ctx.atr_value = None
 
             # historical_context (35-bar trend data) — live line 1599
             try:
@@ -801,7 +818,8 @@ class MultiAgentAnalyzer(DiagnosticStep):
             print(f"  Total API Calls: {total_calls} (顺序执行)")
             print()
 
-            # Data completeness check (all 15 analyze() parameters)
+            # Data completeness check (all 16 analyze() parameters)
+            # Must match production on_timer() call at deepseek_strategy.py:1863-1886
             params = {
                 'symbol': self.ctx.symbol,
                 'technical_report': self.ctx.technical_data,
@@ -818,15 +836,17 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 'bars_data_1d': self.ctx.bars_data_1d,
                 'daily_bar': self.ctx.daily_bar,
                 'weekly_bar': self.ctx.weekly_bar,
+                'atr_value': self.ctx.atr_value,
             }
 
-            print("  📊 analyze() 参数完整性检查 (vs 实盘):")
+            print("  📊 analyze() 参数完整性检查 (vs 实盘 16 参数):")
             live_params = [
                 'symbol', 'technical_report', 'sentiment_report',
                 'current_position', 'price_data', 'order_flow_report',
                 'derivatives_report', 'binance_derivatives_report',
                 'orderbook_report', 'account_context', 'bars_data',
                 'bars_data_4h', 'bars_data_1d', 'daily_bar', 'weekly_bar',
+                'atr_value',
             ]
             for param_name in live_params:
                 value = params[param_name]
@@ -865,6 +885,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 bars_data_1d=self.ctx.bars_data_1d,
                 daily_bar=self.ctx.daily_bar,
                 weekly_bar=self.ctx.weekly_bar,
+                atr_value=self.ctx.atr_value,
             )
 
             t_elapsed = time.monotonic() - t_start
