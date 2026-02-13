@@ -532,7 +532,10 @@ def test_funding_rate_pipeline(results: TestResults):
         data = resp.json()
 
         if isinstance(data, list) and len(data) > 0:
-            rate = float(data[0].get('fundingRate', 0))
+            # Binance /fundingRate 返回升序 (旧→新), data[-1] 是最新结算
+            # 用 max(fundingTime) 确保取到最新记录，不依赖排序假设
+            most_recent = max(data, key=lambda x: int(x.get('fundingTime', 0)))
+            rate = float(most_recent.get('fundingRate', 0))
             rate_pct = rate * 100
             results.ok("Settled Funding Rate", f"{rate:.6f} (decimal) = {rate_pct:.4f}%")
 
@@ -542,11 +545,12 @@ def test_funding_rate_pipeline(results: TestResults):
             else:
                 results.warn("Settled FR 极端值", f"{rate_pct:.4f}%")
 
-            # 历史排序 (limit=3, 应该是最近3次结算)
+            # 历史排序验证 (limit=3, 最近3次结算)
             if len(data) >= 2:
                 times = [int(d.get('fundingTime', 0)) for d in data]
-                # Binance /fundingRate 返回降序 (最新在前)
-                results.ok("Settled History", f"{len(data)} 条结算记录")
+                is_ascending = all(times[i] <= times[i+1] for i in range(len(times)-1))
+                order_str = "升序(旧→新)" if is_ascending else "降序(新→旧)"
+                results.ok("Settled History", f"{len(data)} 条结算记录, {order_str}")
         else:
             results.fail("Settled Funding Rate API", f"返回: {data}")
 
@@ -603,31 +607,17 @@ def test_funding_rate_pipeline(results: TestResults):
                     results.fail("BinanceKlineClient 字段缺失", str(missing))
 
                 # 验证数值一致性 (与直接 API 对比)
-                # 注意: 两次 API 调用之间有时间差，如果恰好跨越 8h 结算边界
-                # (00:00, 08:00, 16:00 UTC)，会返回不同结算周期的费率，这是正常的
+                # 两边都取最新结算费率: BKC 用 limit=1, 直接 API 用 max(fundingTime)
                 bkc_settled = fr_data.get('funding_rate_pct', 0)
                 bkc_predicted = fr_data.get('predicted_rate_pct', 0)
                 diff = abs(bkc_settled - rate_pct)
                 if diff < 0.001:
                     results.ok("Settled Rate 一致性", f"BKC={bkc_settled:.4f}% vs API={rate_pct:.4f}%")
                 else:
-                    # 检测是否接近结算边界 (距 00:00/08:00/16:00 UTC 2分钟内)
-                    from datetime import datetime, timezone
-                    utc_now = datetime.now(timezone.utc)
-                    minutes_in_8h = (utc_now.hour % 8) * 60 + utc_now.minute
-                    near_boundary = minutes_in_8h < 2 or minutes_in_8h > (8 * 60 - 2)
-                    if near_boundary:
-                        results.ok(
-                            "Settled Rate 时序差异 (正常)",
-                            f"BKC={bkc_settled:.4f}% vs API={rate_pct:.4f}% "
-                            f"(跨越结算边界, 两次调用拿到不同周期费率)"
-                        )
-                    else:
-                        results.warn(
-                            "Settled Rate 不一致",
-                            f"BKC={bkc_settled:.4f}% vs API={rate_pct:.4f}% "
-                            f"(差异={diff:.4f}%, 非结算边界时段)"
-                        )
+                    results.warn(
+                        "Settled Rate 不一致",
+                        f"BKC={bkc_settled:.4f}% vs API={rate_pct:.4f}% (差异={diff:.4f}%)"
+                    )
             else:
                 results.warn("BinanceKlineClient.get_funding_rate() 返回 None", "")
 
