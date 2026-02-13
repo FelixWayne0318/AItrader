@@ -1002,11 +1002,13 @@ Last Bull Argument:
                 if bb_pos is not None:
                     lines.append(f"BB Position: {bb_pos:.1%}")
                 # v3.24: SMA positions relative to price
+                # NOTE: These are 15M-based SMAs (SMA50 ≈ 12.5h, SMA200 ≈ 50h)
+                # Daily SMA200 is in the 1D Timeframe section
                 for period in [50, 200]:
                     sma_val = technical_data.get(f'sma_{period}')
                     if sma_val is not None and sma_val > 0 and current_price > 0:
                         pct = (current_price - sma_val) / sma_val * 100
-                        lines.append(f"Price vs SMA{period}: {pct:+.2f}%")
+                        lines.append(f"Price vs SMA{period}_15M: {pct:+.2f}%")
                 # v3.24: Volume ratio
                 vol_ratio = technical_data.get('volume_ratio')
                 if vol_ratio is not None:
@@ -2207,10 +2209,15 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         cvd_cumulative = data.get('cvd_cumulative', 0)
         cvd_history_str = ", ".join([f"{v:+,.0f}" for v in cvd_history]) if cvd_history else "N/A"
 
+        # v5.3: Cold start warning when insufficient CVD history
+        cvd_warning = ""
+        if len(cvd_history) < 3:
+            cvd_warning = " ⚠️ COLD_START (< 3 bars, trend unreliable)"
+
         return f"""
 ORDER FLOW (Binance Taker Data):
 - Buy Ratio (10-bar avg): {buy_ratio:.1%}
-{range_stats}- CVD Trend: {cvd_trend}
+{range_stats}- CVD Trend: {cvd_trend}{cvd_warning}
 - CVD History (last {len(cvd_history)} bars): [{cvd_history_str}]
 - CVD Cumulative: {cvd_cumulative:+,.0f}
 - Volume (USDT): ${volume_usdt:,.0f}
@@ -2424,6 +2431,33 @@ ORDER FLOW (Binance Taker Data):
                 if history and len(history) >= 2:
                     oi_values = [f"${float(h.get('sumOpenInterestValue', 0))/1e9:.2f}B" for h in reversed(history)]
                     parts.append(f"  History: {' → '.join(oi_values)}")
+
+                    # v5.3: OI×Price 4-Quadrant analysis
+                    # (Price ↑+OI ↑=New longs, Price ↑+OI ↓=Short covering,
+                    #  Price ↓+OI ↑=New shorts, Price ↓+OI ↓=Long liquidation)
+                    ticker_data = binance_derivatives.get('ticker_24hr')
+                    if ticker_data and current_price > 0:
+                        price_change = float(ticker_data.get('priceChangePercent', 0))
+                        oldest_oi = float(history[-1].get('sumOpenInterestValue', 0))
+                        newest_oi = float(history[0].get('sumOpenInterestValue', 0))
+                        if oldest_oi > 0:
+                            oi_change_pct = (newest_oi - oldest_oi) / oldest_oi * 100
+                            price_dir = "↑" if price_change > 0.1 else "↓" if price_change < -0.1 else "→"
+                            oi_dir = "↑" if oi_change_pct > 0.5 else "↓" if oi_change_pct < -0.5 else "→"
+                            quadrant_map = {
+                                ("↑", "↑"): "New longs entering → BULLISH CONFIRMATION",
+                                ("↑", "↓"): "Short covering → WEAK rally (no new conviction)",
+                                ("↓", "↑"): "New shorts entering → BEARISH CONFIRMATION",
+                                ("↓", "↓"): "Long liquidation → BEARISH EXHAUSTION",
+                            }
+                            signal = quadrant_map.get(
+                                (price_dir, oi_dir),
+                                f"Price {price_dir} + OI {oi_dir} = Neutral / consolidation"
+                            )
+                            parts.append(
+                                f"  OI×Price: Price {price_dir}{price_change:+.1f}% + "
+                                f"OI {oi_dir}{oi_change_pct:+.1f}% = {signal}"
+                            )
 
             # 24h Stats
             ticker = binance_derivatives.get('ticker_24hr')
@@ -2663,7 +2697,7 @@ Reason: {status.get('message', 'Unknown')}
                 parts.append(f"  Spread Change: {_safe_float(spread_change):+.1f}%")
             parts.append(f"  Trend: {trend}")
         else:
-            parts.append("  [First snapshot - no historical data yet]")
+            parts.append("  [First snapshot - no historical data yet] ⚠️ COLD_START (dynamics available after 2nd cycle)")
         parts.append("")
 
         # ========== PRESSURE GRADIENT Section (v2.0) ==========
