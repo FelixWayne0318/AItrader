@@ -3,7 +3,7 @@ import type { AppProps } from "next/app";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import Head from "next/head";
 import useSWR from "swr";
-import "@/app/globals.css";
+import "@/styles/globals.css";
 
 // Font configuration with fallback to prevent render-blocking
 const inter = Inter({
