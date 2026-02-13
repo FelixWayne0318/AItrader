@@ -302,6 +302,11 @@ class AIInputDataValidator(DiagnosticStep):
                 bb_data=bb_data,
                 sma_data=sma_data,
                 orderbook_anomalies=orderbook_anomalies,
+                bars_data=self.ctx.sr_bars_data,
+                bars_data_4h=self.ctx.bars_data_4h,
+                bars_data_1d=self.ctx.bars_data_1d,
+                daily_bar=self.ctx.daily_bar,
+                weekly_bar=self.ctx.weekly_bar,
             )
 
             self.ctx.sr_zones_data = sr_result
@@ -671,7 +676,8 @@ class AIInputDataValidator(DiagnosticStep):
         """
         Print S/R Zone data (v2.6.0).
 
-        Shows support/resistance zones calculated from BB, SMA, Order Walls.
+        Shows support/resistance zones calculated from Swing Points, Volume Profile,
+        Pivot Points, Order Walls, and Round Numbers (v4.0+).
         This data is used for SL/TP calculation when AI doesn't provide valid values.
         """
         sr_data = getattr(self.ctx, 'sr_zones_data', None)
@@ -738,7 +744,7 @@ class AIInputDataValidator(DiagnosticStep):
                     print(f"      SHORT R/R: {short_rr:.2f}:1 {rr_status}")
 
             print()
-            print("      ℹ️ 数据来源: SRZoneCalculator (BB + SMA + Order Walls)")
+            print("      ℹ️ 数据来源: SRZoneCalculator (Swing + VP + Pivot + Order Walls)")
         else:
             print("  [13] S/R Zones: 未计算 (可能缺少技术数据)")
 
