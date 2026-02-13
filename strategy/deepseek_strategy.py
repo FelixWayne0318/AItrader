@@ -2346,20 +2346,32 @@ class DeepSeekAIStrategy(Strategy):
                 }
 
             # 9. 获取信号执行状态 (v4.1)
-            # v4.4: 状态一致性检查 - 防止缓存状态与实时仓位矛盾
+            # v4.4+: 状态一致性检查 - 防止缓存状态与实时仓位矛盾
             signal_status_heartbeat = getattr(self, '_last_signal_status', None)
             if signal_status_heartbeat and not position_side:
-                # 缓存状态说有仓位，但实时查询无仓位 → 状态过时
+                cached_executed = signal_status_heartbeat.get('executed', False)
                 cached_reason = signal_status_heartbeat.get('reason', '')
+                cached_action = signal_status_heartbeat.get('action_taken', '')
+
+                # Case 1: 状态说"已持有仓位"但实际无仓位 → 仓位被 SL/TP 平掉
+                # Case 2: 状态说已执行开仓 (executed=True + action_taken 包含"开")
+                #          但实际无仓位 → 仓位已被平掉，状态过时
+                # 这两种情况下 heartbeat 都不应显示旧的 "✅ 开多仓" 等信息
+                should_clear = False
                 if '已持有' in cached_reason:
-                    # 仓位已被止损/止盈平掉，清除过时状态
+                    should_clear = True
+                elif cached_executed and cached_action and '开' in cached_action:
+                    # "开多仓 0.034 BTC" but no position → stale
+                    should_clear = True
+
+                if should_clear:
                     signal_status_heartbeat = {
                         'executed': False,
                         'reason': '仓位已平仓 (SL/TP 触发)',
-                        'action_taken': '等待新信号',
+                        'action_taken': '',
                     }
                     self._last_signal_status = signal_status_heartbeat
-                    self.log.info("🔄 检测到仓位已平仓，更新信号状态")
+                    self.log.info("🔄 检测到仓位已平仓，清除过时的执行状态")
 
             # 10. 发送消息
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({

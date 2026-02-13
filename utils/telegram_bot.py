@@ -749,12 +749,16 @@ class TelegramBot:
                 msg += f"\n📐 {' | '.join(rm_parts)}"
 
         # Signal execution status
+        # Guard: don't show "✅ 开多仓" when there's no position (stale data)
         if signal_status:
             executed = signal_status.get('executed', False)
             reason = signal_status.get('reason', '')
             action_taken = signal_status.get('action_taken', '')
             if executed and action_taken:
-                msg += f"\n✅ {action_taken}"
+                # Only show "✅ 开仓" if we actually have a position
+                if has_position or '开' not in action_taken:
+                    msg += f"\n✅ {action_taken}"
+                # else: skip stale "开仓" action when position is already closed
             elif reason:
                 msg += f"\n⏸️ {reason}"
 
