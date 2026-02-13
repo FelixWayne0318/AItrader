@@ -2709,13 +2709,13 @@ Reason: {status.get('message', 'Unknown')}
             parts.append(f"ANOMALIES (threshold={threshold:.1f}x, {threshold_reason}):")
             for anom in bid_anomalies[:3]:  # Show up to 3 per side
                 price = _safe_float(anom.get('price', 0))
-                amount = _safe_float(anom.get('amount', 0))
-                multiple = _safe_float(anom.get('multiple', 0))
+                amount = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
+                multiple = _safe_float(anom.get('multiplier', anom.get('multiple', 0)))
                 parts.append(f"  Bid: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
             for anom in ask_anomalies[:3]:
                 price = _safe_float(anom.get('price', 0))
-                amount = _safe_float(anom.get('amount', 0))
-                multiple = _safe_float(anom.get('multiple', 0))
+                amount = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
+                multiple = _safe_float(anom.get('multiplier', anom.get('multiple', 0)))
                 parts.append(f"  Ask: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
             parts.append("")
 
