@@ -2202,11 +2202,17 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
                 f"(spread={br_range:.1%}, stddev={br_std:.1%})\n"
             )
 
-        # v3.24: Added CVD Trend (was missing — critical confirmation signal)
+        # v5.2: Added CVD numerical history (was trend-only — AI needs magnitude)
+        cvd_history = data.get('cvd_history', [])
+        cvd_cumulative = data.get('cvd_cumulative', 0)
+        cvd_history_str = ", ".join([f"{v:+,.0f}" for v in cvd_history]) if cvd_history else "N/A"
+
         return f"""
 ORDER FLOW (Binance Taker Data):
 - Buy Ratio (10-bar avg): {buy_ratio:.1%}
 {range_stats}- CVD Trend: {cvd_trend}
+- CVD History (last {len(cvd_history)} bars): [{cvd_history_str}]
+- CVD Cumulative: {cvd_cumulative:+,.0f}
 - Volume (USDT): ${volume_usdt:,.0f}
 - Avg Trade Size: ${avg_trade:,.0f} USDT
 - Trade Count: {trades_count:,}
@@ -2247,7 +2253,7 @@ ORDER FLOW (Binance Taker Data):
         if data and data.get('enabled', True):
             parts.append("COINALYZE DERIVATIVES:")
 
-            # Open Interest (v3.26: restored trend — single snapshot needs trend context)
+            # Open Interest (v5.2: add hourly history series for OI×Price analysis)
             trends = data.get('trends', {})
             oi = data.get('open_interest')
             if oi:
@@ -2257,6 +2263,17 @@ ORDER FLOW (Binance Taker Data):
                     oi_btc = 0.0
                 oi_trend = trends.get('oi_trend', 'N/A')
                 parts.append(f"- Open Interest: {oi_btc:,.2f} BTC (Trend: {oi_trend})")
+
+                # v5.2: OI hourly history (price divergence analysis)
+                oi_hist = data.get('open_interest_history')
+                if oi_hist and oi_hist.get('history'):
+                    oi_closes = [float(h.get('c', 0)) for h in oi_hist['history']]
+                    if len(oi_closes) >= 2:
+                        oi_series_str = " → ".join([f"{v:,.0f}" for v in oi_closes])
+                        oi_change = oi_closes[-1] - oi_closes[0]
+                        oi_change_pct = (oi_change / oi_closes[0] * 100) if oi_closes[0] != 0 else 0
+                        parts.append(f"  OI History ({len(oi_closes)}h): {oi_series_str}")
+                        parts.append(f"  OI Change: {oi_change:+,.0f} BTC ({oi_change_pct:+.2f}%)")
             else:
                 parts.append("- Open Interest: N/A")
 
@@ -2275,6 +2292,10 @@ ORDER FLOW (Binance Taker Data):
                 predicted_pct = funding.get('predicted_rate_pct')
                 if predicted_pct is not None:
                     parts.append(f"- Predicted Next Funding Rate: {predicted_pct:.4f}%")
+                    # v5.2: Settled vs Predicted delta (key sentiment shift signal)
+                    delta_pct = predicted_pct - settled_pct
+                    direction = "↑ more bullish pressure" if delta_pct > 0 else "↓ more bearish pressure" if delta_pct < 0 else "→ stable"
+                    parts.append(f"- Funding Delta (Predicted - Settled): {delta_pct:+.4f}% ({direction})")
 
                 # 溢价指数 (瞬时值)
                 premium_index = funding.get('premium_index')

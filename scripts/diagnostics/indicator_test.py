@@ -206,9 +206,18 @@ class TechnicalDataFetcher(DiagnosticStep):
                     'sma_200': trend_layer_data.get('sma_200', 0),
                     'macd': trend_layer_data.get('macd', 0),
                     'macd_signal': trend_layer_data.get('macd_signal', 0),
+                    # v3.25: 1D RSI + ADX for macro analysis (match production)
+                    'rsi': trend_layer_data.get('rsi', 0),
+                    'adx': trend_layer_data.get('adx', 0),
+                    'di_plus': trend_layer_data.get('di_plus', 0),
+                    'di_minus': trend_layer_data.get('di_minus', 0),
+                    'adx_regime': trend_layer_data.get('adx_regime', 'UNKNOWN'),
                 }
-                sma_200 = self.ctx.technical_data['mtf_trend_layer']['sma_200']
-                print(f"  ✅ 1D 趋势层数据加载: SMA_200=${sma_200:,.2f}")
+                mtf_1d = self.ctx.technical_data['mtf_trend_layer']
+                sma_200 = mtf_1d['sma_200']
+                rsi_1d = mtf_1d['rsi']
+                adx_1d = mtf_1d['adx']
+                print(f"  ✅ 1D 趋势层数据加载: SMA_200=${sma_200:,.2f}, RSI={rsi_1d:.1f}, ADX={adx_1d:.1f} ({mtf_1d['adx_regime']})")
 
                 # v4.0: Store raw 1D bars for S/R swing detection + pivot calculation
                 bars_1d_dicts = [
