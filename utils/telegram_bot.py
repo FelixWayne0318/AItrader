@@ -686,7 +686,21 @@ class TelegramBot:
         sig_icon = self._signal_icon(signal)
         signal_is_stale = heartbeat_data.get('signal_is_stale', False)
         stale_label = " (上次)" if signal_is_stale else ""
+        risk_level = heartbeat_data.get('risk_level')
+        position_size_pct = heartbeat_data.get('position_size_pct')
+
         msg += f"\n🤖 *{sig_icon} {signal}* ({confidence}){stale_label}"
+
+        # v4.14: Show Risk Manager's position sizing and risk assessment
+        if signal not in ('HOLD', 'PENDING') and (risk_level or position_size_pct is not None):
+            rm_parts = []
+            if position_size_pct is not None:
+                rm_parts.append(f"仓位 {position_size_pct}%")
+            if risk_level:
+                risk_cn = {'LOW': '低', 'MEDIUM': '中', 'HIGH': '高'}.get(risk_level, risk_level)
+                rm_parts.append(f"风险 {risk_cn}")
+            if rm_parts:
+                msg += f"\n📐 {' | '.join(rm_parts)}"
 
         # Signal execution status
         if signal_status:
@@ -752,6 +766,9 @@ class TelegramBot:
         msg = f"{side_emoji} *交易执行 — {title}*\n"
         msg += "━━━━━━━━━━━━━━━━━━\n"
         msg += f"📊 {quantity:.4f} BTC @ ${entry_price:,.2f} (${amount:,.2f})\n"
+        risk_level = execution_data.get('risk_level')
+        position_size_pct = execution_data.get('position_size_pct')
+
         msg += f"📋 信心: {conf_cn}"
 
         if winning_side:
@@ -759,6 +776,16 @@ class TelegramBot:
             w_cn = "多方" if winning_side.upper() == "BULL" else "空方" if winning_side.upper() == "BEAR" else winning_side
             msg += f" | {w_icon} {w_cn}胜出"
         msg += "\n"
+
+        # v4.14: Risk Manager assessment
+        if risk_level or position_size_pct is not None:
+            rm_parts = []
+            if position_size_pct is not None:
+                rm_parts.append(f"仓位 {position_size_pct}%")
+            if risk_level:
+                risk_cn = {'LOW': '低风险', 'MEDIUM': '中风险', 'HIGH': '高风险'}.get(risk_level, risk_level)
+                rm_parts.append(risk_cn)
+            msg += f"📐 {' | '.join(rm_parts)}\n"
 
         # SL/TP and R/R
         if sl_price or tp_price:

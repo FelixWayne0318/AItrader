@@ -656,6 +656,7 @@ class TelegramCommandHandler:
         # Look up strategy command
         strategy_cmd = CALLBACK_MAP.get(callback_data)
         if not strategy_cmd:
+            self.logger.warning(f"Unknown callback_data: {callback_data}")
             await self._edit_message(query, "❌ 未知操作")
             return
 

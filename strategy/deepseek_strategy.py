@@ -2246,6 +2246,8 @@ class DeepSeekAIStrategy(Strategy):
             last_signal = getattr(self, 'last_signal', None) or {}
             signal = last_signal.get('signal') or 'PENDING'
             confidence = last_signal.get('confidence') or 'N/A'
+            risk_level = last_signal.get('risk_level')
+            position_size_pct = last_signal.get('position_size_pct')
             # Mark signal as stale (from previous cycle) so Telegram can label it correctly
             signal_is_stale = signal != 'PENDING'  # PENDING = no previous analysis yet
 
@@ -2363,6 +2365,8 @@ class DeepSeekAIStrategy(Strategy):
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
+                'risk_level': risk_level,
+                'position_size_pct': position_size_pct,
                 'signal_is_stale': signal_is_stale,
                 'price': display_price or 0,
                 'rsi': rsi,
@@ -3265,6 +3269,8 @@ class DeepSeekAIStrategy(Strategy):
                 'macd': technical_data.get('macd'),
                 'winning_side': judge_info.get('winning_side', ''),
                 'reasoning': signal_data.get('reason', ''),
+                'risk_level': signal_data.get('risk_level', 'MEDIUM'),
+                'position_size_pct': signal_data.get('position_size_pct'),
             }
 
         # Execute position management logic
@@ -5585,6 +5591,8 @@ class DeepSeekAIStrategy(Strategy):
                         'macd': self._pending_execution_data.get('macd'),
                         'winning_side': self._pending_execution_data.get('winning_side', ''),
                         'reasoning': self._pending_execution_data.get('reasoning', ''),
+                        'risk_level': self._pending_execution_data.get('risk_level', 'MEDIUM'),
+                        'position_size_pct': self._pending_execution_data.get('position_size_pct'),
                     })
                     # Clear pending data after use
                     self._pending_execution_data = None
