@@ -127,36 +127,30 @@ def check_binance_position():
             print("  ⚠️ 未找到 BINANCE_API_KEY/SECRET, 跳过")
             return
 
-        from utils.binance_account import BinanceAccountClient
-        client = BinanceAccountClient(api_key, api_secret)
+        from utils.binance_account import BinanceAccountFetcher
+        client = BinanceAccountFetcher(api_key, api_secret)
 
         # Get position
-        positions = client.get_positions()
-        btc_positions = [p for p in (positions or [])
-                         if 'BTC' in p.get('symbol', '')]
-
-        if btc_positions:
-            for pos in btc_positions:
+        positions = client.get_positions(symbol='BTCUSDT')
+        if positions:
+            for pos in positions:
                 amt = float(pos.get('positionAmt', 0))
-                if abs(amt) > 0:
-                    entry = float(pos.get('entryPrice', 0))
-                    pnl = float(pos.get('unRealizedProfit', 0))
-                    leverage = pos.get('leverage', '?')
-                    side = 'LONG' if amt > 0 else 'SHORT'
-                    print(f"  📊 持仓: {side} {abs(amt)} BTC")
-                    print(f"  💰 入场: ${entry:,.2f}")
-                    print(f"  📈 未实现盈亏: ${pnl:,.2f}")
-                    print(f"  🔧 杠杆: {leverage}x")
-                else:
-                    print(f"  💼 BTCUSDT: 空仓 (positionAmt=0)")
+                entry = float(pos.get('entryPrice', 0))
+                pnl = float(pos.get('unrealized_pnl', pos.get('unRealizedProfit', 0)))
+                leverage = pos.get('leverage', '?')
+                side = 'LONG' if amt > 0 else 'SHORT'
+                print(f"  📊 持仓: {side} {abs(amt)} BTC")
+                print(f"  💰 入场: ${entry:,.2f}")
+                print(f"  📈 未实现盈亏: ${pnl:,.2f}")
+                print(f"  🔧 杠杆: {leverage}x")
         else:
-            print("  💼 无 BTC 持仓")
+            print("  💼 BTCUSDT: 空仓")
 
         # Get balance
-        balance = client.get_account_balance()
+        balance = client.get_balance()
         if balance:
-            print(f"\n  🏦 余额: ${float(balance.get('totalWalletBalance', 0)):,.2f}")
-            print(f"  📊 可用: ${float(balance.get('availableBalance', 0)):,.2f}")
+            print(f"\n  🏦 余额: ${balance.get('total_balance', 0):,.2f}")
+            print(f"  📊 可用: ${balance.get('available_balance', 0):,.2f}")
 
         # Get recent price
         price = client.get_realtime_price('BTCUSDT')
