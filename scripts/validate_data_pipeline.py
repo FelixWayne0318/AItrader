@@ -2124,6 +2124,7 @@ def main():
         test_data_assembler_structure(results)   # Test 17
         test_sma_label_disambiguation(results)   # Test 18
         test_consumer_field_contracts(results)   # Test 19
+        test_production_calculations(results)    # Test 20
 
     # 汇总
     all_passed = results.summary()
