@@ -1535,7 +1535,12 @@ def test_consumer_field_contracts(results: TestResults):
                 ]
 
             def get_klines(self, **kwargs):
-                return None
+                # 最小有效 K线 (Binance 12列: open_time,O,H,L,C,V,close_time,quote_vol,trades,taker_buy_base,taker_buy_quote,ignore)
+                t = int(time.time() * 1000)
+                return [
+                    [t - 60000, '100000', '100500', '99500', '100000', '10', t, '1000000', 100, '5', '500000', '0'],
+                    [t,         '100000', '100200', '99800', '100000', '12', t + 60000, '1200000', 120, '6', '600000', '0'],
+                ]
 
         class MockOrderFlow:
             def process_klines(self, klines):
@@ -1800,7 +1805,12 @@ def test_production_calculations(results: TestResults):
                 ]
 
             def get_klines(self, **kwargs):
-                return None
+                # 最小有效 K线 (Binance 12列: open_time,O,H,L,C,V,close_time,quote_vol,trades,taker_buy_base,taker_buy_quote,ignore)
+                t = int(time.time() * 1000)
+                return [
+                    [t - 60000, '100000', '100500', '99500', '100000', '10', t, '1000000', 100, '5', '500000', '0'],
+                    [t,         '100000', '100200', '99800', '100000', '12', t + 60000, '1200000', 120, '6', '600000', '0'],
+                ]
 
         class MockOrderFlow:
             def process_klines(self, klines):
