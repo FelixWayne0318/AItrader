@@ -4029,12 +4029,332 @@
       "pattern_type": "function_exists",
       "created": "2026-02-07T23:55:35.230891",
       "auto_generated": true
+    },
+    {
+      "id": "17cbb8cdcd46",
+      "commit": "7c62dea",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "feat: close remaining oracle blind spots across 4 files",
+      "pattern": "# ── R/R cross-check: percentage-based vs direct formula ──",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.194264",
+      "auto_generated": true
+    },
+    {
+      "id": "ca8135830074",
+      "commit": "7c62dea",
+      "file": "scripts/diagnostics/math_verification.py",
+      "message": "feat: close remaining oracle blind spots across 4 files",
+      "pattern": "from strategy.trading_logic import get_default_sl_pct",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:36.262625",
+      "auto_generated": true
+    },
+    {
+      "id": "e5008545d7de",
+      "commit": "7c62dea",
+      "file": "scripts/diagnostics/order_flow_simulation.py",
+      "message": "feat: close remaining oracle blind spots across 4 files",
+      "pattern": "if new_sl and new_sl < old_sl and final_sl != old_sl:",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.285575",
+      "auto_generated": true
+    },
+    {
+      "id": "6f80cc21661b",
+      "commit": "7c62dea",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "feat: close remaining oracle blind spots across 4 files",
+      "pattern": "if abs(actual_usdt - expected_usdt) < 1.0:",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.313712",
+      "auto_generated": true
+    },
+    {
+      "id": "2d4dc62a539e",
+      "commit": "bfb68d2",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: align S/R zone diagnostics with production — replace deprecated fallbacks",
+      "pattern": "from utils.sr_sltp_calculator import calculate_sr_based_sltp",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:36.363447",
+      "auto_generated": true
+    },
+    {
+      "id": "35253e60a60e",
+      "commit": "bfb68d2",
+      "file": "scripts/diagnostics/order_flow_simulation.py",
+      "message": "fix: align S/R zone diagnostics with production — replace deprecated fallbacks",
+      "pattern": "from utils.sr_sltp_calculator import calculate_sr_based_sltp",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:36.385699",
+      "auto_generated": true
+    },
+    {
+      "id": "3217c988f76b",
+      "commit": "bfb68d2",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: align S/R zone diagnostics with production — replace deprecated fallbacks",
+      "pattern": "from utils.sr_sltp_calculator import calculate_sr_based_sltp",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:36.408780",
+      "auto_generated": true
+    },
+    {
+      "id": "b88ee235cd13",
+      "commit": "19b5db3",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: align diagnostic scripts with production on_timer() data flow",
+      "pattern": "from utils.sr_zone_calculator import SRZoneCalculator",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:36.450931",
+      "auto_generated": true
+    },
+    {
+      "id": "0b1f399ee8aa",
+      "commit": "19b5db3",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix: align diagnostic scripts with production on_timer() data flow",
+      "pattern": "atr_value: Optional[float] = None    # v4.0 (E1): ATR from S/R bars for zone buffer calc",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.474742",
+      "auto_generated": true
+    },
+    {
+      "id": "f0d258a4e094",
+      "commit": "19b5db3",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: align diagnostic scripts with production on_timer() data flow",
+      "pattern": "import inspect",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:36.500534",
+      "auto_generated": true
+    },
+    {
+      "id": "ad511537fe14",
+      "commit": "c68376d",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: 在线模式添加 Test 20 (计算正确性验证)",
+      "pattern": "test_production_calculations(results)    # Test 20",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.540385",
+      "auto_generated": true
+    },
+    {
+      "id": "3e03a8064c34",
+      "commit": "e69fed0",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: Test 19/20 用真实生产代码替换硬编码 mock",
+      "pattern": "from utils.order_flow_processor import OrderFlowProcessor",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:36.580140",
+      "auto_generated": true
+    },
+    {
+      "id": "2fda4d113ae7",
+      "commit": "5f8157d",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: Test 19/20 mock get_klines 返回有效数据消除降级警告",
+      "pattern": "[t,         '100000', '100200', '99800', '100000', '12', t + 60000, '1200000', 120, '6', '600000', '0'],",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.620219",
+      "auto_generated": true
+    },
+    {
+      "id": "71c22b5ecf86",
+      "commit": "6abc277",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: 验证脚本取错 fundingRate 元素 — API 返回升序非降序",
+      "pattern": "most_recent = max(data, key=lambda x: int(x.get('fundingTime', 0)))",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.660549",
+      "auto_generated": true
+    },
+    {
+      "id": "75d2b9d68f59",
+      "commit": "d6f22a5",
+      "file": "utils/ai_data_assembler.py",
+      "message": "fix: funding rate 字段命名不一致导致 AI 看不到资金费率",
+      "pattern": "\"current_pct\": funding_pct,          # 消费者兼容 (format_complete_report + multi_agent_analyzer 读此字段)",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.700880",
+      "auto_generated": true
+    },
+    {
+      "id": "79b45f207442",
+      "commit": "c8c79bd",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: 诊断脚本 Settled Rate 一致性检查增加结算边界检测",
+      "pattern": "from datetime import datetime, timezone",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:36.741685",
+      "auto_generated": true
+    },
+    {
+      "id": "8ca916d1d67e",
+      "commit": "439fad2",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "feat: enhance validate_data_pipeline.py v2.0 - comprehensive data pipeline validation",
+      "pattern": "import math",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:36.782084",
+      "auto_generated": true
+    },
+    {
+      "id": "b58ae2a09353",
+      "commit": "33be865",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: BarType 构造兼容性 - 使用 from_str() 替代手动构造",
+      "pattern": "bar_type = BarType.from_str(\"BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL\")",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.819228",
+      "auto_generated": true
+    },
+    {
+      "id": "000cc3b4750a",
+      "commit": "783f865",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: 验证脚本指标测试 - 修正类名和 Bar 构造",
+      "pattern": "from indicators.technical_manager import TechnicalIndicatorManager",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:36.855303",
+      "auto_generated": true
+    },
+    {
+      "id": "da324ab832f6",
+      "commit": "aaa72a1",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: AI数据质量改进 - SMA200标签/OI四象限/冷启动提示",
+      "pattern": "if len(cvd_history) < 3:",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.895571",
+      "auto_generated": true
+    },
+    {
+      "id": "094f72a9db84",
+      "commit": "1a7b89e",
+      "file": "utils/sentiment_client.py",
+      "message": "fix: 情绪数据延迟143分钟 - data[0]取到最旧而非最新数据",
+      "pattern": "result = self._parse_binance_data(data[-1])",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.932514",
+      "auto_generated": true
+    },
+    {
+      "id": "618448cc6ce9",
+      "commit": "d68cc5a",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: 订单簿异常字段名不匹配 - AI 看到 0.0 BTC 而非实际大单",
+      "pattern": "amount = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:36.972594",
+      "auto_generated": true
+    },
+    {
+      "id": "f8f1dde82c85",
+      "commit": "d1d900d",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: BB Position 格式化 bug - AI 收到 0.9% 实际应为 85.2%",
+      "pattern": "- Position: {safe_get('bb_position') * 100:.1f}% (0%=Lower Band, 100%=Upper Band)",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:37.012469",
+      "auto_generated": true
+    },
+    {
+      "id": "d05a0b9816e1",
+      "commit": "5f9d696",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: resolve 5 AI data pipeline gaps (1D RSI/ADX, CVD history, OI series, funding delta)",
+      "pattern": "cvd_history = data.get('cvd_history', [])",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:37.056041",
+      "auto_generated": true
+    },
+    {
+      "id": "2eaaaa229bb3",
+      "commit": "5f9d696",
+      "file": "scripts/diagnostics/indicator_test.py",
+      "message": "fix: resolve 5 AI data pipeline gaps (1D RSI/ADX, CVD history, OI series, funding delta)",
+      "pattern": "'rsi': trend_layer_data.get('rsi', 0),",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:37.075905",
+      "auto_generated": true
+    },
+    {
+      "id": "74d92204ab23",
+      "commit": "5f9d696",
+      "file": "utils/order_flow_processor.py",
+      "message": "fix: resolve 5 AI data pipeline gaps (1D RSI/ADX, CVD history, OI series, funding delta)",
+      "pattern": "cvd_cumulative = round(sum(self._cvd_history), 2) if self._cvd_history else 0.0",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:37.094111",
+      "auto_generated": true
+    },
+    {
+      "id": "518b3267ea1e",
+      "commit": "1733cc0",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: diagnostic [13] S/R Zones now uses full bars data (Swing+VP+Pivot)",
+      "pattern": "Shows support/resistance zones calculated from Swing Points, Volume Profile,",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:37.136717",
+      "auto_generated": true
+    },
+    {
+      "id": "2f49282faa30",
+      "commit": "f4acc6b",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: S/R zone accuracy in AI prompt and diagnostic tool",
+      "pattern": "- \"HIGH 强度\" = 多源确认 (Swing Point + Volume Profile + Pivot 共振)，历史反弹率较高",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:37.176979",
+      "auto_generated": true
+    },
+    {
+      "id": "f2b48c3d6990",
+      "commit": "f4acc6b",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: S/R zone accuracy in AI prompt and diagnostic tool",
+      "pattern": "# Data completeness check (all 15 analyze() parameters)",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:37.197973",
+      "auto_generated": true
+    },
+    {
+      "id": "db9379275527",
+      "commit": "f4acc6b",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix: S/R zone accuracy in AI prompt and diagnostic tool",
+      "pattern": "bars_data_4h: Optional[List] = None  # v4.0: 4H bars for S/R pivot + volume profile",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:37.219253",
+      "auto_generated": true
+    },
+    {
+      "id": "370f85ac367a",
+      "commit": "f4acc6b",
+      "file": "scripts/diagnostics/indicator_test.py",
+      "message": "fix: S/R zone accuracy in AI prompt and diagnostic tool",
+      "pattern": "from utils.sr_pivot_calculator import aggregate_weekly_bar",
+      "pattern_type": "import",
+      "created": "2026-02-13T10:39:37.238754",
+      "auto_generated": true
+    },
+    {
+      "id": "c6bf27df1fd1",
+      "commit": "f4acc6b",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "fix: S/R zone accuracy in AI prompt and diagnostic tool",
+      "pattern": "print(f\"     📊 数据源: Swing15M={'✅' if has_bars else '❌'}, Swing4H={'✅' if has_4h else '❌'}, Swing1D={'✅' if has_1d else '❌'}, Pivot={'✅' if has_pivot else '❌'}\")",
+      "pattern_type": "contains",
+      "created": "2026-02-13T10:39:37.258857",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-07T23:55:43.543756",
-    "count": 403,
+    "updated": "2026-02-13T10:39:37.259106",
+    "count": 435,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }

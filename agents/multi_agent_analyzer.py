@@ -264,6 +264,11 @@ class MultiAgentAnalyzer:
             cluster_pct=cluster_cfg.get('cluster_pct', 0.5),
             zone_expand_pct=sr_cfg.get('zone_expand_pct', 0.1),
             hard_control_threshold_pct=hard_ctrl_cfg.get('threshold_pct', 1.0),
+            # v5.1: ATR-adaptive hard control
+            hard_control_threshold_mode=hard_ctrl_cfg.get('threshold_mode', 'fixed'),
+            hard_control_atr_multiplier=hard_ctrl_cfg.get('atr_multiplier', 0.5),
+            hard_control_atr_min_pct=hard_ctrl_cfg.get('atr_min_pct', 0.3),
+            hard_control_atr_max_pct=hard_ctrl_cfg.get('atr_max_pct', 2.0),
             # v3.0: Swing Point config
             swing_detection_enabled=swing_cfg.get('enabled', True),
             swing_left_bars=swing_cfg.get('left_bars', 5),

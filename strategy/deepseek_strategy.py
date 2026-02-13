@@ -3729,6 +3729,12 @@ class DeepSeekAIStrategy(Strategy):
             stop_loss_price = validated_sl
             tp_price = validated_tp
             self.log.info(f"🎯 SL/TP validated for entry: {validation_reason}")
+
+            # v5.1: Zone cross-validation — check if AI SL is anchored near a real S/R zone
+            # If AI SL floats in no-man's-land (not near any zone), replace with zone-based SL
+            stop_loss_price, tp_price = self._zone_cross_validate_sltp(
+                stop_loss_price, tp_price, entry_price, side,
+            )
         else:
             # Level 1 (AI) failed — try Level 2 (S/R-based) if enabled
             if multi_sl or multi_tp:
@@ -3796,6 +3802,169 @@ class DeepSeekAIStrategy(Strategy):
         )
 
         return (stop_loss_price, tp_price, entry_price)
+
+    def _zone_cross_validate_sltp(
+        self,
+        ai_sl: float,
+        ai_tp: float,
+        entry_price: float,
+        side: OrderSide,
+    ) -> tuple:
+        """
+        v5.1: Zone cross-validation for AI SL/TP.
+
+        After AI SL/TP passes basic validation (direction, distance, R/R),
+        verify that the SL is anchored near a real S/R zone. If the SL floats
+        in structural no-man's-land, replace it with a zone-based SL while
+        keeping the AI's TP (which reflects the AI's profit target judgment).
+
+        This prevents "numerically valid but structurally unsound" SL placement
+        where AI sets SL at an arbitrary distance without reference to market structure.
+
+        Returns
+        -------
+        tuple
+            (final_sl, final_tp) — may be same as input or zone-adjusted
+        """
+        # Check if zone cross-validation is enabled
+        sr_cfg = {}
+        try:
+            from utils.config_manager import ConfigManager
+            config_mgr = ConfigManager(env=getattr(self, '_config_env', 'production'))
+            config_mgr.load()
+            zcv_cfg = config_mgr.get('sr_zones', 'zone_cross_validation', default={})
+            if isinstance(zcv_cfg, dict):
+                sr_cfg = zcv_cfg
+        except Exception:
+            pass
+
+        if not sr_cfg.get('enabled', True):
+            return ai_sl, ai_tp
+
+        if not hasattr(self, 'latest_sr_zones_data') or not self.latest_sr_zones_data:
+            return ai_sl, ai_tp
+
+        is_long = (side == OrderSide.BUY)
+        atr = getattr(self, '_cached_atr_value', 0.0) or 0.0
+
+        if atr <= 0:
+            self.log.debug("Zone cross-validation skipped: ATR not available")
+            return ai_sl, ai_tp
+
+        max_distance_atr = sr_cfg.get('max_distance_atr', 1.5)
+        replace_sl = sr_cfg.get('replace_sl', True)
+        max_distance = atr * max_distance_atr
+
+        # Find nearest zone on the SL side
+        if is_long:
+            sl_zones = self.latest_sr_zones_data.get('support_zones', [])
+        else:
+            sl_zones = self.latest_sr_zones_data.get('resistance_zones', [])
+
+        # Check if AI SL is within max_distance of any zone
+        sl_anchored = False
+        nearest_zone_price = None
+        nearest_zone_dist = float('inf')
+
+        for zone in sl_zones:
+            zone_price = None
+            if hasattr(zone, 'price_center'):
+                zone_price = zone.price_center
+            elif isinstance(zone, dict):
+                zone_price = zone.get('price_center')
+            if not zone_price:
+                continue
+
+            dist = abs(ai_sl - zone_price)
+            if dist < nearest_zone_dist:
+                nearest_zone_dist = dist
+                nearest_zone_price = zone_price
+
+            if dist <= max_distance:
+                sl_anchored = True
+                break
+
+        if sl_anchored:
+            self.log.debug(
+                f"Zone cross-validation: AI SL ${ai_sl:,.2f} anchored near zone "
+                f"${nearest_zone_price:,.0f} (dist=${nearest_zone_dist:,.0f}, "
+                f"max=${max_distance:,.0f})"
+            )
+            return ai_sl, ai_tp
+
+        # AI SL is not anchored — attempt zone-based replacement
+        zone_info = (
+            f"nearest zone=${nearest_zone_price:,.0f} dist=${nearest_zone_dist:,.0f}"
+            if nearest_zone_price else "no zones found"
+        )
+        self.log.warning(
+            f"⚠️ Zone cross-validation: AI SL ${ai_sl:,.2f} NOT anchored "
+            f"to any S/R zone (max_dist={max_distance:,.0f}, {zone_info})"
+        )
+
+        if not replace_sl:
+            self.log.info("Zone cross-validation: replace_sl=false, keeping AI SL")
+            return ai_sl, ai_tp
+
+        # Use sr_sltp_calculator to find zone-based SL
+        try:
+            from utils.sr_sltp_calculator import _select_sl_anchor
+
+            if is_long:
+                sl_anchor = _select_sl_anchor(
+                    sl_zones, entry_price, is_long=True, atr_value=atr,
+                )
+            else:
+                sl_anchor = _select_sl_anchor(
+                    sl_zones, entry_price, is_long=False, atr_value=atr,
+                )
+
+            if not sl_anchor:
+                self.log.info(
+                    "Zone cross-validation: no zone anchor found, keeping AI SL"
+                )
+                return ai_sl, ai_tp
+
+            # Place SL behind zone with ATR buffer (same logic as sr_sltp_calculator)
+            buffer = atr * self.atr_buffer_multiplier
+            if is_long:
+                zone_sl = sl_anchor - buffer
+            else:
+                zone_sl = sl_anchor + buffer
+
+            # Validate zone SL is on correct side and maintains R/R
+            if is_long:
+                if zone_sl >= entry_price:
+                    self.log.info("Zone cross-validation: zone SL >= entry, keeping AI SL")
+                    return ai_sl, ai_tp
+                risk = entry_price - zone_sl
+                reward = ai_tp - entry_price
+            else:
+                if zone_sl <= entry_price:
+                    self.log.info("Zone cross-validation: zone SL <= entry, keeping AI SL")
+                    return ai_sl, ai_tp
+                risk = zone_sl - entry_price
+                reward = entry_price - ai_tp
+
+            rr = reward / risk if risk > 0 else 0
+
+            if rr < self.min_rr_ratio:
+                self.log.info(
+                    f"Zone cross-validation: zone SL ${zone_sl:,.2f} gives "
+                    f"R/R {rr:.2f}:1 < {self.min_rr_ratio}:1, keeping AI SL"
+                )
+                return ai_sl, ai_tp
+
+            self.log.info(
+                f"📍 Zone cross-validation: replaced AI SL ${ai_sl:,.2f} → "
+                f"zone SL ${zone_sl:,.2f} (anchor=${sl_anchor:,.0f} ± "
+                f"ATR buffer ${buffer:,.0f}, R/R={rr:.2f}:1)"
+            )
+            return zone_sl, ai_tp
+
+        except Exception as e:
+            self.log.warning(f"Zone cross-validation error: {e}, keeping AI SL")
+            return ai_sl, ai_tp
 
     def _replace_sltp_orders(
         self,

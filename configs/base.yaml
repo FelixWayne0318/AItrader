@@ -622,7 +622,22 @@ sr_zones:
   # ---------------------------------------------------------------------------
   hard_control:
     enabled: false                      # 启用本地硬风控覆盖 (默认关闭)
-    threshold_pct: 1.0                  # 硬风控触发阈值 (距离 < 1%)
+    threshold_pct: 1.0                  # 硬风控触发阈值 (距离 < 1%) — fixed 模式使用
+    threshold_mode: "atr"               # "fixed" = 固定百分比, "atr" = ATR 自适应
+    atr_multiplier: 0.5                 # ATR 模式: zone_distance < ATR/price*100 * multiplier → block
+    atr_min_pct: 0.3                    # ATR 模式下限 (防止低波动时阈值太小)
+    atr_max_pct: 2.0                    # ATR 模式上限 (防止高波动时阈值太大)
+
+  # ---------------------------------------------------------------------------
+  # v5.1: AI SL/TP Zone 交叉验证
+  # 当 AI 返回 SL/TP 通过基础验证后，检查 SL 是否锚定在真实 S/R zone 附近
+  # 如果 AI SL 偏离所有 zone，用 sr_sltp_calculator 的 zone-based SL 替换
+  # ---------------------------------------------------------------------------
+  zone_cross_validation:
+    enabled: true                       # 启用 zone 交叉验证
+    max_distance_atr: 1.5              # SL 距最近 zone 超过 ATR * 1.5 视为未锚定
+    replace_sl: true                    # 未锚定时用 zone-based SL 替换 AI SL
+    keep_ai_tp: true                    # 替换 SL 时保留 AI 的 TP (仅替换 SL)
 
 # =============================================================================
 # 订单簿深度配置 (Order Book Depth) v2.0 - v3.7 新增

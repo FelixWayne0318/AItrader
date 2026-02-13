@@ -650,17 +650,23 @@ def calculate_technical_sltp(
     sl_buffer_pct: float = 0.005,  # 0.5% buffer to confirm real S/R breakout
     tp_buffer_pct: float = 0.005,  # 0.5% buffer before S/R for TP
     min_rr_ratio: float = 1.5,
-    # DEPRECATED: v5.0 — This function is only used by diagnostic scripts.
-    # Production code uses calculate_sr_based_sltp() from utils/sr_sltp_calculator.py.
-    # See _reevaluate_sltp_for_existing_position() for the unified approach.
 ) -> Tuple[float, float, str]:
     """
-    Calculate SL/TP based on technical analysis (v3.14 - S/R based TP).
+    Calculate SL/TP based on simple min/max support/resistance.
 
-    This function calculates stop loss and take profit prices using:
-    - Support/resistance levels for BOTH SL and TP (if available and valid)
-    - Default percentage-based fallback only when S/R is not available
-    - Ensures minimum R/R ratio of 1.5:1
+    .. deprecated:: v5.0
+        **DIAGNOSTIC ONLY** — Not used in production trading.
+        Production code uses ``calculate_sr_based_sltp()`` from
+        ``utils/sr_sltp_calculator.py``, which uses full SRZone objects
+        with strength, touch_count, source_type, and ATR buffer.
+
+        This function uses naive float support/resistance (min low / max high
+        from TechnicalIndicatorManager's 20-bar lookback) and provides a
+        percentage-based fallback — both of which are inferior to zone-based
+        calculation.
+
+        **Callers**: diagnostic scripts only
+        (``scripts/diagnostics/*.py``, ``scripts/diagnose_*.py``)
 
     v3.14 Changes:
     - TP now uses S/R zones instead of fixed percentage
