@@ -1495,6 +1495,259 @@ def test_sma_label_disambiguation(results: TestResults):
 # Main
 # ─────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────
+# Test 19: 消费者字段契约验证 (防止 current_pct 类 bug)
+# ─────────────────────────────────────────────────────────────────────
+
+def test_consumer_field_contracts(results: TestResults):
+    """
+    验证 AIDataAssembler 输出的字段名与消费者 .get() 调用匹配。
+
+    核心思路: 不测生产者输出了什么，测消费者能不能读到值。
+    这是防止字段名断裂 bug 的关键测试 (如 settled_pct vs current_pct)。
+    """
+    print("\n─── Test 19: 消费者字段契约验证 ───")
+
+    try:
+        from utils.ai_data_assembler import AIDataAssembler
+
+        # --- Mock clients (最小化，只需要 _convert_derivatives 依赖的方法) ---
+        class MockBinanceKlines:
+            def get_funding_rate(self):
+                return {
+                    'funding_rate': 0.00058,
+                    'funding_rate_pct': 0.058,
+                    'predicted_rate': 0.00001,
+                    'predicted_rate_pct': 0.001,
+                    'next_funding_time': int(time.time() * 1000) + 3600000,
+                    'next_funding_countdown_min': 60,
+                    'mark_price': 100000.0,
+                    'index_price': 99950.0,
+                    'interest_rate': 0.0001,
+                    'premium_index': 0.0005,
+                }
+
+            def get_funding_rate_history(self, limit=10):
+                return [
+                    {'fundingRate': '0.00030', 'fundingTime': 1000},
+                    {'fundingRate': '0.00040', 'fundingTime': 2000},
+                    {'fundingRate': '0.00058', 'fundingTime': 3000},
+                ]
+
+            def get_klines(self, **kwargs):
+                return None
+
+        class MockOrderFlow:
+            def process_klines(self, klines):
+                return {'buy_ratio': 0.55, 'cvd_trend': 'RISING',
+                        'avg_trade_size': 1500, 'data_source': 'mock'}
+
+            def _default_result(self):
+                return {'buy_ratio': 0.5, 'cvd_trend': 'NEUTRAL',
+                        'avg_trade_size': 0, 'data_source': 'default'}
+
+        class MockCoinalyze:
+            def fetch_all_with_history(self, **kwargs):
+                return {
+                    'open_interest': {'value': 500.0},
+                    'liquidations': {'history': [{'l': 1.5, 's': 2.0}]},
+                    'funding_rate': {'value': 0.0003},
+                    'trends': {'oi_trend': 'RISING', 'funding_trend': 'STABLE'},
+                }
+
+            def is_enabled(self):
+                return True
+
+        class MockSentiment:
+            def fetch(self):
+                return {
+                    'positive_ratio': 0.55, 'negative_ratio': 0.45,
+                    'net_sentiment': 0.1, 'long_short_ratio': 1.22,
+                    'source': 'mock', 'history': [],
+                }
+
+        assembler = AIDataAssembler(
+            binance_kline_client=MockBinanceKlines(),
+            order_flow_processor=MockOrderFlow(),
+            coinalyze_client=MockCoinalyze(),
+            sentiment_client=MockSentiment(),
+        )
+
+        # --- 调用真实的 assemble() 方法 ---
+        assembled = assembler.assemble(
+            technical_data={
+                'price': 100000, 'rsi': 50, 'macd': 100, 'macd_signal': 95,
+                'bb_upper': 101000, 'bb_lower': 99000, 'bb_middle': 100000,
+                'bb_position': 0.5, 'adx': 25, 'di_plus': 20, 'di_minus': 15,
+                'sma_5': 99900, 'sma_20': 99500, 'sma_50': 99000,
+                'volume_ratio': 1.2, 'atr': 500,
+            },
+            symbol='BTCUSDT',
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # 消费者契约定义
+        # 格式: (consumer_get_chain, description, allow_none)
+        #   consumer_get_chain: 模拟消费者的 .get() 调用链
+        #   description: 消费者位置
+        #   allow_none: True = 允许 None (消费者有 if 保护)
+        # ═══════════════════════════════════════════════════════════════
+
+        derivatives = assembled.get('derivatives', {})
+        fr = derivatives.get('funding_rate', {})
+        oi = derivatives.get('open_interest', {})
+        liq = derivatives.get('liquidations', {})
+        sentiment = assembled.get('sentiment', {})
+        order_flow = assembled.get('order_flow', {})
+
+        contracts = [
+            # --- Funding Rate (multi_agent_analyzer Bull/Bear prompt) ---
+            (fr.get('current_pct'),
+             "derivatives.funding_rate.current_pct",
+             "multi_agent L1020: Bull/Bear analyst prompt", False),
+
+            (fr.get('predicted_rate_pct'),
+             "derivatives.funding_rate.predicted_rate_pct",
+             "multi_agent L1022: Bull/Bear analyst prompt", True),
+
+            (fr.get('value'),
+             "derivatives.funding_rate.value",
+             "multi_agent L2292: Risk Manager prompt", False),
+
+            # --- Funding Rate (format_complete_report) ---
+            (fr.get('current_pct', 0),
+             "derivatives.funding_rate.current_pct (default=0)",
+             "format_complete_report L485", False),
+
+            (fr.get('interpretation'),
+             "derivatives.funding_rate.interpretation",
+             "format_complete_report L486", False),
+
+            (fr.get('trend'),
+             "derivatives.funding_rate.trend",
+             "format_complete_report L483", False),
+
+            (fr.get('premium_index'),
+             "derivatives.funding_rate.premium_index",
+             "format_complete_report L489", True),
+
+            (fr.get('mark_price'),
+             "derivatives.funding_rate.mark_price",
+             "format_complete_report L492", False),
+
+            (fr.get('history'),
+             "derivatives.funding_rate.history",
+             "format_complete_report L512", False),
+
+            (fr.get('next_funding_countdown_min'),
+             "derivatives.funding_rate.next_funding_countdown_min",
+             "format_complete_report L504", True),
+
+            # --- Open Interest ---
+            (oi.get('total_btc') if oi else None,
+             "derivatives.open_interest.total_btc",
+             "format_complete_report L476", True),
+
+            (oi.get('change_pct') if oi else None,
+             "derivatives.open_interest.change_pct",
+             "multi_agent L1033: OI change", True),
+
+            # --- Liquidations ---
+            (liq.get('total_usd') if liq else None,
+             "derivatives.liquidations.total_usd",
+             "multi_agent L1028: liquidation display", True),
+
+            # --- Sentiment ---
+            (sentiment.get('net_sentiment'),
+             "sentiment.net_sentiment",
+             "multi_agent L1055: sentiment report", False),
+
+            (sentiment.get('positive_ratio'),
+             "sentiment.positive_ratio",
+             "multi_agent L1724: sentiment report", False),
+
+            (sentiment.get('negative_ratio'),
+             "sentiment.negative_ratio",
+             "multi_agent L1728: sentiment report", False),
+
+            # --- Order Flow ---
+            (order_flow.get('buy_ratio'),
+             "order_flow.buy_ratio",
+             "multi_agent L1038: order flow report", False),
+
+            (order_flow.get('cvd_trend'),
+             "order_flow.cvd_trend",
+             "multi_agent L1041: order flow report", False),
+        ]
+
+        # --- 执行契约验证 ---
+        pass_count = 0
+        fail_count = 0
+        for value, field_path, consumer, allow_none in contracts:
+            if value is None and not allow_none:
+                results.fail(
+                    f"契约断裂: {field_path}",
+                    f"消费者 {consumer} 会读到 None → AI 看不到此数据"
+                )
+                fail_count += 1
+            elif value is None and allow_none:
+                pass_count += 1  # 静默通过 (允许 None)
+            else:
+                pass_count += 1
+
+        if fail_count == 0:
+            results.ok(
+                "消费者字段契约",
+                f"全部 {pass_count + fail_count} 条契约通过 "
+                f"(生产者字段名 = 消费者 .get() key)"
+            )
+        else:
+            results.fail(
+                "消费者字段契约",
+                f"{fail_count} 条断裂 — AI prompt 中有数据缺失"
+            )
+
+        # --- 额外验证: current_pct 不应为 0 (当费率非零时) ---
+        if fr.get('value') and fr.get('value') != 0:
+            current_pct = fr.get('current_pct')
+            if current_pct == 0 or current_pct is None:
+                results.fail(
+                    "current_pct 零值保护",
+                    f"funding_rate.value={fr['value']} 但 current_pct={current_pct}"
+                )
+            else:
+                results.ok(
+                    "current_pct 零值保护",
+                    f"value={fr['value']:.6f} → current_pct={current_pct:.4f}% (非零)"
+                )
+
+        # --- 额外验证: format_complete_report 可正常执行 ---
+        try:
+            report = assembler.format_complete_report(assembled)
+            # 验证报告中包含实际 funding rate 值 (不是 0.0000%)
+            if 'Funding Rate' in report and '0.0000%' not in report.split('Funding Rate')[1][:30]:
+                results.ok("format_complete_report", "Funding Rate 显示非零值")
+            elif 'Funding Rate' in report:
+                # 检查是否显示了 0.0000%
+                fr_section = report.split('Funding Rate')[1][:50]
+                if '0.0000%' in fr_section:
+                    results.fail(
+                        "format_complete_report Funding Rate",
+                        f"显示 0.0000% (字段映射可能断裂): ...{fr_section.strip()[:40]}"
+                    )
+                else:
+                    results.ok("format_complete_report", "Funding Rate 正常显示")
+            else:
+                results.warn("format_complete_report", "未找到 Funding Rate 段")
+        except Exception as e:
+            results.fail("format_complete_report 执行失败", str(e)[:80])
+
+    except ImportError as e:
+        results.warn("AIDataAssembler 不可导入", f"跳过契约验证: {e}")
+    except Exception as e:
+        results.fail("消费者字段契约测试异常", str(e)[:100])
+
+
 def main():
     parser = argparse.ArgumentParser(description="端到端数据流水线验证 v2.0")
     parser.add_argument('--quick', action='store_true', help="快速模式 (跳过慢速 API)")
@@ -1528,6 +1781,7 @@ def main():
         test_trend_calculation(results)          # Test 16
         test_data_assembler_structure(results)   # Test 17
         test_sma_label_disambiguation(results)   # Test 18
+        test_consumer_field_contracts(results)   # Test 19
     else:
         # ═══ 在线模式: API + 逻辑验证 ═══
 
@@ -1557,6 +1811,7 @@ def main():
         test_trend_calculation(results)          # Test 16
         test_data_assembler_structure(results)   # Test 17
         test_sma_label_disambiguation(results)   # Test 18
+        test_consumer_field_contracts(results)   # Test 19
 
     # 汇总
     all_passed = results.summary()
