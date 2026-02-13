@@ -1409,6 +1409,17 @@ class OrderSimulator(DiagnosticStep):
             print(f"     最大亏损: ${quantity * self.ctx.current_price * sl_pct / 100:,.2f}")
             print(f"     最大盈利: ${quantity * self.ctx.current_price * tp_pct / 100:,.2f}")
 
+            # ── R/R cross-check: percentage-based vs direct formula ──
+            if is_long:
+                direct_rr = (final_tp - self.ctx.current_price) / (self.ctx.current_price - final_sl)
+            else:
+                direct_rr = (self.ctx.current_price - final_tp) / (final_sl - self.ctx.current_price)
+
+            if abs(direct_rr - rr_ratio) > 0.01:
+                print(f"     ⚠️ R/R formula mismatch: pct-based={rr_ratio:.4f} vs direct={direct_rr:.4f}")
+            else:
+                print(f"     ✅ R/R cross-check: pct={rr_ratio:.4f} ≈ direct={direct_rr:.4f}")
+
             # ── Structural integrity assertions (v5.1) ──
             # These catch magnitude errors that display-only output cannot detect
             print()

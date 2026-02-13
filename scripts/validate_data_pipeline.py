@@ -1042,19 +1042,41 @@ def test_position_sizing(results: TestResults):
 
         qty, details = calculate_position_size(signal, price_data, technical_data, config)
 
+        # Oracle values: exact formula replay
+        # max_usdt = equity × max_position_ratio × leverage = 1000 × 0.30 × 10 = 3000
         max_usdt = 1000 * 0.30 * 10  # = $3000
+        # ai_controlled: position_size_pct=80 → size_ratio = 80/100 = 0.8
+        # position_usdt = max_usdt × size_ratio = 3000 × 0.8 = 2400
         expected_usdt = max_usdt * 0.80  # = $2400
+        # btc_quantity = final_usdt / price = 2400 / 100000 = 0.024
         expected_qty = expected_usdt / price  # = 0.024
 
         if qty > 0:
             actual_usdt = qty * price
-            results.ok("AI Controlled 仓位", f"qty={qty:.6f} BTC (${actual_usdt:,.0f})")
+            # Exact formula verification (tolerance for Binance step rounding)
+            if abs(actual_usdt - expected_usdt) < 1.0:
+                results.ok("AI Controlled 精确值",
+                           f"${actual_usdt:,.0f} = $1000×0.30×10×0.80 = ${expected_usdt:,.0f} ✓")
+            elif actual_usdt >= expected_usdt:
+                # May be elevated by min_notional (Binance minimum)
+                results.ok("AI Controlled 仓位", f"${actual_usdt:,.0f} ≥ ${expected_usdt:,.0f} (min_notional 提升)")
+            else:
+                results.fail("AI Controlled 精确值",
+                             f"${actual_usdt:,.0f} ≠ ${expected_usdt:,.0f} (equity×ratio×lev×pct)")
+
+            # qty precision check
+            if abs(qty - expected_qty) < 0.000001:
+                results.ok("BTC 数量精确值",
+                           f"{qty:.6f} = ${expected_usdt}/${price:,.0f} = {expected_qty:.6f} ✓")
+            elif qty >= expected_qty:
+                results.ok("BTC 数量", f"{qty:.6f} ≥ {expected_qty:.6f} (min_notional 提升)")
+            else:
+                results.fail("BTC 数量精确值", f"{qty:.6f} ≠ {expected_qty:.6f}")
         else:
             results.fail("AI Controlled 仓位", f"qty={qty}, details={details}")
 
         # 不应超过 max_usdt (考虑 Binance min_notional 可能抬高)
         actual_usdt = qty * price
-        # Note: actual 可能 > max_usdt 如果 min_notional > max_usdt
         if actual_usdt <= max_usdt * 1.05:  # 5% 容差 (rounding + min_notional)
             results.ok("最大仓位限制", f"${actual_usdt:,.0f} ≤ max ${max_usdt:,.0f}")
         else:
@@ -1070,6 +1092,12 @@ def test_position_sizing(results: TestResults):
             results.fail("价格=0 应返回 0", f"qty={qty2}")
 
         # --- confidence-based (fixed_pct, 无 position_size_pct) ---
+        # Fixed_pct 公式: final_usdt = base_usdt × conf_mult × trend_mult × rsi_mult
+        # 当前 technical_data: trend='BULLISH'(不匹配强势), rsi=50(不极端)
+        # → trend_mult=1.0, rsi_mult=1.0
+        # → final_usdt = 100 × conf_mult × 1.0 × 1.0
+        conf_mults = {'HIGH': 1.5, 'MEDIUM': 1.0, 'LOW': 0.5}
+        max_usdt_fc = 1000 * 0.30 * 5  # = $1500
         for conf in ['HIGH', 'MEDIUM', 'LOW']:
             signal_fc = {'signal': 'BUY', 'confidence': conf}
             config_fc = {
@@ -1086,11 +1114,23 @@ def test_position_sizing(results: TestResults):
                 'low_confidence_multiplier': 0.5,
                 'min_trade_amount': 0.001,  # BTC, not USDT
             }
-            qty_fc, _ = calculate_position_size(signal_fc, price_data, technical_data, config_fc)
+            qty_fc, details_fc = calculate_position_size(signal_fc, price_data, technical_data, config_fc)
+            # Oracle: expected_usdt = base × conf_mult × trend(1.0) × rsi(1.0)
+            expected_fc = 100 * conf_mults[conf]
+            actual_fc = qty_fc * price if qty_fc > 0 else 0
+
             if qty_fc > 0:
-                results.ok(f"Fixed PCT ({conf})", f"qty={qty_fc:.6f}")
+                if abs(actual_fc - expected_fc) < 1.0:
+                    results.ok(f"Fixed PCT ({conf}) 精确值",
+                               f"${actual_fc:,.0f} = $100×{conf_mults[conf]}×1.0×1.0 ✓")
+                elif actual_fc > expected_fc:
+                    results.ok(f"Fixed PCT ({conf})", f"${actual_fc:,.0f} ≥ ${expected_fc:,.0f} (min_notional 提升)")
+                else:
+                    results.fail(f"Fixed PCT ({conf}) 精确值",
+                                 f"${actual_fc:,.0f} ≠ ${expected_fc:,.0f}")
             else:
-                results.warn(f"Fixed PCT ({conf}) = 0", "可能 min_trade_amount 过滤")
+                results.fail(f"Fixed PCT ({conf}) = 0",
+                             f"details={details_fc}")
 
     except ImportError as e:
         results.warn("trading_logic 导入失败", str(e))

@@ -754,6 +754,45 @@ class OrderFlowSimulator(DiagnosticStep):
         notes.append("SL 只能向有利方向移动 (LONG: UP, SHORT: DOWN)")
         notes.append("TP 由 S/R 重评估自由调整 (v2.2: AI 职责, 非 LOCAL 保护)")
         notes.append(f"阈值 {threshold_pct:.1f}% 避免频繁修改订单 (生产 dynamic_update_threshold_pct={threshold})")
+
+        # ── Structural assertions (v5.1: verify formulas, not just display) ──
+        assertion_failures = []
+
+        # Assert 1: Favorable direction rule — LONG SL can only go UP
+        if new_sl and new_sl < old_sl and final_sl != old_sl:
+            assertion_failures.append(
+                f"LONG SL 降低: new_sl=${new_sl:,.2f} < old_sl=${old_sl:,.2f} "
+                f"但 final_sl=${final_sl:,.2f} ≠ old_sl (max 规则失败)")
+        if final_sl < old_sl:
+            assertion_failures.append(
+                f"LONG final_sl=${final_sl:,.2f} < old_sl=${old_sl:,.2f} — 违反有利方向规则")
+
+        # Assert 2: SL must be below entry for LONG
+        if position_side == 'long' and sl_valid and final_sl >= entry_price:
+            assertion_failures.append(
+                f"LONG SL=${final_sl:,.2f} >= entry=${entry_price:,.2f}")
+
+        # Assert 3: Threshold formula precision
+        expected_sl_change_pct = abs(final_sl - old_sl) / old_sl * 100
+        if abs(sl_change_pct - expected_sl_change_pct) > 0.001:
+            assertion_failures.append(
+                f"SL change pct 计算误差: {sl_change_pct:.4f}% ≠ {expected_sl_change_pct:.4f}%")
+
+        # Assert 4: If real_calc returned valid SL/TP, they must respect R/R >= min_rr
+        if real_calc_used and new_sl and new_tp:
+            if new_sl < entry_price and new_tp > entry_price:
+                calc_rr = (new_tp - entry_price) / (entry_price - new_sl)
+                if calc_rr < min_rr:
+                    assertion_failures.append(
+                        f"Level 2 SL/TP R/R={calc_rr:.2f}:1 < {min_rr}:1 硬性门槛")
+
+        if assertion_failures:
+            for af in assertion_failures:
+                events.append(f"  ❌ ASSERTION: {af}")
+            notes.append(f"⚠️ {len(assertion_failures)} 个结构断言失败")
+        else:
+            notes.append("✅ 全部结构断言通过 (有利方向 + SL 方向 + 阈值精度 + R/R)")
+
         if real_calc_used:
             notes.append(f"✅ 使用真实 calculate_sr_based_sltp() (ATR={atr_val:.2f}, min_rr={min_rr})")
         else:
