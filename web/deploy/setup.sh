@@ -28,7 +28,10 @@ if [[ $EUID -eq 0 ]]; then
 fi
 
 # Variables
-INSTALL_DIR="/home/linuxuser/algvex"
+# Web files live inside the main repo — no separate directory needed.
+# This avoids path mismatches between the service, PM2, and the actual code.
+REPO_DIR="/home/linuxuser/nautilus_AItrader"
+INSTALL_DIR="$REPO_DIR/web"
 REPO_URL="https://github.com/FelixWayne0318/AItrader.git"
 BRANCH="${ALGVEX_BRANCH:-main}"  # Use main by default, can override with ALGVEX_BRANCH env var
 
@@ -72,8 +75,6 @@ echo -e "${GREEN}✓ System dependencies installed${NC}"
 # =============================================================================
 echo -e "\n${GREEN}[2/8] Creating directory structure...${NC}"
 
-sudo mkdir -p "$INSTALL_DIR"/{backend,frontend}
-sudo chown -R linuxuser:linuxuser "$INSTALL_DIR"
 sudo mkdir -p /var/log/caddy
 sudo chown caddy:caddy /var/log/caddy
 
@@ -82,28 +83,31 @@ echo -e "${GREEN}✓ Directory structure created${NC}"
 # =============================================================================
 # Step 3: Clone/Update Repository
 # =============================================================================
-echo -e "\n${GREEN}[3/8] Cloning repository...${NC}"
+echo -e "\n${GREEN}[3/8] Updating repository...${NC}"
 
-TEMP_DIR=$(mktemp -d)
-git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TEMP_DIR"
+if [[ -d "$REPO_DIR/.git" ]]; then
+    echo "Repository exists, pulling latest..."
+    cd "$REPO_DIR"
+    git fetch origin "$BRANCH"
+    git reset --hard "origin/$BRANCH"
+else
+    echo "Cloning repository..."
+    git clone --branch "$BRANCH" "$REPO_URL" "$REPO_DIR"
+fi
 
-# Copy web files (use rsync to ensure all files are copied)
-rsync -av --delete "$TEMP_DIR/web/backend/" "$INSTALL_DIR/backend/"
-rsync -av --delete "$TEMP_DIR/web/frontend/" "$INSTALL_DIR/frontend/"
-sudo cp "$TEMP_DIR/web/deploy/Caddyfile" /etc/caddy/Caddyfile
-sudo cp "$TEMP_DIR/web/deploy/algvex-backend.service" /etc/systemd/system/
-sudo cp "$TEMP_DIR/web/deploy/algvex-frontend.service" /etc/systemd/system/
+# Copy deploy configs to system locations
+sudo cp "$INSTALL_DIR/deploy/Caddyfile" /etc/caddy/Caddyfile
+sudo cp "$INSTALL_DIR/deploy/algvex-backend.service" /etc/systemd/system/
+sudo cp "$INSTALL_DIR/deploy/algvex-frontend.service" /etc/systemd/system/
 
-rm -rf "$TEMP_DIR"
-
-echo -e "${GREEN}✓ Repository cloned${NC}"
+echo -e "${GREEN}✓ Repository updated${NC}"
 
 # =============================================================================
 # Step 4: Setup Backend
 # =============================================================================
 echo -e "\n${GREEN}[4/8] Setting up backend...${NC}"
 
-cd "$INSTALL_DIR/backend"
+cd "$INSTALL_DIR/backend" || { echo -e "${RED}Backend directory not found!${NC}"; exit 1; }
 
 # Create virtual environment
 python3.12 -m venv venv
@@ -146,7 +150,10 @@ echo -e "${GREEN}✓ Backend setup complete${NC}"
 # =============================================================================
 echo -e "\n${GREEN}[5/8] Setting up frontend...${NC}"
 
-cd "$INSTALL_DIR/frontend"
+cd "$INSTALL_DIR/frontend" || { echo -e "${RED}Frontend directory not found!${NC}"; exit 1; }
+
+# Clear stale build cache
+rm -rf .next node_modules/.cache
 
 # Install dependencies
 npm install

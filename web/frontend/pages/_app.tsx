@@ -1,24 +1,14 @@
 import { useEffect } from "react";
 import type { AppProps } from "next/app";
-import { Inter, JetBrains_Mono } from "next/font/google";
 import Head from "next/head";
 import useSWR from "swr";
 import "@/styles/globals.css";
 
-// Font configuration with fallback to prevent render-blocking
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  display: "swap", // Prevent font from blocking render
-  fallback: ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  display: "swap",
-  fallback: ["Consolas", "Monaco", "monospace"],
-});
+// NOTE: We use <link> tags in _document.tsx for Google Fonts instead of next/font/google.
+// next/font/google downloads fonts at BUILD TIME — if Google Fonts is unreachable
+// (firewall, China GFW, network issues), the ENTIRE build fails with:
+//   Error [NextFontError]: Failed to fetch font `Inter`.
+// <link> tags load fonts at RUNTIME in the browser, with graceful fallback.
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
@@ -41,20 +31,13 @@ export default function App({ Component, pageProps }: AppProps) {
     }
   }, [branding?.favicon_url]);
 
-  // Safely get font variables (fallback to empty string if font fails)
-  const fontClasses = [
-    inter?.variable || "",
-    jetbrainsMono?.variable || "",
-    "font-sans antialiased min-h-screen bg-background text-foreground"
-  ].filter(Boolean).join(" ");
-
   return (
     <>
       <Head>
         <title>{branding?.site_name || "AlgVex"} - AI Trading</title>
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
       </Head>
-      <main className={fontClasses}>
+      <main className="font-sans antialiased min-h-screen bg-background text-foreground">
         <Component {...pageProps} />
       </main>
     </>
