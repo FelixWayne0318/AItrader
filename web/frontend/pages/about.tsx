@@ -31,7 +31,7 @@ const techStack = [
   {
     name: "NautilusTrader",
     description: "High-performance algorithmic trading platform",
-    version: "1.221.0",
+    version: "1.222.0",
   },
   {
     name: "DeepSeek AI",
@@ -40,13 +40,23 @@ const techStack = [
   },
   {
     name: "Multi-Agent System",
-    description: "Bull/Bear debate mechanism for decision making",
-    version: "TradingAgents",
+    description: "Bull/Bear debate + Judge + Risk Manager decision pipeline",
+    version: "TradingAgents v4",
   },
   {
     name: "Binance Futures",
-    description: "Primary exchange for BTC/USDT perpetual",
-    version: "API v3",
+    description: "Primary exchange for BTCUSDT perpetual futures",
+    version: "Futures API",
+  },
+  {
+    name: "Python",
+    description: "Core language for strategy and data processing",
+    version: "3.12+",
+  },
+  {
+    name: "Next.js + FastAPI",
+    description: "Web dashboard frontend and backend",
+    version: "14 / 0.109",
   },
 ];
 
@@ -145,9 +155,9 @@ export default function AboutPage() {
                     <div>
                       <h4 className="font-semibold mb-1">Signal Generation</h4>
                       <p className="text-muted-foreground">
-                        Trading signals (BUY/SELL/HOLD) are generated with confidence
-                        levels (HIGH/MEDIUM/LOW). Position sizing is adjusted based
-                        on confidence.
+                        Trading signals (LONG/SHORT/HOLD) are generated with confidence
+                        levels (HIGH/MEDIUM/LOW). The Risk Manager sets SL/TP prices
+                        and adjusts position sizing based on risk factors.
                       </p>
                     </div>
                   </div>
@@ -158,9 +168,9 @@ export default function AboutPage() {
                     <div>
                       <h4 className="font-semibold mb-1">Risk Management</h4>
                       <p className="text-muted-foreground">
-                        Automatic stop-loss, take-profit, and trailing stop orders
-                        protect capital. Maximum position size is capped at 30% of
-                        equity.
+                        AI-driven stop-loss and take-profit based on support/resistance
+                        zones. R/R ratio must exceed 1.5:1 for entry. Position sizing
+                        scales with risk factors (funding rate, order book imbalance).
                       </p>
                     </div>
                   </div>

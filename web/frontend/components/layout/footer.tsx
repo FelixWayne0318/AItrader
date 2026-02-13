@@ -25,6 +25,17 @@ export function Footer({ t }: FooterProps) {
     { refreshInterval: 300000 }
   );
 
+  // Fetch social links from API
+  const { data: socialLinks } = useSWR(
+    mounted ? "/api/public/social-links" : null,
+    fetcher,
+    { refreshInterval: 300000 }
+  );
+
+  const twitterUrl = socialLinks?.find?.((l: any) => l.platform === "twitter")?.url;
+  const telegramUrl = socialLinks?.find?.((l: any) => l.platform === "telegram")?.url;
+  const githubUrl = socialLinks?.find?.((l: any) => l.platform === "github")?.url || "https://github.com/FelixWayne0318/AItrader";
+
   return (
     <footer className="border-t border-border bg-background/50">
       <div className="container mx-auto px-4 py-12">
@@ -77,24 +88,28 @@ export function Footer({ t }: FooterProps) {
           <div>
             <h4 className="font-semibold mb-4">Connect</h4>
             <div className="flex space-x-4">
+              {twitterUrl && (
+                <a
+                  href={twitterUrl}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Twitter className="h-5 w-5" />
+                </a>
+              )}
+              {telegramUrl && (
+                <a
+                  href={telegramUrl}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <MessageCircle className="h-5 w-5" />
+                </a>
+              )}
               <a
-                href="#"
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Twitter className="h-5 w-5" />
-              </a>
-              <a
-                href="#"
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <MessageCircle className="h-5 w-5" />
-              </a>
-              <a
-                href="https://github.com/FelixWayne0318/AItrader"
+                href={githubUrl}
                 className="text-muted-foreground hover:text-foreground transition-colors"
                 target="_blank"
                 rel="noopener noreferrer"

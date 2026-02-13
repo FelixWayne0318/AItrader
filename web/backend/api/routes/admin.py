@@ -567,7 +567,6 @@ async def get_recent_signals(
 ):
     """Get recent AI signals for admin dashboard"""
     import json
-    from datetime import datetime
 
     signal_file_paths = [
         "/home/linuxuser/nautilus_AItrader/logs/signal_history.json",
@@ -584,12 +583,5 @@ async def get_recent_signals(
             except Exception:
                 pass
 
-    # Demo data
-    return [
-        {
-            "signal": "HOLD",
-            "confidence": "MEDIUM",
-            "reason": "Market consolidating",
-            "timestamp": datetime.now().isoformat(),
-        }
-    ]
+    # No signal data found
+    return []
