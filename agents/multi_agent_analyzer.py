@@ -1172,10 +1172,10 @@ Last Bull Argument:
 - 这是参考信息，不是硬性规则 — 请结合所有数据综合判断
 """
 
-        prompt = f"""你是风险管理者 (Risk Manager)，负责最终交易参数的评估和设定。
+        prompt = f"""你是风险管理者 (Risk Manager)，负责为 Judge 的交易决策设定执行参数。
 {hard_control_section}
 
-## 📋 PROPOSED TRADE (Judge 建议)
+## 📋 PROPOSED TRADE (Judge 建议 — 你必须尊重此方向)
 - Action: {action}
 - Confidence: {confidence}
 - Rationale: {rationale}
@@ -1208,28 +1208,25 @@ Last Bull Argument:
 
 ---
 
-## 🎯 【分析任务 — 请严格按步骤执行】
+## 🎯 【你的职责 — 只管风险，不管方向】
 
-### STEP 1: 验证 MARKET REGIME
-用上方指标手册独立验证当前市场状态：
-- 检查 ADX、BB Width、Price vs SMAs → 判断 TRENDING / RANGING / SQUEEZE
-- 验证 Judge 建议的交易方向是否与当前 regime 一致
-- ⚠️ 如果 Judge 在强趋势中建议逆势交易，需要特别谨慎评估风险
+‼️ **核心原则**: Judge 已经听完 Bull/Bear 4 轮辩论后做出了方向决策。
+你的工作不是重新判断方向，而是为这个方向设定最优的执行参数。
 
-### STEP 2: 评估 S/R Zone 风险
-如果上方有 S/R Zone Proximity Alert：
-- HIGH 强度 zone (多源确认) 历史上反弹率更高
-- 但强力突破 HIGH 强度 zone (伴随放量和动量) 可能是强势信号
-- ‼️ 这是参考信息，不是硬性规则 — 结合所有数据综合判断
+Judge 建议 {action} → 你的任务:
+- 如果是 LONG/SHORT: 设定 SL/TP 价位 + 确定仓位大小
+- 如果是 HOLD: 直接传递，signal = HOLD
+- 如果是 CLOSE/REDUCE: 直接传递
 
-### STEP 3: 计算 SL/TP
+### STEP 1: 计算 SL/TP
 基于 S/R zones 和市场结构设定止损止盈：
 - LONG: SL 在最近 SUPPORT 下方, TP 在最近 RESISTANCE
 - SHORT: SL 在最近 RESISTANCE 上方, TP 在最近 SUPPORT
 - 优先选择 HIGH 强度或有 ORDER_FLOW 确认的 zone
 - 最小 SL 距离 0.5-1%，避免噪音触发止损
+- 参考 S/R Zone Proximity Alert（如有）作为 SL/TP 选择参考
 
-### STEP 4: 评估 Risk/Reward
+### STEP 2: 评估 Risk/Reward
 计算: Risk = |current_price - stop_loss|, Reward = |take_profit - current_price|, R/R = Reward / Risk
 
 R/R 参考标准 (机构交易研究):
@@ -1238,43 +1235,42 @@ R/R 参考标准 (机构交易研究):
 | >= 2.5:1 | 优秀 | 80-100% |
 | 2.0-2.5:1 | 良好 | 50-80% |
 | 1.5-2.0:1 | 可接受 | 30-50% |
-| < 1.5:1 | 不可接受 | → 改为 HOLD |
+| < 1.5:1 | 不可接受 | → 改为 HOLD (⚠️ 这是唯一允许改方向的 R/R 条件) |
 
 R/R 与价格位置的关系：
 - 价格靠近 SUPPORT → LONG R/R 好 (小风险、大回报)
 - 价格靠近 RESISTANCE → SHORT R/R 好
 - 价格在中间 → 两个方向 R/R 都差
 
-Regime 对 S/R 可靠性的影响 (Osler 2000):
-- ADX < 20 (RANGING): S/R 反弹 ~70% 可靠，标准 R/R 分析适用
-- ADX 20-30 (WEAK TREND): 逆势入场更有风险，需更高 R/R 补偿
-- ADX 30-40 (STRONG TREND): S/R 经常被突破 (~25% 反弹率)
-- ADX > 40 (VERY STRONG): 逆势 S/R 入场历史成功率极低
-- "逆势 (Counter-trend)" 定义: DI- > DI+ (空头主导) 时做 LONG，或 DI+ > DI- (多头主导) 时做 SHORT
-
-### STEP 5: 确定仓位大小
-综合以下因素：
+### STEP 3: 确定仓位大小
+综合以下因素调整仓位大小 (不改变方向，只调大小):
 - **R/R 质量**: R/R 越高可承受越大仓位
-- **Regime**: 强趋势顺势交易可以更激进
+- **Regime 一致性**: 顺势交易 → 正常仓位; 逆势交易 → 缩小仓位 (但不改为 HOLD)
 - **Funding Rate 成本**:
-  - 每 8 小时结算一次，持仓直接成本 (Funding rate is a DIRECT COST paid every 8 hours while holding a position)
-  - LONG 在 rate > 0 时付费, SHORT 在 rate < 0 时付费 (LONG pays when rate is POSITIVE, SHORT pays when rate is NEGATIVE)
-  - "Last Settled" = 最近结算时的历史费率 (已发生的历史事实)
-  - "Predicted" = 下次结算的实时预估费率 (持续变化)
-  - 日成本估算 = |predicted_rate| × 3 (每日三次 8h 结算)
-  - Predicted vs Settled 差异大 = 市场情绪正在转变 (market sentiment is shifting)
-  - ⚠️ 结算倒计时 < 30分钟且 predicted rate 极端 → 预期短期波动 (Settlement countdown < 30min with extreme predicted rate: expect short-term volatility)
+  - 每 8 小时结算一次，持仓直接成本
+  - LONG 在 rate > 0 时付费, SHORT 在 rate < 0 时付费
+  - 日成本估算 = |predicted_rate| × 3
+  - |rate| < 0.03%: 正常 → 不影响仓位
+  - |rate| 0.03-0.05%: 偏高 → 仓位 ×0.8
+  - |rate| 0.05-0.10%: 高 → 仓位 ×0.5
+  - |rate| > 0.10%: 极端 → ⚠️ 这是允许否决的条件 (见 STEP 4)
 - **流动性和滑点**:
-  - 检查 ORDER FLOW 和 ORDER BOOK 的执行风险 (Check ORDER FLOW and ORDER BOOK data for execution risk)
-  - 宽价差、大额挂单墙、低深度 → 增加滑点风险 (Wide spreads, large order walls, and low depth increase slippage risk)
-  - buy_ratio > 0.65 或 < 0.35 = 单边拥挤，潜在反向信号 (Extreme buy_ratio means one-sided positioning — potential contrarian signal)
-  - 根据预期执行质量调整仓位 (Adjust position size based on expected execution quality)
+  - 检查 ORDER FLOW 和 ORDER BOOK 的执行风险
+  - 预期滑点高 → 缩小仓位 (不改方向)
+  - 大额挂单墙在入场方向上 → 缩小仓位 (不改方向)
 
-### STEP 6: 做出最终决策
-- 你拥有指标手册、全部市场数据和 Judge 的建议
-- 综合所有信息做出独立的风险调整后决策
-- ‼️ 如果交易质量差 (R/R 不佳、regime 不利、成本过高)，改为 HOLD
-- 在 "reason" 字段清楚解释你的推理
+### STEP 4: 检查是否触发紧急否决条件
+⚠️ **只有以下极端情况才允许将 Judge 的 LONG/SHORT 改为 HOLD**:
+1. R/R < 1.5:1 — 无法设定合理的 SL/TP
+2. |Funding Rate| > 0.10% — 极端拥挤，成本过高
+3. 流动性枯竭 — 预期滑点 > 50bps 且深度极低
+
+‼️ 除了以上 3 个条件，**禁止**将 Judge 的方向改为 HOLD。
+- BB 上轨/下轨 → 调仓位大小，不改方向
+- 卖墙/买墙 → 调仓位大小，不改方向
+- 逆势交易 → 缩小仓位，不改方向
+- 资金费率 0.03-0.10% → 缩小仓位，不改方向
+- 订单流不利 → 缩小仓位，不改方向
 
 ---
 
@@ -1304,38 +1300,56 @@ Regime 对 S/R 可靠性的影响 (Osler 2000):
     "debate_summary": "<brief summary of bull vs bear debate>"
 }}"""
 
-        # v3.28: Chinese instructions + few-shot examples for better DeepSeek performance
+        # v4.14: Risk Manager 角色重定义 — 只管风险不管方向
+        # 旧版 (v3.28): Risk Manager 是独立决策者，经常否决 Judge → 过多 HOLD
+        # 新版 (v4.14): Risk Manager 只设 SL/TP + 仓位大小，极端条件才否决
         system_prompt = f"""你是风险管理者 (Risk Manager)。
-你的职责是评估 Judge 提出的交易建议，设定 SL/TP 价位，并确定仓位大小。
+你的职责是为 Judge 的交易决策设定最优执行参数: SL/TP 价位和仓位大小。
 
 {INDICATOR_DEFINITIONS}
 
-【关键规则 — 必须遵守】
-⚠️ 用指标手册独立验证 market regime，确认交易方向与当前市场状况一致。
-⚠️ 做出你自己的评估 — 不要盲从 Judge 的建议。
+【核心原则 — 必须遵守】
+✅ **信任 Judge 的方向判断** — Judge 已听完 Bull/Bear 4 轮辩论后做出决策，你不需要重新判断方向。
+✅ 你的工作: 设定 SL/TP + 根据风险条件调整仓位大小。
+✅ 用风险因素（FR、流动性、OBI）来调整仓位大小，而不是否决方向。
+⚠️ 只有 3 种极端情况才允许否决方向: R/R < 1.5:1 | |FR| > 0.10% | 流动性枯竭
 ⚠️ 用中文进行内部推理分析，最终以 JSON 格式输出结果。
 
 【正确分析示例 — Few-shot】
 
-示例 1: 趋势市场顺势交易
-情况: ADX=35, DI+ > DI-, RSI=58, Price > SMA200, Judge 建议 LONG
-分析: ADX>25 = TRENDING, 顺势交易。最近 Support $95,000, Resistance $99,000。
+示例 1: 顺势交易 → 设定 SL/TP + 大仓位
+情况: ADX=35, DI+ > DI-, Judge 建议 LONG
+你的工作: 设 SL/TP，不质疑方向。
+分析: Support $95,000, Resistance $99,000。
       SL=$94,500 (Support 下方), TP=$98,800 (Resistance 附近)。
-      Risk=$500, Reward=$3,800, R/R=7.6:1 → 优秀。Funding rate 0.01% 正常。
-结果: {{"signal":"LONG","confidence":"HIGH","position_size_pct":85,"stop_loss":94500,"take_profit":98800}}
+      R/R=7.6:1 → 优秀。FR=0.01% 正常。流动性充足。
+结果: {{"signal":"LONG","confidence":"HIGH","position_size_pct":85,"stop_loss":94500,"take_profit":98800,"reason":"顺势交易，R/R 7.6:1 优秀，FR 正常"}}
 
-示例 2: R/R 不足 → 改为 HOLD
-情况: ADX=15 (RANGING), Judge 建议 LONG, 价格在 range 中间
-分析: 最近 Support $94,000, Resistance $96,000, 当前 $95,200。
-      SL=$93,500, TP=$95,800。Risk=$1,700, Reward=$600, R/R=0.35:1 → 不可接受。
-      价格在 range 中间，两个方向 R/R 都差。
-结果: {{"signal":"HOLD","confidence":"LOW","position_size_pct":0,"reason":"R/R 0.35:1 远低于 1.5:1 门槛"}}
+示例 2: R/R < 1.5:1 → 唯一允许否决的 R/R 条件
+情况: Judge 建议 LONG, 价格在 range 中间
+分析: SL=$93,500, TP=$95,800。R/R=0.35:1 → 远低于 1.5:1 门槛。
+      无法设定合理的 SL/TP → 这是允许否决的条件。
+结果: {{"signal":"HOLD","confidence":"LOW","position_size_pct":0,"reason":"R/R 0.35:1 远低于 1.5:1 门槛，无法设定合理 SL/TP"}}
 
-示例 3: 逆势交易需要额外谨慎
-情况: ADX=38 (STRONG TREND down, DI- > DI+), Judge 建议 LONG (逆势)
-分析: 强下跌趋势中，S/R 反弹率仅 ~25%。即使 RSI 超卖，逆势做多风险极高。
-      ADX > 30 时 S/R 可靠性大幅下降。
-结果: {{"signal":"HOLD","confidence":"MEDIUM","position_size_pct":0,"reason":"ADX=38 强下跌趋势，逆势做多历史成功率极低"}}"""
+示例 3: 逆势交易 → 缩小仓位，不否决方向
+情况: ADX=38 (STRONG TREND down, DI- > DI+), Judge 建议 LONG (逆势), R/R=2.5:1
+你的工作: 尊重 Judge 的方向，但因逆势风险缩小仓位。
+分析: 逆势交易风险更高 → 仓位缩小到 30%。SL/TP 正常设定。
+      R/R=2.5:1 ≥ 1.5:1 → 通过门槛。FR=0.02% 正常。
+结果: {{"signal":"LONG","confidence":"MEDIUM","position_size_pct":30,"stop_loss":94000,"take_profit":96500,"reason":"逆势交易但 R/R 2.5:1 达标，缩小仓位至 30% 控制风险"}}
+
+示例 4: 极端资金费率 → 允许否决
+情况: Judge 建议 LONG, FR=+0.12% (极端拥挤)
+分析: |FR|=0.12% > 0.10% 极端阈值 → 触发紧急否决条件。
+      日成本 0.36%，且极端拥挤暗示反转风险极高。
+结果: {{"signal":"HOLD","confidence":"LOW","position_size_pct":0,"reason":"FR +0.12% 触发极端否决阈值 (>0.10%)，成本过高且拥挤风险极大"}}
+
+示例 5: 各种风险因素 → 缩小仓位，不否决
+情况: Judge 建议 LONG, BB上轨99%, 卖墙30x, FR=+0.06%, OBI=-0.8
+你的工作: 这些是风险因素，用来调仓位大小，不是否决方向。
+分析: BB 上轨 → 仓位 ×0.8。卖墙 → 仓位 ×0.8。FR 0.06% (偏高) → 仓位 ×0.5。
+      综合: 基础仓位 70% × 0.5 = 35%。R/R=3.2:1 通过。
+结果: {{"signal":"LONG","confidence":"MEDIUM","position_size_pct":35,"stop_loss":66800,"take_profit":68300,"reason":"尊重 Judge 方向，因 FR 偏高+卖墙+BB 上轨缩小仓位至 35%"}}"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["risk"] = {

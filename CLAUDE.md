@@ -672,6 +672,25 @@ Environment=AUTO_CONFIRM=true
     - 文件：`strategy/deepseek_strategy.py` (v4.13), `requirements.txt`
     - 参考：Binance Futures API Changelog (Dec 2025)
 
+22. **v4.14 Risk Manager 角色重定义** (只管风险不管方向) - **架构改进**
+    - **背景**: Risk Manager 被设计为"独立决策者"，经常否决 Judge 的方向 → 过多 HOLD
+    - **根因**: Risk Manager prompt 指示"做出你自己的评估 — 不要盲从 Judge"，等于第二个 Judge
+    - **对比 TradingAgents 原版**: 原版用 3 角色 Risk Debate (Aggressive/Conservative/Neutral)
+      实现平衡；我们只有 1 个 Risk Manager，天然偏保守，缺少"值得冒险"的声音
+    - **修复**: Risk Manager 角色从"独立决策者"改为"执行风险管理"
+    - **新职责**:
+      - ✅ 设定 SL/TP 价位 (基于 S/R zones)
+      - ✅ 根据风险因素调整仓位大小 (FR、OBI、流动性 → 缩小仓位)
+      - ✅ 只在 3 种极端条件下否决方向: R/R < 1.5:1 | |FR| > 0.10% | 流动性枯竭
+      - ❌ 不再重新判断方向 (Judge 已听完 4 轮辩论)
+      - ❌ 不再独立评估 Confluence
+    - **风险因素处理方式变化**:
+      - BB 上轨/下轨 → 缩小仓位 (旧: HOLD)
+      - 卖墙/买墙 → 缩小仓位 (旧: HOLD)
+      - 逆势交易 → 缩小仓位至 30% (旧: HOLD)
+      - FR 0.03-0.10% → 仓位 ×0.5 (旧: HOLD)
+    - 文件：`agents/multi_agent_analyzer.py`
+
 ## 常见错误避免
 
 - ❌ 使用 `python` 命令 → ✅ **始终使用 `python3`** (确保使用正确版本)
@@ -700,6 +719,8 @@ Environment=AUTO_CONFIRM=true
 - ❌ **加仓后不更新 SL/TP 数量** → ✅ **调用 `_update_sltp_quantity()` 更新订单** (v3.18)
 - ❌ **仅在 AI prompt 中要求 R/R >= 1.5:1** → ✅ **`validate_multiagent_sltp()` 硬性执行 R/R 门槛** (回退到技术分析)
 - ❌ **使用 `order_factory.bracket()` + `submit_order_list()`** → ✅ **分步提交: MARKET entry → on_position_opened → SL + TP 单独提交** (v4.13, NT 1.222.0 拒绝 linked orders)
+- ❌ **Risk Manager 重新判断方向** → ✅ **Risk Manager 只设 SL/TP + 仓位大小，只在 R/R<1.5 / |FR|>0.1% / 流动性枯竭时才否决** (v4.14)
+- ❌ **用 BB 上轨/卖墙/OBI 等因素否决方向** → ✅ **这些因素只用来调整仓位大小** (v4.14)
 
 ## 文件结构
 
