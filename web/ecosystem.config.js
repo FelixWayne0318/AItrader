@@ -5,7 +5,9 @@ module.exports = {
   apps: [
     {
       name: 'algvex-frontend',
-      cwd: './frontend',
+      // IMPORTANT: Use absolute path to avoid cwd mismatch when PM2 restarts.
+      // Relative paths depend on where PM2 was first started from.
+      cwd: '/home/linuxuser/nautilus_AItrader/web/frontend',
       script: 'npm',
       args: 'start',
       env: {
@@ -30,7 +32,7 @@ module.exports = {
     },
     {
       name: 'algvex-backend',
-      cwd: './backend',
+      cwd: '/home/linuxuser/nautilus_AItrader/web/backend',
       script: 'uvicorn',
       args: 'main:app --host 0.0.0.0 --port 8000',
       interpreter: 'python3',
