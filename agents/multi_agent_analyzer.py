@@ -1225,6 +1225,8 @@ Judge 建议 {action} → 你的任务:
 - 优先选择 HIGH 强度或有 ORDER_FLOW 确认的 zone
 - 最小 SL 距离 0.5-1%，避免噪音触发止损
 - 参考 S/R Zone Proximity Alert（如有）作为 SL/TP 选择参考
+- ‼️ **必须在 sl_zone 和 tp_zone 中标注你选择的 S/R zone** (如 "S1 $68,386 (HIGH)")
+- ‼️ **必须在 rr_calculation 中展示计算过程** (如 "Risk=$500, Reward=$1,200, R/R=2.4:1")
 
 ### STEP 2: 评估 Risk/Reward
 计算: Risk = |current_price - stop_loss|, Reward = |take_profit - current_price|, R/R = Reward / Risk
@@ -1295,6 +1297,9 @@ R/R 与价格位置的关系：
     "position_size_pct": <number 0-100>,
     "stop_loss": <price_number>,
     "take_profit": <price_number>,
+    "sl_zone": "<which S/R zone the SL is based on, e.g. 'S1 $68,386 (HIGH)'>",
+    "tp_zone": "<which S/R zone the TP is based on, e.g. 'R2 $71,200 (MEDIUM)'>",
+    "rr_calculation": "<show math: Risk=$X, Reward=$Y, R/R=Z:1>",
     "reason": "<one sentence explaining the final decision>",
     "invalidation": "<specific condition that would prove this trade wrong>",
     "debate_summary": "<brief summary of bull vs bear debate>"
@@ -1318,25 +1323,28 @@ R/R 与价格位置的关系：
 【正确分析示例 — Few-shot】
 
 示例 1: 顺势交易 → 设定 SL/TP + 大仓位
-情况: ADX=35, DI+ > DI-, Judge 建议 LONG
+情况: ADX=35, DI+ > DI-, Judge 建议 LONG, 当前价 $95,500
 你的工作: 设 SL/TP，不质疑方向。
-分析: Support $95,000, Resistance $99,000。
-      SL=$94,500 (Support 下方), TP=$98,800 (Resistance 附近)。
-      R/R=7.6:1 → 优秀。FR=0.01% 正常。流动性充足。
-结果: {{"signal":"LONG","confidence":"HIGH","position_size_pct":85,"stop_loss":94500,"take_profit":98800,"reason":"顺势交易，R/R 7.6:1 优秀，FR 正常"}}
+分析: Support S1=$95,000 (HIGH), Resistance R1=$99,000 (MEDIUM)。
+      SL=$94,500 (S1 下方), TP=$98,800 (R1 附近)。
+      Risk=$1,000, Reward=$3,300, R/R=3.3:1 → 优秀。FR=0.01% 正常。流动性充足。
+结果: {{"signal":"LONG","confidence":"HIGH","position_size_pct":85,"stop_loss":94500,"take_profit":98800,"sl_zone":"S1 $95,000 (HIGH)","tp_zone":"R1 $99,000 (MEDIUM)","rr_calculation":"Risk=$1,000, Reward=$3,300, R/R=3.3:1","reason":"顺势交易，R/R 3.3:1 优秀，FR 正常"}}
 
 示例 2: R/R < 1.5:1 → 唯一允许否决的 R/R 条件
-情况: Judge 建议 LONG, 价格在 range 中间
-分析: SL=$93,500, TP=$95,800。R/R=0.35:1 → 远低于 1.5:1 门槛。
+情况: Judge 建议 LONG, 当前价 $94,800, 价格在 range 中间
+分析: S1=$93,500 (LOW), R1=$95,800 (MEDIUM)。
+      SL=$93,500, TP=$95,800。Risk=$1,300, Reward=$1,000, R/R=0.77:1 → 远低于 1.5:1 门槛。
       无法设定合理的 SL/TP → 这是允许否决的条件。
-结果: {{"signal":"HOLD","confidence":"LOW","position_size_pct":0,"reason":"R/R 0.35:1 远低于 1.5:1 门槛，无法设定合理 SL/TP"}}
+结果: {{"signal":"HOLD","confidence":"LOW","position_size_pct":0,"sl_zone":"S1 $93,500 (LOW)","tp_zone":"R1 $95,800 (MEDIUM)","rr_calculation":"Risk=$1,300, Reward=$1,000, R/R=0.77:1","reason":"R/R 0.77:1 远低于 1.5:1 门槛，无法设定合理 SL/TP"}}
 
 示例 3: 逆势交易 → 缩小仓位，不否决方向
-情况: ADX=38 (STRONG TREND down, DI- > DI+), Judge 建议 LONG (逆势), R/R=2.5:1
+情况: ADX=38 (STRONG TREND down, DI- > DI+), Judge 建议 LONG (逆势), 当前价 $95,000
 你的工作: 尊重 Judge 的方向，但因逆势风险缩小仓位。
-分析: 逆势交易风险更高 → 仓位缩小到 30%。SL/TP 正常设定。
-      R/R=2.5:1 ≥ 1.5:1 → 通过门槛。FR=0.02% 正常。
-结果: {{"signal":"LONG","confidence":"MEDIUM","position_size_pct":30,"stop_loss":94000,"take_profit":96500,"reason":"逆势交易但 R/R 2.5:1 达标，缩小仓位至 30% 控制风险"}}
+分析: S2=$94,000 (HIGH), R1=$96,500 (MEDIUM)。
+      SL=$94,000 (S2 下方), TP=$96,500 (R1 附近)。
+      Risk=$1,000, Reward=$1,500, R/R=1.5:1 → 达标。
+      逆势交易风险更高 → 仓位缩小到 30%。FR=0.02% 正常。
+结果: {{"signal":"LONG","confidence":"MEDIUM","position_size_pct":30,"stop_loss":94000,"take_profit":96500,"sl_zone":"S2 $94,000 (HIGH)","tp_zone":"R1 $96,500 (MEDIUM)","rr_calculation":"Risk=$1,000, Reward=$1,500, R/R=1.5:1","reason":"逆势交易但 R/R 1.5:1 达标，缩小仓位至 30% 控制风险"}}
 
 示例 4: 极端资金费率 → 允许否决
 情况: Judge 建议 LONG, FR=+0.12% (极端拥挤)
@@ -1345,11 +1353,14 @@ R/R 与价格位置的关系：
 结果: {{"signal":"HOLD","confidence":"LOW","position_size_pct":0,"reason":"FR +0.12% 触发极端否决阈值 (>0.10%)，成本过高且拥挤风险极大"}}
 
 示例 5: 各种风险因素 → 缩小仓位，不否决
-情况: Judge 建议 LONG, BB上轨99%, 卖墙30x, FR=+0.06%, OBI=-0.8
+情况: Judge 建议 LONG, 当前价 $67,200, BB上轨99%, 卖墙30x, FR=+0.06%, OBI=-0.8
 你的工作: 这些是风险因素，用来调仓位大小，不是否决方向。
-分析: BB 上轨 → 仓位 ×0.8。卖墙 → 仓位 ×0.8。FR 0.06% (偏高) → 仓位 ×0.5。
-      综合: 基础仓位 70% × 0.5 = 35%。R/R=3.2:1 通过。
-结果: {{"signal":"LONG","confidence":"MEDIUM","position_size_pct":35,"stop_loss":66800,"take_profit":68300,"reason":"尊重 Judge 方向，因 FR 偏高+卖墙+BB 上轨缩小仓位至 35%"}}"""
+分析: S1=$66,800 (HIGH), R2=$68,300 (MEDIUM)。
+      SL=$66,800 (S1 下方), TP=$68,300 (R2 附近)。
+      Risk=$400, Reward=$1,100, R/R=2.75:1 → 优秀。
+      BB 上轨 → 仓位 ×0.8。卖墙 → 仓位 ×0.8。FR 0.06% (偏高) → 仓位 ×0.5。
+      综合: 基础仓位 70% × 0.5 = 35%。
+结果: {{"signal":"LONG","confidence":"MEDIUM","position_size_pct":35,"stop_loss":66800,"take_profit":68300,"sl_zone":"S1 $66,800 (HIGH)","tp_zone":"R2 $68,300 (MEDIUM)","rr_calculation":"Risk=$400, Reward=$1,100, R/R=2.75:1","reason":"尊重 Judge 方向，因 FR 偏高+卖墙+BB 上轨缩小仓位至 35%"}}"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["risk"] = {
@@ -1373,6 +1384,40 @@ R/R 与价格位置的关系：
             decision["debate_rounds"] = self.debate_rounds
             decision["judge_decision"] = proposed_action
 
+            # v4.15: Reask mechanism — validate R/R before accepting SL/TP
+            # Three-tier constraint model:
+            #   Tier 1 (hard): R/R < 1.0 → skip reask, downstream hard gate rejects
+            #   Tier 2 (soft): R/R 1.0~1.5 → reask once with specific feedback
+            #   Tier 3 (pass): R/R >= 1.5 → accept as-is
+            signal = decision.get("signal", "HOLD").upper()
+            if signal in ("LONG", "SHORT", "BUY", "SELL"):
+                rr_ratio = self._compute_rr_ratio(decision, current_price)
+                decision["computed_rr"] = round(rr_ratio, 2)
+
+                if 1.0 <= rr_ratio < 1.5:
+                    self.logger.info(
+                        f"📊 R/R {rr_ratio:.2f}:1 is in reask zone (1.0-1.5). "
+                        f"Attempting reask for better SL/TP placement."
+                    )
+                    decision = self._reask_rm_sltp(
+                        decision=decision,
+                        current_price=current_price,
+                        system_prompt=system_prompt,
+                        original_user_prompt=prompt,
+                        sr_zones_summary=sr_zones_for_risk,
+                    )
+                    # Preserve metadata after reask
+                    decision.setdefault("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                    decision.setdefault("debate_rounds", self.debate_rounds)
+                    decision.setdefault("judge_decision", proposed_action)
+                elif rr_ratio < 1.0 and rr_ratio > 0:
+                    self.logger.info(
+                        f"📊 R/R {rr_ratio:.2f}:1 < 1.0 — too low for reask, "
+                        f"downstream validate_multiagent_sltp() will handle fallback."
+                    )
+                elif rr_ratio >= 1.5:
+                    self.logger.info(f"📊 R/R {rr_ratio:.2f}:1 — passes threshold, no reask needed.")
+
             # v3.12: Normalize signal type (handle legacy BUY/SELL)
             decision = self._normalize_signal(decision)
 
@@ -1384,6 +1429,163 @@ R/R 与价格位置的关系：
         # Fallback if all retries failed
         self.logger.warning("Risk evaluation parsing failed after retries, using fallback")
         return self._create_fallback_signal({"price": current_price})
+
+    def _compute_rr_ratio(self, decision: Dict[str, Any], current_price: float) -> float:
+        """
+        Compute the actual Risk/Reward ratio from RM's SL/TP output.
+
+        Parameters
+        ----------
+        decision : Dict
+            RM decision containing stop_loss and take_profit
+        current_price : float
+            Current market price
+
+        Returns
+        -------
+        float
+            R/R ratio (reward / risk), or 0.0 if invalid
+        """
+        signal = decision.get("signal", "HOLD").upper()
+        if signal not in ("LONG", "SHORT", "BUY", "SELL"):
+            return 0.0
+
+        try:
+            sl = float(decision.get("stop_loss", 0))
+            tp = float(decision.get("take_profit", 0))
+        except (ValueError, TypeError):
+            return 0.0
+
+        if sl <= 0 or tp <= 0 or current_price <= 0:
+            return 0.0
+
+        if signal in ("LONG", "BUY"):
+            risk = current_price - sl
+            reward = tp - current_price
+        else:  # SHORT / SELL
+            risk = sl - current_price
+            reward = current_price - tp
+
+        if risk <= 0:
+            return 0.0
+
+        return reward / risk
+
+    def _reask_rm_sltp(
+        self,
+        decision: Dict[str, Any],
+        current_price: float,
+        system_prompt: str,
+        original_user_prompt: str,
+        sr_zones_summary: str,
+    ) -> Dict[str, Any]:
+        """
+        Reask the Risk Manager with specific feedback when R/R is suboptimal (1.0-1.5).
+
+        This implements the "Validated Soft Constraint" tier:
+        - R/R >= 1.5: pass through (no reask needed)
+        - R/R 1.0 ~ 1.5: reask once with specific error feedback
+        - R/R < 1.0: skip reask, let downstream hard gate handle it
+
+        Parameters
+        ----------
+        decision : Dict
+            Initial RM decision with suboptimal R/R
+        current_price : float
+            Current market price
+        system_prompt : str
+            Original system prompt for RM
+        original_user_prompt : str
+            Original user prompt for RM
+        sr_zones_summary : str
+            S/R zones text for reference in reask
+
+        Returns
+        -------
+        Dict
+            Improved decision if reask succeeds, or original decision
+        """
+        signal = decision.get("signal", "HOLD").upper()
+        sl = float(decision.get("stop_loss", 0))
+        tp = float(decision.get("take_profit", 0))
+        rr_ratio = self._compute_rr_ratio(decision, current_price)
+        sl_zone = decision.get("sl_zone", "未指定")
+        tp_zone = decision.get("tp_zone", "未指定")
+        rr_calc = decision.get("rr_calculation", "未提供")
+
+        # Build focused reask prompt
+        if signal in ("LONG", "BUY"):
+            direction_hint = (
+                "LONG: SL 应在 SUPPORT 下方 (选择更远的 support 可缩小 risk)，"
+                "TP 应在 RESISTANCE 附近 (选择更远的 resistance 可增大 reward)。"
+            )
+        else:
+            direction_hint = (
+                "SHORT: SL 应在 RESISTANCE 上方 (选择更近的 resistance 可缩小 risk)，"
+                "TP 应在 SUPPORT 附近 (选择更远的 support 可增大 reward)。"
+            )
+
+        reask_prompt = f"""⚠️ **SL/TP 需要调整 — R/R 不达标**
+
+你上一次输出的 SL/TP:
+- Stop Loss: ${sl:,.2f} (基于: {sl_zone})
+- Take Profit: ${tp:,.2f} (基于: {tp_zone})
+- 你的计算: {rr_calc}
+- **实际 R/R: {rr_ratio:.2f}:1** ← 低于 1.5:1 最低标准
+
+当前价格: ${current_price:,.2f}
+方向: {signal}
+
+## 🔑 可用的 S/R ZONES (重新参考):
+{sr_zones_summary if sr_zones_summary else "S/R 数据不可用"}
+
+## 📐 调整方向:
+{direction_hint}
+
+## ✅ 要求:
+1. 重新选择 SL/TP，使 R/R >= 1.5:1
+2. SL 和 TP 必须基于具体的 S/R zone (在 sl_zone 和 tp_zone 中说明)
+3. 在 rr_calculation 中展示完整计算过程
+4. 如果确实无法达到 1.5:1 → 改为 HOLD
+
+请重新输出完整 JSON (格式与之前相同)。"""
+
+        self.logger.info(
+            f"🔄 Reask RM: R/R {rr_ratio:.2f}:1 < 1.5:1, "
+            f"SL=${sl:,.2f}, TP=${tp:,.2f}, signal={signal}"
+        )
+
+        # Make the reask API call
+        reask_decision = self._extract_json_with_retry(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": original_user_prompt},
+                {"role": "assistant", "content": json.dumps(decision, ensure_ascii=False)},
+                {"role": "user", "content": reask_prompt},
+            ],
+            temperature=0.1,  # Lower temperature for more focused correction
+            max_json_retries=1,
+            trace_label="Risk Manager (Reask)",
+        )
+
+        if reask_decision:
+            new_rr = self._compute_rr_ratio(reask_decision, current_price)
+            self.logger.info(
+                f"🔄 Reask result: R/R {new_rr:.2f}:1, "
+                f"SL=${float(reask_decision.get('stop_loss', 0)):,.2f}, "
+                f"TP=${float(reask_decision.get('take_profit', 0)):,.2f}, "
+                f"signal={reask_decision.get('signal', '?')}"
+            )
+            reask_decision["reask_applied"] = True
+            reask_decision["original_rr"] = round(rr_ratio, 2)
+            reask_decision["reask_rr"] = round(new_rr, 2)
+            return reask_decision
+
+        # Reask failed to produce valid JSON — return original
+        self.logger.warning("Reask failed to produce valid JSON, keeping original decision")
+        decision["reask_attempted"] = True
+        decision["reask_failed"] = True
+        return decision
 
     def _normalize_signal(self, decision: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1474,46 +1676,46 @@ R/R 与价格位置的关系：
         default_tp_buy = get_default_tp_pct_buy()
         default_tp_sell = get_default_tp_pct_sell()
 
-        if signal == "BUY":
+        if signal in ("BUY", "LONG"):
             # For LONG: SL should be below entry, TP above
             sl_distance = (current_price - sl) / current_price if sl > 0 else 0
 
             if sl >= current_price:
                 # Critical error: SL on wrong side - must fix
                 decision["stop_loss"] = current_price * (1 - default_sl)
-                self.logger.warning(f"Fixed BUY stop loss (wrong side): {sl} -> {decision['stop_loss']}")
+                self.logger.warning(f"Fixed LONG stop loss (wrong side): {sl} -> {decision['stop_loss']}")
             elif sl_distance < min_sl_distance:
                 # v3.13: TradingAgents style - warn but trust AI's S/R-based decision
                 # The AI was prompted to consider volatility and R/R ratio
                 self.logger.info(
-                    f"📍 BUY stop loss is close ({sl_distance*100:.2f}%) - "
+                    f"📍 LONG stop loss is close ({sl_distance*100:.2f}%) - "
                     f"trusting AI's S/R-based SL: ${sl:,.2f}"
                 )
                 decision["sl_warning"] = f"SL distance {sl_distance*100:.2f}% is below recommended {min_sl_distance*100:.1f}%"
 
             if tp <= current_price:
                 decision["take_profit"] = current_price * (1 + default_tp_buy)
-                self.logger.warning(f"Fixed BUY take profit: {tp} -> {decision['take_profit']}")
+                self.logger.warning(f"Fixed LONG take profit: {tp} -> {decision['take_profit']}")
 
-        elif signal == "SELL":
+        elif signal in ("SELL", "SHORT"):
             # For SHORT: SL should be above entry, TP below
             sl_distance = (sl - current_price) / current_price if sl > 0 else 0
 
             if sl <= current_price:
                 # Critical error: SL on wrong side - must fix
                 decision["stop_loss"] = current_price * (1 + default_sl)
-                self.logger.warning(f"Fixed SELL stop loss (wrong side): {sl} -> {decision['stop_loss']}")
+                self.logger.warning(f"Fixed SHORT stop loss (wrong side): {sl} -> {decision['stop_loss']}")
             elif sl_distance < min_sl_distance:
                 # v3.13: TradingAgents style - warn but trust AI's S/R-based decision
                 self.logger.info(
-                    f"📍 SELL stop loss is close ({sl_distance*100:.2f}%) - "
+                    f"📍 SHORT stop loss is close ({sl_distance*100:.2f}%) - "
                     f"trusting AI's S/R-based SL: ${sl:,.2f}"
                 )
                 decision["sl_warning"] = f"SL distance {sl_distance*100:.2f}% is below recommended {min_sl_distance*100:.1f}%"
 
             if tp >= current_price:
                 decision["take_profit"] = current_price * (1 - default_tp_sell)
-                self.logger.warning(f"Fixed SELL take profit: {tp} -> {decision['take_profit']}")
+                self.logger.warning(f"Fixed SHORT take profit: {tp} -> {decision['take_profit']}")
 
         return decision
 
