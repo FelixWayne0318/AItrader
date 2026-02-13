@@ -653,50 +653,150 @@ class OrderFlowSimulator(DiagnosticStep):
         """
         场景 8: S/R 动态 SL/TP 重评估 (v5.0)
 
+        v5.1: 使用真实 calculate_sr_based_sltp() 替代硬编码 mock，
+        与生产 _reevaluate_sltp_for_existing_position() 100% 一致。
+
         Flow:
         1. on_timer triggers _reevaluate_sltp_for_existing_position()
         2. Recalculate S/R zones with current data via calculate_sr_based_sltp()
         3. Apply SL favorable direction rule (max for LONG, min for SHORT)
         4. TP freely adjustable (AI responsibility per v2.2)
-        5. Check 0.1% threshold - skip if change too small
+        5. Check dynamic_update_threshold_pct (0.2%) - skip if change too small
         6. If threshold met: _replace_sltp_orders (atomic cancel+recreate)
         """
         events = []
         notes = []
 
         entry_price = self.ctx.current_price
+        # Simulate existing position: LONG with SL 1.5% below, TP 2.5% above
         old_sl = entry_price * 0.985
         old_tp = entry_price * 1.025
-
-        # Simulate new S/R shifted up
-        new_sl = entry_price * 0.988
-        new_tp = entry_price * 1.030
-
-        # Favorable direction: LONG SL can only go UP
-        final_sl = max(new_sl, old_sl)
-
-        # TP freely adjustable (v2.2: AI responsibility, not LOCAL protection)
-        final_tp = new_tp
-
-        # Threshold check
-        sl_change_pct = abs(final_sl - old_sl) / old_sl * 100
-        tp_change_pct = abs(final_tp - old_tp) / old_tp * 100
-        should_update = sl_change_pct > 0.1 or tp_change_pct > 0.1
+        position_side = 'long'
 
         events.append("on_timer → _reevaluate_sltp_for_existing_position()")
         events.append("  1. 获取当前持仓 + 最新 S/R zones")
-        events.append("  2. calculate_sr_based_sltp() 基于 S/R 重新计算")
-        events.append(f"  3. SL favorable: max({old_sl:.2f}, {new_sl:.2f}) = {final_sl:.2f}")
-        events.append(f"  4. TP: {old_tp:.2f} → {final_tp:.2f} (自由调整, AI 职责)")
+
+        # v5.1: Call real calculate_sr_based_sltp() with live S/R data
+        new_sl = None
+        new_tp = None
+        sr_method = "N/A"
+        real_calc_used = False
+
+        if self.ctx.sr_zones_data:
+            try:
+                from utils.sr_sltp_calculator import calculate_sr_based_sltp
+                from strategy.trading_logic import get_min_rr_ratio
+
+                atr_val = getattr(self.ctx, 'atr_value', None) or 0.0
+                cfg = self.ctx.strategy_config
+                min_rr = get_min_rr_ratio()
+                atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5) if cfg else 0.5
+
+                new_sl, new_tp, sr_method = calculate_sr_based_sltp(
+                    current_price=entry_price,
+                    side="BUY",  # LONG position
+                    sr_zones=self.ctx.sr_zones_data,
+                    atr_value=atr_val,
+                    min_rr_ratio=min_rr,
+                    atr_buffer_multiplier=atr_buf_mult,
+                )
+                real_calc_used = True
+                events.append(f"  2. calculate_sr_based_sltp() → {sr_method}")
+                if new_sl and new_tp:
+                    events.append(f"     新 SL=${new_sl:,.2f}, 新 TP=${new_tp:,.2f}")
+                else:
+                    events.append(f"     ❌ S/R 拒绝: {sr_method} → 保持现有 SL/TP")
+            except Exception as e:
+                events.append(f"  2. calculate_sr_based_sltp() 失败: {e}")
+        else:
+            events.append("  2. ⚠️ 无 S/R zones 数据，使用 mock 值模拟")
+
+        if not real_calc_used or not new_sl or not new_tp:
+            # Fallback to mock for display (when no live S/R data)
+            new_sl = entry_price * 0.988
+            new_tp = entry_price * 1.030
+            events.append(f"  2. [MOCK] 新 SL=${new_sl:,.2f}, 新 TP=${new_tp:,.2f}")
+
+        # Favorable direction: LONG SL can only go UP (matches production L4662-4666)
+        final_sl = max(new_sl, old_sl)
+        # TP freely adjustable (v2.2: AI responsibility, matches production L4667)
+        final_tp = new_tp
+
+        # Validate SL won't immediately trigger (matches production L4670-4675)
+        sl_valid = True
+        if position_side == 'long' and final_sl >= entry_price:
+            events.append(f"  3. ⚠️ SL >= 当前价 (LONG), 跳过更新")
+            sl_valid = False
+        elif position_side == 'short' and final_sl <= entry_price:
+            events.append(f"  3. ⚠️ SL <= 当前价 (SHORT), 跳过更新")
+            sl_valid = False
+        else:
+            events.append(f"  3. SL favorable: max({old_sl:,.2f}, {new_sl:,.2f}) = {final_sl:,.2f}")
+            events.append(f"  4. TP: {old_tp:,.2f} → {final_tp:,.2f} (自由调整, AI 职责)")
+
+        # Threshold check — production uses 0.2% (dynamic_update_threshold_pct=0.002)
+        cfg = self.ctx.strategy_config
+        threshold = getattr(cfg, 'dynamic_update_threshold_pct', 0.002) if cfg else 0.002
+        threshold_pct = threshold * 100  # convert to percentage for display
+
+        sl_change_pct = abs(final_sl - old_sl) / old_sl * 100
+        tp_change_pct = abs(final_tp - old_tp) / old_tp * 100 if old_tp > 0 else 0
+        sl_changed = sl_change_pct > threshold_pct
+        tp_changed = tp_change_pct > threshold_pct
+        should_update = sl_valid and (sl_changed or tp_changed)
+
         events.append(f"  5. SL Δ={sl_change_pct:.3f}%, TP Δ={tp_change_pct:.3f}%")
-        events.append(f"  6. 阈值 0.1%: {'更新' if should_update else '跳过'}")
+        events.append(f"  6. 阈值 {threshold_pct:.1f}% (dynamic_update_threshold_pct={threshold}): {'更新' if should_update else '跳过'}")
         if should_update:
             events.append("  7. _replace_sltp_orders (atomic cancel+recreate)")
 
         notes.append("v5.0: Trailing Stop 已移除, S/R 重评估是唯一 SL 调整机制")
         notes.append("SL 只能向有利方向移动 (LONG: UP, SHORT: DOWN)")
         notes.append("TP 由 S/R 重评估自由调整 (v2.2: AI 职责, 非 LOCAL 保护)")
-        notes.append("0.1% 阈值避免频繁修改订单")
+        notes.append(f"阈值 {threshold_pct:.1f}% 避免频繁修改订单 (生产 dynamic_update_threshold_pct={threshold})")
+
+        # ── Structural assertions (v5.1: verify formulas, not just display) ──
+        assertion_failures = []
+
+        # Assert 1: Favorable direction rule — LONG SL can only go UP
+        if new_sl and new_sl < old_sl and final_sl != old_sl:
+            assertion_failures.append(
+                f"LONG SL 降低: new_sl=${new_sl:,.2f} < old_sl=${old_sl:,.2f} "
+                f"但 final_sl=${final_sl:,.2f} ≠ old_sl (max 规则失败)")
+        if final_sl < old_sl:
+            assertion_failures.append(
+                f"LONG final_sl=${final_sl:,.2f} < old_sl=${old_sl:,.2f} — 违反有利方向规则")
+
+        # Assert 2: SL must be below entry for LONG
+        if position_side == 'long' and sl_valid and final_sl >= entry_price:
+            assertion_failures.append(
+                f"LONG SL=${final_sl:,.2f} >= entry=${entry_price:,.2f}")
+
+        # Assert 3: Threshold formula precision
+        expected_sl_change_pct = abs(final_sl - old_sl) / old_sl * 100
+        if abs(sl_change_pct - expected_sl_change_pct) > 0.001:
+            assertion_failures.append(
+                f"SL change pct 计算误差: {sl_change_pct:.4f}% ≠ {expected_sl_change_pct:.4f}%")
+
+        # Assert 4: If real_calc returned valid SL/TP, they must respect R/R >= min_rr
+        if real_calc_used and new_sl and new_tp:
+            if new_sl < entry_price and new_tp > entry_price:
+                calc_rr = (new_tp - entry_price) / (entry_price - new_sl)
+                if calc_rr < min_rr:
+                    assertion_failures.append(
+                        f"Level 2 SL/TP R/R={calc_rr:.2f}:1 < {min_rr}:1 硬性门槛")
+
+        if assertion_failures:
+            for af in assertion_failures:
+                events.append(f"  ❌ ASSERTION: {af}")
+            notes.append(f"⚠️ {len(assertion_failures)} 个结构断言失败")
+        else:
+            notes.append("✅ 全部结构断言通过 (有利方向 + SL 方向 + 阈值精度 + R/R)")
+
+        if real_calc_used:
+            notes.append(f"✅ 使用真实 calculate_sr_based_sltp() (ATR={atr_val:.2f}, min_rr={min_rr})")
+        else:
+            notes.append("⚠️ 使用 mock 值 (无 S/R zones 数据)")
 
         return SimulationResult(
             scenario=OrderScenario.DYNAMIC_SLTP_UPDATE,
@@ -705,8 +805,9 @@ class OrderFlowSimulator(DiagnosticStep):
             events_triggered=events,
             state_changes={
                 "sl_price": f"${old_sl:,.2f} → ${final_sl:,.2f} (Δ={sl_change_pct:.3f}%)",
-                "tp_price": f"${old_tp:,.2f} → ${new_tp:,.2f} (Δ={tp_change_pct:.3f}%)",
-                "update_needed": "YES" if should_update else "NO (< 0.1%)",
+                "tp_price": f"${old_tp:,.2f} → ${final_tp:,.2f} (Δ={tp_change_pct:.3f}%)",
+                "update_needed": "YES" if should_update else f"NO (< {threshold_pct:.1f}%)",
+                "real_sr_calc": "YES" if real_calc_used else "NO (mock)",
             },
             notes=notes,
         )

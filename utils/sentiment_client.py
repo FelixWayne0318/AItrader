@@ -106,12 +106,13 @@ class SentimentDataFetcher:
             if response.status_code == 200:
                 data = response.json()
                 if data and len(data) > 0:
-                    # Parse latest (data[0] is newest from Binance)
-                    result = self._parse_binance_data(data[0])
+                    # Binance returns data in ascending order (oldest first, newest last)
+                    result = self._parse_binance_data(data[-1])
                     if result:
                         # v3.24: Build history series (oldest → newest)
+                        # Binance API already returns ascending order, no need to reverse
                         history = []
-                        for item in reversed(data):
+                        for item in data:
                             try:
                                 history.append({
                                     'long': float(item.get('longAccount', 0.5)),

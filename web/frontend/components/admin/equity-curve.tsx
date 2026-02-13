@@ -57,10 +57,10 @@ export function EquityCurve({ data }: EquityCurveProps) {
         lineWidth: 2,
       });
 
-      // Use provided data or generate demo data
+      // Only render chart when real data is available
       const chartData = data?.length
         ? data.map((d) => ({ time: d.time, value: d.value }))
-        : generateDemoData();
+        : [];
 
       areaSeries.setData(chartData as any);
       chart.timeScale().fitContent();
@@ -90,30 +90,16 @@ export function EquityCurve({ data }: EquityCurveProps) {
       transition={{ duration: 0.3 }}
     >
       <div ref={containerRef} className="w-full" />
-      {!data && (
-        <p className="text-xs text-muted-foreground text-center mt-2">
-          Demo data - Connect to backend for live data
-        </p>
+      {(!data || !data.length) && (
+        <div className="flex flex-col items-center justify-center h-60 text-muted-foreground">
+          <svg className="h-8 w-8 mb-3 opacity-40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+          <p className="text-sm font-medium">No equity data yet</p>
+          <p className="text-xs mt-1">Chart will populate as trades are executed</p>
+        </div>
       )}
     </motion.div>
   );
 }
 
-function generateDemoData() {
-  const data = [];
-  let value = 1000;
-  const now = new Date();
-
-  for (let i = 30; i >= 0; i--) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - i);
-    const change = (Math.random() - 0.45) * 50;
-    value = Math.max(500, value + change);
-    data.push({
-      time: date.toISOString().split("T")[0],
-      value: Math.round(value * 100) / 100,
-    });
-  }
-
-  return data;
-}

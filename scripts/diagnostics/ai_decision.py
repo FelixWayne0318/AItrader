@@ -6,6 +6,12 @@ Handles MultiAgent AI analysis and decision-making:
 - Sequential AI call execution (6 DeepSeek API calls)
 - Prompt structure verification
 - Bull/Bear debate transcript display
+
+IMPORTANT: Data fetching uses INLINE calls (matching production on_timer()),
+NOT AIDataAssembler. Key differences from AIDataAssembler:
+- Coinalyze: fetch_all() (production) vs fetch_all_with_history() (assembler)
+- S/R bars: 200 count (production) vs no S/R bars (assembler)
+- ATR value: calculated from S/R bars (production) vs not calculated (assembler)
 """
 
 from typing import Any, Dict, Optional
@@ -82,15 +88,17 @@ class AIInputDataValidator(DiagnosticStep):
         """
         Fetch ALL external data before printing — 100% matches live on_timer() flow.
 
-        Live system data fetch order (deepseek_strategy.py:1620-1731):
+        IMPORTANT: Uses INLINE data fetching, NOT AIDataAssembler.
+        Production on_timer() (deepseek_strategy.py:1724-1813) fetches data inline:
         1. Order flow (Binance klines → OrderFlowProcessor)
-        2. Derivatives (Coinalyze OI/Funding/Liquidations)
+        2. Derivatives (Coinalyze fetch_all(), NOT fetch_all_with_history())
         3. Order book (if enabled)
-        4. Binance derivatives (Top Traders, Taker Ratio) ← was MISSING
-        5. S/R bars (120 bars for Swing Point detection) ← was MISSING
-        6. kline_ohlcv (20 bars OHLCV for AI) ← was MISSING
-        7. historical_context (35-bar trend data)
-        8. S/R Zones calculation
+        4. Binance derivatives (Top Traders, Taker Ratio)
+        5. S/R bars (200 bars for Swing Point detection)
+        6. ATR value (from SRZoneCalculator._calculate_atr_from_bars)
+        7. kline_ohlcv (20 bars OHLCV for AI)
+        8. historical_context (35-bar trend data)
+        9. S/R Zones calculation
         """
         import os
         timings = self.ctx.step_timings
@@ -99,13 +107,30 @@ class AIInputDataValidator(DiagnosticStep):
             from utils.binance_kline_client import BinanceKlineClient
             from utils.order_flow_processor import OrderFlowProcessor
             from utils.coinalyze_client import CoinalyzeClient
-            from utils.ai_data_assembler import AIDataAssembler
             from utils.sentiment_client import SentimentDataFetcher
 
             kline_client = BinanceKlineClient(timeout=10)
             processor = OrderFlowProcessor(logger=None)
 
-            # Get Coinalyze config
+            # ========== 1. Order flow (matches live L1724-1744) ==========
+            try:
+                with step_timer("OrderFlow: BinanceKlines+Process", timings):
+                    raw_klines = kline_client.get_klines(
+                        symbol=self.ctx.symbol,
+                        interval="15m",
+                        limit=50,
+                    )
+                    if raw_klines:
+                        self.ctx.order_flow_report = processor.process_klines(raw_klines)
+                    else:
+                        print("  ⚠️ Failed to get Binance klines for order flow")
+            except Exception as e:
+                print(f"  ⚠️ Order flow processing failed: {e}")
+
+            # ========== 2. Derivatives — fetch_all() like production (matches live L1746-1762) ==========
+            # IMPORTANT: Production uses fetch_all(), NOT fetch_all_with_history()
+            # fetch_all() returns: {open_interest, liquidations, funding_rate, enabled}
+            # fetch_all_with_history() returns extra: trends, *_history (NOT used in production)
             coinalyze_cfg = self.ctx.base_config.get('order_flow', {}).get('coinalyze', {})
             coinalyze_api_key = coinalyze_cfg.get('api_key') or os.getenv('COINALYZE_API_KEY')
 
@@ -116,13 +141,16 @@ class AIInputDataValidator(DiagnosticStep):
                 logger=None
             )
 
-            sentiment_client = SentimentDataFetcher()
+            if coinalyze_client.is_enabled():
+                try:
+                    with step_timer("Coinalyze.fetch_all()", timings):
+                        self.ctx.derivatives_report = coinalyze_client.fetch_all()
+                except Exception as e:
+                    print(f"  ⚠️ Derivatives fetch failed: {e}")
 
-            # ========== Order book client (v3.7) ==========
+            # ========== 3. Order book (matches live L1764-1797) ==========
             order_book_cfg = self.ctx.base_config.get('order_book', {})
             order_book_enabled = order_book_cfg.get('enabled', False)
-            binance_orderbook = None
-            orderbook_processor = None
 
             if order_book_enabled:
                 try:
@@ -156,11 +184,30 @@ class AIInputDataValidator(DiagnosticStep):
                         history_size=ob_proc_cfg.get('history', {}).get('size', 10),
                         logger=None
                     )
+
+                    with step_timer("OrderBook: fetch+process", timings):
+                        raw_orderbook = binance_orderbook.get_order_book(
+                            symbol=self.ctx.symbol,
+                            limit=100,
+                        )
+                        if raw_orderbook:
+                            td = self.ctx.technical_data or {}
+                            self.ctx.orderbook_report = orderbook_processor.process(
+                                order_book=raw_orderbook,
+                                current_price=self.ctx.current_price,
+                                volatility=td.get('bb_bandwidth', 0.02),
+                            )
+                            ob_status = self.ctx.orderbook_report.get('_status', {})
+                            if ob_status.get('code') != 'OK':
+                                print(f"  ℹ️ Order book status: {ob_status.get('code')} - {ob_status.get('message')}")
+                        else:
+                            print("  ⚠️ Failed to get order book data")
                 except ImportError as e:
                     print(f"  ⚠️ Order book modules not available: {e}")
+                except Exception as e:
+                    print(f"  ⚠️ Order book processing failed: {e}")
 
-            # ========== Binance Derivatives client (v3.21) ==========
-            binance_derivatives_client = None
+            # ========== 4. Binance Derivatives (matches live L1799-1813) ==========
             try:
                 from utils.binance_derivatives_client import BinanceDerivativesClient
                 bd_cfg = self.ctx.base_config.get('binance_derivatives', {})
@@ -169,63 +216,17 @@ class AIInputDataValidator(DiagnosticStep):
                     logger=None,
                     config=self.ctx.base_config,
                 )
+                with step_timer("BinanceDerivatives.fetch_all()", timings):
+                    bd_data = binance_derivatives_client.fetch_all()
+                if bd_data:
+                    self.ctx.binance_derivatives_data = bd_data
             except ImportError as e:
                 print(f"  ⚠️ BinanceDerivativesClient not available: {e}")
-
-            # ========== AIDataAssembler (matches live system) ==========
-            assembler = AIDataAssembler(
-                binance_kline_client=kline_client,
-                order_flow_processor=processor,
-                coinalyze_client=coinalyze_client,
-                sentiment_client=sentiment_client,
-                binance_derivatives_client=binance_derivatives_client,
-                binance_orderbook_client=binance_orderbook,
-                orderbook_processor=orderbook_processor,
-                logger=None
-            )
-
-            with step_timer("AIDataAssembler.assemble()", timings):
-                assembled_data = assembler.assemble(
-                    technical_data=self.ctx.technical_data,
-                    position_data=self.ctx.current_position,
-                    symbol=self.ctx.symbol,
-                    interval=self.ctx.interval
-                )
-
-            # Store ALL data in context (matches live system exactly)
-            self.ctx.order_flow_report = assembled_data.get('order_flow')
-            self.ctx.derivatives_report = assembled_data.get('derivatives')
-            self.ctx.orderbook_report = assembled_data.get('order_book')
-
-            # v3.21: Binance Derivatives (Top Traders, Taker Ratio)
-            if assembled_data.get('binance_derivatives'):
-                self.ctx.binance_derivatives_data = assembled_data.get('binance_derivatives')
-            elif binance_derivatives_client:
-                # Fallback: fetch directly if assembler didn't include it
-                try:
-                    with step_timer("BinanceDerivatives.fetch_all()", timings):
-                        bd_data = binance_derivatives_client.fetch_all()
-                    if bd_data:
-                        self.ctx.binance_derivatives_data = bd_data
-                except Exception as bd_err:
-                    print(f"  ⚠️ Binance derivatives fetch failed: {bd_err}")
-
-            # Order book status logging
-            ob_data = assembled_data.get('order_book')
-            if ob_data:
-                ob_status = ob_data.get('_status', {})
-                ob_code = ob_status.get('code', 'UNKNOWN')
-                if ob_code != 'OK':
-                    ob_msg = ob_status.get('message', 'No message')
-                    print(f"  ℹ️ Order book status: {ob_code} - {ob_msg}")
-            else:
-                metadata = assembled_data.get('_metadata', {})
-                ob_enabled = metadata.get('orderbook_enabled', False)
-                ob_status = metadata.get('orderbook_status', 'UNKNOWN')
-                print(f"  ℹ️ Order book data is None (enabled={ob_enabled}, status={ob_status})")
+            except Exception as bd_err:
+                print(f"  ⚠️ Binance derivatives fetch failed: {bd_err}")
 
         except Exception as e:
-            print(f"  ⚠️ AIDataAssembler 数据获取失败: {e}")
+            print(f"  ⚠️ 外部数据获取失败: {e}")
             import traceback
             traceback.print_exc()
 
@@ -240,14 +241,30 @@ class AIInputDataValidator(DiagnosticStep):
             except Exception as e:
                 print(f"  ⚠️ kline_ohlcv 获取失败: {e}")
 
-            # v3.0: S/R bars (120 bars for Swing Point detection) — live line 1712
+            # v4.0: S/R bars (200 bars for Swing Point detection) — live line 1817
             try:
-                sr_bars = self.ctx.indicator_manager.get_kline_data(count=120)
+                sr_bars = self.ctx.indicator_manager.get_kline_data(count=200)
                 if sr_bars:
                     self.ctx.sr_bars_data = sr_bars
                     print(f"  ℹ️ sr_bars_data: {len(sr_bars)} bars for S/R detection")
             except Exception as e:
                 print(f"  ⚠️ sr_bars_data 获取失败: {e}")
+
+            # v4.0 (E1): ATR value from S/R bars — matches live line 1819-1827
+            try:
+                if self.ctx.sr_bars_data and len(self.ctx.sr_bars_data) >= 14:
+                    from utils.sr_zone_calculator import SRZoneCalculator
+                    atr_val = SRZoneCalculator._calculate_atr_from_bars(self.ctx.sr_bars_data)
+                    if atr_val and atr_val > 0:
+                        self.ctx.atr_value = atr_val
+                        print(f"  ℹ️ atr_value: ${atr_val:,.2f} (from {len(self.ctx.sr_bars_data)} bars)")
+                    else:
+                        self.ctx.atr_value = None
+                else:
+                    self.ctx.atr_value = None
+            except Exception as e:
+                print(f"  ⚠️ ATR 计算失败: {e}")
+                self.ctx.atr_value = None
 
             # historical_context (35-bar trend data) — live line 1599
             try:
@@ -281,7 +298,15 @@ class AIInputDataValidator(DiagnosticStep):
             from utils.sr_zone_calculator import SRZoneCalculator
 
             td = self.ctx.technical_data
-            sr_calculator = SRZoneCalculator()
+
+            # v5.1: Reuse MultiAgent's sr_calculator (18 config params from base.yaml)
+            # instead of SRZoneCalculator() with defaults — matches production exactly
+            if self.ctx.multi_agent and hasattr(self.ctx.multi_agent, 'sr_calculator'):
+                sr_calculator = self.ctx.multi_agent.sr_calculator
+                print("  ℹ️ S/R Calculator: 使用 MultiAgent.sr_calculator (与实盘一致)")
+            else:
+                sr_calculator = SRZoneCalculator()
+                print("  ⚠️ S/R Calculator: MultiAgent 未初始化，使用默认参数 (与实盘可能不一致)")
 
             bb_data = {
                 'upper': td.get('bb_upper', 0),
@@ -302,6 +327,11 @@ class AIInputDataValidator(DiagnosticStep):
                 bb_data=bb_data,
                 sma_data=sma_data,
                 orderbook_anomalies=orderbook_anomalies,
+                bars_data=self.ctx.sr_bars_data,
+                bars_data_4h=self.ctx.bars_data_4h,
+                bars_data_1d=self.ctx.bars_data_1d,
+                daily_bar=self.ctx.daily_bar,
+                weekly_bar=self.ctx.weekly_bar,
             )
 
             self.ctx.sr_zones_data = sr_result
@@ -671,7 +701,8 @@ class AIInputDataValidator(DiagnosticStep):
         """
         Print S/R Zone data (v2.6.0).
 
-        Shows support/resistance zones calculated from BB, SMA, Order Walls.
+        Shows support/resistance zones calculated from Swing Points, Volume Profile,
+        Pivot Points, Order Walls, and Round Numbers (v4.0+).
         This data is used for SL/TP calculation when AI doesn't provide valid values.
         """
         sr_data = getattr(self.ctx, 'sr_zones_data', None)
@@ -738,7 +769,7 @@ class AIInputDataValidator(DiagnosticStep):
                     print(f"      SHORT R/R: {short_rr:.2f}:1 {rr_status}")
 
             print()
-            print("      ℹ️ 数据来源: SRZoneCalculator (BB + SMA + Order Walls)")
+            print("      ℹ️ 数据来源: SRZoneCalculator (Swing + VP + Pivot + Order Walls)")
         else:
             print("  [13] S/R Zones: 未计算 (可能缺少技术数据)")
 
@@ -795,7 +826,8 @@ class MultiAgentAnalyzer(DiagnosticStep):
             print(f"  Total API Calls: {total_calls} (顺序执行)")
             print()
 
-            # Data completeness check (all 11 analyze() parameters)
+            # Data completeness check (all 16 analyze() parameters)
+            # Must match production on_timer() call at deepseek_strategy.py:1863-1886
             params = {
                 'symbol': self.ctx.symbol,
                 'technical_report': self.ctx.technical_data,
@@ -808,14 +840,21 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 'orderbook_report': self.ctx.orderbook_report,
                 'account_context': self.ctx.account_context,
                 'bars_data': self.ctx.sr_bars_data,
+                'bars_data_4h': self.ctx.bars_data_4h,
+                'bars_data_1d': self.ctx.bars_data_1d,
+                'daily_bar': self.ctx.daily_bar,
+                'weekly_bar': self.ctx.weekly_bar,
+                'atr_value': self.ctx.atr_value,
             }
 
-            print("  📊 analyze() 参数完整性检查 (vs 实盘):")
+            print("  📊 analyze() 参数完整性检查 (vs 实盘 16 参数):")
             live_params = [
                 'symbol', 'technical_report', 'sentiment_report',
                 'current_position', 'price_data', 'order_flow_report',
                 'derivatives_report', 'binance_derivatives_report',
                 'orderbook_report', 'account_context', 'bars_data',
+                'bars_data_4h', 'bars_data_1d', 'daily_bar', 'weekly_bar',
+                'atr_value',
             ]
             for param_name in live_params:
                 value = params[param_name]
@@ -849,6 +888,12 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 orderbook_report=self.ctx.orderbook_report,
                 account_context=self.ctx.account_context,
                 bars_data=self.ctx.sr_bars_data,
+                # v4.0: MTF bars for S/R pivot + volume profile + swing detection
+                bars_data_4h=self.ctx.bars_data_4h,
+                bars_data_1d=self.ctx.bars_data_1d,
+                daily_bar=self.ctx.daily_bar,
+                weekly_bar=self.ctx.weekly_bar,
+                atr_value=self.ctx.atr_value,
             )
 
             t_elapsed = time.monotonic() - t_start
@@ -1154,8 +1199,8 @@ class OrderSimulator(DiagnosticStep):
         from strategy.trading_logic import (
             calculate_position_size,
             validate_multiagent_sltp,
-            calculate_technical_sltp,
         )
+        from utils.sr_sltp_calculator import calculate_sr_based_sltp
 
         cfg = self.ctx.strategy_config
 
@@ -1258,29 +1303,68 @@ class OrderSimulator(DiagnosticStep):
             print(f"     验证结果: {'✅ 通过' if is_valid else '❌ 失败'} - {reason}")
 
             if not is_valid:
-                print("     ⚠️ AI SL/TP 验证失败，回退到 S/R Zone 技术分析")
-                final_sl, final_tp, calc_method = calculate_technical_sltp(
-                    side=signal,
-                    entry_price=self.ctx.current_price,
-                    support=support,
-                    resistance=resistance,
-                    confidence=confidence,
-                    use_support_resistance=use_sr,
-                    sl_buffer_pct=sl_buffer,
-                )
-                print(f"     {calc_method}")
+                print("     ⚠️ AI SL/TP 验证失败 (Level 1)，尝试 Level 2: calculate_sr_based_sltp()")
+                sr_fallback_used = False
+
+                if self.ctx.sr_zones_data:
+                    atr_val = self.ctx.atr_value or 0.0
+                    atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5)
+                    sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
+                        current_price=self.ctx.current_price,
+                        side=signal,
+                        sr_zones=self.ctx.sr_zones_data,
+                        atr_value=atr_val,
+                        min_rr_ratio=min_rr,
+                        atr_buffer_multiplier=atr_buf_mult,
+                    )
+                    if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
+                        final_sl, final_tp = sr_sl, sr_tp
+                        sr_fallback_used = True
+                        print(f"     ✅ Level 2 通过: {sr_method}")
+                    else:
+                        print(f"     ❌ Level 2 拒绝: {sr_method}")
+                else:
+                    print("     ⚠️ 无 S/R zones 数据，Level 2 不可用")
+
+                if not sr_fallback_used:
+                    # v4.2: Level 3 removed — S/R veto is final (matches production)
+                    proximity_info = ""
+                    if support > 0:
+                        support_dist = ((self.ctx.current_price - support) / self.ctx.current_price) * 100
+                        proximity_info += f" Support=${support:,.0f} ({support_dist:+.1f}%)"
+                    if resistance > 0:
+                        resist_dist = ((resistance - self.ctx.current_price) / self.ctx.current_price) * 100
+                        proximity_info += f" Resistance=${resistance:,.0f} ({resist_dist:+.1f}%)"
+                    print(f"     🚫 SL/TP 全部验证失败, 百分比回退已禁用 (v4.2).{proximity_info}")
+                    print("     🚫 交易被阻止 — 价格可能在 S/R 中间无人区")
+                    final_sl, final_tp = 0.0, 0.0
         else:
-            print("     ⚠️ AI 未提供 SL/TP，使用 S/R Zone 技术分析计算")
-            final_sl, final_tp, calc_method = calculate_technical_sltp(
-                side=signal,
-                entry_price=self.ctx.current_price,
-                support=support,
-                resistance=resistance,
-                confidence=confidence,
-                use_support_resistance=use_sr,
-                sl_buffer_pct=sl_buffer,
-            )
-            print(f"     {calc_method}")
+            print("     ⚠️ AI 未提供 SL/TP，尝试 Level 2: calculate_sr_based_sltp()")
+            sr_fallback_used = False
+
+            if self.ctx.sr_zones_data:
+                atr_val = self.ctx.atr_value or 0.0
+                atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5)
+                sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
+                    current_price=self.ctx.current_price,
+                    side=signal,
+                    sr_zones=self.ctx.sr_zones_data,
+                    atr_value=atr_val,
+                    min_rr_ratio=min_rr,
+                    atr_buffer_multiplier=atr_buf_mult,
+                )
+                if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
+                    final_sl, final_tp = sr_sl, sr_tp
+                    sr_fallback_used = True
+                    print(f"     ✅ Level 2 通过: {sr_method}")
+                else:
+                    print(f"     ❌ Level 2 拒绝: {sr_method}")
+            else:
+                print("     ⚠️ 无 S/R zones 数据，Level 2 不可用")
+
+            if not sr_fallback_used:
+                print("     🚫 SL/TP 全部验证失败, 交易被阻止 (v4.2 — S/R veto is final)")
+                final_sl, final_tp = 0.0, 0.0
 
         final_sl = safe_float(final_sl) or 0.0
         final_tp = safe_float(final_tp) or 0.0
@@ -1293,9 +1377,10 @@ class OrderSimulator(DiagnosticStep):
         print(f"     sl_trigger_price: ${final_sl:,.2f}")
         print(f"     tp_price: ${final_tp:,.2f}")
 
-        # Risk/reward analysis
+        # Risk/reward analysis + structural integrity assertions
         if final_sl > 0 and final_tp > 0:
-            if signal in ['BUY', 'LONG']:
+            is_long = signal in ['BUY', 'LONG']
+            if is_long:
                 sl_pct = ((self.ctx.current_price - final_sl) / self.ctx.current_price) * 100
                 tp_pct = ((final_tp - self.ctx.current_price) / self.ctx.current_price) * 100
             else:
@@ -1323,6 +1408,83 @@ class OrderSimulator(DiagnosticStep):
 
             print(f"     最大亏损: ${quantity * self.ctx.current_price * sl_pct / 100:,.2f}")
             print(f"     最大盈利: ${quantity * self.ctx.current_price * tp_pct / 100:,.2f}")
+
+            # ── R/R cross-check: percentage-based vs direct formula ──
+            if is_long:
+                direct_rr = (final_tp - self.ctx.current_price) / (self.ctx.current_price - final_sl)
+            else:
+                direct_rr = (self.ctx.current_price - final_tp) / (final_sl - self.ctx.current_price)
+
+            if abs(direct_rr - rr_ratio) > 0.01:
+                print(f"     ⚠️ R/R formula mismatch: pct-based={rr_ratio:.4f} vs direct={direct_rr:.4f}")
+            else:
+                print(f"     ✅ R/R cross-check: pct={rr_ratio:.4f} ≈ direct={direct_rr:.4f}")
+
+            # ── Structural integrity assertions (v5.1) ──
+            # These catch magnitude errors that display-only output cannot detect
+            print()
+            print("  🔍 结构完整性断言:")
+            assertion_errors = []
+
+            # Assert 1: SL on correct side of price
+            if is_long and final_sl >= self.ctx.current_price:
+                assertion_errors.append(f"LONG SL=${final_sl:,.2f} >= entry=${self.ctx.current_price:,.2f}")
+            elif not is_long and final_sl <= self.ctx.current_price:
+                assertion_errors.append(f"SHORT SL=${final_sl:,.2f} <= entry=${self.ctx.current_price:,.2f}")
+            else:
+                print("     ✅ SL 方向正确")
+
+            # Assert 2: TP on correct side of price
+            if is_long and final_tp <= self.ctx.current_price:
+                assertion_errors.append(f"LONG TP=${final_tp:,.2f} <= entry=${self.ctx.current_price:,.2f}")
+            elif not is_long and final_tp >= self.ctx.current_price:
+                assertion_errors.append(f"SHORT TP=${final_tp:,.2f} >= entry=${self.ctx.current_price:,.2f}")
+            else:
+                print("     ✅ TP 方向正确")
+
+            # Assert 3: R/R meets minimum threshold
+            if rr_ratio < min_rr:
+                assertion_errors.append(f"R/R={rr_ratio:.4f}:1 < {min_rr}:1 硬性门槛")
+            else:
+                print(f"     ✅ R/R={rr_ratio:.4f}:1 >= {min_rr}:1")
+
+            # Assert 4: SL anchored near S/R zone (not arbitrary percentage)
+            if self.ctx.sr_zones_data:
+                nearest_sr = None
+                if is_long:
+                    ns = self.ctx.sr_zones_data.get('nearest_support')
+                    if ns and hasattr(ns, 'price_center'):
+                        nearest_sr = ns.price_center
+                else:
+                    nr = self.ctx.sr_zones_data.get('nearest_resistance')
+                    if nr and hasattr(nr, 'price_center'):
+                        nearest_sr = nr.price_center
+
+                if nearest_sr and nearest_sr > 0:
+                    atr_val = self.ctx.atr_value or self.ctx.current_price * 0.005
+                    sl_to_zone_dist = abs(final_sl - nearest_sr)
+                    max_acceptable_dist = atr_val * 2  # SL should be within 2x ATR of zone
+                    if sl_to_zone_dist <= max_acceptable_dist:
+                        print(f"     ✅ SL 锚定 S/R zone (距离=${sl_to_zone_dist:,.0f}, zone=${nearest_sr:,.0f})")
+                    else:
+                        assertion_errors.append(
+                            f"SL=${final_sl:,.0f} 距 S/R zone ${nearest_sr:,.0f} "
+                            f"= ${sl_to_zone_dist:,.0f} > {max_acceptable_dist:,.0f} (2×ATR)")
+
+            # Assert 5: SL distance sanity (not too far, not too close)
+            if sl_pct < 0.5:
+                assertion_errors.append(f"SL 距离仅 {sl_pct:.2f}% — 过近，可能立即触发")
+            elif sl_pct > 10:
+                assertion_errors.append(f"SL 距离 {sl_pct:.2f}% — 过远，风险过大")
+            else:
+                print(f"     ✅ SL 距离合理 ({sl_pct:.2f}%)")
+
+            if assertion_errors:
+                for err in assertion_errors:
+                    print(f"     ❌ ASSERTION FAILED: {err}")
+                print(f"  ⚠️ {len(assertion_errors)} 个结构断言失败 — SL/TP 可能有计算错误")
+            else:
+                print("     ✅ 全部结构断言通过")
 
         print()
         print("  ✅ 订单提交流程模拟完成")

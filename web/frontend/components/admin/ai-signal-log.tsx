@@ -17,7 +17,7 @@ interface AISignalLogProps {
 }
 
 export function AISignalLog({ signals }: AISignalLogProps) {
-  const displaySignals = signals?.length ? signals : generateDemoSignals();
+  const displaySignals = signals?.length ? signals : [];
 
   const getSignalConfig = (signal: string) => {
     switch (signal) {
@@ -114,10 +114,12 @@ export function AISignalLog({ signals }: AISignalLogProps) {
         })}
       </AnimatePresence>
 
-      {!signals && (
-        <p className="text-xs text-muted-foreground text-center py-2">
-          Demo data - Connect to backend for live signals
-        </p>
+      {!displaySignals.length && (
+        <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+          <Brain className="h-8 w-8 mb-3 opacity-40" />
+          <p className="text-sm font-medium">No AI signals yet</p>
+          <p className="text-xs mt-1">Signals will appear after the bot completes an analysis cycle</p>
+        </div>
       )}
     </div>
   );
@@ -128,31 +130,3 @@ function formatTime(isoString: string): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function generateDemoSignals(): AISignal[] {
-  const signals: ("BUY" | "SELL" | "HOLD")[] = ["BUY", "SELL", "HOLD"];
-  const confidences: ("HIGH" | "MEDIUM" | "LOW")[] = ["HIGH", "MEDIUM", "LOW"];
-  const reasons = [
-    "Strong bullish momentum with RSI divergence",
-    "Price approaching key resistance level",
-    "Market sentiment neutral, waiting for confirmation",
-    "Multiple indicators aligned for entry",
-    "Risk/reward ratio favorable at current levels",
-  ];
-
-  const result: AISignal[] = [];
-  const now = new Date();
-
-  for (let i = 0; i < 5; i++) {
-    const time = new Date(now.getTime() - i * 900000); // 15 min intervals
-    result.push({
-      id: `signal-${i}`,
-      time: time.toISOString(),
-      signal: signals[Math.floor(Math.random() * signals.length)],
-      confidence: confidences[Math.floor(Math.random() * confidences.length)],
-      reason: reasons[Math.floor(Math.random() * reasons.length)],
-      symbol: "BTCUSDT",
-    });
-  }
-
-  return result;
-}

@@ -17,7 +17,7 @@ interface RiskMetricsProps {
 }
 
 export function RiskMetrics({ data }: RiskMetricsProps) {
-  const metrics = data || generateDemoData();
+  const metrics = data || {};
 
   const items = [
     {
@@ -74,21 +74,12 @@ export function RiskMetrics({ data }: RiskMetricsProps) {
       })}
 
       {!data && (
-        <div className="col-span-2 text-xs text-muted-foreground text-center py-1">
-          Demo data
+        <div className="col-span-2 flex flex-col items-center justify-center py-4 text-muted-foreground">
+          <Shield className="h-6 w-6 mb-2 opacity-40" />
+          <p className="text-xs">Risk metrics will appear after trades are executed</p>
         </div>
       )}
     </div>
   );
 }
 
-function generateDemoData(): RiskData {
-  return {
-    max_drawdown: 5 + Math.random() * 10,
-    sharpe_ratio: 0.5 + Math.random() * 2,
-    win_rate: 45 + Math.random() * 20,
-    risk_reward: 1 + Math.random() * 2,
-    volatility: 10 + Math.random() * 15,
-    var_95: 2 + Math.random() * 3,
-  };
-}

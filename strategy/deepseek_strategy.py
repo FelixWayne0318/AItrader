@@ -2246,6 +2246,8 @@ class DeepSeekAIStrategy(Strategy):
             last_signal = getattr(self, 'last_signal', None) or {}
             signal = last_signal.get('signal') or 'PENDING'
             confidence = last_signal.get('confidence') or 'N/A'
+            risk_level = last_signal.get('risk_level')
+            position_size_pct = last_signal.get('position_size_pct')
             # Mark signal as stale (from previous cycle) so Telegram can label it correctly
             signal_is_stale = signal != 'PENDING'  # PENDING = no previous analysis yet
 
@@ -2363,6 +2365,8 @@ class DeepSeekAIStrategy(Strategy):
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
                 'signal': signal,
                 'confidence': confidence,
+                'risk_level': risk_level,
+                'position_size_pct': position_size_pct,
                 'signal_is_stale': signal_is_stale,
                 'price': display_price or 0,
                 'rsi': rsi,
@@ -3265,6 +3269,8 @@ class DeepSeekAIStrategy(Strategy):
                 'macd': technical_data.get('macd'),
                 'winning_side': judge_info.get('winning_side', ''),
                 'reasoning': signal_data.get('reason', ''),
+                'risk_level': signal_data.get('risk_level', 'MEDIUM'),
+                'position_size_pct': signal_data.get('position_size_pct'),
             }
 
         # Execute position management logic
@@ -3444,6 +3450,8 @@ class DeepSeekAIStrategy(Strategy):
                             'change_qty': abs(size_diff),
                             'current_price': cached_price,
                             'unrealized_pnl': current_pos.get('unrealized_pnl') if current_pos else None,
+                            'sl_price': new_sl_price,
+                            'tp_price': new_tp_price,
                         })
                         self.telegram_bot.send_message_sync(scaling_msg)
                     except Exception as e:
@@ -3509,6 +3517,13 @@ class DeepSeekAIStrategy(Strategy):
                     try:
                         with self._state_lock:
                             cached_price = self._cached_current_price
+                        # Get SL/TP from sltp_state for display
+                        reduce_sl = None
+                        reduce_tp = None
+                        instrument_key = str(self.instrument_id)
+                        if instrument_key in self.sltp_state:
+                            reduce_sl = self.sltp_state[instrument_key].get('current_sl_price')
+                            reduce_tp = self.sltp_state[instrument_key].get('current_tp_price')
                         scaling_msg = self.telegram_bot.format_scaling_notification({
                             'action': 'REDUCE',
                             'side': target_side,
@@ -3516,6 +3531,8 @@ class DeepSeekAIStrategy(Strategy):
                             'new_qty': target_quantity,
                             'change_qty': actual_reduce,
                             'current_price': cached_price,
+                            'sl_price': reduce_sl,
+                            'tp_price': reduce_tp,
                         })
                         self.telegram_bot.send_message_sync(scaling_msg)
                     except Exception as e:
@@ -3729,6 +3746,12 @@ class DeepSeekAIStrategy(Strategy):
             stop_loss_price = validated_sl
             tp_price = validated_tp
             self.log.info(f"🎯 SL/TP validated for entry: {validation_reason}")
+
+            # v5.1: Zone cross-validation — check if AI SL is anchored near a real S/R zone
+            # If AI SL floats in no-man's-land (not near any zone), replace with zone-based SL
+            stop_loss_price, tp_price = self._zone_cross_validate_sltp(
+                stop_loss_price, tp_price, entry_price, side,
+            )
         else:
             # Level 1 (AI) failed — try Level 2 (S/R-based) if enabled
             if multi_sl or multi_tp:
@@ -3796,6 +3819,169 @@ class DeepSeekAIStrategy(Strategy):
         )
 
         return (stop_loss_price, tp_price, entry_price)
+
+    def _zone_cross_validate_sltp(
+        self,
+        ai_sl: float,
+        ai_tp: float,
+        entry_price: float,
+        side: OrderSide,
+    ) -> tuple:
+        """
+        v5.1: Zone cross-validation for AI SL/TP.
+
+        After AI SL/TP passes basic validation (direction, distance, R/R),
+        verify that the SL is anchored near a real S/R zone. If the SL floats
+        in structural no-man's-land, replace it with a zone-based SL while
+        keeping the AI's TP (which reflects the AI's profit target judgment).
+
+        This prevents "numerically valid but structurally unsound" SL placement
+        where AI sets SL at an arbitrary distance without reference to market structure.
+
+        Returns
+        -------
+        tuple
+            (final_sl, final_tp) — may be same as input or zone-adjusted
+        """
+        # Check if zone cross-validation is enabled
+        sr_cfg = {}
+        try:
+            from utils.config_manager import ConfigManager
+            config_mgr = ConfigManager(env=getattr(self, '_config_env', 'production'))
+            config_mgr.load()
+            zcv_cfg = config_mgr.get('sr_zones', 'zone_cross_validation', default={})
+            if isinstance(zcv_cfg, dict):
+                sr_cfg = zcv_cfg
+        except Exception:
+            pass
+
+        if not sr_cfg.get('enabled', True):
+            return ai_sl, ai_tp
+
+        if not hasattr(self, 'latest_sr_zones_data') or not self.latest_sr_zones_data:
+            return ai_sl, ai_tp
+
+        is_long = (side == OrderSide.BUY)
+        atr = getattr(self, '_cached_atr_value', 0.0) or 0.0
+
+        if atr <= 0:
+            self.log.debug("Zone cross-validation skipped: ATR not available")
+            return ai_sl, ai_tp
+
+        max_distance_atr = sr_cfg.get('max_distance_atr', 1.5)
+        replace_sl = sr_cfg.get('replace_sl', True)
+        max_distance = atr * max_distance_atr
+
+        # Find nearest zone on the SL side
+        if is_long:
+            sl_zones = self.latest_sr_zones_data.get('support_zones', [])
+        else:
+            sl_zones = self.latest_sr_zones_data.get('resistance_zones', [])
+
+        # Check if AI SL is within max_distance of any zone
+        sl_anchored = False
+        nearest_zone_price = None
+        nearest_zone_dist = float('inf')
+
+        for zone in sl_zones:
+            zone_price = None
+            if hasattr(zone, 'price_center'):
+                zone_price = zone.price_center
+            elif isinstance(zone, dict):
+                zone_price = zone.get('price_center')
+            if not zone_price:
+                continue
+
+            dist = abs(ai_sl - zone_price)
+            if dist < nearest_zone_dist:
+                nearest_zone_dist = dist
+                nearest_zone_price = zone_price
+
+            if dist <= max_distance:
+                sl_anchored = True
+                break
+
+        if sl_anchored:
+            self.log.debug(
+                f"Zone cross-validation: AI SL ${ai_sl:,.2f} anchored near zone "
+                f"${nearest_zone_price:,.0f} (dist=${nearest_zone_dist:,.0f}, "
+                f"max=${max_distance:,.0f})"
+            )
+            return ai_sl, ai_tp
+
+        # AI SL is not anchored — attempt zone-based replacement
+        zone_info = (
+            f"nearest zone=${nearest_zone_price:,.0f} dist=${nearest_zone_dist:,.0f}"
+            if nearest_zone_price else "no zones found"
+        )
+        self.log.warning(
+            f"⚠️ Zone cross-validation: AI SL ${ai_sl:,.2f} NOT anchored "
+            f"to any S/R zone (max_dist={max_distance:,.0f}, {zone_info})"
+        )
+
+        if not replace_sl:
+            self.log.info("Zone cross-validation: replace_sl=false, keeping AI SL")
+            return ai_sl, ai_tp
+
+        # Use sr_sltp_calculator to find zone-based SL
+        try:
+            from utils.sr_sltp_calculator import _select_sl_anchor
+
+            if is_long:
+                sl_anchor = _select_sl_anchor(
+                    sl_zones, entry_price, is_long=True, atr_value=atr,
+                )
+            else:
+                sl_anchor = _select_sl_anchor(
+                    sl_zones, entry_price, is_long=False, atr_value=atr,
+                )
+
+            if not sl_anchor:
+                self.log.info(
+                    "Zone cross-validation: no zone anchor found, keeping AI SL"
+                )
+                return ai_sl, ai_tp
+
+            # Place SL behind zone with ATR buffer (same logic as sr_sltp_calculator)
+            buffer = atr * self.atr_buffer_multiplier
+            if is_long:
+                zone_sl = sl_anchor - buffer
+            else:
+                zone_sl = sl_anchor + buffer
+
+            # Validate zone SL is on correct side and maintains R/R
+            if is_long:
+                if zone_sl >= entry_price:
+                    self.log.info("Zone cross-validation: zone SL >= entry, keeping AI SL")
+                    return ai_sl, ai_tp
+                risk = entry_price - zone_sl
+                reward = ai_tp - entry_price
+            else:
+                if zone_sl <= entry_price:
+                    self.log.info("Zone cross-validation: zone SL <= entry, keeping AI SL")
+                    return ai_sl, ai_tp
+                risk = zone_sl - entry_price
+                reward = entry_price - ai_tp
+
+            rr = reward / risk if risk > 0 else 0
+
+            if rr < self.min_rr_ratio:
+                self.log.info(
+                    f"Zone cross-validation: zone SL ${zone_sl:,.2f} gives "
+                    f"R/R {rr:.2f}:1 < {self.min_rr_ratio}:1, keeping AI SL"
+                )
+                return ai_sl, ai_tp
+
+            self.log.info(
+                f"📍 Zone cross-validation: replaced AI SL ${ai_sl:,.2f} → "
+                f"zone SL ${zone_sl:,.2f} (anchor=${sl_anchor:,.0f} ± "
+                f"ATR buffer ${buffer:,.0f}, R/R={rr:.2f}:1)"
+            )
+            return zone_sl, ai_tp
+
+        except Exception as e:
+            self.log.warning(f"Zone cross-validation error: {e}, keeping AI SL")
+            return ai_sl, ai_tp
 
     def _replace_sltp_orders(
         self,
@@ -5355,6 +5541,7 @@ class DeepSeekAIStrategy(Strategy):
                     tp_price = state.get("current_tp_price")
 
                 # v4.2: Retrieve S/R Zone data (v3.8 fix: extract price_center)
+                # v4.15: Include full zone arrays for unified S/R display
                 sr_zone_data = None
                 nearest_sup_price = None
                 nearest_res_price = None
@@ -5363,9 +5550,21 @@ class DeepSeekAIStrategy(Strategy):
                     nearest_res = self.latest_sr_zones_data.get('nearest_resistance')
                     nearest_sup_price = nearest_sup.price_center if nearest_sup else None
                     nearest_res_price = nearest_res.price_center if nearest_res else None
+
+                    def _zone_to_dict(zone):
+                        return {
+                            'price': zone.price_center,
+                            'strength': getattr(zone, 'strength', 'LOW'),
+                            'level': getattr(zone, 'level', 'MINOR'),
+                        }
+
+                    support_zones = self.latest_sr_zones_data.get('support_zones', [])
+                    resistance_zones = self.latest_sr_zones_data.get('resistance_zones', [])
                     sr_zone_data = {
                         'nearest_support': nearest_sup_price,
                         'nearest_resistance': nearest_res_price,
+                        'support_zones': [_zone_to_dict(z) for z in support_zones[:3]],
+                        'resistance_zones': [_zone_to_dict(z) for z in resistance_zones[:3]],
                     }
 
                 # v3.17: Calculate entry quality based on distance from S/R Zone
@@ -5416,6 +5615,8 @@ class DeepSeekAIStrategy(Strategy):
                         'macd': self._pending_execution_data.get('macd'),
                         'winning_side': self._pending_execution_data.get('winning_side', ''),
                         'reasoning': self._pending_execution_data.get('reasoning', ''),
+                        'risk_level': self._pending_execution_data.get('risk_level', 'MEDIUM'),
+                        'position_size_pct': self._pending_execution_data.get('position_size_pct'),
                     })
                     # Clear pending data after use
                     self._pending_execution_data = None

@@ -379,6 +379,52 @@ class TelegramBot:
             return raw_rate  # Already in percentage form
         return raw_rate * 100
 
+    @staticmethod
+    def _format_sr_compact(sr_zone: dict, ref_price: float) -> str:
+        """Format S/R zones in compact form for trade execution / position closed messages.
+
+        Supports both full zone arrays (from heartbeat data) and simple
+        nearest_support / nearest_resistance (legacy format).
+        """
+        if not sr_zone or ref_price <= 0:
+            return ''
+
+        lines = []
+        # Full zone arrays (v5.0+ format from heartbeat)
+        support_zones = sr_zone.get('support_zones', [])
+        resistance_zones = sr_zone.get('resistance_zones', [])
+
+        if support_zones or resistance_zones:
+            lines.append("\n📍 *S/R*")
+            for z in sorted(resistance_zones, key=lambda x: x.get('price', 0), reverse=True):
+                z_price = z.get('price', 0)
+                if z_price <= ref_price:
+                    continue
+                z_pct = ((z_price - ref_price) / ref_price * 100)
+                strength = z.get('strength', 'LOW')
+                s_icon = '🔴' if strength == 'HIGH' else '🟠' if strength == 'MEDIUM' else '⚪'
+                lines.append(f"  {s_icon} R ${z_price:,.0f} ({z_pct:+.1f}%) [{strength}]")
+            for z in sorted(support_zones, key=lambda x: x.get('price', 0), reverse=True):
+                z_price = z.get('price', 0)
+                if z_price >= ref_price:
+                    continue
+                z_pct = ((z_price - ref_price) / ref_price * 100)
+                strength = z.get('strength', 'LOW')
+                s_icon = '🟢' if strength == 'HIGH' else '🟡' if strength == 'MEDIUM' else '⚪'
+                lines.append(f"  {s_icon} S ${z_price:,.0f} ({z_pct:+.1f}%) [{strength}]")
+        else:
+            # Legacy: simple nearest support/resistance
+            nearest_support = sr_zone.get('nearest_support')
+            nearest_resistance = sr_zone.get('nearest_resistance')
+            if nearest_support and nearest_support < ref_price:
+                s_pct = ((nearest_support - ref_price) / ref_price * 100)
+                lines.append(f"📉 支撑 ${nearest_support:,.2f} ({s_pct:+.2f}%)")
+            if nearest_resistance and nearest_resistance > ref_price:
+                r_pct = ((nearest_resistance - ref_price) / ref_price * 100)
+                lines.append(f"📈 阻力 ${nearest_resistance:,.2f} ({r_pct:+.2f}%)")
+
+        return '\n'.join(lines)
+
     # ==================== Message Formatters ====================
 
     def format_heartbeat_message(self, heartbeat_data: Dict[str, Any], compact: bool = False) -> str:
@@ -686,7 +732,21 @@ class TelegramBot:
         sig_icon = self._signal_icon(signal)
         signal_is_stale = heartbeat_data.get('signal_is_stale', False)
         stale_label = " (上次)" if signal_is_stale else ""
+        risk_level = heartbeat_data.get('risk_level')
+        position_size_pct = heartbeat_data.get('position_size_pct')
+
         msg += f"\n🤖 *{sig_icon} {signal}* ({confidence}){stale_label}"
+
+        # v4.14: Show Risk Manager's position sizing and risk assessment
+        if signal not in ('HOLD', 'PENDING') and (risk_level or position_size_pct is not None):
+            rm_parts = []
+            if position_size_pct is not None:
+                rm_parts.append(f"仓位 {position_size_pct}%")
+            if risk_level:
+                risk_cn = {'LOW': '低', 'MEDIUM': '中', 'HIGH': '高'}.get(risk_level, risk_level)
+                rm_parts.append(f"风险 {risk_cn}")
+            if rm_parts:
+                msg += f"\n📐 {' | '.join(rm_parts)}"
 
         # Signal execution status
         if signal_status:
@@ -752,6 +812,9 @@ class TelegramBot:
         msg = f"{side_emoji} *交易执行 — {title}*\n"
         msg += "━━━━━━━━━━━━━━━━━━\n"
         msg += f"📊 {quantity:.4f} BTC @ ${entry_price:,.2f} (${amount:,.2f})\n"
+        risk_level = execution_data.get('risk_level')
+        position_size_pct = execution_data.get('position_size_pct')
+
         msg += f"📋 信心: {conf_cn}"
 
         if winning_side:
@@ -759,6 +822,16 @@ class TelegramBot:
             w_cn = "多方" if winning_side.upper() == "BULL" else "空方" if winning_side.upper() == "BEAR" else winning_side
             msg += f" | {w_icon} {w_cn}胜出"
         msg += "\n"
+
+        # v4.14: Risk Manager assessment
+        if risk_level or position_size_pct is not None:
+            rm_parts = []
+            if position_size_pct is not None:
+                rm_parts.append(f"仓位 {position_size_pct}%")
+            if risk_level:
+                risk_cn = {'LOW': '低风险', 'MEDIUM': '中风险', 'HIGH': '高风险'}.get(risk_level, risk_level)
+                rm_parts.append(risk_cn)
+            msg += f"📐 {' | '.join(rm_parts)}\n"
 
         # SL/TP and R/R
         if sl_price or tp_price:
@@ -783,15 +856,10 @@ class TelegramBot:
                     rr_icon = '✅' if rr >= 2.0 else '✓' if rr >= 1.5 else '⚠️'
                     msg += f"📊 R/R {rr:.1f}:1 {rr_icon}\n"
 
-        # S/R levels
-        nearest_support = sr_zone.get('nearest_support')
-        nearest_resistance = sr_zone.get('nearest_resistance')
-        if nearest_support is not None and nearest_support < entry_price:
-            s_pct = ((nearest_support - entry_price) / entry_price * 100) if entry_price > 0 else 0
-            msg += f"📉 支撑 ${nearest_support:,.2f} ({s_pct:+.2f}%)\n"
-        if nearest_resistance is not None and nearest_resistance > entry_price:
-            r_pct = ((nearest_resistance - entry_price) / entry_price * 100) if entry_price > 0 else 0
-            msg += f"📈 阻力 ${nearest_resistance:,.2f} ({r_pct:+.2f}%)\n"
+        # S/R levels (unified format via helper)
+        sr_text = self._format_sr_compact(sr_zone, entry_price)
+        if sr_text:
+            msg += sr_text + "\n"
 
         # Technical indicators
         if rsi is not None or macd is not None:
@@ -892,15 +960,10 @@ class TelegramBot:
             if close_reason_detail:
                 msg += f"📋 {close_reason_detail}\n"
 
-            # S/R zones at close time
-            nearest_support = sr_zone.get('nearest_support')
-            nearest_resistance = sr_zone.get('nearest_resistance')
-            if nearest_support is not None and nearest_support < current_price:
-                sup_dist = ((nearest_support - current_price) / current_price * 100) if current_price > 0 else 0
-                msg += f"📉 支撑 ${nearest_support:,.2f} ({sup_dist:+.2f}%)\n"
-            if nearest_resistance is not None and nearest_resistance > current_price:
-                res_dist = ((nearest_resistance - current_price) / current_price * 100) if current_price > 0 else 0
-                msg += f"📈 阻力 ${nearest_resistance:,.2f} ({res_dist:+.2f}%)\n"
+            # S/R zones at close time (unified format)
+            sr_text = self._format_sr_compact(sr_zone, current_price)
+            if sr_text:
+                msg += sr_text + "\n"
 
         else:  # UPDATE
             pnl_icon = self._pnl_icon(pnl)
@@ -1171,24 +1234,6 @@ class TelegramBot:
     def format_trade_signal(self, signal_data: Dict[str, Any]) -> str:
         """Deprecated: Use format_trade_execution instead."""
         return self.format_trade_execution(signal_data)
-
-    def format_order_fill(self, order_data: Dict[str, Any]) -> str:
-        """Format order fill notification (minimal)."""
-        side = order_data.get('side', 'UNKNOWN')
-        quantity = order_data.get('quantity', 0.0)
-        price = order_data.get('price', 0.0)
-        order_type = order_data.get('order_type', 'MARKET')
-
-        side_emoji = '🟢' if side == 'BUY' else '🔴' if side == 'SELL' else '⚪'
-        type_text = 'Market' if order_type == 'MARKET' else 'Limit' if order_type == 'LIMIT' else order_type
-
-        return (
-            f"{side_emoji} *Order Fill*\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"{side} {quantity:.4f} BTC @ ${price:,.2f}\n"
-            f"Amount: ${quantity * price:,.2f} | {type_text}\n"
-            f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-        )
 
     async def test_connection(self) -> bool:
         """
@@ -1487,6 +1532,28 @@ class TelegramBot:
         if pnl is not None:
             pnl_icon = self._pnl_icon(pnl)
             msg += f"P&L: {pnl_icon} ${pnl:,.2f}\n"
+
+        # SL/TP (updated after scaling)
+        sl_price = scaling_info.get('sl_price')
+        tp_price = scaling_info.get('tp_price')
+        if sl_price or tp_price:
+            if sl_price:
+                msg += f"🛑 SL ${sl_price:,.2f}"
+            if tp_price:
+                msg += f" | 🎯 TP ${tp_price:,.2f}"
+            msg += "\n"
+            # R/R
+            if sl_price and tp_price and current_price > 0:
+                if side.upper() == 'LONG':
+                    sl_d = current_price - sl_price
+                    tp_d = tp_price - current_price
+                else:
+                    sl_d = sl_price - current_price
+                    tp_d = current_price - tp_price
+                if sl_d > 0 and tp_d > 0:
+                    rr = tp_d / sl_d
+                    rr_icon = '✅' if rr >= 2.0 else '✓' if rr >= 1.5 else '⚠️'
+                    msg += f"📊 R/R {rr:.1f}:1 {rr_icon}\n"
 
         return msg
 

@@ -5,8 +5,8 @@ Endpoints for trading performance metrics and analytics
 from fastapi import APIRouter, HTTPException
 
 from services.performance_service import get_performance_service
-from services.signal_log_service import get_signal_log_service, create_demo_signals
-from services.notification_service import get_notification_service, create_demo_notifications
+from services.signal_log_service import get_signal_log_service
+from services.notification_service import get_notification_service
 
 router = APIRouter(prefix="/api/performance", tags=["Performance"])
 

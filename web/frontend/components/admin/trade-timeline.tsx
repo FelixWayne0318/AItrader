@@ -18,7 +18,7 @@ interface TradeTimelineProps {
 }
 
 export function TradeTimeline({ trades }: TradeTimelineProps) {
-  const displayTrades = trades?.length ? trades : generateDemoTrades();
+  const displayTrades = trades?.length ? trades : [];
 
   return (
     <div className="space-y-3 max-h-80 overflow-y-auto pr-2">
@@ -86,10 +86,12 @@ export function TradeTimeline({ trades }: TradeTimelineProps) {
         ))}
       </AnimatePresence>
 
-      {!trades && (
-        <p className="text-xs text-muted-foreground text-center py-2">
-          Demo data - Connect to backend for live trades
-        </p>
+      {!displayTrades.length && (
+        <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+          <Clock className="h-8 w-8 mb-3 opacity-40" />
+          <p className="text-sm font-medium">No trades yet</p>
+          <p className="text-xs mt-1">Trade history will appear when the bot executes orders</p>
+        </div>
       )}
     </div>
   );
@@ -108,29 +110,3 @@ function formatTime(isoString: string): string {
   return date.toLocaleDateString();
 }
 
-function generateDemoTrades(): Trade[] {
-  const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
-  const trades: Trade[] = [];
-  const now = new Date();
-
-  for (let i = 0; i < 5; i++) {
-    const symbol = symbols[Math.floor(Math.random() * symbols.length)];
-    const side = Math.random() > 0.5 ? "BUY" : "SELL";
-    const price = symbol === "BTCUSDT" ? 95000 + Math.random() * 5000 : symbol === "ETHUSDT" ? 3200 + Math.random() * 200 : 180 + Math.random() * 20;
-    const quantity = Math.random() * 0.5 + 0.01;
-    const pnl = (Math.random() - 0.4) * 100;
-    const time = new Date(now.getTime() - i * 3600000 * Math.random() * 5);
-
-    trades.push({
-      id: `trade-${i}`,
-      symbol,
-      side: side as "BUY" | "SELL",
-      quantity: Math.round(quantity * 1000) / 1000,
-      price: Math.round(price * 100) / 100,
-      pnl: Math.round(pnl * 100) / 100,
-      time: time.toISOString(),
-    });
-  }
-
-  return trades;
-}

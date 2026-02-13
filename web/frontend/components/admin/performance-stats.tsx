@@ -19,7 +19,7 @@ interface PerformanceStatsProps {
 }
 
 export function PerformanceStats({ data }: PerformanceStatsProps) {
-  const stats = data || generateDemoData();
+  const stats = data || {};
 
   const items = [
     {
@@ -103,24 +103,3 @@ export function PerformanceStats({ data }: PerformanceStatsProps) {
   );
 }
 
-function generateDemoData(): PerformanceData {
-  const totalTrades = Math.floor(50 + Math.random() * 100);
-  const winRate = 0.45 + Math.random() * 0.2;
-  const winningTrades = Math.floor(totalTrades * winRate);
-  const losingTrades = totalTrades - winningTrades;
-  const avgProfit = 50 + Math.random() * 100;
-  const avgLoss = 30 + Math.random() * 50;
-  const totalPnl = winningTrades * avgProfit - losingTrades * avgLoss;
-  const baseEquity = 10000;
-
-  return {
-    total_equity: baseEquity + totalPnl,
-    total_pnl: totalPnl,
-    total_pnl_percent: (totalPnl / baseEquity) * 100,
-    total_trades: totalTrades,
-    winning_trades: winningTrades,
-    losing_trades: losingTrades,
-    avg_profit: avgProfit,
-    avg_loss: avgLoss,
-  };
-}

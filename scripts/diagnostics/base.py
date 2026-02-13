@@ -320,7 +320,12 @@ class DiagnosticContext:
     binance_derivatives_data: Optional[Dict] = None  # v3.21: Binance Top Traders, Taker Ratio
     binance_funding_rate: Optional[Dict] = None  # v4.8: Binance 8h funding rate (主要数据源)
     sr_zones_data: Optional[Dict] = None  # v2.6.0: S/R Zone Calculator data
-    sr_bars_data: Optional[List] = None  # v3.0: 120 bars for S/R Swing Detection
+    sr_bars_data: Optional[List] = None  # v4.0: 200 bars for S/R Swing Detection
+    atr_value: Optional[float] = None    # v4.0 (E1): ATR from S/R bars for zone buffer calc
+    bars_data_4h: Optional[List] = None  # v4.0: 4H bars for S/R pivot + volume profile
+    bars_data_1d: Optional[List] = None  # v4.0: 1D bars for S/R swing detection
+    daily_bar: Optional[Dict] = None     # v4.0: Last daily bar for pivot calculation
+    weekly_bar: Optional[Dict] = None    # v4.0: Aggregated weekly bar for pivot
 
     # AI decision data
     multi_agent: Any = None

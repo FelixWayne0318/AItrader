@@ -162,7 +162,12 @@ class SRZoneCalculator:
         self,
         cluster_pct: float = 0.5,       # 聚类阈值 (价差 < 0.5% 合并)
         zone_expand_pct: float = 0.1,   # Zone 扩展 (上下各 0.1%)
-        hard_control_threshold_pct: float = 1.0,  # 硬风控阈值 (距离 < 1%)
+        hard_control_threshold_pct: float = 1.0,  # 硬风控阈值 (距离 < 1%) — fixed 模式
+        # v5.1: ATR-adaptive hard control
+        hard_control_threshold_mode: str = "fixed",  # "fixed" or "atr"
+        hard_control_atr_multiplier: float = 0.5,    # ATR 模式乘数
+        hard_control_atr_min_pct: float = 0.3,       # ATR 模式下限
+        hard_control_atr_max_pct: float = 2.0,       # ATR 模式上限
         # v3.0: Swing Point 配置
         swing_detection_enabled: bool = True,
         swing_left_bars: int = 5,       # 左侧 N 根 bar
@@ -226,6 +231,12 @@ class SRZoneCalculator:
         self.cluster_pct = cluster_pct
         self.zone_expand_pct = zone_expand_pct
         self.hard_control_threshold_pct = hard_control_threshold_pct
+
+        # v5.1: ATR-adaptive hard control
+        self.hard_control_threshold_mode = hard_control_threshold_mode
+        self.hard_control_atr_multiplier = hard_control_atr_multiplier
+        self.hard_control_atr_min_pct = hard_control_atr_min_pct
+        self.hard_control_atr_max_pct = hard_control_atr_max_pct
 
         # v3.0: Swing Point
         self.swing_detection_enabled = swing_detection_enabled
@@ -722,9 +733,10 @@ class SRZoneCalculator:
         nearest_support = support_zones[0] if support_zones else None
         nearest_resistance = resistance_zones[0] if resistance_zones else None
 
-        # Step 6: 硬风控检查
+        # Step 6: 硬风控检查 (v5.1: pass ATR for adaptive threshold)
         hard_control = self._check_hard_control(
-            current_price, nearest_support, nearest_resistance
+            current_price, nearest_support, nearest_resistance,
+            atr_value=atr_value or 0.0,
         )
 
         # Step 7: 生成 AI 报告
@@ -1149,53 +1161,86 @@ class SRZoneCalculator:
             has_swing_point=has_swing_point,
         )
 
+    def _get_hard_control_threshold(
+        self,
+        current_price: float,
+        atr_value: float = 0.0,
+    ) -> float:
+        """
+        v5.1: 计算硬风控阈值 (支持 ATR 自适应)
+
+        ATR 模式: threshold = clamp(ATR/price * 100 * multiplier, min, max)
+        Fixed 模式: threshold = hard_control_threshold_pct (默认 1.0%)
+
+        Returns
+        -------
+        float
+            阈值百分比 (例如 1.0 表示 1%)
+        """
+        if self.hard_control_threshold_mode == "atr" and atr_value > 0 and current_price > 0:
+            atr_pct = (atr_value / current_price) * 100 * self.hard_control_atr_multiplier
+            threshold = max(self.hard_control_atr_min_pct,
+                            min(atr_pct, self.hard_control_atr_max_pct))
+            self.logger.debug(
+                f"Hard control threshold (ATR): {threshold:.2f}% "
+                f"(ATR=${atr_value:,.0f}, raw={atr_pct:.2f}%, "
+                f"clamped to [{self.hard_control_atr_min_pct}, {self.hard_control_atr_max_pct}])"
+            )
+            return threshold
+
+        return self.hard_control_threshold_pct
+
     def _check_hard_control(
         self,
         current_price: float,
         nearest_support: Optional[SRZone],
         nearest_resistance: Optional[SRZone],
+        atr_value: float = 0.0,
     ) -> Dict[str, Any]:
         """
         硬风控检查
 
         只在 HIGH strength 且距离 < threshold 时阻止
+        v5.1: threshold 支持 ATR 自适应 (高波动 → 更宽阈值, 低波动 → 更窄阈值)
         """
         block_long = False
         block_short = False
         reasons = []
 
+        threshold = self._get_hard_control_threshold(current_price, atr_value)
+
         # 检查阻力位 (阻止 LONG)
         if nearest_resistance and nearest_resistance.strength == 'HIGH':
-            if nearest_resistance.distance_pct < self.hard_control_threshold_pct:
+            if nearest_resistance.distance_pct < threshold:
                 block_long = True
                 if nearest_resistance.has_order_wall:
                     reasons.append(
                         f"LONG blocked: Order Wall at ${nearest_resistance.price_center:,.0f} "
                         f"({nearest_resistance.wall_size_btc:.1f} BTC), "
-                        f"{nearest_resistance.distance_pct:.1f}% away"
+                        f"{nearest_resistance.distance_pct:.1f}% away (threshold: {threshold:.1f}%)"
                     )
                 else:
                     reasons.append(
                         f"LONG blocked: HIGH strength resistance at ${nearest_resistance.price_center:,.0f} "
                         f"(sources: {', '.join(nearest_resistance.sources)}), "
-                        f"{nearest_resistance.distance_pct:.1f}% away"
+                        f"{nearest_resistance.distance_pct:.1f}% away (threshold: {threshold:.1f}%)"
                     )
 
         # 检查支撑位 (阻止 SHORT)
         if nearest_support and nearest_support.strength == 'HIGH':
-            if nearest_support.distance_pct < self.hard_control_threshold_pct:
+            if nearest_support.distance_pct < threshold:
                 block_short = True
                 if nearest_support.has_order_wall:
                     reasons.append(
                         f"SHORT blocked: Order Wall at ${nearest_support.price_center:,.0f} "
                         f"({nearest_support.wall_size_btc:.1f} BTC), "
-                        f"{nearest_support.distance_pct:.1f}% away"
+                        f"{nearest_support.distance_pct:.1f}% away (threshold: {threshold:.1f}%)"
                     )
                 else:
                     reasons.append(
                         f"SHORT blocked: HIGH strength support at ${nearest_support.price_center:,.0f} "
                         f"(sources: {', '.join(nearest_support.sources)}), "
-                        f"{nearest_support.distance_pct:.1f}% away"
+                        f"{nearest_support.distance_pct:.1f}% away (threshold: {threshold:.1f}%)"
                     )
 
         return {

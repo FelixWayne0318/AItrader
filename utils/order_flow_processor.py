@@ -99,6 +99,10 @@ class OrderFlowProcessor:
         # 之前只用最新一根 K 线，波动太大
         avg_buy_ratio = sum(recent_10_bars) / len(recent_10_bars) if recent_10_bars else 0.5
 
+        # v5.2: Expose CVD numerical history for AI analysis
+        cvd_recent = [round(v, 2) for v in self._cvd_history[-10:]]
+        cvd_cumulative = round(sum(self._cvd_history), 2) if self._cvd_history else 0.0
+
         return {
             "buy_ratio": round(avg_buy_ratio, 4),  # 使用 10 bar 平均值
             "latest_buy_ratio": round(latest_buy_ratio, 4),  # 保留最新 K 线值供参考
@@ -106,6 +110,8 @@ class OrderFlowProcessor:
             "volume_usdt": round(quote_volume, 2),
             "trades_count": trades_count,
             "cvd_trend": cvd_trend,
+            "cvd_history": cvd_recent,  # v5.2: Last 10 CVD deltas (numerical)
+            "cvd_cumulative": cvd_cumulative,  # v5.2: Cumulative sum
             "recent_10_bars": recent_10_bars,
             "recent_10_bars_avg": round(avg_buy_ratio, 4),  # 明确标记这是平均值
             "data_source": "binance_raw",

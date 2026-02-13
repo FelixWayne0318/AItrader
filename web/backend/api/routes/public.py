@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from core.database import get_db
+from core.config import settings
 from models import SocialLink, CopyTradingLink, SiteSettings
 from services import binance_service
 
@@ -155,9 +156,8 @@ async def get_latest_signal():
 
     # Try to read from the bot's signal state file
     signal_file_paths = [
-        "/home/linuxuser/nautilus_AItrader/logs/latest_signal.json",
-        "/home/linuxuser/nautilus_AItrader/state/latest_signal.json",
-        os.path.expanduser("~/nautilus_AItrader/logs/latest_signal.json"),
+        str(settings.AITRADER_PATH / "logs" / "latest_signal.json"),
+        str(settings.AITRADER_PATH / "state" / "latest_signal.json"),
     ]
 
     for signal_file in signal_file_paths:
@@ -195,9 +195,8 @@ async def get_signal_history(limit: int = 10):
     from datetime import datetime
 
     history_file_paths = [
-        "/home/linuxuser/nautilus_AItrader/logs/signal_history.json",
-        "/home/linuxuser/nautilus_AItrader/state/signal_history.json",
-        os.path.expanduser("~/nautilus_AItrader/logs/signal_history.json"),
+        str(settings.AITRADER_PATH / "logs" / "signal_history.json"),
+        str(settings.AITRADER_PATH / "state" / "signal_history.json"),
     ]
 
     for history_file in history_file_paths:
@@ -231,9 +230,8 @@ async def get_ai_analysis():
     from datetime import datetime
 
     analysis_file_paths = [
-        "/home/linuxuser/nautilus_AItrader/logs/latest_analysis.json",
-        "/home/linuxuser/nautilus_AItrader/state/latest_analysis.json",
-        os.path.expanduser("~/nautilus_AItrader/logs/latest_analysis.json"),
+        str(settings.AITRADER_PATH / "logs" / "latest_analysis.json"),
+        str(settings.AITRADER_PATH / "state" / "latest_analysis.json"),
     ]
 
     for analysis_file in analysis_file_paths:
