@@ -151,9 +151,26 @@ class BinanceService:
             elif pnl < 0:
                 losing_trades += 1
 
+        # Separate wins and losses for avg calculations
+        win_amounts = []
+        loss_amounts = []
+
+        for record in pnl_history:
+            pnl = float(record.get("income", 0))
+            if pnl > 0:
+                win_amounts.append(pnl)
+            elif pnl < 0:
+                loss_amounts.append(abs(pnl))
+
         # Calculate metrics
         total_trades = winning_trades + losing_trades
         win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+        avg_profit = sum(win_amounts) / len(win_amounts) if win_amounts else 0
+        avg_loss = sum(loss_amounts) / len(loss_amounts) if loss_amounts else 0
+        total_wins = sum(win_amounts)
+        total_losses = sum(loss_amounts)
+        profit_factor = (total_wins / total_losses) if total_losses > 0 else 0
+        risk_reward = (avg_profit / avg_loss) if avg_loss > 0 else 0
 
         # Calculate cumulative PnL curve
         sorted_dates = sorted(daily_pnl.keys())
@@ -178,6 +195,16 @@ class BinanceService:
             if drawdown > max_drawdown:
                 max_drawdown = drawdown
 
+        # Calculate Sharpe ratio (annualized, crypto = 365 days)
+        daily_returns = [p["daily_pnl"] for p in pnl_curve]
+        sharpe_ratio = 0.0
+        if len(daily_returns) > 1:
+            import statistics
+            mean_return = statistics.mean(daily_returns)
+            std_return = statistics.stdev(daily_returns)
+            if std_return > 0:
+                sharpe_ratio = (mean_return / std_return) * (365 ** 0.5)
+
         # Get account info for balance
         account = await self.get_account_info()
         balance = 0.0
@@ -187,10 +214,16 @@ class BinanceService:
         return {
             "total_pnl": round(total_pnl, 2),
             "total_pnl_percent": round((total_pnl / balance * 100) if balance > 0 else 0, 2),
+            "total_equity": round(balance, 2),
             "win_rate": round(win_rate, 1),
             "total_trades": total_trades,
             "winning_trades": winning_trades,
             "losing_trades": losing_trades,
+            "avg_profit": round(avg_profit, 2),
+            "avg_loss": round(avg_loss, 2),
+            "profit_factor": round(profit_factor, 2),
+            "risk_reward": round(risk_reward, 2),
+            "sharpe_ratio": round(sharpe_ratio, 2),
             "max_drawdown": round(max_drawdown, 2),
             "max_drawdown_percent": round((max_drawdown / balance * 100) if balance > 0 else 0, 2),
             "pnl_curve": pnl_curve,
@@ -203,10 +236,16 @@ class BinanceService:
         return {
             "total_pnl": 0,
             "total_pnl_percent": 0,
+            "total_equity": 0,
             "win_rate": 0,
             "total_trades": 0,
             "winning_trades": 0,
             "losing_trades": 0,
+            "avg_profit": 0,
+            "avg_loss": 0,
+            "profit_factor": 0,
+            "risk_reward": 0,
+            "sharpe_ratio": 0,
             "max_drawdown": 0,
             "max_drawdown_percent": 0,
             "pnl_curve": [],

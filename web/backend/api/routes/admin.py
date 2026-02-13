@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from typing import Optional, Any, Dict, List
 
 from core.database import get_db
+from core.config import settings
 from models import SocialLink, CopyTradingLink, SiteSettings
 from services import config_service
 from api.deps import get_current_admin
@@ -536,14 +537,27 @@ async def get_performance_data(admin=Depends(get_current_admin)):
     from services import binance_service
 
     stats = await binance_service.get_performance_stats(30)
+
+    # Build equity curve from cumulative PnL data
+    # Frontend expects: [{time: "YYYY-MM-DD", value: number}]
+    balance = stats.get("total_equity", 0)
+    total_pnl = stats.get("total_pnl", 0)
+    base_equity = balance - total_pnl if balance > 0 else 0
+    equity_history = []
+    for point in stats.get("pnl_curve", []):
+        equity_history.append({
+            "time": point["date"],
+            "value": round(base_equity + point["cumulative_pnl"], 2),
+        })
+
     return {
         **stats,
-        "equity_history": stats.get("pnl_history", []),
+        "equity_history": equity_history,
         "risk_metrics": {
             "sharpe_ratio": stats.get("sharpe_ratio", 0),
             "max_drawdown": stats.get("max_drawdown_percent", 0),
             "win_rate": stats.get("win_rate", 0),
-            "profit_factor": stats.get("profit_factor", 0),
+            "risk_reward": stats.get("risk_reward", 0),
         }
     }
 
@@ -569,8 +583,8 @@ async def get_recent_signals(
     import json
 
     signal_file_paths = [
-        "/home/linuxuser/nautilus_AItrader/logs/signal_history.json",
-        "/home/linuxuser/nautilus_AItrader/state/signal_history.json",
+        str(settings.AITRADER_PATH / "logs" / "signal_history.json"),
+        str(settings.AITRADER_PATH / "state" / "signal_history.json"),
     ]
 
     for path in signal_file_paths:
