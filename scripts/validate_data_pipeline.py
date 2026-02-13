@@ -603,12 +603,31 @@ def test_funding_rate_pipeline(results: TestResults):
                     results.fail("BinanceKlineClient 字段缺失", str(missing))
 
                 # 验证数值一致性 (与直接 API 对比)
+                # 注意: 两次 API 调用之间有时间差，如果恰好跨越 8h 结算边界
+                # (00:00, 08:00, 16:00 UTC)，会返回不同结算周期的费率，这是正常的
                 bkc_settled = fr_data.get('funding_rate_pct', 0)
                 bkc_predicted = fr_data.get('predicted_rate_pct', 0)
-                if abs(bkc_settled - rate_pct) < 0.001:
+                diff = abs(bkc_settled - rate_pct)
+                if diff < 0.001:
                     results.ok("Settled Rate 一致性", f"BKC={bkc_settled:.4f}% vs API={rate_pct:.4f}%")
                 else:
-                    results.warn("Settled Rate 不一致", f"BKC={bkc_settled:.4f}% vs API={rate_pct:.4f}%")
+                    # 检测是否接近结算边界 (距 00:00/08:00/16:00 UTC 2分钟内)
+                    from datetime import datetime, timezone
+                    utc_now = datetime.now(timezone.utc)
+                    minutes_in_8h = (utc_now.hour % 8) * 60 + utc_now.minute
+                    near_boundary = minutes_in_8h < 2 or minutes_in_8h > (8 * 60 - 2)
+                    if near_boundary:
+                        results.ok(
+                            "Settled Rate 时序差异 (正常)",
+                            f"BKC={bkc_settled:.4f}% vs API={rate_pct:.4f}% "
+                            f"(跨越结算边界, 两次调用拿到不同周期费率)"
+                        )
+                    else:
+                        results.warn(
+                            "Settled Rate 不一致",
+                            f"BKC={bkc_settled:.4f}% vs API={rate_pct:.4f}% "
+                            f"(差异={diff:.4f}%, 非结算边界时段)"
+                        )
             else:
                 results.warn("BinanceKlineClient.get_funding_rate() 返回 None", "")
 
