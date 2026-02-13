@@ -1538,7 +1538,7 @@ VOLATILITY (Bollinger Bands):
 - Upper: ${safe_get('bb_upper'):,.2f}
 - Middle: ${safe_get('bb_middle'):,.2f}
 - Lower: ${safe_get('bb_lower'):,.2f}
-- Position: {safe_get('bb_position'):.1f}% (0%=Lower Band, 100%=Upper Band)
+- Position: {safe_get('bb_position') * 100:.1f}% (0%=Lower Band, 100%=Upper Band)
 
 VOLUME:
 - Volume Ratio: {safe_get('volume_ratio'):.2f}x average
@@ -1571,7 +1571,7 @@ BOLLINGER BANDS (4H):
 - Upper: ${mtf_safe_get('bb_upper'):,.2f}
 - Middle: ${mtf_safe_get('bb_middle'):,.2f}
 - Lower: ${mtf_safe_get('bb_lower'):,.2f}
-- Position: {mtf_safe_get('bb_position'):.1f}% (0%=Lower, 100%=Upper)
+- Position: {mtf_safe_get('bb_position') * 100:.1f}% (0%=Lower, 100%=Upper)
 """
 
         # Add 1D trend layer data if available (MTF v3.5)
