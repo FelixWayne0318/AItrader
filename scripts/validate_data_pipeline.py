@@ -277,15 +277,19 @@ def test_indicator_ranges(results: TestResults):
     print("\n─── Test 4: 技术指标范围验证 ───")
 
     try:
-        from indicators.technical_manager import IndicatorManager
+        from indicators.technical_manager import TechnicalIndicatorManager
 
-        # 使用默认配置参数
-        manager = IndicatorManager(
-            sma_period=20, rsi_period=14, macd_fast=12,
+        # 构建 TechnicalIndicatorManager 需要 NautilusTrader 的 Cython 指标
+        # 但 update() 需要 Bar 对象，无法从纯数值构造
+        # 所以: 先验证类可以实例化，然后从诊断缓存读取实际值做范围检查
+
+        manager = TechnicalIndicatorManager(
+            rsi_period=14, macd_fast=12,
             macd_slow=26, macd_signal=9, bb_period=20
         )
+        results.ok("指标管理器实例化", "TechnicalIndicatorManager ✓")
 
-        # 获取 K 线数据来 feed 指标
+        # 获取 K 线来验证指标计算 (需要通过 Bar 对象 feed)
         url = "https://fapi.binance.com/fapi/v1/klines"
         params = {"symbol": "BTCUSDT", "interval": "15m", "limit": 100}
         resp = requests.get(url, params=params, timeout=10)
@@ -295,18 +299,32 @@ def test_indicator_ranges(results: TestResults):
             results.fail("K线数据", "无法获取")
             return
 
-        # 模拟 on_bar 更新指标
-        from decimal import Decimal
+        # Feed bars via NautilusTrader Bar objects
         from nautilus_trader.model.data import Bar, BarType
+        from nautilus_trader.model.identifiers import InstrumentId
+        from nautilus_trader.model.enums import BarAggregation, PriceType, AggregationSource
         from nautilus_trader.model.objects import Price, Quantity
 
-        # 简化: 直接检查指标初始化后的 get_technical_data
-        # 使用原始值手动更新
-        for k in klines:
-            o, h, l, c, v = float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])
-            manager.update_from_values(o, h, l, c, v)
+        bar_type = BarType(
+            instrument_id=InstrumentId.from_str("BTCUSDT-PERP.BINANCE"),
+            bar_spec=BarType.from_str("BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL").bar_spec,
+        )
 
-        data = manager.get_technical_data()
+        for k in klines[:-1]:  # skip last incomplete bar
+            bar = Bar(
+                bar_type=bar_type,
+                open=Price.from_str(k[1]),
+                high=Price.from_str(k[2]),
+                low=Price.from_str(k[3]),
+                close=Price.from_str(k[4]),
+                volume=Quantity.from_str(k[5]),
+                ts_event=int(k[0]) * 1_000_000,  # ms → ns
+                ts_init=int(k[0]) * 1_000_000,
+            )
+            manager.update(bar)
+
+        price = float(klines[-2][4])  # last complete bar close
+        data = manager.get_technical_data(current_price=price)
 
         if data is None:
             results.fail("get_technical_data()", "返回 None (指标未初始化?)")
@@ -323,20 +341,19 @@ def test_indicator_ranges(results: TestResults):
 
         # MACD: 应该是合理的价格差值
         macd = data.get('macd', 0)
-        macd_signal = data.get('macd_signal', 0)
+        macd_sig = data.get('macd_signal', 0)
         macd_hist = data.get('macd_histogram', 0)
-        if abs(macd) < 10000:  # BTC 的 MACD 差值不应超过 10000
-            results.ok("MACD 范围", f"MACD={macd:.2f}, Signal={macd_signal:.2f}, Hist={macd_hist:.2f}")
+        if abs(macd) < 10000:
+            results.ok("MACD 范围", f"MACD={macd:.2f}, Signal={macd_sig:.2f}, Hist={macd_hist:.2f}")
         else:
             results.warn("MACD 值过大", f"{macd:.2f}")
 
         # SMA: 应该接近当前价格
-        sma = data.get('sma', 0)
-        price = float(klines[-1][4])
-        if sma > 0 and abs(sma - price) / price < 0.1:  # 10% 以内
-            results.ok("SMA 范围", f"SMA={sma:.2f}, Price={price:.2f}, 偏差={abs(sma-price)/price*100:.1f}%")
+        sma = data.get('sma_20', 0)
+        if sma > 0 and abs(sma - price) / price < 0.1:
+            results.ok("SMA 范围", f"SMA20={sma:.2f}, Price={price:.2f}, 偏差={abs(sma-price)/price*100:.1f}%")
         elif sma > 0:
-            results.warn("SMA 偏差较大", f"SMA={sma:.2f} vs Price={price:.2f}")
+            results.warn("SMA 偏差较大", f"SMA20={sma:.2f} vs Price={price:.2f}")
         else:
             results.warn("SMA 为 0", "可能未初始化")
 
@@ -350,6 +367,13 @@ def test_indicator_ranges(results: TestResults):
             results.warn("BB 未初始化", "数据不足?")
         else:
             results.fail("BB 顺序错误", f"U={bb_upper:.2f}, M={bb_middle:.2f}, L={bb_lower:.2f}")
+
+        # ADX: 应该是 0-100
+        adx = data.get('adx', -1)
+        if 0 <= adx <= 100:
+            results.ok("ADX 范围", f"{adx:.2f} (0-100)")
+        else:
+            results.warn("ADX 范围异常", f"{adx}")
 
     except ImportError as e:
         results.warn("指标模块导入失败", f"{e} (可能缺少 NautilusTrader)")
