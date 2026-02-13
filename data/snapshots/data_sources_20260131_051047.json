@@ -1,0 +1,1047 @@
+{
+  "timestamp": "2026-01-31T05:10:47.246798",
+  "binance_derivatives": {
+    "top_long_short_account": {
+      "data": [
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7373",
+          "longShortRatio": "2.8066",
+          "shortAccount": "0.2627",
+          "timestamp": 1769827500000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7372",
+          "longShortRatio": "2.8052",
+          "shortAccount": "0.2628",
+          "timestamp": 1769828400000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7368",
+          "longShortRatio": "2.7994",
+          "shortAccount": "0.2632",
+          "timestamp": 1769829300000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7366",
+          "longShortRatio": "2.7965",
+          "shortAccount": "0.2634",
+          "timestamp": 1769830200000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7364",
+          "longShortRatio": "2.7936",
+          "shortAccount": "0.2636",
+          "timestamp": 1769831100000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7360",
+          "longShortRatio": "2.7879",
+          "shortAccount": "0.2640",
+          "timestamp": 1769832000000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7360",
+          "longShortRatio": "2.7879",
+          "shortAccount": "0.2640",
+          "timestamp": 1769832900000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7362",
+          "longShortRatio": "2.7908",
+          "shortAccount": "0.2638",
+          "timestamp": 1769833800000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7362",
+          "longShortRatio": "2.7908",
+          "shortAccount": "0.2638",
+          "timestamp": 1769834700000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7363",
+          "longShortRatio": "2.7922",
+          "shortAccount": "0.2637",
+          "timestamp": 1769835600000
+        }
+      ],
+      "latest": {
+        "symbol": "BTCUSDT",
+        "longAccount": "0.7373",
+        "longShortRatio": "2.8066",
+        "shortAccount": "0.2627",
+        "timestamp": 1769827500000
+      }
+    },
+    "top_long_short_position": {
+      "data": [
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6540",
+          "longShortRatio": "1.8901",
+          "shortAccount": "0.3460",
+          "timestamp": 1769827500000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6540",
+          "longShortRatio": "1.8903",
+          "shortAccount": "0.3460",
+          "timestamp": 1769828400000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6543",
+          "longShortRatio": "1.8929",
+          "shortAccount": "0.3457",
+          "timestamp": 1769829300000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6543",
+          "longShortRatio": "1.8925",
+          "shortAccount": "0.3457",
+          "timestamp": 1769830200000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6547",
+          "longShortRatio": "1.8958",
+          "shortAccount": "0.3453",
+          "timestamp": 1769831100000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6547",
+          "longShortRatio": "1.8964",
+          "shortAccount": "0.3453",
+          "timestamp": 1769832000000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6548",
+          "longShortRatio": "1.8970",
+          "shortAccount": "0.3452",
+          "timestamp": 1769832900000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6554",
+          "longShortRatio": "1.9019",
+          "shortAccount": "0.3446",
+          "timestamp": 1769833800000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6554",
+          "longShortRatio": "1.9017",
+          "shortAccount": "0.3446",
+          "timestamp": 1769834700000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6554",
+          "longShortRatio": "1.9016",
+          "shortAccount": "0.3446",
+          "timestamp": 1769835600000
+        }
+      ],
+      "latest": {
+        "symbol": "BTCUSDT",
+        "longAccount": "0.6540",
+        "longShortRatio": "1.8901",
+        "shortAccount": "0.3460",
+        "timestamp": 1769827500000
+      },
+      "trend": "STABLE"
+    },
+    "taker_long_short": {
+      "data": [
+        {
+          "buySellRatio": "2.4507",
+          "sellVol": "429.8560",
+          "buyVol": "1053.4420",
+          "timestamp": 1769826600000
+        },
+        {
+          "buySellRatio": "0.6482",
+          "sellVol": "199.0710",
+          "buyVol": "129.0370",
+          "timestamp": 1769827500000
+        },
+        {
+          "buySellRatio": "0.8463",
+          "sellVol": "196.3500",
+          "buyVol": "166.1800",
+          "timestamp": 1769828400000
+        },
+        {
+          "buySellRatio": "0.7113",
+          "sellVol": "165.9820",
+          "buyVol": "118.0630",
+          "timestamp": 1769829300000
+        },
+        {
+          "buySellRatio": "0.4106",
+          "sellVol": "211.2110",
+          "buyVol": "86.7270",
+          "timestamp": 1769830200000
+        },
+        {
+          "buySellRatio": "0.4504",
+          "sellVol": "200.0590",
+          "buyVol": "90.1100",
+          "timestamp": 1769831100000
+        },
+        {
+          "buySellRatio": "0.7754",
+          "sellVol": "151.1990",
+          "buyVol": "117.2460",
+          "timestamp": 1769832000000
+        },
+        {
+          "buySellRatio": "0.6997",
+          "sellVol": "220.3170",
+          "buyVol": "154.1610",
+          "timestamp": 1769832900000
+        },
+        {
+          "buySellRatio": "0.8076",
+          "sellVol": "163.2970",
+          "buyVol": "131.8710",
+          "timestamp": 1769833800000
+        },
+        {
+          "buySellRatio": "0.6793",
+          "sellVol": "247.6040",
+          "buyVol": "168.1940",
+          "timestamp": 1769834700000
+        }
+      ],
+      "latest": {
+        "buySellRatio": "2.4507",
+        "sellVol": "429.8560",
+        "buyVol": "1053.4420",
+        "timestamp": 1769826600000
+      },
+      "trend": "RISING"
+    },
+    "open_interest_hist": {
+      "data": [
+        {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "102184.62800000",
+          "sumOpenInterestValue": "8593298039.36240000",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769827500000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "102129.89700000",
+          "sumOpenInterestValue": "8587643454.19350000",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769828400000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "102066.29100000",
+          "sumOpenInterestValue": "8587694418.67440000",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769829300000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "102065.09800000",
+          "sumOpenInterestValue": "8584828077.40740000",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769830200000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "102010.26800000",
+          "sumOpenInterestValue": "8572440829.55702200",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769831100000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "101993.53400000",
+          "sumOpenInterestValue": "8566181936.82500000",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769832000000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "101998.97200000",
+          "sumOpenInterestValue": "8574016181.45205600",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769832900000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "101955.33600000",
+          "sumOpenInterestValue": "8574984120.88080000",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769833800000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "101935.60400000",
+          "sumOpenInterestValue": "8565618223.43880000",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769834700000
+        },
+        {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "101956.00300000",
+          "sumOpenInterestValue": "8560266794.28120000",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769835600000
+        }
+      ],
+      "latest": {
+        "symbol": "BTCUSDT",
+        "sumOpenInterest": "102184.62800000",
+        "sumOpenInterestValue": "8593298039.36240000",
+        "CMCCirculatingSupply": "19982475.00000000",
+        "timestamp": 1769827500000
+      },
+      "trend": "STABLE"
+    },
+    "funding_rate_hist": {
+      "data": [
+        {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769558400000,
+          "fundingRate": "0.00006237",
+          "markPrice": "89203.89821739"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769587200000,
+          "fundingRate": "0.00006174",
+          "markPrice": "89106.90000000"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769616000000,
+          "fundingRate": "0.00003830",
+          "markPrice": "89446.72848576"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769644800000,
+          "fundingRate": "0.00007210",
+          "markPrice": "89262.92891304"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769673600009,
+          "fundingRate": "0.00005856",
+          "markPrice": "88310.90000000"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769702400000,
+          "fundingRate": "0.00004023",
+          "markPrice": "84898.27826087"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769731200008,
+          "fundingRate": "0.00004478",
+          "markPrice": "84617.11086232"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769760000000,
+          "fundingRate": "0.00001714",
+          "markPrice": "82778.82526087"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769788800001,
+          "fundingRate": "0.00000310",
+          "markPrice": "82853.51839855"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769817600000,
+          "fundingRate": "0.00009693",
+          "markPrice": "84213.96525362"
+        }
+      ],
+      "latest": {
+        "symbol": "BTCUSDT",
+        "fundingTime": 1769558400000,
+        "fundingRate": "0.00006237",
+        "markPrice": "89203.89821739"
+      }
+    },
+    "ticker_24hr": {
+      "symbol": "BTCUSDT",
+      "priceChange": "938.20",
+      "priceChangePercent": "1.131",
+      "weightedAvgPrice": "83182.56",
+      "lastPrice": "83911.10",
+      "lastQty": "0.037",
+      "openPrice": "82972.90",
+      "highPrice": "84599.00",
+      "lowPrice": "81832.00",
+      "volume": "180337.605",
+      "quoteVolume": "15000943636.46",
+      "openTime": 1769749800000,
+      "closeTime": 1769836235420,
+      "firstId": 7153574524,
+      "lastId": 7159243342,
+      "count": 5661449
+    },
+    "_metadata": {
+      "symbol": "BTCUSDT",
+      "period": "15m",
+      "history_limit": 10
+    }
+  },
+  "coinalyze": {
+    "open_interest": {
+      "symbol": "BTCUSDT_PERP.A",
+      "value": 101984.694,
+      "update": 1769836239417
+    },
+    "liquidations": null,
+    "funding_rate": {
+      "symbol": "BTCUSDT_PERP.A",
+      "value": 0.009693,
+      "update": 1769836239913
+    },
+    "open_interest_history": {
+      "symbol": "BTCUSDT_PERP.A",
+      "history": [
+        {
+          "t": 1769824800,
+          "o": 101787.687,
+          "h": 102206.262,
+          "l": 101756.139,
+          "c": 102127.378
+        },
+        {
+          "t": 1769828400,
+          "o": 102127.895,
+          "h": 102133.806,
+          "l": 101987.014,
+          "c": 101991.492
+        },
+        {
+          "t": 1769832000,
+          "o": 101991.489,
+          "h": 102006.154,
+          "l": 101927.816,
+          "c": 101953.965
+        },
+        {
+          "t": 1769835600,
+          "o": 101953.715,
+          "h": 101986.706,
+          "l": 101953.714,
+          "c": 101984.694
+        }
+      ]
+    },
+    "funding_rate_history": {
+      "symbol": "BTCUSDT_PERP.A",
+      "history": [
+        {
+          "t": 1769824800,
+          "o": 0.009693,
+          "h": 0.009693,
+          "l": 0.009693,
+          "c": 0.009693
+        },
+        {
+          "t": 1769828400,
+          "o": 0.009693,
+          "h": 0.009693,
+          "l": 0.009693,
+          "c": 0.009693
+        },
+        {
+          "t": 1769832000,
+          "o": 0.009693,
+          "h": 0.009693,
+          "l": 0.009693,
+          "c": 0.009693
+        },
+        {
+          "t": 1769835600,
+          "o": 0.009693,
+          "h": 0.009693,
+          "l": 0.009693,
+          "c": 0.009693
+        }
+      ]
+    },
+    "long_short_ratio_history": {
+      "symbol": "BTCUSDT_PERP.A",
+      "history": [
+        {
+          "t": 1769824800,
+          "r": 2.4662,
+          "l": 71.15,
+          "s": 28.85
+        },
+        {
+          "t": 1769828400,
+          "r": 2.4282,
+          "l": 70.83,
+          "s": 29.17
+        },
+        {
+          "t": 1769832000,
+          "r": 2.413,
+          "l": 70.7,
+          "s": 29.3
+        },
+        {
+          "t": 1769835600,
+          "r": 2.4106,
+          "l": 70.68,
+          "s": 29.32
+        }
+      ]
+    },
+    "trends": {
+      "oi_trend": "STABLE",
+      "funding_trend": "STABLE",
+      "long_short_trend": "STABLE"
+    },
+    "enabled": true
+  },
+  "complete_assembled": {
+    "price": {
+      "current": 83911.0,
+      "change_pct": 0.96
+    },
+    "technical": {
+      "price": 100000,
+      "sma_20": 99500,
+      "sma_50": 98000,
+      "rsi": 55,
+      "macd": {
+        "macd": 100,
+        "signal": 80,
+        "histogram": 20
+      }
+    },
+    "order_flow": {
+      "buy_ratio": 0.4051,
+      "latest_buy_ratio": 0.4014,
+      "avg_trade_usdt": 2256.08,
+      "volume_usdt": 22468340.47,
+      "trades_count": 9959,
+      "cvd_trend": "NEUTRAL",
+      "recent_10_bars": [
+        0.4052,
+        0.4658,
+        0.427,
+        0.2956,
+        0.3139,
+        0.4469,
+        0.4192,
+        0.4633,
+        0.4124,
+        0.4014
+      ],
+      "recent_10_bars_avg": 0.4051,
+      "data_source": "binance_raw",
+      "bars_count": 50
+    },
+    "derivatives": {
+      "open_interest": {
+        "value": 101985.07,
+        "total_usd": 8557668873.0,
+        "total_btc": 101985.07,
+        "change_pct": null
+      },
+      "liquidations": null,
+      "funding_rate": {
+        "value": 4.266e-05,
+        "current": 4.266e-05,
+        "current_pct": 0.0043,
+        "interpretation": "NEUTRAL",
+        "source": "binance_direct",
+        "coinalyze_pct": 0.9693,
+        "binance_pct": 0.0043
+      },
+      "enabled": true,
+      "trends": {
+        "oi_trend": "STABLE",
+        "funding_trend": "STABLE",
+        "long_short_trend": "STABLE"
+      },
+      "long_short_ratio_history": {
+        "symbol": "BTCUSDT_PERP.A",
+        "history": [
+          {
+            "t": 1769824800,
+            "r": 2.4662,
+            "l": 71.15,
+            "s": 28.85
+          },
+          {
+            "t": 1769828400,
+            "r": 2.4282,
+            "l": 70.83,
+            "s": 29.17
+          },
+          {
+            "t": 1769832000,
+            "r": 2.413,
+            "l": 70.7,
+            "s": 29.3
+          },
+          {
+            "t": 1769835600,
+            "r": 2.4106,
+            "l": 70.68,
+            "s": 29.32
+          }
+        ]
+      }
+    },
+    "sentiment": {
+      "positive_ratio": 0.7068,
+      "negative_ratio": 0.2932,
+      "net_sentiment": 0.41359999999999997,
+      "data_time": "2026-01-31 05:00:00 UTC",
+      "data_delay_minutes": 10,
+      "source": "binance",
+      "long_short_ratio": 2.4106
+    },
+    "binance_derivatives": {
+      "top_long_short_account": {
+        "data": [
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.7373",
+            "longShortRatio": "2.8066",
+            "shortAccount": "0.2627",
+            "timestamp": 1769827500000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.7372",
+            "longShortRatio": "2.8052",
+            "shortAccount": "0.2628",
+            "timestamp": 1769828400000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.7368",
+            "longShortRatio": "2.7994",
+            "shortAccount": "0.2632",
+            "timestamp": 1769829300000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.7366",
+            "longShortRatio": "2.7965",
+            "shortAccount": "0.2634",
+            "timestamp": 1769830200000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.7364",
+            "longShortRatio": "2.7936",
+            "shortAccount": "0.2636",
+            "timestamp": 1769831100000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.7360",
+            "longShortRatio": "2.7879",
+            "shortAccount": "0.2640",
+            "timestamp": 1769832000000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.7360",
+            "longShortRatio": "2.7879",
+            "shortAccount": "0.2640",
+            "timestamp": 1769832900000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.7362",
+            "longShortRatio": "2.7908",
+            "shortAccount": "0.2638",
+            "timestamp": 1769833800000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.7362",
+            "longShortRatio": "2.7908",
+            "shortAccount": "0.2638",
+            "timestamp": 1769834700000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.7363",
+            "longShortRatio": "2.7922",
+            "shortAccount": "0.2637",
+            "timestamp": 1769835600000
+          }
+        ],
+        "latest": {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.7373",
+          "longShortRatio": "2.8066",
+          "shortAccount": "0.2627",
+          "timestamp": 1769827500000
+        }
+      },
+      "top_long_short_position": {
+        "data": [
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.6540",
+            "longShortRatio": "1.8901",
+            "shortAccount": "0.3460",
+            "timestamp": 1769827500000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.6540",
+            "longShortRatio": "1.8903",
+            "shortAccount": "0.3460",
+            "timestamp": 1769828400000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.6543",
+            "longShortRatio": "1.8929",
+            "shortAccount": "0.3457",
+            "timestamp": 1769829300000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.6543",
+            "longShortRatio": "1.8925",
+            "shortAccount": "0.3457",
+            "timestamp": 1769830200000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.6547",
+            "longShortRatio": "1.8958",
+            "shortAccount": "0.3453",
+            "timestamp": 1769831100000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.6547",
+            "longShortRatio": "1.8964",
+            "shortAccount": "0.3453",
+            "timestamp": 1769832000000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.6548",
+            "longShortRatio": "1.8970",
+            "shortAccount": "0.3452",
+            "timestamp": 1769832900000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.6554",
+            "longShortRatio": "1.9019",
+            "shortAccount": "0.3446",
+            "timestamp": 1769833800000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.6554",
+            "longShortRatio": "1.9017",
+            "shortAccount": "0.3446",
+            "timestamp": 1769834700000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "longAccount": "0.6554",
+            "longShortRatio": "1.9016",
+            "shortAccount": "0.3446",
+            "timestamp": 1769835600000
+          }
+        ],
+        "latest": {
+          "symbol": "BTCUSDT",
+          "longAccount": "0.6540",
+          "longShortRatio": "1.8901",
+          "shortAccount": "0.3460",
+          "timestamp": 1769827500000
+        },
+        "trend": "STABLE"
+      },
+      "taker_long_short": {
+        "data": [
+          {
+            "buySellRatio": "2.4507",
+            "sellVol": "429.8560",
+            "buyVol": "1053.4420",
+            "timestamp": 1769826600000
+          },
+          {
+            "buySellRatio": "0.6482",
+            "sellVol": "199.0710",
+            "buyVol": "129.0370",
+            "timestamp": 1769827500000
+          },
+          {
+            "buySellRatio": "0.8463",
+            "sellVol": "196.3500",
+            "buyVol": "166.1800",
+            "timestamp": 1769828400000
+          },
+          {
+            "buySellRatio": "0.7113",
+            "sellVol": "165.9820",
+            "buyVol": "118.0630",
+            "timestamp": 1769829300000
+          },
+          {
+            "buySellRatio": "0.4106",
+            "sellVol": "211.2110",
+            "buyVol": "86.7270",
+            "timestamp": 1769830200000
+          },
+          {
+            "buySellRatio": "0.4504",
+            "sellVol": "200.0590",
+            "buyVol": "90.1100",
+            "timestamp": 1769831100000
+          },
+          {
+            "buySellRatio": "0.7754",
+            "sellVol": "151.1990",
+            "buyVol": "117.2460",
+            "timestamp": 1769832000000
+          },
+          {
+            "buySellRatio": "0.6997",
+            "sellVol": "220.3170",
+            "buyVol": "154.1610",
+            "timestamp": 1769832900000
+          },
+          {
+            "buySellRatio": "0.8076",
+            "sellVol": "163.2970",
+            "buyVol": "131.8710",
+            "timestamp": 1769833800000
+          },
+          {
+            "buySellRatio": "0.6793",
+            "sellVol": "247.6040",
+            "buyVol": "168.1940",
+            "timestamp": 1769834700000
+          }
+        ],
+        "latest": {
+          "buySellRatio": "2.4507",
+          "sellVol": "429.8560",
+          "buyVol": "1053.4420",
+          "timestamp": 1769826600000
+        },
+        "trend": "RISING"
+      },
+      "open_interest_hist": {
+        "data": [
+          {
+            "symbol": "BTCUSDT",
+            "sumOpenInterest": "102184.62800000",
+            "sumOpenInterestValue": "8593298039.36240000",
+            "CMCCirculatingSupply": "19982475.00000000",
+            "timestamp": 1769827500000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "sumOpenInterest": "102129.89700000",
+            "sumOpenInterestValue": "8587643454.19350000",
+            "CMCCirculatingSupply": "19982475.00000000",
+            "timestamp": 1769828400000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "sumOpenInterest": "102066.29100000",
+            "sumOpenInterestValue": "8587694418.67440000",
+            "CMCCirculatingSupply": "19982475.00000000",
+            "timestamp": 1769829300000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "sumOpenInterest": "102065.09800000",
+            "sumOpenInterestValue": "8584828077.40740000",
+            "CMCCirculatingSupply": "19982475.00000000",
+            "timestamp": 1769830200000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "sumOpenInterest": "102010.26800000",
+            "sumOpenInterestValue": "8572440829.55702200",
+            "CMCCirculatingSupply": "19982475.00000000",
+            "timestamp": 1769831100000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "sumOpenInterest": "101993.53400000",
+            "sumOpenInterestValue": "8566181936.82500000",
+            "CMCCirculatingSupply": "19982475.00000000",
+            "timestamp": 1769832000000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "sumOpenInterest": "101998.97200000",
+            "sumOpenInterestValue": "8574016181.45205600",
+            "CMCCirculatingSupply": "19982475.00000000",
+            "timestamp": 1769832900000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "sumOpenInterest": "101955.33600000",
+            "sumOpenInterestValue": "8574984120.88080000",
+            "CMCCirculatingSupply": "19982475.00000000",
+            "timestamp": 1769833800000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "sumOpenInterest": "101935.60400000",
+            "sumOpenInterestValue": "8565618223.43880000",
+            "CMCCirculatingSupply": "19982475.00000000",
+            "timestamp": 1769834700000
+          },
+          {
+            "symbol": "BTCUSDT",
+            "sumOpenInterest": "101956.00300000",
+            "sumOpenInterestValue": "8560266794.28120000",
+            "CMCCirculatingSupply": "19982475.00000000",
+            "timestamp": 1769835600000
+          }
+        ],
+        "latest": {
+          "symbol": "BTCUSDT",
+          "sumOpenInterest": "102184.62800000",
+          "sumOpenInterestValue": "8593298039.36240000",
+          "CMCCirculatingSupply": "19982475.00000000",
+          "timestamp": 1769827500000
+        },
+        "trend": "STABLE"
+      },
+      "funding_rate_hist": {
+        "data": [
+          {
+            "symbol": "BTCUSDT",
+            "fundingTime": 1769558400000,
+            "fundingRate": "0.00006237",
+            "markPrice": "89203.89821739"
+          },
+          {
+            "symbol": "BTCUSDT",
+            "fundingTime": 1769587200000,
+            "fundingRate": "0.00006174",
+            "markPrice": "89106.90000000"
+          },
+          {
+            "symbol": "BTCUSDT",
+            "fundingTime": 1769616000000,
+            "fundingRate": "0.00003830",
+            "markPrice": "89446.72848576"
+          },
+          {
+            "symbol": "BTCUSDT",
+            "fundingTime": 1769644800000,
+            "fundingRate": "0.00007210",
+            "markPrice": "89262.92891304"
+          },
+          {
+            "symbol": "BTCUSDT",
+            "fundingTime": 1769673600009,
+            "fundingRate": "0.00005856",
+            "markPrice": "88310.90000000"
+          },
+          {
+            "symbol": "BTCUSDT",
+            "fundingTime": 1769702400000,
+            "fundingRate": "0.00004023",
+            "markPrice": "84898.27826087"
+          },
+          {
+            "symbol": "BTCUSDT",
+            "fundingTime": 1769731200008,
+            "fundingRate": "0.00004478",
+            "markPrice": "84617.11086232"
+          },
+          {
+            "symbol": "BTCUSDT",
+            "fundingTime": 1769760000000,
+            "fundingRate": "0.00001714",
+            "markPrice": "82778.82526087"
+          },
+          {
+            "symbol": "BTCUSDT",
+            "fundingTime": 1769788800001,
+            "fundingRate": "0.00000310",
+            "markPrice": "82853.51839855"
+          },
+          {
+            "symbol": "BTCUSDT",
+            "fundingTime": 1769817600000,
+            "fundingRate": "0.00009693",
+            "markPrice": "84213.96525362"
+          }
+        ],
+        "latest": {
+          "symbol": "BTCUSDT",
+          "fundingTime": 1769558400000,
+          "fundingRate": "0.00006237",
+          "markPrice": "89203.89821739"
+        }
+      },
+      "ticker_24hr": {
+        "symbol": "BTCUSDT",
+        "priceChange": "938.10",
+        "priceChangePercent": "1.131",
+        "weightedAvgPrice": "83182.57",
+        "lastPrice": "83911.00",
+        "lastQty": "0.002",
+        "openPrice": "82972.90",
+        "highPrice": "84599.00",
+        "lowPrice": "81832.00",
+        "volume": "180339.257",
+        "quoteVolume": "15001082257.56",
+        "openTime": 1769749800000,
+        "closeTime": 1769836241300,
+        "firstId": 7153574524,
+        "lastId": 7159243378,
+        "count": 5661485
+      },
+      "_metadata": {
+        "symbol": "BTCUSDT",
+        "period": "15m",
+        "history_limit": 10
+      }
+    },
+    "current_position": {},
+    "_metadata": {
+      "kline_source": "binance_raw",
+      "coinalyze_enabled": true,
+      "binance_derivatives_enabled": true
+    }
+  }
+}

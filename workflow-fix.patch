@@ -1,0 +1,74 @@
+This patch improves the Smart Regression Detection workflow to better handle documentation-only PRs.
+
+Apply with: git apply workflow-fix.patch
+
+---
+
+diff --git a/.github/workflows/commit-analysis.yml b/.github/workflows/commit-analysis.yml
+index c4f856b..9b3c6ad 100644
+--- a/.github/workflows/commit-analysis.yml
++++ b/.github/workflows/commit-analysis.yml
+@@ -47,6 +47,27 @@ jobs:
+         with:
+           python-version: '3.11'
+
++      - name: Check if code files changed
++        id: check_changes
++        run: |
++          # 检测是否有代码文件变更 (仅在 PR 时检查)
++          if [ "${{ github.event_name }}" == "pull_request" ]; then
++            CODE_CHANGED=$(git diff origin/${{ github.base_ref }}...HEAD --name-only | grep -E '\.(py|js|ts|tsx|jsx|vue|go|rs|java|cpp|c|h)$' | wc -l)
++            echo "code_changed=$CODE_CHANGED" >> $GITHUB_OUTPUT
++
++            if [ "$CODE_CHANGED" -eq 0 ]; then
++              echo "📄 Documentation-only PR detected"
++              echo "doc_only=true" >> $GITHUB_OUTPUT
++            else
++              echo "💻 Code changes detected: $CODE_CHANGED files"
++              echo "doc_only=false" >> $GITHUB_OUTPUT
++            fi
++          else
++            # Push 到 main 分支时始终运行完整检查
++            echo "code_changed=1" >> $GITHUB_OUTPUT
++            echo "doc_only=false" >> $GITHUB_OUTPUT
++          fi
++
+       - name: Run smart_commit_analyzer.py
+         id: analyze
+         run: |
+@@ -75,6 +96,13 @@ jobs:
+         run: |
+           echo "## 🔍 Smart Regression Detection" >> $GITHUB_STEP_SUMMARY
+           echo "" >> $GITHUB_STEP_SUMMARY
++
++          # 如果是文档专用 PR，添加说明
++          if [ "${{ steps.check_changes.outputs.doc_only }}" == "true" ]; then
++            echo "📄 **Documentation-only PR detected** - failures may be from historical code evolution" >> $GITHUB_STEP_SUMMARY
++            echo "" >> $GITHUB_STEP_SUMMARY
++          fi
++
+           echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+           echo "| 📋 Total Rules | ${{ steps.analyze.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
+@@ -116,6 +144,7 @@ jobs:
+             const passed = '${{ steps.analyze.outputs.passed }}';
+             const failed = '${{ steps.analyze.outputs.failed }}';
+             const warnings = '${{ steps.analyze.outputs.warnings }}';
++            const docOnly = '${{ steps.check_changes.outputs.doc_only }}';
+
+             let status = failed > 0 ? '⚠️' : '✅';
+             let body = `## ${status} Smart Regression Detection\n\n`;
+@@ -127,7 +156,12 @@ jobs:
+             body += `| ⚠️ Warnings | ${warnings} |\n`;
+
+             if (failed > 0) {
+-              body += `\n⚠️ **Potential Regressions Detected**: Please review the failed checks in the workflow summary.`;
++              if (docOnly === 'true') {
++                body += `\n📄 **Note**: This is a documentation-only PR. `;
++                body += `"Failures" are likely from historical code evolution, not actual regressions in this PR.`;
++              } else {
++                body += `\n⚠️ **Potential Regressions Detected**: Please review the failed checks in the workflow summary.`;
++              }
+             }
+
+             github.rest.issues.createComment({

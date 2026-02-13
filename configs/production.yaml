@@ -1,0 +1,16 @@
+# configs/production.yaml
+# 生产环境配置覆盖
+
+capital:
+  leverage: 10                    # 生产环境杠杆 (与币安实际设置一致)
+
+timing:
+  timer_interval_sec: 900         # 15分钟
+
+logging:
+  level: "INFO"
+
+network:
+  instrument_discovery:
+    max_retries: 180              # 增加到 180 秒 (3 分钟)
+    retry_interval: 1.0

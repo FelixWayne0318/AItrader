@@ -1,0 +1,9 @@
+# AItrader Custom Query Suite
+# Includes all project-specific CodeQL queries
+
+- description: AItrader security and quality queries
+- queries: .
+- include:
+    kind:
+      - problem
+      - path-problem

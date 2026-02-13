@@ -1,0 +1,96 @@
+# Environment and secrets
+.env
+.env.backup
+.env.backup_*
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+/lib/
+/lib64/
+!web/frontend/lib/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+venv_old_*/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+!logs/.gitkeep
+!logs/diagnosis_*.txt
+*.log
+
+# NautilusTrader
+.nautilus/
+catalog/
+*.feather
+*.parquet
+
+# Data files
+data/*
+!data/snapshots/
+*.csv
+*.json.gz
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary
+tmp/
+temp/
+*.tmp
+
+# Trading session data
+DeepSeekTrader-*.json
+
+# Process files
+*.pid
+
+# Accidental pip output files
+=*
+
+# Database files
+*.db
+!web/frontend/*.db
+
+# Uploaded assets (user-generated)
+web/backend/uploads/
