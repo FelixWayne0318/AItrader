@@ -795,7 +795,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
             print(f"  Total API Calls: {total_calls} (顺序执行)")
             print()
 
-            # Data completeness check (all 11 analyze() parameters)
+            # Data completeness check (all 15 analyze() parameters)
             params = {
                 'symbol': self.ctx.symbol,
                 'technical_report': self.ctx.technical_data,
@@ -808,6 +808,10 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 'orderbook_report': self.ctx.orderbook_report,
                 'account_context': self.ctx.account_context,
                 'bars_data': self.ctx.sr_bars_data,
+                'bars_data_4h': self.ctx.bars_data_4h,
+                'bars_data_1d': self.ctx.bars_data_1d,
+                'daily_bar': self.ctx.daily_bar,
+                'weekly_bar': self.ctx.weekly_bar,
             }
 
             print("  📊 analyze() 参数完整性检查 (vs 实盘):")
@@ -816,6 +820,7 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 'current_position', 'price_data', 'order_flow_report',
                 'derivatives_report', 'binance_derivatives_report',
                 'orderbook_report', 'account_context', 'bars_data',
+                'bars_data_4h', 'bars_data_1d', 'daily_bar', 'weekly_bar',
             ]
             for param_name in live_params:
                 value = params[param_name]
@@ -849,6 +854,11 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 orderbook_report=self.ctx.orderbook_report,
                 account_context=self.ctx.account_context,
                 bars_data=self.ctx.sr_bars_data,
+                # v4.0: MTF bars for S/R pivot + volume profile + swing detection
+                bars_data_4h=self.ctx.bars_data_4h,
+                bars_data_1d=self.ctx.bars_data_1d,
+                daily_bar=self.ctx.daily_bar,
+                weekly_bar=self.ctx.weekly_bar,
             )
 
             t_elapsed = time.monotonic() - t_start

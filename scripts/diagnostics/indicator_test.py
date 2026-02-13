@@ -171,6 +171,14 @@ class TechnicalDataFetcher(DiagnosticStep):
                 }
                 rsi_4h = self.ctx.technical_data['mtf_decision_layer']['rsi']
                 print(f"  ✅ 4H 决策层数据加载: RSI={rsi_4h:.1f}")
+
+                # v4.0: Store raw 4H bars for S/R swing detection + volume profile
+                self.ctx.bars_data_4h = [
+                    {'high': float(k[2]), 'low': float(k[3]),
+                     'close': float(k[4]), 'open': float(k[1]),
+                     'volume': float(k[5])}
+                    for k in klines_4h
+                ]
             else:
                 print("  ⚠️ 4H K线数据不足，跳过决策层")
 
@@ -201,6 +209,22 @@ class TechnicalDataFetcher(DiagnosticStep):
                 }
                 sma_200 = self.ctx.technical_data['mtf_trend_layer']['sma_200']
                 print(f"  ✅ 1D 趋势层数据加载: SMA_200=${sma_200:,.2f}")
+
+                # v4.0: Store raw 1D bars for S/R swing detection + pivot calculation
+                bars_1d_dicts = [
+                    {'high': float(k[2]), 'low': float(k[3]),
+                     'close': float(k[4]), 'open': float(k[1]),
+                     'volume': float(k[5])}
+                    for k in klines_1d
+                ]
+                self.ctx.bars_data_1d = bars_1d_dicts
+                if bars_1d_dicts:
+                    self.ctx.daily_bar = bars_1d_dicts[-1]
+                    try:
+                        from utils.sr_pivot_calculator import aggregate_weekly_bar
+                        self.ctx.weekly_bar = aggregate_weekly_bar(bars_1d_dicts)
+                    except Exception:
+                        pass
             else:
                 count = len(klines_1d) if klines_1d else 0
                 print(f"  ⚠️ 1D K线数据不足 ({count}/200)，跳过趋势层")

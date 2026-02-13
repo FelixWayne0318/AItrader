@@ -1159,7 +1159,7 @@ Last Bull Argument:
 - 详情 (Detail): {hc_reason if hc_reason else 'N/A'}
 
 ‼️ 评估要点:
-- "HIGH 强度" = 多源确认 (BB + SMA + Order Wall 共振)，历史反弹率较高
+- "HIGH 强度" = 多源确认 (Swing Point + Volume Profile + Pivot 共振)，历史反弹率较高
 - 逆 HIGH 强度 zone 交易的成功率显著降低
 - 但伴随放量的强力突破可能是强势信号
 - 这是参考信息，不是硬性规则 — 请结合所有数据综合判断

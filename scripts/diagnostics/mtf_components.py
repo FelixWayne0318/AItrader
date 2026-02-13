@@ -327,10 +327,19 @@ class MTFComponentTester(DiagnosticStep):
                 bb_data=test_bb_data,
                 sma_data=test_sma_data,
                 orderbook_anomalies=None,
+                bars_data=self.ctx.sr_bars_data,
+                bars_data_4h=self.ctx.bars_data_4h,
+                bars_data_1d=self.ctx.bars_data_1d,
+                daily_bar=self.ctx.daily_bar,
+                weekly_bar=self.ctx.weekly_bar,
             )
 
+            has_bars = bool(self.ctx.sr_bars_data)
+            has_4h = bool(self.ctx.bars_data_4h)
+            has_1d = bool(self.ctx.bars_data_1d)
+            has_pivot = bool(self.ctx.daily_bar)
             print(f"     📊 当前价格: ${self.ctx.current_price:,.0f}")
-            print(f"     📊 数据源: BB={'✅' if test_bb_data else '❌'}, SMA={'✅' if test_sma_data else '❌'}")
+            print(f"     📊 数据源: Swing15M={'✅' if has_bars else '❌'}, Swing4H={'✅' if has_4h else '❌'}, Swing1D={'✅' if has_1d else '❌'}, Pivot={'✅' if has_pivot else '❌'}")
 
             # Display resistance zones
             resistance_zones = sr_result.get('resistance_zones', [])
