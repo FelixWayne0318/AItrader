@@ -301,14 +301,9 @@ def test_indicator_ranges(results: TestResults):
 
         # Feed bars via NautilusTrader Bar objects
         from nautilus_trader.model.data import Bar, BarType
-        from nautilus_trader.model.identifiers import InstrumentId
-        from nautilus_trader.model.enums import BarAggregation, PriceType, AggregationSource
         from nautilus_trader.model.objects import Price, Quantity
 
-        bar_type = BarType(
-            instrument_id=InstrumentId.from_str("BTCUSDT-PERP.BINANCE"),
-            bar_spec=BarType.from_str("BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL").bar_spec,
-        )
+        bar_type = BarType.from_str("BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL")
 
         for k in klines[:-1]:  # skip last incomplete bar
             bar = Bar(
