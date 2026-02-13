@@ -23,6 +23,29 @@ from datetime import datetime, timezone
 
 # Add project root to path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _load_env_file():
+    """Load ~/.env.aitrader without depending on python-dotenv."""
+    env_path = os.path.expanduser('~/.env.aitrader')
+    if not os.path.exists(env_path):
+        # Try .env in project root
+        env_path = os.path.join(PROJECT_ROOT, '.env')
+    if not os.path.exists(env_path):
+        return
+    try:
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, _, value = line.partition('=')
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except Exception:
+        pass
 sys.path.insert(0, PROJECT_ROOT)
 
 
@@ -115,10 +138,7 @@ def check_binance_position():
     section("2. Binance 实时状态")
 
     try:
-        from dotenv import load_dotenv
-        env_path = os.path.expanduser('~/.env.aitrader')
-        if os.path.exists(env_path):
-            load_dotenv(env_path)
+        _load_env_file()
 
         api_key = os.environ.get('BINANCE_API_KEY')
         api_secret = os.environ.get('BINANCE_API_SECRET')
@@ -173,10 +193,7 @@ def check_recent_orders():
     section("3. 最近订单历史 (Binance)")
 
     try:
-        from dotenv import load_dotenv
-        env_path = os.path.expanduser('~/.env.aitrader')
-        if os.path.exists(env_path):
-            load_dotenv(env_path)
+        _load_env_file()
 
         import hmac
         import hashlib
