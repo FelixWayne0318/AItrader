@@ -1511,7 +1511,13 @@ def test_consumer_field_contracts(results: TestResults):
     try:
         from utils.ai_data_assembler import AIDataAssembler
 
-        # --- Mock clients (最小化，只需要 _convert_derivatives 依赖的方法) ---
+        # --- 只 mock 数据源，不 mock 计算逻辑 ---
+        # 原则: BinanceKlines/Sentiment = 纯数据源 → mock OK
+        #        OrderFlowProcessor/CoinalyzeClient = 有公式计算 → 用真实生产代码
+        from utils.order_flow_processor import OrderFlowProcessor
+        from utils.coinalyze_client import CoinalyzeClient
+
+        # Mock: Binance K线数据源 (纯 API 调用，无计算逻辑)
         class MockBinanceKlines:
             def get_funding_rate(self):
                 return {
@@ -1535,34 +1541,48 @@ def test_consumer_field_contracts(results: TestResults):
                 ]
 
             def get_klines(self, **kwargs):
-                # 最小有效 K线 (Binance 12列: open_time,O,H,L,C,V,close_time,quote_vol,trades,taker_buy_base,taker_buy_quote,ignore)
+                # 10 根 K线: volume=100, taker_buy=60 → 真实 OrderFlowProcessor 计算
                 t = int(time.time() * 1000)
-                return [
-                    [t - 60000, '100000', '100500', '99500', '100000', '10', t, '1000000', 100, '5', '500000', '0'],
-                    [t,         '100000', '100200', '99800', '100000', '12', t + 60000, '1200000', 120, '6', '600000', '0'],
-                ]
+                klines = []
+                for i in range(10):
+                    ts = t - (10 - i) * 60000
+                    klines.append([
+                        ts, '100000', '100500', '99500', '100000',
+                        '100', ts + 60000, '1200000', 120, '60', '720000', '0',
+                    ])
+                return klines
 
-        class MockOrderFlow:
-            def process_klines(self, klines):
-                return {'buy_ratio': 0.55, 'cvd_trend': 'RISING',
-                        'avg_trade_size': 1500, 'data_source': 'mock'}
+        # ✅ 真实生产代码: OrderFlowProcessor (10-bar 平均, CVD, 趋势)
+        real_order_flow = OrderFlowProcessor()
 
-            def _default_result(self):
-                return {'buy_ratio': 0.5, 'cvd_trend': 'NEUTRAL',
-                        'avg_trade_size': 0, 'data_source': 'default'}
+        # ✅ 真实生产代码: CoinalyzeClient (只 mock 6 个 API 调用，保留趋势计算公式)
+        class TestableCoinalyze(CoinalyzeClient):
+            """Override API calls, keep real fetch_all_with_history + _calc_trend_from_history"""
+            def __init__(self):
+                super().__init__(api_key="test_key", timeout=1, max_retries=0)
 
-        class MockCoinalyze:
-            def fetch_all_with_history(self, **kwargs):
-                return {
-                    'open_interest': {'value': 500.0},
-                    'liquidations': {'history': [{'l': 1.5, 's': 2.0}]},
-                    'funding_rate': {'value': 0.0003},
-                    'trends': {'oi_trend': 'RISING', 'funding_trend': 'STABLE'},
-                }
+            def get_open_interest(self, symbol=None):
+                return {'value': 500.0}
 
-            def is_enabled(self):
-                return True
+            def get_liquidations(self, symbol=None):
+                return {'history': [{'l': 1.5, 's': 2.0}]}
 
+            def get_funding_rate(self, symbol=None):
+                return {'value': 0.0003}
+
+            def get_open_interest_history(self, symbol=None, hours=4):
+                # oldest=100, newest=110 → +10% > 3% → RISING (由真实公式计算)
+                return {'history': [{'c': 100, 't': 1000}, {'c': 110, 't': 2000}]}
+
+            def get_funding_rate_history(self, symbol=None, hours=4):
+                # oldest=0.01, newest=0.008 → -20% < -3% → FALLING (由真实公式计算)
+                return {'history': [{'c': 0.01, 't': 1000}, {'c': 0.008, 't': 2000}]}
+
+            def get_long_short_ratio_history(self, symbol=None, hours=4):
+                # oldest=1.0, newest=1.02 → +2% → STABLE (由真实公式计算)
+                return {'history': [{'r': 1.0, 't': 1000}, {'r': 1.02, 't': 2000}]}
+
+        # Mock: 情绪数据源 (纯 API 调用，计算仅 net=pos-neg)
         class MockSentiment:
             def fetch(self):
                 return {
@@ -1573,8 +1593,8 @@ def test_consumer_field_contracts(results: TestResults):
 
         assembler = AIDataAssembler(
             binance_kline_client=MockBinanceKlines(),
-            order_flow_processor=MockOrderFlow(),
-            coinalyze_client=MockCoinalyze(),
+            order_flow_processor=real_order_flow,          # ← 真实生产代码
+            coinalyze_client=TestableCoinalyze(),          # ← 真实趋势计算
             sentiment_client=MockSentiment(),
         )
 
@@ -1805,35 +1825,52 @@ def test_production_calculations(results: TestResults):
                 ]
 
             def get_klines(self, **kwargs):
-                # 最小有效 K线 (Binance 12列: open_time,O,H,L,C,V,close_time,quote_vol,trades,taker_buy_base,taker_buy_quote,ignore)
+                # 10 根 K线: volume=100, taker_buy=60 → 真实 OrderFlowProcessor 计算
+                # 预期: buy_ratio=0.6, avg_trade_usdt=10000, volume_usdt=1200000
                 t = int(time.time() * 1000)
-                return [
-                    [t - 60000, '100000', '100500', '99500', '100000', '10', t, '1000000', 100, '5', '500000', '0'],
-                    [t,         '100000', '100200', '99800', '100000', '12', t + 60000, '1200000', 120, '6', '600000', '0'],
-                ]
+                klines = []
+                for i in range(10):
+                    ts = t - (10 - i) * 60000
+                    klines.append([
+                        ts, '100000', '100500', '99500', '100000',
+                        '100', ts + 60000, '1200000', 120, '60', '720000', '0',
+                    ])
+                return klines
 
-        class MockOrderFlow:
-            def process_klines(self, klines):
-                return {'buy_ratio': 0.55, 'cvd_trend': 'RISING',
-                        'avg_trade_size': 1500, 'data_source': 'mock'}
+        # ✅ 真实生产代码: OrderFlowProcessor
+        from utils.order_flow_processor import OrderFlowProcessor
+        real_order_flow = OrderFlowProcessor()
 
-            def _default_result(self):
-                return {'buy_ratio': 0.5, 'cvd_trend': 'NEUTRAL',
-                        'avg_trade_size': 0, 'data_source': 'default'}
+        # ✅ 真实生产代码: CoinalyzeClient (只 mock API，保留趋势计算公式)
+        from utils.coinalyze_client import CoinalyzeClient
 
-        class MockCoinalyze:
-            def fetch_all_with_history(self, **kwargs):
-                return {
-                    'open_interest': {'value': MOCK_OI_BTC},
-                    'liquidations': {'history': [
-                        {'l': MOCK_LIQ_LONG_BTC, 's': MOCK_LIQ_SHORT_BTC}
-                    ]},
-                    'funding_rate': {'value': 0.0003},
-                    'trends': {},
-                }
+        class TestableCoinalyze(CoinalyzeClient):
+            """Override API calls, keep real _calc_trend_from_history"""
+            def __init__(self):
+                super().__init__(api_key="test_key", timeout=1, max_retries=0)
 
-            def is_enabled(self):
-                return True
+            def get_open_interest(self, symbol=None):
+                return {'value': MOCK_OI_BTC}
+
+            def get_liquidations(self, symbol=None):
+                return {'history': [
+                    {'l': MOCK_LIQ_LONG_BTC, 's': MOCK_LIQ_SHORT_BTC}
+                ]}
+
+            def get_funding_rate(self, symbol=None):
+                return {'value': 0.0003}
+
+            def get_open_interest_history(self, symbol=None, hours=4):
+                # oldest=100, newest=110 → +10% > 3% → 预期 RISING
+                return {'history': [{'c': 100, 't': 1000}, {'c': 110, 't': 2000}]}
+
+            def get_funding_rate_history(self, symbol=None, hours=4):
+                # oldest=0.01, newest=0.008 → -20% < -3% → 预期 FALLING
+                return {'history': [{'c': 0.01, 't': 1000}, {'c': 0.008, 't': 2000}]}
+
+            def get_long_short_ratio_history(self, symbol=None, hours=4):
+                # oldest=1.0, newest=1.02 → +2% → 预期 STABLE (< 3%)
+                return {'history': [{'r': 1.0, 't': 1000}, {'r': 1.02, 't': 2000}]}
 
         class MockSentiment:
             def fetch(self):
@@ -1845,8 +1882,8 @@ def test_production_calculations(results: TestResults):
 
         assembler = AIDataAssembler(
             binance_kline_client=MockBinanceKlines(),
-            order_flow_processor=MockOrderFlow(),
-            coinalyze_client=MockCoinalyze(),
+            order_flow_processor=real_order_flow,          # ← 真实生产代码
+            coinalyze_client=TestableCoinalyze(),          # ← 真实趋势计算
             sentiment_client=MockSentiment(),
         )
 
@@ -1948,6 +1985,73 @@ def test_production_calculations(results: TestResults):
         assert_close(fr.get('premium_index'), expected_pi,
                      f"PI = ({MOCK_MARK_PRICE}-{MOCK_INDEX_PRICE})/{MOCK_INDEX_PRICE}",
                      tolerance=0.000001)
+
+        # ═══════════════════════════════════════════════════════════
+        # 以下测试真实生产代码的计算公式 (非硬编码 mock)
+        # ═══════════════════════════════════════════════════════════
+
+        order_flow = assembled.get('order_flow', {})
+
+        # ═══ OrderFlowProcessor.process_klines() — 10-bar 平均买盘比 ═══
+        # 10 根 K线: taker_buy=60 / volume=100 = 0.6 per bar → avg = 0.6
+        assert_close(order_flow.get('buy_ratio'), 0.6,
+                     "OrderFlow buy_ratio (10-bar avg: 60/100)", tolerance=0.001)
+
+        assert_close(order_flow.get('latest_buy_ratio'), 0.6,
+                     "OrderFlow latest_buy_ratio (最新 bar: 60/100)", tolerance=0.001)
+
+        # ═══ OrderFlowProcessor — 平均成交额 ═══
+        # quote_volume=1200000 / trades=120 = 10000.0
+        assert_close(order_flow.get('avg_trade_usdt'), 10000.0,
+                     "OrderFlow avg_trade_usdt (1200000/120)", tolerance=1)
+
+        # ═══ OrderFlowProcessor — 成交额透传 ═══
+        assert_close(order_flow.get('volume_usdt'), 1200000.0,
+                     "OrderFlow volume_usdt 透传", tolerance=1)
+
+        # ═══ OrderFlowProcessor — CVD 趋势 ═══
+        # 全新 processor，只处理 1 次 → _cvd_history 长度 1 → NEUTRAL
+        actual_cvd = order_flow.get('cvd_trend')
+        if actual_cvd == 'NEUTRAL':
+            results.ok("计算: OrderFlow CVD trend", "首次调用 → NEUTRAL ✓")
+        else:
+            results.fail("计算: OrderFlow CVD trend",
+                         f"预期 NEUTRAL (首次调用), 实际 {actual_cvd}")
+
+        # ═══ OrderFlowProcessor — 数据来源标记 ═══
+        actual_src = order_flow.get('data_source')
+        if actual_src == 'binance_raw':
+            results.ok("计算: OrderFlow data_source", "binance_raw ✓")
+        else:
+            results.fail("计算: OrderFlow data_source",
+                         f"预期 binance_raw, 实际 {actual_src}")
+
+        # ═══ CoinalyzeClient._calc_trend_from_history() — 趋势计算公式 ═══
+        trends = derivatives.get('trends', {})
+
+        # OI: oldest=100, newest=110 → (110-100)/100*100 = +10% > 3% → RISING
+        actual_oi_trend = trends.get('oi_trend')
+        if actual_oi_trend == 'RISING':
+            results.ok("计算: Coinalyze OI trend", "+10% > 3% → RISING ✓")
+        else:
+            results.fail("计算: Coinalyze OI trend",
+                         f"预期 RISING (+10%), 实际 {actual_oi_trend}")
+
+        # Funding: oldest=0.01, newest=0.008 → (0.008-0.01)/0.01*100 = -20% < -3% → FALLING
+        actual_fr_trend = trends.get('funding_trend')
+        if actual_fr_trend == 'FALLING':
+            results.ok("计算: Coinalyze funding trend", "-20% < -3% → FALLING ✓")
+        else:
+            results.fail("计算: Coinalyze funding trend",
+                         f"预期 FALLING (-20%), 实际 {actual_fr_trend}")
+
+        # L/S Ratio: oldest=1.0, newest=1.02 → (1.02-1.0)/1.0*100 = +2% → STABLE
+        actual_ls_trend = trends.get('long_short_trend')
+        if actual_ls_trend == 'STABLE':
+            results.ok("计算: Coinalyze L/S ratio trend", "+2% < 3% → STABLE ✓")
+        else:
+            results.fail("计算: Coinalyze L/S ratio trend",
+                         f"预期 STABLE (+2%), 实际 {actual_ls_trend}")
 
     except ImportError as e:
         results.warn("AIDataAssembler 不可导入", f"跳过计算验证: {e}")
