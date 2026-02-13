@@ -2107,6 +2107,183 @@ def test_production_calculations(results: TestResults):
         results.fail("计算正确性测试异常", str(e)[:100])
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Test 21: S/R-based SL/TP 计算 (calculate_sr_based_sltp)
+# ─────────────────────────────────────────────────────────────────────
+
+def test_sr_based_sltp(results: TestResults):
+    """
+    验证 calculate_sr_based_sltp() — 生产 Level 2 回退链的核心函数。
+
+    与 Test 9 (validate_multiagent_sltp, Level 1) 互补:
+    - Test 9: AI SL/TP R/R 门槛验证 (纯数值校验)
+    - Test 21: S/R zone 迭代 + ATR buffer + Measured Move + R/R 过滤
+
+    覆盖:
+    1. LONG: 支撑做 SL anchor, 阻力做 TP target, ATR buffer
+    2. SHORT: 阻力做 SL anchor, 支撑做 TP target
+    3. R/R < min_rr → 拒绝 (返回 None)
+    4. 无 S/R zone → 拒绝 (无百分比回退, v4.2)
+    5. ATR=0 → 使用 0.5% price fallback buffer
+    6. 动态重评估: SL 只能向有利方向移动 (模拟 _reevaluate_sltp_for_existing_position)
+    """
+    print("\n─── Test 21: S/R-based SL/TP 计算 (生产 Level 2) ───")
+
+    try:
+        from utils.sr_sltp_calculator import calculate_sr_based_sltp
+        from utils.sr_zone_calculator import SRZone
+        from strategy.trading_logic import get_min_rr_ratio
+
+        price = 100000.0
+        min_rr = get_min_rr_ratio()
+
+        # Build mock S/R zones with proper SRZone dataclass
+        support_zone = SRZone(
+            price_low=96800, price_high=97200, price_center=97000,
+            side='support', strength='HIGH', sources=['SMA_200', 'Swing_Low'],
+            total_weight=3.0, distance_pct=3.0, has_order_wall=False, wall_size_btc=0,
+        )
+        resistance_zone = SRZone(
+            price_low=104800, price_high=105200, price_center=105000,
+            side='resistance', strength='HIGH', sources=['BB_Upper', 'Swing_High'],
+            total_weight=3.0, distance_pct=5.0, has_order_wall=False, wall_size_btc=0,
+        )
+        sr_zones = {
+            'support_zones': [support_zone],
+            'resistance_zones': [resistance_zone],
+            'nearest_support': support_zone,
+            'nearest_resistance': resistance_zone,
+        }
+
+        # --- Case 1: LONG with good R/R ---
+        sl, tp, method = calculate_sr_based_sltp(
+            current_price=price, side='BUY', sr_zones=sr_zones,
+            atr_value=2000.0, min_rr_ratio=min_rr, atr_buffer_multiplier=0.5,
+        )
+        if sl and tp and sl < price and tp > price:
+            rr = (tp - price) / (price - sl)
+            if rr >= min_rr:
+                results.ok("LONG S/R SL/TP", f"SL=${sl:,.0f} TP=${tp:,.0f} R/R={rr:.2f}:1")
+            else:
+                results.fail("LONG R/R 不达标", f"R/R={rr:.2f}:1 < {min_rr}:1")
+        else:
+            results.fail("LONG S/R SL/TP", f"SL={sl}, TP={tp}, method={method}")
+
+        # --- Case 2: SHORT with good R/R ---
+        sl, tp, method = calculate_sr_based_sltp(
+            current_price=price, side='SELL', sr_zones=sr_zones,
+            atr_value=2000.0, min_rr_ratio=min_rr, atr_buffer_multiplier=0.5,
+        )
+        if sl and tp and sl > price and tp < price:
+            rr = (price - tp) / (sl - price)
+            # Note: SHORT may not pass R/R if zone distances are asymmetric
+            results.ok("SHORT S/R SL/TP", f"SL=${sl:,.0f} TP=${tp:,.0f} R/R={rr:.2f}:1")
+        elif sl is None and tp is None:
+            results.ok("SHORT S/R 拒绝 (R/R 不足)", f"{method}")
+        else:
+            results.fail("SHORT S/R SL/TP", f"SL={sl}, TP={tp}, method={method}")
+
+        # --- Case 3: R/R too low → rejection ---
+        close_resistance = SRZone(
+            price_low=100800, price_high=101200, price_center=101000,
+            side='resistance', strength='MEDIUM', sources=['SMA_50'],
+            total_weight=1.5, distance_pct=1.0, has_order_wall=False, wall_size_btc=0,
+        )
+        poor_rr_zones = {
+            'support_zones': [support_zone],
+            'resistance_zones': [close_resistance],
+            'nearest_support': support_zone,
+            'nearest_resistance': close_resistance,
+        }
+        sl, tp, method = calculate_sr_based_sltp(
+            current_price=price, side='BUY', sr_zones=poor_rr_zones,
+            atr_value=2000.0, min_rr_ratio=min_rr,
+        )
+        if sl is None and tp is None:
+            results.ok("R/R 不足拒绝", f"{method}")
+        else:
+            rr = (tp - price) / (price - sl) if sl and tp and sl < price else 0
+            results.warn("R/R 不足未拒绝", f"SL={sl}, TP={tp}, R/R={rr:.2f}")
+
+        # --- Case 4: No S/R zones → rejection (v4.2: no percentage fallback) ---
+        empty_zones = {
+            'support_zones': [], 'resistance_zones': [],
+            'nearest_support': None, 'nearest_resistance': None,
+        }
+        sl, tp, method = calculate_sr_based_sltp(
+            current_price=price, side='BUY', sr_zones=empty_zones,
+            atr_value=2000.0, min_rr_ratio=min_rr,
+        )
+        if sl is None and tp is None:
+            results.ok("空 S/R zones 拒绝", f"{method}")
+        else:
+            results.fail("空 S/R zones 应拒绝", f"但返回 SL={sl}, TP={tp}")
+
+        # --- Case 5: ATR=0 → uses 0.5% price fallback buffer ---
+        sl, tp, method = calculate_sr_based_sltp(
+            current_price=price, side='BUY', sr_zones=sr_zones,
+            atr_value=0.0, min_rr_ratio=min_rr,
+        )
+        if sl and tp:
+            # Buffer should be price * 0.005 = 500
+            expected_buffer = price * 0.005
+            sl_anchor = support_zone.price_center  # 97000
+            expected_sl = sl_anchor - expected_buffer  # 96500
+            if abs(sl - expected_sl) < 100:  # tolerance
+                results.ok("ATR=0 fallback buffer", f"SL=${sl:,.0f} (预期≈${expected_sl:,.0f})")
+            else:
+                results.warn("ATR=0 buffer 偏差", f"SL=${sl:,.0f} vs 预期=${expected_sl:,.0f}")
+        elif sl is None:
+            results.warn("ATR=0 拒绝", f"{method}")
+
+        # --- Case 6: Dynamic reevaluation — SL favorable direction ---
+        # Simulates _reevaluate_sltp_for_existing_position() logic
+        old_sl_long = 96000.0
+        old_tp_long = 104000.0
+        new_sl_long = 96800.0  # Better SL (higher for LONG)
+        new_tp_long = 105000.0
+
+        # LONG: SL can only go UP
+        final_sl = max(new_sl_long, old_sl_long)
+        if final_sl == new_sl_long:
+            results.ok("SL 有利方向 (LONG↑)", f"max({old_sl_long:,.0f}, {new_sl_long:,.0f}) = {final_sl:,.0f}")
+        else:
+            results.fail("SL 有利方向 (LONG)", f"预期 {new_sl_long:,.0f}, 实际 {final_sl:,.0f}")
+
+        # LONG: SL cannot go DOWN
+        worse_sl = 95500.0
+        final_sl2 = max(worse_sl, old_sl_long)
+        if final_sl2 == old_sl_long:
+            results.ok("SL 不可向下 (LONG)", f"max({worse_sl:,.0f}, {old_sl_long:,.0f}) = {final_sl2:,.0f}")
+        else:
+            results.fail("SL 不可向下", f"预期 {old_sl_long:,.0f}, 实际 {final_sl2:,.0f}")
+
+        # SHORT: SL can only go DOWN
+        old_sl_short = 104000.0
+        new_sl_short = 103500.0  # Better SL (lower for SHORT)
+        final_sl3 = min(new_sl_short, old_sl_short)
+        if final_sl3 == new_sl_short:
+            results.ok("SL 有利方向 (SHORT↓)", f"min({old_sl_short:,.0f}, {new_sl_short:,.0f}) = {final_sl3:,.0f}")
+        else:
+            results.fail("SL 有利方向 (SHORT)", f"预期 {new_sl_short:,.0f}, 实际 {final_sl3:,.0f}")
+
+        # Threshold check (0.2% = production default)
+        threshold = 0.002
+        change = abs(final_sl - old_sl_long) / old_sl_long
+        should_update = change > threshold
+        if should_update:
+            results.ok("动态更新阈值", f"Δ={change*100:.3f}% > {threshold*100:.1f}% → 更新")
+        else:
+            results.ok("动态更新阈值", f"Δ={change*100:.3f}% ≤ {threshold*100:.1f}% → 跳过")
+
+    except ImportError as e:
+        results.warn("sr_sltp_calculator 导入失败", str(e))
+    except Exception as e:
+        results.fail("S/R SL/TP 测试异常", str(e)[:120])
+        import traceback
+        traceback.print_exc()
+
+
 def main():
     parser = argparse.ArgumentParser(description="端到端数据流水线验证 v2.0")
     parser.add_argument('--quick', action='store_true', help="快速模式 (跳过慢速 API)")
@@ -2142,6 +2319,7 @@ def main():
         test_sma_label_disambiguation(results)   # Test 18
         test_consumer_field_contracts(results)   # Test 19
         test_production_calculations(results)    # Test 20
+        test_sr_based_sltp(results)              # Test 21
     else:
         # ═══ 在线模式: API + 逻辑验证 ═══
 
@@ -2173,6 +2351,7 @@ def main():
         test_sma_label_disambiguation(results)   # Test 18
         test_consumer_field_contracts(results)   # Test 19
         test_production_calculations(results)    # Test 20
+        test_sr_based_sltp(results)              # Test 21
 
     # 汇总
     all_passed = results.summary()

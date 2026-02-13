@@ -298,7 +298,15 @@ class AIInputDataValidator(DiagnosticStep):
             from utils.sr_zone_calculator import SRZoneCalculator
 
             td = self.ctx.technical_data
-            sr_calculator = SRZoneCalculator()
+
+            # v5.1: Reuse MultiAgent's sr_calculator (18 config params from base.yaml)
+            # instead of SRZoneCalculator() with defaults — matches production exactly
+            if self.ctx.multi_agent and hasattr(self.ctx.multi_agent, 'sr_calculator'):
+                sr_calculator = self.ctx.multi_agent.sr_calculator
+                print("  ℹ️ S/R Calculator: 使用 MultiAgent.sr_calculator (与实盘一致)")
+            else:
+                sr_calculator = SRZoneCalculator()
+                print("  ⚠️ S/R Calculator: MultiAgent 未初始化，使用默认参数 (与实盘可能不一致)")
 
             bb_data = {
                 'upper': td.get('bb_upper', 0),
@@ -1191,8 +1199,8 @@ class OrderSimulator(DiagnosticStep):
         from strategy.trading_logic import (
             calculate_position_size,
             validate_multiagent_sltp,
-            calculate_technical_sltp,
         )
+        from utils.sr_sltp_calculator import calculate_sr_based_sltp
 
         cfg = self.ctx.strategy_config
 
@@ -1295,29 +1303,68 @@ class OrderSimulator(DiagnosticStep):
             print(f"     验证结果: {'✅ 通过' if is_valid else '❌ 失败'} - {reason}")
 
             if not is_valid:
-                print("     ⚠️ AI SL/TP 验证失败，回退到 S/R Zone 技术分析")
-                final_sl, final_tp, calc_method = calculate_technical_sltp(
-                    side=signal,
-                    entry_price=self.ctx.current_price,
-                    support=support,
-                    resistance=resistance,
-                    confidence=confidence,
-                    use_support_resistance=use_sr,
-                    sl_buffer_pct=sl_buffer,
-                )
-                print(f"     {calc_method}")
+                print("     ⚠️ AI SL/TP 验证失败 (Level 1)，尝试 Level 2: calculate_sr_based_sltp()")
+                sr_fallback_used = False
+
+                if self.ctx.sr_zones_data:
+                    atr_val = self.ctx.atr_value or 0.0
+                    atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5)
+                    sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
+                        current_price=self.ctx.current_price,
+                        side=signal,
+                        sr_zones=self.ctx.sr_zones_data,
+                        atr_value=atr_val,
+                        min_rr_ratio=min_rr,
+                        atr_buffer_multiplier=atr_buf_mult,
+                    )
+                    if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
+                        final_sl, final_tp = sr_sl, sr_tp
+                        sr_fallback_used = True
+                        print(f"     ✅ Level 2 通过: {sr_method}")
+                    else:
+                        print(f"     ❌ Level 2 拒绝: {sr_method}")
+                else:
+                    print("     ⚠️ 无 S/R zones 数据，Level 2 不可用")
+
+                if not sr_fallback_used:
+                    # v4.2: Level 3 removed — S/R veto is final (matches production)
+                    proximity_info = ""
+                    if support > 0:
+                        support_dist = ((self.ctx.current_price - support) / self.ctx.current_price) * 100
+                        proximity_info += f" Support=${support:,.0f} ({support_dist:+.1f}%)"
+                    if resistance > 0:
+                        resist_dist = ((resistance - self.ctx.current_price) / self.ctx.current_price) * 100
+                        proximity_info += f" Resistance=${resistance:,.0f} ({resist_dist:+.1f}%)"
+                    print(f"     🚫 SL/TP 全部验证失败, 百分比回退已禁用 (v4.2).{proximity_info}")
+                    print("     🚫 交易被阻止 — 价格可能在 S/R 中间无人区")
+                    final_sl, final_tp = 0.0, 0.0
         else:
-            print("     ⚠️ AI 未提供 SL/TP，使用 S/R Zone 技术分析计算")
-            final_sl, final_tp, calc_method = calculate_technical_sltp(
-                side=signal,
-                entry_price=self.ctx.current_price,
-                support=support,
-                resistance=resistance,
-                confidence=confidence,
-                use_support_resistance=use_sr,
-                sl_buffer_pct=sl_buffer,
-            )
-            print(f"     {calc_method}")
+            print("     ⚠️ AI 未提供 SL/TP，尝试 Level 2: calculate_sr_based_sltp()")
+            sr_fallback_used = False
+
+            if self.ctx.sr_zones_data:
+                atr_val = self.ctx.atr_value or 0.0
+                atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5)
+                sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
+                    current_price=self.ctx.current_price,
+                    side=signal,
+                    sr_zones=self.ctx.sr_zones_data,
+                    atr_value=atr_val,
+                    min_rr_ratio=min_rr,
+                    atr_buffer_multiplier=atr_buf_mult,
+                )
+                if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
+                    final_sl, final_tp = sr_sl, sr_tp
+                    sr_fallback_used = True
+                    print(f"     ✅ Level 2 通过: {sr_method}")
+                else:
+                    print(f"     ❌ Level 2 拒绝: {sr_method}")
+            else:
+                print("     ⚠️ 无 S/R zones 数据，Level 2 不可用")
+
+            if not sr_fallback_used:
+                print("     🚫 SL/TP 全部验证失败, 交易被阻止 (v4.2 — S/R veto is final)")
+                final_sl, final_tp = 0.0, 0.0
 
         final_sl = safe_float(final_sl) or 0.0
         final_tp = safe_float(final_tp) or 0.0
