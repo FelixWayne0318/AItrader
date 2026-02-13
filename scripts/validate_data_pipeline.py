@@ -943,12 +943,42 @@ def test_sltp_validation(results: TestResults):
         valid, _, _, reason = validate_multiagent_sltp(
             side='BUY', multi_sl=98000.0, multi_tp=101000.0, entry_price=price
         )
+        expected_rr = (101000 - price) / (price - 98000)  # 1000/2000 = 0.5
+        from strategy.trading_logic import get_min_rr_ratio
+        min_rr_t9 = get_min_rr_ratio()
         if not valid and 'R/R' in reason:
-            results.ok("R/R < 1.5 拒绝", f"reason={reason[:80]}")
+            results.ok("R/R < min 拒绝", f"R/R={expected_rr:.2f}:1 < {min_rr_t9}:1 ✓, {reason[:50]}")
         elif valid:
-            # 可能 R/R 阈值不同, 检查计算
-            rr = (101000 - price) / (price - 98000)
-            results.warn("R/R 验证", f"通过了, R/R={rr:.2f}:1 (可能阈值不同)")
+            results.fail("R/R 验证失败", f"R/R={expected_rr:.2f}:1 < {min_rr_t9}:1 但通过了!")
+
+        # --- R/R 精确计算验证 ---
+        # BUY: risk=entry-sl, reward=tp-entry, R/R=reward/risk
+        valid_rr, _, _, reason_rr = validate_multiagent_sltp(
+            side='BUY', multi_sl=97000.0, multi_tp=104500.0, entry_price=price
+        )
+        computed_rr = (104500.0 - price) / (price - 97000.0)  # 4500/3000 = 1.5
+        if computed_rr >= min_rr_t9 and valid_rr:
+            results.ok("R/R 精确 BUY", f"R/R={computed_rr:.4f}:1 >= {min_rr_t9}:1, 通过 ✓")
+        elif computed_rr >= min_rr_t9 and not valid_rr:
+            results.fail("R/R 精确 BUY", f"R/R={computed_rr:.4f}:1 >= {min_rr_t9}:1 但被拒绝: {reason_rr}")
+        elif computed_rr < min_rr_t9 and not valid_rr:
+            results.ok("R/R 精确 BUY", f"R/R={computed_rr:.4f}:1 < {min_rr_t9}:1, 拒绝 ✓")
+        else:
+            results.fail("R/R 精确 BUY", f"R/R={computed_rr:.4f}:1, valid={valid_rr}")
+
+        # SELL: risk=sl-entry, reward=entry-tp, R/R=reward/risk
+        valid_rr2, _, _, reason_rr2 = validate_multiagent_sltp(
+            side='SELL', multi_sl=103000.0, multi_tp=95500.0, entry_price=price
+        )
+        computed_rr2 = (price - 95500.0) / (103000.0 - price)  # 4500/3000 = 1.5
+        if computed_rr2 >= min_rr_t9 and valid_rr2:
+            results.ok("R/R 精确 SELL", f"R/R={computed_rr2:.4f}:1 >= {min_rr_t9}:1, 通过 ✓")
+        elif computed_rr2 >= min_rr_t9 and not valid_rr2:
+            results.fail("R/R 精确 SELL", f"R/R={computed_rr2:.4f}:1 >= {min_rr_t9}:1 但被拒绝: {reason_rr2}")
+        elif computed_rr2 < min_rr_t9 and not valid_rr2:
+            results.ok("R/R 精确 SELL", f"R/R={computed_rr2:.4f}:1 < {min_rr_t9}:1, 拒绝 ✓")
+        else:
+            results.fail("R/R 精确 SELL", f"R/R={computed_rr2:.4f}:1, valid={valid_rr2}")
 
         # --- SL/TP 为 None ---
         valid, _, _, reason = validate_multiagent_sltp(
@@ -2119,130 +2149,369 @@ def test_sr_based_sltp(results: TestResults):
     - Test 9: AI SL/TP R/R 门槛验证 (纯数值校验)
     - Test 21: S/R zone 迭代 + ATR buffer + Measured Move + R/R 过滤
 
-    覆盖:
-    1. LONG: 支撑做 SL anchor, 阻力做 TP target, ATR buffer
-    2. SHORT: 阻力做 SL anchor, 支撑做 TP target
-    3. R/R < min_rr → 拒绝 (返回 None)
-    4. 无 S/R zone → 拒绝 (无百分比回退, v4.2)
-    5. ATR=0 → 使用 0.5% price fallback buffer
-    6. 动态重评估: SL 只能向有利方向移动 (模拟 _reevaluate_sltp_for_existing_position)
+    Oracle 测试覆盖 (精确值断言):
+    1. ATR buffer 精确公式: SL = anchor - ATR * buffer_mult
+    2. Zone 选择: 最强 zone 被选为 SL anchor (score 排序)
+    3. Measured Move 公式: target = nearest_tp ± box_height
+    4. R/R 精确计算: reward/risk 必须与手算一致
+    5. ATR=0 fallback: buffer = price * 0.005
+    6. 动态重评估: SL 有利方向 + 阈值
     """
     print("\n─── Test 21: S/R-based SL/TP 计算 (生产 Level 2) ───")
 
     try:
-        from utils.sr_sltp_calculator import calculate_sr_based_sltp
-        from utils.sr_zone_calculator import SRZone
+        from utils.sr_sltp_calculator import (
+            calculate_sr_based_sltp,
+            _select_sl_anchor,
+            _collect_tp_candidates,
+            _measured_move_target,
+        )
+        from utils.sr_zone_calculator import SRZone, SRSourceType
         from strategy.trading_logic import get_min_rr_ratio
 
         price = 100000.0
         min_rr = get_min_rr_ratio()
+        ATR = 2000.0
+        BUF_MULT = 0.5
 
-        # Build mock S/R zones with proper SRZone dataclass
-        support_zone = SRZone(
+        # ================================================================
+        # Build mock zones with KNOWN properties for deterministic testing
+        # ================================================================
+        # Support: STRUCTURAL, HIGH strength, has swing, touch_count=3
+        support_strong = SRZone(
             price_low=96800, price_high=97200, price_center=97000,
-            side='support', strength='HIGH', sources=['SMA_200', 'Swing_Low'],
+            side='support', strength='HIGH', sources=['Swing_Low'],
             total_weight=3.0, distance_pct=3.0, has_order_wall=False, wall_size_btc=0,
+            source_type=SRSourceType.STRUCTURAL,
+            touch_count=3, has_swing_point=True,
         )
+        # Support: PROJECTED, MEDIUM strength, no swing, touch_count=0 (weaker)
+        support_weak = SRZone(
+            price_low=95800, price_high=96200, price_center=96000,
+            side='support', strength='MEDIUM', sources=['Pivot_S1'],
+            total_weight=1.5, distance_pct=4.0, has_order_wall=False, wall_size_btc=0,
+            source_type=SRSourceType.PROJECTED,
+            touch_count=0, has_swing_point=False,
+        )
+        # Resistance: STRUCTURAL, HIGH, with swing, touch=2
         resistance_zone = SRZone(
             price_low=104800, price_high=105200, price_center=105000,
-            side='resistance', strength='HIGH', sources=['BB_Upper', 'Swing_High'],
+            side='resistance', strength='HIGH', sources=['Swing_High'],
             total_weight=3.0, distance_pct=5.0, has_order_wall=False, wall_size_btc=0,
+            source_type=SRSourceType.STRUCTURAL,
+            touch_count=2, has_swing_point=True,
         )
+
         sr_zones = {
-            'support_zones': [support_zone],
+            'support_zones': [support_strong, support_weak],
             'resistance_zones': [resistance_zone],
-            'nearest_support': support_zone,
+            'nearest_support': support_strong,
             'nearest_resistance': resistance_zone,
         }
 
-        # --- Case 1: LONG with good R/R ---
+        # ================================================================
+        # Case 1: ATR buffer 精确公式 (ATR≠0)
+        # Formula: SL = sl_anchor - ATR * buffer_mult
+        # sl_anchor = support_strong.price_center = 97000 (strongest by score)
+        # SL = 97000 - 2000 * 0.5 = 96000
+        # TP = resistance_zone.price_center = 105000 (nearest resistance)
+        # risk = 100000 - 96000 = 4000
+        # reward = 105000 - 100000 = 5000
+        # R/R = 5000 / 4000 = 1.25:1 — may fail min_rr if 1.5
+        # ================================================================
         sl, tp, method = calculate_sr_based_sltp(
             current_price=price, side='BUY', sr_zones=sr_zones,
-            atr_value=2000.0, min_rr_ratio=min_rr, atr_buffer_multiplier=0.5,
+            atr_value=ATR, min_rr_ratio=min_rr, atr_buffer_multiplier=BUF_MULT,
         )
-        if sl and tp and sl < price and tp > price:
-            rr = (tp - price) / (price - sl)
-            if rr >= min_rr:
-                results.ok("LONG S/R SL/TP", f"SL=${sl:,.0f} TP=${tp:,.0f} R/R={rr:.2f}:1")
+
+        expected_sl_anchor = 97000.0
+        expected_buffer = ATR * BUF_MULT  # 1000
+        expected_sl = expected_sl_anchor - expected_buffer  # 96000
+        expected_risk = price - expected_sl  # 4000
+        expected_tp_direct = 105000.0
+        expected_rr_direct = (expected_tp_direct - price) / expected_risk  # 5000/4000 = 1.25
+
+        if expected_rr_direct >= min_rr:
+            # Direct TP passes R/R — check exact SL
+            if sl and abs(sl - expected_sl) < 1.0:
+                results.ok("ATR buffer 精确值", f"SL=${sl:,.0f} = {expected_sl_anchor:,.0f} - {ATR}×{BUF_MULT} ✓")
+            elif sl:
+                results.fail("ATR buffer 精确值", f"SL=${sl:,.0f} ≠ 预期${expected_sl:,.0f}")
             else:
-                results.fail("LONG R/R 不达标", f"R/R={rr:.2f}:1 < {min_rr}:1")
+                results.fail("ATR buffer 精确值", f"返回 None: {method}")
         else:
-            results.fail("LONG S/R SL/TP", f"SL={sl}, TP={tp}, method={method}")
+            # Direct TP R/R insufficient → Measured Move should kick in
+            # Measured Move: box_height = |105000 - 97000| = 8000
+            # target = 105000 + 8000 = 113000
+            # R/R_mm = (113000 - 100000) / 4000 = 3.25
+            expected_mm_target = expected_tp_direct + abs(expected_tp_direct - expected_sl_anchor)
+            expected_rr_mm = (expected_mm_target - price) / expected_risk
 
-        # --- Case 2: SHORT with good R/R ---
-        sl, tp, method = calculate_sr_based_sltp(
-            current_price=price, side='SELL', sr_zones=sr_zones,
-            atr_value=2000.0, min_rr_ratio=min_rr, atr_buffer_multiplier=0.5,
+            if expected_rr_mm >= min_rr:
+                # Measured Move should save the trade
+                if sl and abs(sl - expected_sl) < 1.0:
+                    results.ok("ATR buffer 精确值", f"SL=${sl:,.0f} = {expected_sl_anchor:,.0f} - {ATR}×{BUF_MULT} ✓")
+                elif sl:
+                    results.fail("ATR buffer 精确值", f"SL=${sl:,.0f} ≠ 预期${expected_sl:,.0f}")
+                else:
+                    results.fail("ATR buffer 精确值", f"返回 None (Measured Move 也失败?): {method}")
+
+                if tp and abs(tp - expected_mm_target) < 1.0:
+                    results.ok("Measured Move TP 精确值",
+                               f"TP=${tp:,.0f} = {expected_tp_direct:,.0f} + box({abs(expected_tp_direct - expected_sl_anchor):,.0f}) ✓")
+                elif tp:
+                    # Could be the direct TP if R/R edge case
+                    results.warn("TP 值偏差", f"TP=${tp:,.0f} (预期 MM=${expected_mm_target:,.0f} 或 direct={expected_tp_direct:,.0f})")
+                else:
+                    results.fail("Measured Move TP", f"返回 None: {method}")
+            else:
+                # Both paths fail → should reject
+                if sl is None and tp is None:
+                    results.ok("R/R 全路径拒绝", f"{method}")
+                else:
+                    results.fail("应全部拒绝", f"但 SL={sl}, TP={tp}")
+
+        # Verify R/R precision if we got valid SL/TP
+        if sl and tp and sl < price:
+            actual_rr = (tp - price) / (price - sl)
+            if actual_rr >= min_rr:
+                results.ok("R/R 精确计算", f"R/R={actual_rr:.4f}:1 >= {min_rr}:1")
+            else:
+                results.fail("R/R 精确计算", f"R/R={actual_rr:.4f}:1 < {min_rr}:1")
+
+        # ================================================================
+        # Case 2: Zone 选择 — 最强 zone 被选为 SL anchor (不是最近的)
+        # support_strong: HIGH/STRUCTURAL/touch=3/swing=True → 高 score
+        # support_weak: MEDIUM/PROJECTED/touch=0/swing=False → 低 score
+        # 即使 support_weak 更远，也不应被选中
+        # ================================================================
+        anchor = _select_sl_anchor(
+            zones=[support_strong, support_weak],
+            current_price=price,
+            is_long=True,
+            atr_value=ATR,
         )
-        if sl and tp and sl > price and tp < price:
-            rr = (price - tp) / (sl - price)
-            # Note: SHORT may not pass R/R if zone distances are asymmetric
-            results.ok("SHORT S/R SL/TP", f"SL=${sl:,.0f} TP=${tp:,.0f} R/R={rr:.2f}:1")
-        elif sl is None and tp is None:
-            results.ok("SHORT S/R 拒绝 (R/R 不足)", f"{method}")
+        if anchor and anchor == support_strong.price_center:
+            results.ok("Zone 选择 (最强 anchor)", f"选中 ${anchor:,.0f} (STRUCTURAL/HIGH/swing/touch=3)")
+        elif anchor and anchor == support_weak.price_center:
+            results.fail("Zone 选择", f"选中弱 zone ${anchor:,.0f} 而非强 zone ${support_strong.price_center:,.0f}")
         else:
-            results.fail("SHORT S/R SL/TP", f"SL={sl}, TP={tp}, method={method}")
+            results.fail("Zone 选择", f"anchor={anchor}")
 
-        # --- Case 3: R/R too low → rejection ---
+        # ================================================================
+        # Case 3: Zone 选择 — SHORT 方向 (阻力做 SL anchor)
+        # ================================================================
+        resistance_strong = SRZone(
+            price_low=103800, price_high=104200, price_center=104000,
+            side='resistance', strength='HIGH', sources=['Swing_High'],
+            total_weight=3.0, distance_pct=4.0, has_order_wall=False, wall_size_btc=0,
+            source_type=SRSourceType.STRUCTURAL,
+            touch_count=3, has_swing_point=True,
+        )
+        resistance_weak = SRZone(
+            price_low=106800, price_high=107200, price_center=107000,
+            side='resistance', strength='LOW', sources=['Round_Number'],
+            total_weight=1.0, distance_pct=7.0, has_order_wall=False, wall_size_btc=0,
+            source_type=SRSourceType.PSYCHOLOGICAL,
+            touch_count=0, has_swing_point=False,
+        )
+        anchor_short = _select_sl_anchor(
+            zones=[resistance_weak, resistance_strong],  # reversed order to test scoring
+            current_price=price,
+            is_long=False,
+            atr_value=ATR,
+        )
+        if anchor_short and anchor_short == resistance_strong.price_center:
+            results.ok("Zone 选择 SHORT", f"选中 ${anchor_short:,.0f} (STRUCTURAL 强于 PSYCHOLOGICAL)")
+        elif anchor_short:
+            results.fail("Zone 选择 SHORT", f"选中 ${anchor_short:,.0f} 而非 ${resistance_strong.price_center:,.0f}")
+        else:
+            results.fail("Zone 选择 SHORT", "anchor=None")
+
+        # ================================================================
+        # Case 4: Measured Move 公式精确验证
+        # box_height = |nearest_tp - sl_anchor|
+        # LONG: target = nearest_tp + box_height
+        # SHORT: target = nearest_tp - box_height
+        # ================================================================
+        sl_anchor_mm = 97000.0
+        nearest_tp_mm = 105000.0
+        # box_height = |105000 - 97000| = 8000
+        # LONG target = 105000 + 8000 = 113000
+        mm_long = _measured_move_target(price, sl_anchor_mm, nearest_tp_mm, is_long=True)
+        expected_mm_long = nearest_tp_mm + abs(nearest_tp_mm - sl_anchor_mm)
+        if mm_long and abs(mm_long - expected_mm_long) < 1.0:
+            results.ok("Measured Move LONG 精确值",
+                       f"${mm_long:,.0f} = {nearest_tp_mm:,.0f} + |{nearest_tp_mm:,.0f}-{sl_anchor_mm:,.0f}| ✓")
+        elif mm_long:
+            results.fail("Measured Move LONG", f"${mm_long:,.0f} ≠ 预期${expected_mm_long:,.0f}")
+        else:
+            results.fail("Measured Move LONG", "返回 None")
+
+        # SHORT: sl_anchor=104000, nearest_tp=97000
+        # box_height = |97000 - 104000| = 7000
+        # target = 97000 - 7000 = 90000
+        sl_anchor_short = 104000.0
+        nearest_tp_short = 97000.0
+        mm_short = _measured_move_target(price, sl_anchor_short, nearest_tp_short, is_long=False)
+        expected_mm_short = nearest_tp_short - abs(nearest_tp_short - sl_anchor_short)
+        if mm_short and abs(mm_short - expected_mm_short) < 1.0:
+            results.ok("Measured Move SHORT 精确值",
+                       f"${mm_short:,.0f} = {nearest_tp_short:,.0f} - |{nearest_tp_short:,.0f}-{sl_anchor_short:,.0f}| ✓")
+        elif mm_short:
+            results.fail("Measured Move SHORT", f"${mm_short:,.0f} ≠ 预期${expected_mm_short:,.0f}")
+        else:
+            results.fail("Measured Move SHORT", "返回 None")
+
+        # ================================================================
+        # Case 5: TP 候选排序验证 (nearest first, quality tiebreak)
+        # ================================================================
+        res_near = SRZone(
+            price_low=102800, price_high=103200, price_center=103000,
+            side='resistance', strength='MEDIUM', sources=['Pivot_R1'],
+            total_weight=1.5, distance_pct=3.0, has_order_wall=False, wall_size_btc=0,
+            source_type=SRSourceType.PROJECTED,
+        )
+        res_far = SRZone(
+            price_low=109800, price_high=110200, price_center=110000,
+            side='resistance', strength='HIGH', sources=['Swing_High'],
+            total_weight=3.0, distance_pct=10.0, has_order_wall=False, wall_size_btc=0,
+            source_type=SRSourceType.STRUCTURAL,
+        )
+        candidates = _collect_tp_candidates([res_far, res_near], price, is_long=True)
+        if len(candidates) >= 2 and candidates[0] == 103000.0 and candidates[1] == 110000.0:
+            results.ok("TP 候选排序 (nearest first)", f"[{candidates[0]:,.0f}, {candidates[1]:,.0f}] ✓")
+        elif len(candidates) >= 2:
+            results.fail("TP 候选排序", f"[{candidates[0]:,.0f}, {candidates[1]:,.0f}], 预期 [103000, 110000]")
+        else:
+            results.fail("TP 候选排序", f"candidates={candidates}")
+
+        # ================================================================
+        # Case 6: R/R 精确边界测试
+        # 构造刚好 R/R = min_rr (边界) 的场景
+        # SL anchor = 97000, buffer = 1000 → SL = 96000, risk = 4000
+        # 需要 reward = 4000 * min_rr = 6000 → TP = 106000
+        # ================================================================
+        exact_rr_resistance = SRZone(
+            price_low=105800, price_high=106200, price_center=106000,
+            side='resistance', strength='HIGH', sources=['Swing_High'],
+            total_weight=3.0, distance_pct=6.0, has_order_wall=False, wall_size_btc=0,
+            source_type=SRSourceType.STRUCTURAL, touch_count=2, has_swing_point=True,
+        )
+        exact_rr_zones = {
+            'support_zones': [support_strong],
+            'resistance_zones': [exact_rr_resistance],
+            'nearest_support': support_strong,
+            'nearest_resistance': exact_rr_resistance,
+        }
+        sl_e, tp_e, method_e = calculate_sr_based_sltp(
+            current_price=price, side='BUY', sr_zones=exact_rr_zones,
+            atr_value=ATR, min_rr_ratio=min_rr, atr_buffer_multiplier=BUF_MULT,
+        )
+        if sl_e and tp_e:
+            actual_rr_e = (tp_e - price) / (price - sl_e)
+            # Expected: risk=4000, reward=6000 → R/R=1.5 (exactly min_rr)
+            expected_rr_e = (106000 - price) / (price - expected_sl)
+            if abs(actual_rr_e - expected_rr_e) < 0.01:
+                results.ok("R/R 边界精确值", f"R/R={actual_rr_e:.4f}:1 ≈ {expected_rr_e:.4f}:1 ✓")
+            else:
+                results.fail("R/R 边界精确值", f"R/R={actual_rr_e:.4f}:1 ≠ 预期{expected_rr_e:.4f}:1")
+        elif sl_e is None:
+            # Might fail if min_rr is slightly above 1.5
+            results.warn("R/R 边界", f"被拒绝: {method_e} (min_rr={min_rr})")
+
+        # ================================================================
+        # Case 7: R/R too low → rejection
+        # ================================================================
         close_resistance = SRZone(
             price_low=100800, price_high=101200, price_center=101000,
             side='resistance', strength='MEDIUM', sources=['SMA_50'],
             total_weight=1.5, distance_pct=1.0, has_order_wall=False, wall_size_btc=0,
         )
         poor_rr_zones = {
-            'support_zones': [support_zone],
+            'support_zones': [support_strong],
             'resistance_zones': [close_resistance],
-            'nearest_support': support_zone,
+            'nearest_support': support_strong,
             'nearest_resistance': close_resistance,
         }
-        sl, tp, method = calculate_sr_based_sltp(
+        sl_r, tp_r, method_r = calculate_sr_based_sltp(
             current_price=price, side='BUY', sr_zones=poor_rr_zones,
-            atr_value=2000.0, min_rr_ratio=min_rr,
+            atr_value=ATR, min_rr_ratio=min_rr,
         )
-        if sl is None and tp is None:
-            results.ok("R/R 不足拒绝", f"{method}")
+        if sl_r is None and tp_r is None:
+            results.ok("R/R 不足拒绝", f"{method_r}")
         else:
-            rr = (tp - price) / (price - sl) if sl and tp and sl < price else 0
-            results.warn("R/R 不足未拒绝", f"SL={sl}, TP={tp}, R/R={rr:.2f}")
+            rr_r = (tp_r - price) / (price - sl_r) if sl_r and tp_r and sl_r < price else 0
+            results.fail("R/R 不足应拒绝", f"SL={sl_r}, TP={tp_r}, R/R={rr_r:.2f}")
 
-        # --- Case 4: No S/R zones → rejection (v4.2: no percentage fallback) ---
+        # ================================================================
+        # Case 8: No S/R zones → rejection (v4.2: no percentage fallback)
+        # ================================================================
         empty_zones = {
             'support_zones': [], 'resistance_zones': [],
             'nearest_support': None, 'nearest_resistance': None,
         }
-        sl, tp, method = calculate_sr_based_sltp(
+        sl_n, tp_n, method_n = calculate_sr_based_sltp(
             current_price=price, side='BUY', sr_zones=empty_zones,
-            atr_value=2000.0, min_rr_ratio=min_rr,
+            atr_value=ATR, min_rr_ratio=min_rr,
         )
-        if sl is None and tp is None:
-            results.ok("空 S/R zones 拒绝", f"{method}")
+        if sl_n is None and tp_n is None:
+            results.ok("空 S/R zones 拒绝", f"{method_n}")
         else:
-            results.fail("空 S/R zones 应拒绝", f"但返回 SL={sl}, TP={tp}")
+            results.fail("空 S/R zones 应拒绝", f"但返回 SL={sl_n}, TP={tp_n}")
 
-        # --- Case 5: ATR=0 → uses 0.5% price fallback buffer ---
-        sl, tp, method = calculate_sr_based_sltp(
+        # ================================================================
+        # Case 9: ATR=0 → uses 0.5% price fallback buffer (精确值)
+        # buffer = price * 0.005 = 500
+        # SL = 97000 - 500 = 96500
+        # ================================================================
+        sl_0, tp_0, method_0 = calculate_sr_based_sltp(
             current_price=price, side='BUY', sr_zones=sr_zones,
             atr_value=0.0, min_rr_ratio=min_rr,
         )
-        if sl and tp:
-            # Buffer should be price * 0.005 = 500
-            expected_buffer = price * 0.005
-            sl_anchor = support_zone.price_center  # 97000
-            expected_sl = sl_anchor - expected_buffer  # 96500
-            if abs(sl - expected_sl) < 100:  # tolerance
-                results.ok("ATR=0 fallback buffer", f"SL=${sl:,.0f} (预期≈${expected_sl:,.0f})")
+        if sl_0 and tp_0:
+            expected_buffer_0 = price * 0.005  # 500
+            expected_sl_0 = support_strong.price_center - expected_buffer_0  # 96500
+            if abs(sl_0 - expected_sl_0) < 1.0:
+                results.ok("ATR=0 buffer 精确值", f"SL=${sl_0:,.0f} = 97000 - {expected_buffer_0:.0f} ✓")
             else:
-                results.warn("ATR=0 buffer 偏差", f"SL=${sl:,.0f} vs 预期=${expected_sl:,.0f}")
-        elif sl is None:
-            results.warn("ATR=0 拒绝", f"{method}")
+                results.fail("ATR=0 buffer 精确值", f"SL=${sl_0:,.0f} ≠ 预期${expected_sl_0:,.0f}")
+        elif sl_0 is None:
+            results.warn("ATR=0 被拒绝", f"{method_0}")
 
-        # --- Case 6: Dynamic reevaluation — SL favorable direction ---
-        # Simulates _reevaluate_sltp_for_existing_position() logic
+        # ================================================================
+        # Case 10: SHORT 精确 SL 计算
+        # SL anchor = resistance_strong.price_center = 104000
+        # SL = 104000 + 2000 * 0.5 = 105000
+        # TP zones = [support_strong(97000), support_weak(96000)]
+        # nearest TP = support_strong.price_center = 97000
+        # risk = 105000 - 100000 = 5000
+        # reward = 100000 - 97000 = 3000 → R/R = 0.6 < min_rr → iterate
+        # ================================================================
+        short_zones = {
+            'support_zones': [support_strong, support_weak],
+            'resistance_zones': [resistance_strong],
+            'nearest_support': support_strong,
+            'nearest_resistance': resistance_strong,
+        }
+        sl_s, tp_s, method_s = calculate_sr_based_sltp(
+            current_price=price, side='SELL', sr_zones=short_zones,
+            atr_value=ATR, min_rr_ratio=min_rr, atr_buffer_multiplier=BUF_MULT,
+        )
+        expected_sl_short = resistance_strong.price_center + ATR * BUF_MULT  # 104000 + 1000 = 105000
+        if sl_s:
+            if abs(sl_s - expected_sl_short) < 1.0:
+                results.ok("SHORT SL 精确值", f"SL=${sl_s:,.0f} = {resistance_strong.price_center:,.0f} + {ATR}×{BUF_MULT} ✓")
+            else:
+                results.fail("SHORT SL 精确值", f"SL=${sl_s:,.0f} ≠ 预期${expected_sl_short:,.0f}")
+        elif sl_s is None:
+            results.warn("SHORT S/R 拒绝", f"{method_s}")
+
+        # ================================================================
+        # Case 11: 动态重评估 — SL 有利方向 + 阈值
+        # ================================================================
         old_sl_long = 96000.0
-        old_tp_long = 104000.0
-        new_sl_long = 96800.0  # Better SL (higher for LONG)
-        new_tp_long = 105000.0
-
+        new_sl_long = 96800.0
         # LONG: SL can only go UP
         final_sl = max(new_sl_long, old_sl_long)
         if final_sl == new_sl_long:
@@ -2250,7 +2519,7 @@ def test_sr_based_sltp(results: TestResults):
         else:
             results.fail("SL 有利方向 (LONG)", f"预期 {new_sl_long:,.0f}, 实际 {final_sl:,.0f}")
 
-        # LONG: SL cannot go DOWN
+        # SL cannot go DOWN
         worse_sl = 95500.0
         final_sl2 = max(worse_sl, old_sl_long)
         if final_sl2 == old_sl_long:
@@ -2259,22 +2528,28 @@ def test_sr_based_sltp(results: TestResults):
             results.fail("SL 不可向下", f"预期 {old_sl_long:,.0f}, 实际 {final_sl2:,.0f}")
 
         # SHORT: SL can only go DOWN
-        old_sl_short = 104000.0
-        new_sl_short = 103500.0  # Better SL (lower for SHORT)
-        final_sl3 = min(new_sl_short, old_sl_short)
-        if final_sl3 == new_sl_short:
-            results.ok("SL 有利方向 (SHORT↓)", f"min({old_sl_short:,.0f}, {new_sl_short:,.0f}) = {final_sl3:,.0f}")
+        old_sl_short_v = 104000.0
+        new_sl_short_v = 103500.0
+        final_sl3 = min(new_sl_short_v, old_sl_short_v)
+        if final_sl3 == new_sl_short_v:
+            results.ok("SL 有利方向 (SHORT↓)", f"min({old_sl_short_v:,.0f}, {new_sl_short_v:,.0f}) = {final_sl3:,.0f}")
         else:
-            results.fail("SL 有利方向 (SHORT)", f"预期 {new_sl_short:,.0f}, 实际 {final_sl3:,.0f}")
+            results.fail("SL 有利方向 (SHORT)", f"预期 {new_sl_short_v:,.0f}, 实际 {final_sl3:,.0f}")
 
         # Threshold check (0.2% = production default)
         threshold = 0.002
         change = abs(final_sl - old_sl_long) / old_sl_long
+        expected_change = abs(96800.0 - 96000.0) / 96000.0  # = 0.00833...
+        if abs(change - expected_change) < 0.0001:
+            results.ok("阈值变化精确值", f"Δ={change*100:.3f}% = |96800-96000|/96000 ✓")
+        else:
+            results.fail("阈值变化精确值", f"Δ={change*100:.3f}% ≠ 预期{expected_change*100:.3f}%")
+
         should_update = change > threshold
         if should_update:
-            results.ok("动态更新阈值", f"Δ={change*100:.3f}% > {threshold*100:.1f}% → 更新")
+            results.ok("动态更新触发", f"Δ={change*100:.3f}% > {threshold*100:.1f}% → 更新")
         else:
-            results.ok("动态更新阈值", f"Δ={change*100:.3f}% ≤ {threshold*100:.1f}% → 跳过")
+            results.fail("动态更新触发", f"Δ={change*100:.3f}% 应 > {threshold*100:.1f}%")
 
     except ImportError as e:
         results.warn("sr_sltp_calculator 导入失败", str(e))

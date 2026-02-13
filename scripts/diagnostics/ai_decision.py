@@ -1377,9 +1377,10 @@ class OrderSimulator(DiagnosticStep):
         print(f"     sl_trigger_price: ${final_sl:,.2f}")
         print(f"     tp_price: ${final_tp:,.2f}")
 
-        # Risk/reward analysis
+        # Risk/reward analysis + structural integrity assertions
         if final_sl > 0 and final_tp > 0:
-            if signal in ['BUY', 'LONG']:
+            is_long = signal in ['BUY', 'LONG']
+            if is_long:
                 sl_pct = ((self.ctx.current_price - final_sl) / self.ctx.current_price) * 100
                 tp_pct = ((final_tp - self.ctx.current_price) / self.ctx.current_price) * 100
             else:
@@ -1407,6 +1408,72 @@ class OrderSimulator(DiagnosticStep):
 
             print(f"     最大亏损: ${quantity * self.ctx.current_price * sl_pct / 100:,.2f}")
             print(f"     最大盈利: ${quantity * self.ctx.current_price * tp_pct / 100:,.2f}")
+
+            # ── Structural integrity assertions (v5.1) ──
+            # These catch magnitude errors that display-only output cannot detect
+            print()
+            print("  🔍 结构完整性断言:")
+            assertion_errors = []
+
+            # Assert 1: SL on correct side of price
+            if is_long and final_sl >= self.ctx.current_price:
+                assertion_errors.append(f"LONG SL=${final_sl:,.2f} >= entry=${self.ctx.current_price:,.2f}")
+            elif not is_long and final_sl <= self.ctx.current_price:
+                assertion_errors.append(f"SHORT SL=${final_sl:,.2f} <= entry=${self.ctx.current_price:,.2f}")
+            else:
+                print("     ✅ SL 方向正确")
+
+            # Assert 2: TP on correct side of price
+            if is_long and final_tp <= self.ctx.current_price:
+                assertion_errors.append(f"LONG TP=${final_tp:,.2f} <= entry=${self.ctx.current_price:,.2f}")
+            elif not is_long and final_tp >= self.ctx.current_price:
+                assertion_errors.append(f"SHORT TP=${final_tp:,.2f} >= entry=${self.ctx.current_price:,.2f}")
+            else:
+                print("     ✅ TP 方向正确")
+
+            # Assert 3: R/R meets minimum threshold
+            if rr_ratio < min_rr:
+                assertion_errors.append(f"R/R={rr_ratio:.4f}:1 < {min_rr}:1 硬性门槛")
+            else:
+                print(f"     ✅ R/R={rr_ratio:.4f}:1 >= {min_rr}:1")
+
+            # Assert 4: SL anchored near S/R zone (not arbitrary percentage)
+            if self.ctx.sr_zones_data:
+                nearest_sr = None
+                if is_long:
+                    ns = self.ctx.sr_zones_data.get('nearest_support')
+                    if ns and hasattr(ns, 'price_center'):
+                        nearest_sr = ns.price_center
+                else:
+                    nr = self.ctx.sr_zones_data.get('nearest_resistance')
+                    if nr and hasattr(nr, 'price_center'):
+                        nearest_sr = nr.price_center
+
+                if nearest_sr and nearest_sr > 0:
+                    atr_val = self.ctx.atr_value or self.ctx.current_price * 0.005
+                    sl_to_zone_dist = abs(final_sl - nearest_sr)
+                    max_acceptable_dist = atr_val * 2  # SL should be within 2x ATR of zone
+                    if sl_to_zone_dist <= max_acceptable_dist:
+                        print(f"     ✅ SL 锚定 S/R zone (距离=${sl_to_zone_dist:,.0f}, zone=${nearest_sr:,.0f})")
+                    else:
+                        assertion_errors.append(
+                            f"SL=${final_sl:,.0f} 距 S/R zone ${nearest_sr:,.0f} "
+                            f"= ${sl_to_zone_dist:,.0f} > {max_acceptable_dist:,.0f} (2×ATR)")
+
+            # Assert 5: SL distance sanity (not too far, not too close)
+            if sl_pct < 0.5:
+                assertion_errors.append(f"SL 距离仅 {sl_pct:.2f}% — 过近，可能立即触发")
+            elif sl_pct > 10:
+                assertion_errors.append(f"SL 距离 {sl_pct:.2f}% — 过远，风险过大")
+            else:
+                print(f"     ✅ SL 距离合理 ({sl_pct:.2f}%)")
+
+            if assertion_errors:
+                for err in assertion_errors:
+                    print(f"     ❌ ASSERTION FAILED: {err}")
+                print(f"  ⚠️ {len(assertion_errors)} 个结构断言失败 — SL/TP 可能有计算错误")
+            else:
+                print("     ✅ 全部结构断言通过")
 
         print()
         print("  ✅ 订单提交流程模拟完成")
