@@ -2188,11 +2188,25 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         # Format recent bars (raw data only, AI infers trend)
         recent_str = ", ".join([f"{r:.1%}" for r in recent_bars]) if recent_bars else "N/A"
 
+        # v5.1: Compute buy ratio range statistics for microstructure analysis
+        # Helps AI detect: compression (low range → breakout imminent),
+        # anomalies (extreme values → potential spoofing/wash), one-sided flow
+        range_stats = ""
+        if recent_bars and len(recent_bars) >= 3:
+            br_min = min(recent_bars)
+            br_max = max(recent_bars)
+            br_range = br_max - br_min
+            br_std = (sum((r - buy_ratio) ** 2 for r in recent_bars) / len(recent_bars)) ** 0.5
+            range_stats = (
+                f"- Buy Ratio Range: {br_min:.1%}-{br_max:.1%} "
+                f"(spread={br_range:.1%}, stddev={br_std:.1%})\n"
+            )
+
         # v3.24: Added CVD Trend (was missing — critical confirmation signal)
         return f"""
 ORDER FLOW (Binance Taker Data):
 - Buy Ratio (10-bar avg): {buy_ratio:.1%}
-- CVD Trend: {cvd_trend}
+{range_stats}- CVD Trend: {cvd_trend}
 - Volume (USDT): ${volume_usdt:,.0f}
 - Avg Trade Size: ${avg_trade:,.0f} USDT
 - Trade Count: {trades_count:,}
