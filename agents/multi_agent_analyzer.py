@@ -1223,10 +1223,16 @@ Judge 建议 {action} → 你的任务:
 - LONG: SL 在最近 SUPPORT 下方, TP 在最近 RESISTANCE
 - SHORT: SL 在最近 RESISTANCE 上方, TP 在最近 SUPPORT
 - 优先选择 HIGH 强度或有 ORDER_FLOW 确认的 zone
-- 最小 SL 距离 0.5-1%，避免噪音触发止损
+- ‼️ 最小 SL 距离 ≥ 1.0% (硬性门槛，低于此值会被系统拒绝)
 - 参考 S/R Zone Proximity Alert（如有）作为 SL/TP 选择参考
 - ‼️ **必须在 sl_zone 和 tp_zone 中标注你选择的 S/R zone** (如 "S1 $68,386 (HIGH)")
 - ‼️ **必须在 rr_calculation 中展示计算过程** (如 "Risk=$500, Reward=$1,200, R/R=2.4:1")
+
+⚠️ **S/R ZONE 宽度预检**:
+- 计算最近 Support 和 Resistance 之间的价差百分比
+- 如果 S/R 范围 < 2.5% 且价格在中间 → R/R 几乎不可能达标 → **直接 HOLD**
+- 不要在窄幅 S/R 区间内强行设定 SL/TP，这会导致 SL 距离 < 1.0% 被系统拒绝
+- 宁可 HOLD 等待价格接近 S/R zone 后再入场
 
 ### STEP 2: 评估 Risk/Reward
 计算: Risk = |current_price - stop_loss|, Reward = |take_profit - current_price|, R/R = Reward / Risk
@@ -1384,20 +1390,22 @@ R/R 与价格位置的关系：
             decision["debate_rounds"] = self.debate_rounds
             decision["judge_decision"] = proposed_action
 
-            # v4.15: Reask mechanism — validate R/R before accepting SL/TP
-            # Three-tier constraint model:
-            #   Tier 1 (hard): R/R < 1.0 → skip reask, downstream hard gate rejects
-            #   Tier 2 (soft): R/R 1.0~1.5 → reask once with specific feedback
-            #   Tier 3 (pass): R/R >= 1.5 → accept as-is
+            # v4.16: Reask mechanism — validate R/R before accepting SL/TP
+            # Two-tier constraint model:
+            #   Tier 1 (reask): R/R < 1.5 → reask once with specific feedback
+            #   Tier 2 (pass): R/R >= 1.5 → accept as-is
+            # Changed from v4.15: R/R < 1.0 now also triggers reask instead of
+            # being silently skipped. This gives AI a chance to self-correct or
+            # switch to HOLD, rather than wasting the signal.
             signal = decision.get("signal", "HOLD").upper()
             if signal in ("LONG", "SHORT", "BUY", "SELL"):
                 rr_ratio = self._compute_rr_ratio(decision, current_price)
                 decision["computed_rr"] = round(rr_ratio, 2)
 
-                if 1.0 <= rr_ratio < 1.5:
+                if 0 < rr_ratio < 1.5:
                     self.logger.info(
-                        f"📊 R/R {rr_ratio:.2f}:1 is in reask zone (1.0-1.5). "
-                        f"Attempting reask for better SL/TP placement."
+                        f"📊 R/R {rr_ratio:.2f}:1 < 1.5 — attempting reask for "
+                        f"better SL/TP placement or HOLD decision."
                     )
                     decision = self._reask_rm_sltp(
                         decision=decision,
@@ -1410,11 +1418,6 @@ R/R 与价格位置的关系：
                     decision.setdefault("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                     decision.setdefault("debate_rounds", self.debate_rounds)
                     decision.setdefault("judge_decision", proposed_action)
-                elif rr_ratio < 1.0 and rr_ratio > 0:
-                    self.logger.info(
-                        f"📊 R/R {rr_ratio:.2f}:1 < 1.0 — too low for reask, "
-                        f"downstream validate_multiagent_sltp() will handle fallback."
-                    )
                 elif rr_ratio >= 1.5:
                     self.logger.info(f"📊 R/R {rr_ratio:.2f}:1 — passes threshold, no reask needed.")
 
@@ -1480,12 +1483,11 @@ R/R 与价格位置的关系：
         sr_zones_summary: str,
     ) -> Dict[str, Any]:
         """
-        Reask the Risk Manager with specific feedback when R/R is suboptimal (1.0-1.5).
+        Reask the Risk Manager with specific feedback when R/R is suboptimal (< 1.5).
 
-        This implements the "Validated Soft Constraint" tier:
+        This implements the reask tier:
         - R/R >= 1.5: pass through (no reask needed)
-        - R/R 1.0 ~ 1.5: reask once with specific error feedback
-        - R/R < 1.0: skip reask, let downstream hard gate handle it
+        - R/R < 1.5: reask once with specific error feedback (AI can fix or switch to HOLD)
 
         Parameters
         ----------
