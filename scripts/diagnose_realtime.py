@@ -136,7 +136,12 @@ Examples:
     parser.add_argument(
         '--push',
         action='store_true',
-        help='导出并推送到 GitHub'
+        help='导出并推送到 GitHub (默认推到 main 分支)'
+    )
+    parser.add_argument(
+        '--push-branch',
+        default='main',
+        help='推送目标分支 (default: main)'
     )
     parser.add_argument(
         '--env',
@@ -154,7 +159,8 @@ Examples:
         env=args.env,
         summary_mode=args.summary,
         export_mode=export_mode,
-        push_to_github=args.push
+        push_to_github=args.push,
+        push_branch=args.push_branch,
     )
 
     # ── Phase 0: Service Health ──

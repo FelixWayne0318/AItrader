@@ -274,6 +274,7 @@ class DiagnosticContext:
     summary_mode: bool = False
     export_mode: bool = False
     push_to_github: bool = False
+    push_branch: str = "main"  # Default push target (server should push to main)
 
     # Project paths
     project_root: Path = field(default_factory=lambda: Path(__file__).parent.parent.parent)
@@ -437,13 +438,15 @@ class DiagnosticRunner:
         env: str = "production",
         summary_mode: bool = False,
         export_mode: bool = False,
-        push_to_github: bool = False
+        push_to_github: bool = False,
+        push_branch: str = "main",
     ):
         self.ctx = DiagnosticContext(
             env=env,
             summary_mode=summary_mode,
             export_mode=export_mode,
-            push_to_github=push_to_github
+            push_to_github=push_to_github,
+            push_branch=push_branch,
         )
         self.steps: List[DiagnosticStep] = []
 
@@ -654,33 +657,49 @@ class DiagnosticRunner:
             f.write("=" * 80 + "\n")
 
     def _push_to_github_multi(self, filepaths: list) -> None:
-        """Push multiple export files to GitHub in a single commit."""
+        """Push multiple export files to GitHub in a single commit.
+
+        Uses ctx.push_branch (default: 'main') as target branch instead of
+        auto-detecting HEAD. This prevents failures when the server happens
+        to be on a feature branch (e.g. claude/* branches with session ID
+        restrictions).
+        """
         import subprocess
 
         filenames = [fp.name for fp in filepaths if fp.exists()]
         commit_msg = f"chore: Add diagnosis report + AI call trace ({', '.join(filenames)})"
+        branch = self.ctx.push_branch
+
         try:
             os.chdir(self.ctx.project_root)
+
+            # Ensure we're on the target branch before committing
+            current_branch = subprocess.run(
+                ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                capture_output=True, text=True, check=True
+            ).stdout.strip()
+
+            if current_branch != branch:
+                print(f"  ℹ️  当前分支 {current_branch} ≠ 目标 {branch}，切换中...")
+                subprocess.run(['git', 'checkout', branch], check=True, capture_output=True)
 
             for fp in filepaths:
                 if fp.exists():
                     subprocess.run(['git', 'add', '-f', str(fp)], check=True, capture_output=True)
 
             subprocess.run(['git', 'commit', '-m', commit_msg], check=True, capture_output=True)
-
-            result = subprocess.run(
-                ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                capture_output=True, text=True, check=True
-            )
-            branch = result.stdout.strip()
-
             subprocess.run(['git', 'push', '-u', 'origin', branch], check=True, capture_output=True)
 
             print(f"  ✅ 已推送到 GitHub (分支: {branch})")
             for fn in filenames:
                 print(f"  📎 logs/{fn}")
 
+            # Switch back to original branch if we changed
+            if current_branch != branch:
+                subprocess.run(['git', 'checkout', current_branch], check=True, capture_output=True)
+                print(f"  ℹ️  已切回 {current_branch}")
+
         except subprocess.CalledProcessError as e:
             print(f"  ⚠️ Git 推送失败: {e}")
             paths_str = ' '.join(str(fp) for fp in filepaths)
-            print(f"     请手动提交: git add -f {paths_str} && git commit && git push")
+            print(f"     请手动提交: git checkout {branch} && git add -f {paths_str} && git commit -m \"{commit_msg}\" && git push")
