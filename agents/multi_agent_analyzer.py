@@ -1871,8 +1871,8 @@ RSI SERIES ({len(rsi_trend)} values):
 MACD SERIES ({len(macd_trend)} values):
 {format_all_values(macd_trend, ".4f")}
 
-VOLUME SERIES ({len(volume_trend)} values, BTC):
-{format_all_values(volume_trend, ",.1f")}
+VOLUME SERIES ({len(volume_trend)} values, USDT):
+{format_all_values([v * p for v, p in zip(volume_trend, price_trend)] if price_trend and len(price_trend) == len(volume_trend) else volume_trend, ",.0f")}
 """
             # v3.24: ADX/DI history (trend strength trajectory)
             adx_trend = historical.get('adx_trend', [])
@@ -2035,8 +2035,9 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         # === Build formatted output ===
         lines = []
 
-        # Header
-        lines.append(f"Side: {side} | Size: {qty:.4f} BTC | Entry: ${avg_px:,.2f}")
+        # Header (v5.4: show notional USDT value for consistent denomination)
+        notional_usd = qty * avg_px if avg_px > 0 else 0
+        lines.append(f"Side: {side} | Size: ${notional_usd:,.0f} ({qty:.4f} BTC) | Entry: ${avg_px:,.2f}")
         lines.append("")
 
         # Performance section
@@ -2526,7 +2527,7 @@ ORDER FLOW (Binance Taker Data):
         data : Dict, optional
             Coinalyze derivatives data (OI, liquidations) + Binance funding rate
         current_price : float
-            Current BTC price for converting liquidations from BTC to USD
+            Current BTC price for converting BTC-denominated data to USDT
         binance_derivatives : Dict, optional
             Binance-specific derivatives (top traders, taker ratio) - v3.0
 
@@ -2551,19 +2552,26 @@ ORDER FLOW (Binance Taker Data):
                     oi_btc = float(oi.get('value', 0) or 0)
                 except (ValueError, TypeError):
                     oi_btc = 0.0
+                oi_usd = oi_btc * current_price if current_price > 0 else 0
                 oi_trend = trends.get('oi_trend', 'N/A')
-                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC (Trend: {oi_trend})")
+                # v5.4: Display in USDT for consistent denomination
+                if oi_usd >= 1e9:
+                    parts.append(f"- Open Interest: ${oi_usd/1e9:.2f}B (Trend: {oi_trend})")
+                else:
+                    parts.append(f"- Open Interest: ${oi_usd/1e6:.1f}M (Trend: {oi_trend})")
 
                 # v5.2: OI hourly history (price divergence analysis)
+                # v5.4: Convert BTC series to USDT for consistent denomination
                 oi_hist = data.get('open_interest_history')
                 if oi_hist and oi_hist.get('history'):
-                    oi_closes = [float(h.get('c', 0)) for h in oi_hist['history']]
-                    if len(oi_closes) >= 2:
-                        oi_series_str = " → ".join([f"{v:,.0f}" for v in oi_closes])
-                        oi_change = oi_closes[-1] - oi_closes[0]
-                        oi_change_pct = (oi_change / oi_closes[0] * 100) if oi_closes[0] != 0 else 0
-                        parts.append(f"  OI History ({len(oi_closes)}h): {oi_series_str}")
-                        parts.append(f"  OI Change: {oi_change:+,.0f} BTC ({oi_change_pct:+.2f}%)")
+                    oi_closes_btc = [float(h.get('c', 0)) for h in oi_hist['history']]
+                    if len(oi_closes_btc) >= 2 and current_price > 0:
+                        oi_closes_usd = [v * current_price for v in oi_closes_btc]
+                        oi_series_str = " → ".join([f"${v/1e9:.2f}B" for v in oi_closes_usd])
+                        oi_change_usd = oi_closes_usd[-1] - oi_closes_usd[0]
+                        oi_change_pct = (oi_change_usd / oi_closes_usd[0] * 100) if oi_closes_usd[0] != 0 else 0
+                        parts.append(f"  OI History ({len(oi_closes_btc)}h): {oi_series_str}")
+                        parts.append(f"  OI Change: ${oi_change_usd/1e6:+,.0f}M ({oi_change_pct:+.2f}%)")
             else:
                 parts.append("- Open Interest: N/A")
 
@@ -2626,23 +2634,25 @@ ORDER FLOW (Binance Taker Data):
                 parts.append("- Funding Rate: N/A")
 
             # Liquidations (v3.24: expanded to 24h with history trend)
+            # v5.4: USDT-primary display for consistent denomination
             liq = data.get('liquidations')
             if liq:
                 history = liq.get('history', [])
                 if history:
                     price_for_conversion = current_price if current_price > 0 else 88000
 
-                    # Calculate 24h totals
+                    # Calculate 24h totals in USDT
                     total_long_btc = sum(float(h.get('l', 0)) for h in history)
                     total_short_btc = sum(float(h.get('s', 0)) for h in history)
-                    total_btc = total_long_btc + total_short_btc
-                    total_usd = total_btc * price_for_conversion
+                    total_long_usd = total_long_btc * price_for_conversion
+                    total_short_usd = total_short_btc * price_for_conversion
+                    total_usd = total_long_usd + total_short_usd
 
-                    parts.append(f"- Liquidations (24h): {total_btc:.4f} BTC (${total_usd:,.0f})")
-                    if total_btc > 0:
-                        long_ratio = total_long_btc / total_btc
-                        parts.append(f"  - Long Liq: {total_long_btc:.4f} BTC ({long_ratio:.0%})")
-                        parts.append(f"  - Short Liq: {total_short_btc:.4f} BTC ({1-long_ratio:.0%})")
+                    parts.append(f"- Liquidations (24h): ${total_usd:,.0f}")
+                    if total_usd > 0:
+                        long_ratio = total_long_usd / total_usd
+                        parts.append(f"  - Long Liq: ${total_long_usd:,.0f} ({long_ratio:.0%})")
+                        parts.append(f"  - Short Liq: ${total_short_usd:,.0f} ({1-long_ratio:.0%})")
 
                     # v3.24: Show hourly history (oldest → newest) for trend
                     if len(history) >= 3:
@@ -2950,14 +2960,13 @@ Reason: {status.get('message', 'Unknown')}
 
         bid_vol_usd = _safe_float(obi.get('bid_volume_usd', 0))
         ask_vol_usd = _safe_float(obi.get('ask_volume_usd', 0))
-        bid_vol_btc = _safe_float(obi.get('bid_volume_btc', 0))
-        ask_vol_btc = _safe_float(obi.get('ask_volume_btc', 0))
 
         parts.append("IMBALANCE:")
         parts.append(f"  Simple OBI: {simple_obi:+.2f}")
         parts.append(f"  Weighted OBI: {weighted_obi:+.2f} (decay={decay_used:.2f}, adaptive)")
-        parts.append(f"  Bid Volume: ${bid_vol_usd/1e6:.1f}M ({bid_vol_btc:.1f} BTC)")
-        parts.append(f"  Ask Volume: ${ask_vol_usd/1e6:.1f}M ({ask_vol_btc:.1f} BTC)")
+        # v5.4: USDT-only display for consistent denomination
+        parts.append(f"  Bid Volume: ${bid_vol_usd/1e6:.1f}M")
+        parts.append(f"  Ask Volume: ${ask_vol_usd/1e6:.1f}M")
         parts.append("")
 
         # ========== DYNAMICS Section (v2.0 Critical) ==========
@@ -3031,14 +3040,19 @@ Reason: {status.get('message', 'Unknown')}
             parts.append(f"ANOMALIES (threshold={threshold:.1f}x, {threshold_reason}):")
             for anom in bid_anomalies[:3]:  # Show up to 3 per side
                 price = _safe_float(anom.get('price', 0))
-                amount = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
+                amount_btc = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
+                amount_usd = amount_btc * price if price > 0 else 0
                 multiple = _safe_float(anom.get('multiplier', anom.get('multiple', 0)))
-                parts.append(f"  Bid: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
+                # v5.4: USDT-primary display
+                vol_str = f"${amount_usd/1e6:.1f}M" if amount_usd >= 1e6 else f"${amount_usd/1e3:.0f}K"
+                parts.append(f"  Bid: ${price:,.0f} @ {vol_str} ({multiple:.1f}x)")
             for anom in ask_anomalies[:3]:
                 price = _safe_float(anom.get('price', 0))
-                amount = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
+                amount_btc = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
+                amount_usd = amount_btc * price if price > 0 else 0
                 multiple = _safe_float(anom.get('multiplier', anom.get('multiple', 0)))
-                parts.append(f"  Ask: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
+                vol_str = f"${amount_usd/1e6:.1f}M" if amount_usd >= 1e6 else f"${amount_usd/1e3:.0f}K"
+                parts.append(f"  Ask: ${price:,.0f} @ {vol_str} ({multiple:.1f}x)")
             parts.append("")
 
         # ========== LIQUIDITY Section ==========
