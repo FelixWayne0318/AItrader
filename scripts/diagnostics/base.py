@@ -660,8 +660,7 @@ class DiagnosticRunner:
         """Push multiple export files to GitHub in a single commit.
 
         Default: push to current branch (HEAD).
-        If current branch is claude/* (session-restricted), auto-fallback to main.
-        --push-branch overrides everything.
+        --push-branch overrides target branch.
         """
         import subprocess
 
@@ -676,19 +675,11 @@ class DiagnosticRunner:
                 capture_output=True, text=True, check=True
             ).stdout.strip()
 
-            # Decide target branch
-            if self.ctx.push_branch != "main":
-                # User explicitly specified --push-branch, use it
-                branch = self.ctx.push_branch
-            elif current_branch.startswith("claude/"):
-                # claude/* branches have session ID restrictions, fallback to main
-                branch = "main"
-                print(f"  ℹ️  当前 {current_branch} 为受限分支，自动切换到 main")
-            else:
-                # Normal case: push to current branch
-                branch = current_branch
+            # Use --push-branch if explicitly set, otherwise current branch
+            branch = self.ctx.push_branch if self.ctx.push_branch != "main" else current_branch
 
             if current_branch != branch:
+                print(f"  ℹ️  当前 {current_branch}，切换到 {branch}...")
                 subprocess.run(['git', 'checkout', branch], check=True, capture_output=True)
 
             for fp in filepaths:
@@ -696,7 +687,18 @@ class DiagnosticRunner:
                     subprocess.run(['git', 'add', '-f', str(fp)], check=True, capture_output=True)
 
             subprocess.run(['git', 'commit', '-m', commit_msg], check=True, capture_output=True)
-            subprocess.run(['git', 'push', '-u', 'origin', branch], check=True, capture_output=True)
+
+            push_result = subprocess.run(
+                ['git', 'push', '-u', 'origin', branch],
+                capture_output=True, text=True
+            )
+            if push_result.returncode != 0:
+                stderr = push_result.stderr.strip()
+                print(f"  ⚠️ Git push 失败 (exit {push_result.returncode}):")
+                print(f"     {stderr}")
+                paths_str = ' '.join(str(fp) for fp in filepaths)
+                print(f"     已提交到本地，请手动: git push origin {branch}")
+                return
 
             print(f"  ✅ 已推送到 GitHub (分支: {branch})")
             for fn in filenames:
@@ -708,6 +710,9 @@ class DiagnosticRunner:
                 print(f"  ℹ️  已切回 {current_branch}")
 
         except subprocess.CalledProcessError as e:
-            print(f"  ⚠️ Git 推送失败: {e}")
+            stderr = e.stderr.decode() if isinstance(e.stderr, bytes) else (e.stderr or "")
+            print(f"  ⚠️ Git 操作失败: {e}")
+            if stderr:
+                print(f"     详情: {stderr.strip()}")
             paths_str = ' '.join(str(fp) for fp in filepaths)
             print(f"     请手动提交: git add -f {paths_str} && git commit && git push")
