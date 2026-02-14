@@ -128,6 +128,7 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     # v5.0: Unified SL/TP management (S/R dynamic + profit-lock)
     # Replaces separate trailing_stop + sltp_method branching
     atr_buffer_multiplier: float = 0.5  # ATR buffer for SL placement behind S/R zone
+    tp_buffer_multiplier: float = 0.25  # ATR buffer for TP placement in front of S/R zone (0=off)
     dynamic_sltp_update: bool = True  # Reevaluate SL/TP every on_timer cycle
     dynamic_update_threshold_pct: float = 0.002  # Min change to trigger SL/TP update (0.2%)
 
@@ -297,8 +298,9 @@ class DeepSeekAIStrategy(Strategy):
         # No need for manual OCO manager anymore
         self.enable_oco = config.enable_oco
 
-        # v5.0: S/R-based dynamic SL/TP management
+        # v5.1: S/R-based dynamic SL/TP management
         self.atr_buffer_multiplier = config.atr_buffer_multiplier
+        self.tp_buffer_multiplier = config.tp_buffer_multiplier
         self.dynamic_sltp_update_enabled = config.dynamic_sltp_update
         self.dynamic_update_threshold_pct = config.dynamic_update_threshold_pct
 
@@ -3855,6 +3857,7 @@ class DeepSeekAIStrategy(Strategy):
                         atr_value=self._cached_atr_value,
                         min_rr_ratio=self.min_rr_ratio,
                         atr_buffer_multiplier=self.atr_buffer_multiplier,
+                        tp_buffer_multiplier=self.tp_buffer_multiplier,
                     )
                     if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
                         stop_loss_price = sr_sl
@@ -4896,6 +4899,7 @@ class DeepSeekAIStrategy(Strategy):
                 atr_value=self._cached_atr_value,
                 min_rr_ratio=self.min_rr_ratio,
                 atr_buffer_multiplier=self.atr_buffer_multiplier,
+                tp_buffer_multiplier=self.tp_buffer_multiplier,
             )
 
             if not new_sl or not new_tp or new_sl <= 0 or new_tp <= 0:

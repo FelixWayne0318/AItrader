@@ -30,8 +30,9 @@ trading_logic:
   default_tp_pct: 0.03            # 默认止盈 3%
   min_rr_ratio: 1.5               # 最小风险收益比 (R/R < 1.5:1 拒绝 AI SL/TP，回退到技术分析)
 
-  # v5.0: S/R zone 驱动 SL/TP (唯一方式，不再有 legacy 百分比路径)
-  atr_buffer_multiplier: 0.5      # ATR 缓冲倍数 (SL = S/R zone ± ATR * multiplier)
+  # v5.1: S/R zone 驱动 SL/TP (唯一方式，不再有 legacy 百分比路径)
+  atr_buffer_multiplier: 0.5      # SL: ATR 缓冲倍数 (SL = S/R zone ± ATR * multiplier)
+  tp_buffer_multiplier: 0.25      # TP: zone 前方偏移 (TP = zone ∓ ATR * multiplier; 0=关闭)
   dynamic_sltp_update: true       # 每 15 分钟动态更新 SL/TP
   dynamic_update_threshold_pct: 0.002  # 变化超过 0.2% 才更新 (避免频繁修改)
   sl_only_favorable: true         # SL 只能向有利方向移动

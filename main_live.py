@@ -227,8 +227,9 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         # OCO (from ConfigManager)
         enable_oco=config_manager.get('risk', 'oco', 'enabled', default=True),
 
-        # v5.0: S/R-based dynamic SL/TP management
+        # v5.1: S/R-based dynamic SL/TP management
         atr_buffer_multiplier=config_manager.get('trading_logic', 'atr_buffer_multiplier', default=0.5),
+        tp_buffer_multiplier=config_manager.get('trading_logic', 'tp_buffer_multiplier', default=0.25),
         dynamic_sltp_update=config_manager.get('trading_logic', 'dynamic_sltp_update', default=True),
         dynamic_update_threshold_pct=config_manager.get('trading_logic', 'dynamic_update_threshold_pct', default=0.002),
 
