@@ -43,8 +43,8 @@ from dotenv import load_dotenv
 # Load environment variables from multiple possible locations
 env_paths = [
     os.path.expanduser("~/.env.aitrader"),
-    "/home/linuxuser/.env.aitrader",
     os.path.join(os.path.dirname(__file__), "../../../.env"),
+    os.path.join(os.path.dirname(__file__), "../.env"),
     ".env"
 ]
 

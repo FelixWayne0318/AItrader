@@ -9,6 +9,7 @@ Group=linuxuser
 WorkingDirectory=/home/linuxuser/nautilus_AItrader/web/frontend
 Environment=NODE_ENV=production
 Environment=PORT=3000
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=10
