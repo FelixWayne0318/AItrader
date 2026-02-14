@@ -11,6 +11,7 @@ from core.database import get_db
 from core.config import settings
 from models import SocialLink, CopyTradingLink, SiteSettings
 from services.performance_service import get_performance_service
+from services.trade_evaluation_service import get_trade_evaluation_service
 
 router = APIRouter(prefix="/public", tags=["Public"])
 
@@ -272,3 +273,83 @@ async def get_ai_analysis():
         "timestamp": datetime.now().isoformat(),
         "data_source": "none",  # Clearly indicate no real data available
     }
+
+
+# =============================================================================
+# Trade Evaluation Endpoints (v5.1)
+# Expose trade quality metrics from decision_memory
+# =============================================================================
+
+
+@router.get("/trade-evaluation/summary")
+async def get_trade_evaluation_summary(days: int = 30):
+    """
+    Get aggregate trade evaluation statistics.
+
+    Public endpoint - returns grade distribution, R/R stats, confidence accuracy.
+    No sensitive data (prices, conditions) included.
+
+    Parameters
+    ----------
+    days : int, optional
+        Number of days to look back (default: 30, 0 = all time)
+
+    Returns
+    -------
+    Dict
+        {
+            "total_evaluated": int,
+            "grade_distribution": {"A+": 3, "A": 5, "B": 4, ...},
+            "direction_accuracy": float,  // Win rate %
+            "avg_winning_rr": float,      // Average R/R for wins
+            "avg_execution_quality": float,
+            "avg_grade_score": float,     // Quality score 0-5
+            "exit_type_distribution": {"TAKE_PROFIT": 10, ...},
+            "confidence_accuracy": {
+                "HIGH": {"total": 10, "wins": 7, "accuracy": 70.0},
+                ...
+            },
+            "avg_hold_duration_min": int,
+            "last_updated": str (ISO timestamp)
+        }
+    """
+    service = get_trade_evaluation_service()
+    days_filter = None if days == 0 else days
+    return service.get_evaluation_summary(days=days_filter)
+
+
+@router.get("/trade-evaluation/recent")
+async def get_recent_trade_evaluations(limit: int = 20):
+    """
+    Get recent trade evaluations (public view - sanitized).
+
+    Excludes sensitive fields (entry/exit prices, conditions).
+    Suitable for displaying trade quality on public website.
+
+    Parameters
+    ----------
+    limit : int, optional
+        Maximum number of trades to return (default: 20, max: 100)
+
+    Returns
+    -------
+    List[Dict]
+        [
+            {
+                "grade": "A",
+                "planned_rr": 2.0,
+                "actual_rr": 1.8,
+                "execution_quality": 0.9,
+                "exit_type": "TAKE_PROFIT",
+                "confidence": "HIGH",
+                "hold_duration_min": 1847,
+                "direction_correct": true,
+                "timestamp": "2026-02-14T02:00:00"
+            },
+            ...
+        ]
+    """
+    service = get_trade_evaluation_service()
+    limit = min(limit, 100)  # Cap at 100 for performance
+    return service.get_recent_trades(limit=limit, include_details=False)
+
