@@ -297,6 +297,9 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         # Network: Telegram message timeout
         network_telegram_message_timeout=config_manager.get('network', 'telegram', 'message_timeout', default=30.0),
 
+        # v3.12: Risk Controller / Circuit Breakers configuration
+        risk_config=config_manager.get('risk', default={}),
+
         # Order Book Configuration (v3.7)
         order_book_enabled=config_manager.get('order_book', 'enabled', default=False),
         order_book_api_timeout=config_manager.get('order_book', 'api', 'timeout', default=10.0),

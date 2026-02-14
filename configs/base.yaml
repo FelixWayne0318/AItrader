@@ -163,11 +163,6 @@ risk:
   rsi_extreme_threshold_lower: 30.0  # RSI 超卖阈值
   rsi_extreme_multiplier: 0.7
 
-  # ===== v3.7: BB 位置硬性检查 (Support/Resistance Risk Control) =====
-  bb_block_enabled: true                # 启用 BB 位置硬性检查
-  bb_block_threshold_pct: 2.0           # 距离 BB 边界 < 2% 时阻止交易
-  bb_high_confidence_override: false    # 高信心时允许突破 (默认 false，保守)
-
   # 止损止盈
   stop_loss:
     enabled: true

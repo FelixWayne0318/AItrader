@@ -45,6 +45,7 @@ from strategy.trading_logic import (
     calculate_position_size,
     validate_multiagent_sltp,
 )
+from utils.risk_controller import RiskController, TradingState
 
 
 class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
@@ -195,6 +196,9 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     multi_timeframe_enabled: bool = False  # Default disabled for backward compatibility
     mtf_trend_sma_period: int = 200        # SMA period for trend layer (1D)
     mtf_decision_debate_rounds: int = 2    # Debate rounds for decision layer (4H)
+
+    # v3.12: Risk Circuit Breakers configuration (passed as dict from ConfigManager)
+    risk_config: Dict = None  # type: ignore  # risk.circuit_breakers section from base.yaml
 
     # Order Book Configuration (v3.7)
     order_book_enabled: bool = False  # 启用订单簿深度数据 (默认关闭)
@@ -650,6 +654,7 @@ class DeepSeekAIStrategy(Strategy):
             # ========== Order Book Depth (v3.7) ==========
             # 订单簿深度数据 (提供流动性、不平衡、滑点等指标)
             order_book_enabled = config.order_book_enabled if hasattr(config, 'order_book_enabled') else False
+            self.order_book_enabled = order_book_enabled  # Store for on_timer access
             if order_book_enabled:
                 # Binance 订单簿客户端
                 self.binance_orderbook_client = BinanceOrderBookClient(
@@ -695,12 +700,20 @@ class DeepSeekAIStrategy(Strategy):
             self.binance_orderbook_client = None
             self.orderbook_processor = None
             self.binance_derivatives_client = None
+            self.order_book_enabled = False
             self.log.info("Order Flow disabled by config")
 
         # State tracking
         self.instrument: Optional[Instrument] = None
         self.last_signal: Optional[Dict[str, Any]] = None
         self.bars_received = 0
+
+        # v3.12: Risk Controller with circuit breakers
+        risk_config = config.risk_config if hasattr(config, 'risk_config') and config.risk_config else {}
+        self.risk_controller = RiskController(
+            config=risk_config,
+            logger=self.log,
+        )
 
         self.log.info(f"DeepSeek AI Strategy initialized for {self.instrument_id}")
 
@@ -1826,6 +1839,21 @@ class DeepSeekAIStrategy(Strategy):
                     except Exception:
                         pass  # ATR cache is best-effort
 
+                # v3.12: Update risk controller with current equity and ATR
+                try:
+                    self.risk_controller.update_equity(
+                        current_equity=self.equity,
+                        current_atr=self._cached_atr_value if self._cached_atr_value > 0 else None,
+                    )
+                    risk_state = self.risk_controller.metrics.trading_state
+                    if risk_state != TradingState.ACTIVE:
+                        self.log.warning(
+                            f"⚠️ Risk Controller: {risk_state.value} - "
+                            f"{self.risk_controller.metrics.halt_reason}"
+                        )
+                except Exception as e:
+                    self.log.warning(f"Risk controller update failed: {e}")
+
                 # v4.0 (E1): Extract MTF bars from trend/decision managers (if available)
                 bars_data_4h = None
                 bars_data_1d = None
@@ -1955,6 +1983,39 @@ class DeepSeekAIStrategy(Strategy):
                 )
             except Exception as e:
                 self.log.debug(f"Failed to save decision snapshot: {e}")
+
+            # v3.12: Risk Controller gate - check circuit breakers before execution
+            signal = signal_data.get('signal', 'HOLD')
+            if signal in ('LONG', 'SHORT'):
+                can_trade, block_reason = self.risk_controller.can_open_trade()
+                if not can_trade:
+                    self.log.warning(f"🚫 Risk Controller blocked trade: {block_reason}")
+                    self._last_signal_status = {
+                        'executed': False,
+                        'reason': f'风控熔断: {block_reason}',
+                        'action_taken': '',
+                    }
+                    # Send Telegram alert for circuit breaker
+                    if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
+                        try:
+                            alert_msg = self.telegram_bot.format_error_alert({
+                                'level': 'WARNING',
+                                'message': f"风控熔断阻止交易: {block_reason}",
+                                'context': f"信号: {signal} {signal_data.get('confidence', 'N/A')}",
+                            })
+                            self.telegram_bot.send_message_sync(alert_msg)
+                        except Exception:
+                            pass
+                    # Skip trade execution but continue with OCO cleanup and SL/TP updates
+                    signal_data = dict(signal_data)  # Make a copy
+                    signal_data['signal'] = 'HOLD'
+                    signal_data['reason'] = f"[风控熔断] {block_reason} | 原始: {signal}"
+
+                # Apply position size multiplier from risk state (REDUCED = 0.5x)
+                risk_mult = self.risk_controller.get_position_size_multiplier()
+                if risk_mult < 1.0 and risk_mult > 0:
+                    signal_data['_risk_position_multiplier'] = risk_mult
+                    self.log.info(f"⚠️ Risk Controller: position size ×{risk_mult:.1f}")
 
             # Execute trade
             self._execute_trade(signal_data, price_data, technical_data, current_position)
@@ -3348,6 +3409,15 @@ class DeepSeekAIStrategy(Strategy):
         btc_quantity, details = calculate_position_size(
             signal_data, price_data, technical_data, config, logger
         )
+
+        # v3.12: Apply risk controller position size multiplier (REDUCED = 0.5x)
+        risk_mult = signal_data.get('_risk_position_multiplier', 1.0)
+        if risk_mult < 1.0 and btc_quantity > 0:
+            original_qty = btc_quantity
+            btc_quantity = round(btc_quantity * risk_mult, 3)
+            self.log.info(
+                f"⚠️ Risk multiplier applied: {original_qty:.4f} × {risk_mult:.1f} = {btc_quantity:.4f} BTC"
+            )
 
         # v4.8: 累加模式 - 计算的是"本次加仓量"而不是"目标仓位"
         if self.position_sizing_cumulative and current_position:
@@ -5838,6 +5908,25 @@ class DeepSeekAIStrategy(Strategy):
             f"entry={entry_price:.2f}, exit={exit_price:.2f}, pnl_pct={pnl_pct:.2f}% (from {pnl_source})"
         )
 
+        # v3.12: Record trade in RiskController for circuit breaker tracking
+        try:
+            side_str = event.side.name if hasattr(event, 'side') else 'UNKNOWN'
+            if entry_price > 0 and quantity > 0:
+                self.risk_controller.record_trade_simple(
+                    side=side_str,
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    quantity=quantity,
+                )
+                risk_state = self.risk_controller.metrics.trading_state
+                if risk_state != TradingState.ACTIVE:
+                    self.log.warning(
+                        f"🚨 Risk state after trade: {risk_state.value} - "
+                        f"{self.risk_controller.metrics.halt_reason}"
+                    )
+        except Exception as e:
+            self.log.warning(f"Failed to record trade in RiskController: {e}")
+
         # Send Telegram position closed notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
@@ -6837,6 +6926,22 @@ class DeepSeekAIStrategy(Strategy):
             else:
                 msg += "*当前持仓*: 无\n"
                 msg += "*风险敞口*: 0%\n"
+
+            # v3.12: Risk Controller status
+            risk_status = self.risk_controller.get_status()
+            state_emoji = {
+                'ACTIVE': '🟢', 'REDUCED': '🟡', 'HALTED': '🔴', 'COOLDOWN': '⏸️',
+            }.get(risk_status['trading_state'], '⚪')
+
+            msg += f"\n*风控状态*:\n"
+            msg += f"• 状态: {state_emoji} {risk_status['trading_state']}\n"
+            if risk_status['halt_reason']:
+                msg += f"• 原因: {risk_status['halt_reason']}\n"
+            msg += f"• 回撤: {risk_status['drawdown_pct']:.1f}%\n"
+            msg += f"• 今日盈亏: {risk_status['daily_pnl_pct']:+.1f}%\n"
+            msg += f"• 今日交易: {risk_status['trades_today']}笔\n"
+            msg += f"• 连续亏损: {risk_status['consecutive_losses']}次\n"
+            msg += f"• 仓位系数: {risk_status['position_multiplier']:.1f}x\n"
 
             # Strategy settings
             msg += f"\n*策略设置*:\n"
