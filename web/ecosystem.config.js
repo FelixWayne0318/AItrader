@@ -35,8 +35,9 @@ module.exports = {
     {
       name: 'algvex-backend',
       cwd: path.join(REPO_DIR, 'web', 'backend'),
-      script: 'venv/bin/uvicorn',
-      args: 'main:app --host 0.0.0.0 --port 8000',
+      // Use Python interpreter directly with -m uvicorn for reliable startup
+      script: path.join(REPO_DIR, 'web', 'backend', 'venv', 'bin', 'python3'),
+      args: '-m uvicorn main:app --host 0.0.0.0 --port 8000',
       interpreter: 'none',
       env: {
         PYTHONUNBUFFERED: '1',
