@@ -13,6 +13,7 @@ import { StatsCard } from "@/components/stats-card";
 import { PnLChart } from "@/components/charts/pnl-chart";
 import { useTranslation, type Locale } from "@/lib/i18n";
 import { formatPercent, formatTimeAgo } from "@/lib/utils";
+import { TradeTable } from "@/components/trade-evaluation/TradeTable";
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
@@ -142,6 +143,11 @@ export default function PerformancePage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Trade Evaluation Table */}
+            <div className="mb-8">
+              <TradeTable limit={20} />
+            </div>
 
             {/* Last Updated */}
             {performance?.last_updated && (

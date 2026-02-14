@@ -23,7 +23,7 @@ class ConfigService:
     """Service for managing AItrader configuration and system control"""
 
     def __init__(self):
-        self.aitrader_path = settings.AITRADER_PATH
+        self.aitrader_path = Path(settings.AITRADER_PATH)
         self.service_name = settings.AITRADER_SERVICE_NAME
         self.configs_path = self.aitrader_path / "configs"
         self.base_config_path = self.configs_path / "base.yaml"

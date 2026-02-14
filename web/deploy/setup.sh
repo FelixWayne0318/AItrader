@@ -135,7 +135,6 @@ ADMIN_EMAILS=your-email@gmail.com
 
 # AItrader paths
 AITRADER_PATH=/home/linuxuser/nautilus_AItrader
-AITRADER_CONFIG_PATH=/home/linuxuser/nautilus_AItrader/configs/strategy_config.yaml
 AITRADER_SERVICE_NAME=nautilus-trader
 EOF
     echo -e "${RED}⚠ Please edit $INSTALL_DIR/backend/.env with your credentials!${NC}"

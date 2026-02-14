@@ -813,3 +813,298 @@ def calculate_technical_sltp(
     return stop_loss_price, take_profit_price, method
 
 
+# =============================================================================
+# TRADE EVALUATION (v5.1: Trading Evaluation Standards)
+# Integrated with decision_memory for AI learning
+# =============================================================================
+
+# Grade thresholds (business logic constants, not configurable)
+GRADE_THRESHOLDS = {
+    'A+': 2.5,   # actual R/R >= 2.5 (exceptional trade)
+    'A':  1.5,   # actual R/R >= 1.5 (strong win)
+    'B':  1.0,   # actual R/R >= 1.0 (acceptable profit)
+    'C':  0.0,   # pnl > 0 but R/R < 1.0 (small profit, poor R/R)
+    'D':  None,   # loss within planned SL (controlled loss)
+    'F':  None,   # loss exceeded planned SL (uncontrolled)
+}
+
+
+def evaluate_trade(
+    entry_price: float,
+    exit_price: float,
+    planned_sl: Optional[float],
+    planned_tp: Optional[float],
+    direction: str,
+    pnl_pct: float,
+    confidence: str = "MEDIUM",
+    position_size_pct: float = 0.0,
+    entry_timestamp: Optional[str] = None,
+    exit_timestamp: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Evaluate trade quality and assign a grade.
+
+    Integrated with decision_memory - the returned dict is stored as the
+    'evaluation' field in each memory entry.
+
+    Grading System:
+        A+ : Actual R/R >= 2.5 (exceptional)
+        A  : Actual R/R >= 1.5 (strong win)
+        B  : Actual R/R >= 1.0 (acceptable profit)
+        C  : Profit but R/R < 1.0 (small profit)
+        D  : Loss within planned SL (controlled loss - discipline maintained)
+        F  : Loss exceeded planned SL by > 20% (uncontrolled)
+
+    Parameters
+    ----------
+    entry_price : float
+        Actual entry price
+    exit_price : float
+        Actual exit price
+    planned_sl : float, optional
+        Planned stop loss price at entry
+    planned_tp : float, optional
+        Planned take profit price at entry
+    direction : str
+        Trade direction ('LONG' or 'SHORT')
+    pnl_pct : float
+        Realized P&L percentage
+    confidence : str
+        Signal confidence level ('HIGH', 'MEDIUM', 'LOW')
+    position_size_pct : float
+        Position size percentage used
+    entry_timestamp : str, optional
+        ISO format entry timestamp
+    exit_timestamp : str, optional
+        ISO format exit timestamp
+
+    Returns
+    -------
+    Dict[str, Any]
+        Evaluation data dict to be stored in decision_memory
+    """
+    is_long = direction.upper() in ('LONG', 'BUY')
+
+    # --- Determine exit type ---
+    exit_type = _classify_exit_type(
+        exit_price, planned_sl, planned_tp, entry_price, is_long,
+    )
+
+    # --- Calculate actual R/R ---
+    actual_rr = 0.0
+    planned_rr = 0.0
+    direction_correct = pnl_pct > 0
+
+    if entry_price > 0 and planned_sl and planned_sl > 0:
+        risk = abs(entry_price - planned_sl)
+        if risk > 0:
+            if is_long:
+                actual_reward = exit_price - entry_price
+            else:
+                actual_reward = entry_price - exit_price
+            actual_rr = round(actual_reward / risk, 2)
+
+            # Planned R/R
+            if planned_tp and planned_tp > 0:
+                planned_reward = abs(planned_tp - entry_price)
+                planned_rr = round(planned_reward / risk, 2)
+
+    # --- Execution quality (how well did actual match plan) ---
+    execution_quality = 0.0
+    if planned_rr > 0:
+        execution_quality = round(min(actual_rr / planned_rr, 2.0), 2)
+
+    # --- Assign grade ---
+    grade = _assign_grade(pnl_pct, actual_rr, exit_type, planned_sl, exit_price, entry_price, is_long)
+
+    # --- Hold duration ---
+    hold_duration_min = _calc_hold_duration(entry_timestamp, exit_timestamp)
+
+    return {
+        'grade': grade,
+        'direction_correct': direction_correct,
+        'entry_price': round(entry_price, 2),
+        'exit_price': round(exit_price, 2),
+        'planned_sl': round(planned_sl, 2) if planned_sl else None,
+        'planned_tp': round(planned_tp, 2) if planned_tp else None,
+        'planned_rr': planned_rr,
+        'actual_rr': actual_rr,
+        'execution_quality': execution_quality,
+        'exit_type': exit_type,
+        'confidence': confidence.upper(),
+        'position_size_pct': position_size_pct,
+        'hold_duration_min': hold_duration_min,
+    }
+
+
+def _classify_exit_type(
+    exit_price: float,
+    planned_sl: Optional[float],
+    planned_tp: Optional[float],
+    entry_price: float,
+    is_long: bool,
+) -> str:
+    """
+    Classify how the trade was closed.
+
+    Returns: 'TAKE_PROFIT', 'STOP_LOSS', 'MANUAL', or 'REVERSAL'
+    """
+    if not planned_sl or not planned_tp or entry_price <= 0:
+        return 'MANUAL'
+
+    tolerance = entry_price * 0.003  # 0.3% tolerance for SL/TP matching
+
+    if is_long:
+        if exit_price <= planned_sl + tolerance and exit_price < entry_price:
+            return 'STOP_LOSS'
+        if exit_price >= planned_tp - tolerance and exit_price > entry_price:
+            return 'TAKE_PROFIT'
+    else:
+        if exit_price >= planned_sl - tolerance and exit_price > entry_price:
+            return 'STOP_LOSS'
+        if exit_price <= planned_tp + tolerance and exit_price < entry_price:
+            return 'TAKE_PROFIT'
+
+    return 'MANUAL'
+
+
+def _assign_grade(
+    pnl_pct: float,
+    actual_rr: float,
+    exit_type: str,
+    planned_sl: Optional[float],
+    exit_price: float,
+    entry_price: float,
+    is_long: bool,
+) -> str:
+    """
+    Assign A+/A/B/C/D/F grade based on trade outcome.
+
+    Profitable trades graded by actual R/R achieved.
+    Losing trades graded by discipline (did SL work?).
+    """
+    if pnl_pct > 0:
+        # Profitable - grade by R/R achievement
+        if actual_rr >= 2.5:
+            return 'A+'
+        elif actual_rr >= 1.5:
+            return 'A'
+        elif actual_rr >= 1.0:
+            return 'B'
+        else:
+            return 'C'
+    else:
+        # Loss - grade by discipline
+        if not planned_sl or planned_sl <= 0:
+            return 'F'  # No SL plan = undisciplined
+
+        # Check if loss was within planned SL (with 20% tolerance)
+        planned_loss_pct = abs(entry_price - planned_sl) / entry_price
+        actual_loss_pct = abs(pnl_pct) / 100.0
+
+        # D = loss within SL (controlled), F = exceeded SL significantly
+        if actual_loss_pct <= planned_loss_pct * 1.2:
+            return 'D'
+        else:
+            return 'F'
+
+
+def _calc_hold_duration(
+    entry_ts: Optional[str],
+    exit_ts: Optional[str],
+) -> int:
+    """Calculate hold duration in minutes from ISO timestamps."""
+    if not entry_ts or not exit_ts:
+        return 0
+    try:
+        from datetime import datetime
+        # Handle both with and without microseconds
+        for fmt in ('%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+            try:
+                entry_dt = datetime.fromisoformat(entry_ts.replace('Z', ''))
+                exit_dt = datetime.fromisoformat(exit_ts.replace('Z', ''))
+                delta = exit_dt - entry_dt
+                return max(0, int(delta.total_seconds() / 60))
+            except ValueError:
+                continue
+    except Exception:
+        pass
+    return 0
+
+
+def get_evaluation_summary(memories: list) -> Dict[str, Any]:
+    """
+    Compute aggregate evaluation statistics from decision_memory.
+
+    Used by daily/weekly summaries and Telegram reports.
+
+    Parameters
+    ----------
+    memories : list
+        List of decision_memory entries (each may have 'evaluation' field)
+
+    Returns
+    -------
+    Dict[str, Any]
+        Aggregate stats: grade distribution, avg R/R, direction accuracy, etc.
+    """
+    evaluated = [m for m in memories if m.get('evaluation')]
+    if not evaluated:
+        return {}
+
+    evals = [m['evaluation'] for m in evaluated]
+    total = len(evals)
+
+    # Grade distribution
+    grade_counts = {}
+    for e in evals:
+        g = e.get('grade', '?')
+        grade_counts[g] = grade_counts.get(g, 0) + 1
+
+    # Direction accuracy
+    correct = sum(1 for e in evals if e.get('direction_correct'))
+    direction_accuracy = round(correct / total * 100, 1) if total > 0 else 0.0
+
+    # Average actual R/R (only for profitable trades)
+    profitable_rrs = [e.get('actual_rr', 0) for e in evals if e.get('direction_correct')]
+    avg_winning_rr = round(sum(profitable_rrs) / len(profitable_rrs), 2) if profitable_rrs else 0.0
+
+    # Average execution quality
+    exec_quals = [e.get('execution_quality', 0) for e in evals if e.get('execution_quality', 0) > 0]
+    avg_exec_quality = round(sum(exec_quals) / len(exec_quals), 2) if exec_quals else 0.0
+
+    # Exit type distribution
+    exit_types = {}
+    for e in evals:
+        et = e.get('exit_type', 'UNKNOWN')
+        exit_types[et] = exit_types.get(et, 0) + 1
+
+    # Confidence accuracy (does HIGH confidence actually win more?)
+    confidence_stats = {}
+    for e in evals:
+        conf = e.get('confidence', 'MEDIUM')
+        if conf not in confidence_stats:
+            confidence_stats[conf] = {'total': 0, 'wins': 0}
+        confidence_stats[conf]['total'] += 1
+        if e.get('direction_correct'):
+            confidence_stats[conf]['wins'] += 1
+
+    for conf, stats in confidence_stats.items():
+        stats['accuracy'] = round(stats['wins'] / stats['total'] * 100, 1) if stats['total'] > 0 else 0.0
+
+    # Average hold duration
+    durations = [e.get('hold_duration_min', 0) for e in evals if e.get('hold_duration_min', 0) > 0]
+    avg_hold_min = round(sum(durations) / len(durations)) if durations else 0
+
+    return {
+        'total_evaluated': total,
+        'grade_distribution': grade_counts,
+        'direction_accuracy': direction_accuracy,
+        'avg_winning_rr': avg_winning_rr,
+        'avg_execution_quality': avg_exec_quality,
+        'exit_type_distribution': exit_types,
+        'confidence_accuracy': confidence_stats,
+        'avg_hold_duration_min': avg_hold_min,
+    }
+
+

@@ -24,7 +24,7 @@ from nautilus_trader.model.enums import OrderSide, TimeInForce, PositionSide, Pr
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.position import Position
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -709,7 +709,7 @@ class DeepSeekAIStrategy(Strategy):
         self.log.info("Starting DeepSeek AI Strategy...")
 
         # v2.2: 记录启动时间 (用于心跳消息显示运行时长)
-        from datetime import datetime
+        from datetime import datetime, timezone
         self._start_time = datetime.now()
 
         # Send immediate "initializing" notification BEFORE instrument loading
@@ -723,7 +723,7 @@ class DeepSeekAIStrategy(Strategy):
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"📊 {safe_id}\n"
                     f"⏳ Loading instruments...\n"
-                    f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                    f"\n⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
                 )
                 self.telegram_bot.send_message_sync(init_msg, use_queue=False)
             except Exception as e:
@@ -834,8 +834,8 @@ class DeepSeekAIStrategy(Strategy):
         self._sync_binance_leverage()
 
         # Record start time for uptime tracking
-        from datetime import datetime
-        self.strategy_start_time = datetime.utcnow()
+        from datetime import datetime, timezone
+        self.strategy_start_time = datetime.now(timezone.utc)
 
         # v2.1: Timer counter for heartbeat tracking
         self._timer_count = 0
@@ -964,7 +964,7 @@ class DeepSeekAIStrategy(Strategy):
                 # Calculate uptime
                 uptime_str = "N/A"
                 if self.strategy_start_time:
-                    uptime_delta = datetime.utcnow() - self.strategy_start_time
+                    uptime_delta = datetime.now(timezone.utc) - self.strategy_start_time
                     hours = int(uptime_delta.total_seconds() // 3600)
                     minutes = int((uptime_delta.total_seconds() % 3600) // 60)
                     uptime_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
@@ -1031,7 +1031,7 @@ class DeepSeekAIStrategy(Strategy):
         Returns:
             datetime: Next aligned UTC time
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Calculate next aligned minute
         current_minute = now.minute
@@ -2346,20 +2346,32 @@ class DeepSeekAIStrategy(Strategy):
                 }
 
             # 9. 获取信号执行状态 (v4.1)
-            # v4.4: 状态一致性检查 - 防止缓存状态与实时仓位矛盾
+            # v4.4+: 状态一致性检查 - 防止缓存状态与实时仓位矛盾
             signal_status_heartbeat = getattr(self, '_last_signal_status', None)
             if signal_status_heartbeat and not position_side:
-                # 缓存状态说有仓位，但实时查询无仓位 → 状态过时
+                cached_executed = signal_status_heartbeat.get('executed', False)
                 cached_reason = signal_status_heartbeat.get('reason', '')
+                cached_action = signal_status_heartbeat.get('action_taken', '')
+
+                # Case 1: 状态说"已持有仓位"但实际无仓位 → 仓位被 SL/TP 平掉
+                # Case 2: 状态说已执行开仓 (executed=True + action_taken 包含"开")
+                #          但实际无仓位 → 仓位已被平掉，状态过时
+                # 这两种情况下 heartbeat 都不应显示旧的 "✅ 开多仓" 等信息
+                should_clear = False
                 if '已持有' in cached_reason:
-                    # 仓位已被止损/止盈平掉，清除过时状态
+                    should_clear = True
+                elif cached_executed and cached_action and '开' in cached_action:
+                    # "开多仓 0.034 BTC" but no position → stale
+                    should_clear = True
+
+                if should_clear:
                     signal_status_heartbeat = {
                         'executed': False,
                         'reason': '仓位已平仓 (SL/TP 触发)',
-                        'action_taken': '等待新信号',
+                        'action_taken': '',
                     }
                     self._last_signal_status = signal_status_heartbeat
-                    self.log.info("🔄 检测到仓位已平仓，更新信号状态")
+                    self.log.info("🔄 检测到仓位已平仓，清除过时的执行状态")
 
             # 10. 发送消息
             heartbeat_msg = self.telegram_bot.format_heartbeat_message({
@@ -3614,7 +3626,7 @@ class DeepSeekAIStrategy(Strategy):
                 'target_side': target_side,
                 'target_quantity': target_quantity,
                 'old_side': current_side,
-                'submitted_at': datetime.utcnow(),
+                'submitted_at': datetime.now(timezone.utc),
             }
             self.log.info(
                 f"📋 Reversal Phase 1: Stored pending reversal state "
@@ -5405,6 +5417,10 @@ class DeepSeekAIStrategy(Strategy):
         # v3.12: Store entry conditions for memory system
         self._last_entry_conditions = self._format_entry_conditions()
 
+        # v5.1: Store entry timestamp for trade evaluation (hold duration)
+        from datetime import datetime, timezone
+        self._last_entry_timestamp = datetime.now(timezone.utc).isoformat()
+
         instrument_key = str(self.instrument_id)
         entry_price = float(event.avg_px_open)
 
@@ -5640,11 +5656,16 @@ class DeepSeekAIStrategy(Strategy):
             f"P&L: {float(event.realized_pnl):.2f} USDT"
         )
         
-        # Clear trailing stop state
+        # Capture SL/TP before clearing state (needed for trade evaluation)
         instrument_key = str(self.instrument_id)
+        captured_sltp = None
         if instrument_key in self.sltp_state:
+            captured_sltp = self.sltp_state[instrument_key].copy()
             del self.sltp_state[instrument_key]
             self.log.debug(f"🗑️ Cleared trailing stop state for {instrument_key}")
+
+        # Store for trade evaluation later
+        self._captured_sltp_for_eval = captured_sltp
 
         # v3.18: Check for pending reversal (Phase 2 of two-phase commit)
         # If we have a pending reversal, open the new position now that old one is closed
@@ -5655,10 +5676,10 @@ class DeepSeekAIStrategy(Strategy):
             target_side = pending['target_side']
             target_quantity = pending['target_quantity']
             old_side = pending['old_side']
-            submitted_at = pending.get('submitted_at', datetime.utcnow())
+            submitted_at = pending.get('submitted_at', datetime.now(timezone.utc))
 
             # Calculate time elapsed since reversal was initiated
-            elapsed = (datetime.utcnow() - submitted_at).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - submitted_at).total_seconds()
 
             old_side_cn = '多' if old_side == 'long' else '空'
             new_side_cn = '多' if target_side == 'long' else '空'
@@ -5715,7 +5736,7 @@ class DeepSeekAIStrategy(Strategy):
                             f"*方向*: {old_side_cn} → {new_side_cn}\n"
                             f"*数量*: {target_quantity:.4f} BTC\n"
                             f"*耗时*: {elapsed:.1f}秒\n\n"
-                            f"⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                            f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
                         )
                         self.telegram_bot.send_message_sync(reversal_msg)
                     except Exception as e:
@@ -5883,24 +5904,80 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.warning(f"Failed to send Telegram position closed notification: {e}")
 
         # v3.12: Record outcome for AI learning
+        # v5.1: Enhanced with trade evaluation (grade, R/R, execution quality)
         try:
             if hasattr(self, 'multi_agent') and self.multi_agent:
                 # Get decision from last signal
                 decision = "UNKNOWN"
+                confidence = "MEDIUM"
+                position_size_pct = 0.0
                 if hasattr(self, 'last_signal') and self.last_signal:
                     signal = self.last_signal.get('signal', '')
                     # v3.12: Handle both legacy (BUY/SELL) and new (LONG/SHORT) formats
                     legacy_mapping = {'BUY': 'LONG', 'SELL': 'SHORT'}
                     decision = legacy_mapping.get(signal, signal)
+                    confidence = self.last_signal.get('confidence', 'MEDIUM')
+                    position_size_pct = self.last_signal.get('position_size_pct', 0) or 0
 
                 # Get entry conditions
                 conditions = getattr(self, '_last_entry_conditions', 'N/A')
 
-                # Record the outcome
+                # v5.1: Compute trade evaluation
+                evaluation = None
+                try:
+                    from strategy.trading_logic import evaluate_trade
+
+                    # Get planned SL/TP from sltp_state or latest_signal_data
+                    planned_sl = None
+                    planned_tp = None
+                    instrument_key = str(self.instrument_id)
+
+                    # Priority 1: captured_sltp (most accurate - actual submitted orders before deletion)
+                    state = getattr(self, '_captured_sltp_for_eval', None)
+                    if state:
+                        planned_sl = state.get('current_sl_price')
+                        planned_tp = state.get('current_tp_price')
+
+                    # Priority 2: latest_signal_data (AI planned values)
+                    if not planned_sl and hasattr(self, 'latest_signal_data') and self.latest_signal_data:
+                        planned_sl = self.latest_signal_data.get('stop_loss')
+                        planned_tp = self.latest_signal_data.get('take_profit')
+
+                    # Get entry timestamp from sltp_state or event
+                    entry_ts = getattr(self, '_last_entry_timestamp', None)
+
+                    direction = event.side.name if hasattr(event, 'side') else decision
+                    # Normalize direction
+                    if direction in ('BUY', 'SELL'):
+                        direction = 'LONG' if direction == 'BUY' else 'SHORT'
+
+                    evaluation = evaluate_trade(
+                        entry_price=entry_price,
+                        exit_price=exit_price,
+                        planned_sl=planned_sl,
+                        planned_tp=planned_tp,
+                        direction=direction,
+                        pnl_pct=pnl_pct,
+                        confidence=confidence,
+                        position_size_pct=position_size_pct,
+                        entry_timestamp=entry_ts,
+                        exit_timestamp=datetime.now(timezone.utc).isoformat(),
+                    )
+
+                    self.log.info(
+                        f"📊 Trade evaluation: Grade={evaluation.get('grade', '?')} | "
+                        f"R/R planned={evaluation.get('planned_rr', 0):.1f} actual={evaluation.get('actual_rr', 0):.1f} | "
+                        f"Exit={evaluation.get('exit_type', '?')}"
+                    )
+                except Exception as eval_err:
+                    self.log.warning(f"Trade evaluation failed (non-critical): {eval_err}")
+
+                # Record the outcome (with evaluation if available)
                 self.multi_agent.record_outcome(
                     decision=decision,
                     pnl=pnl_pct,
                     conditions=conditions,
+                    evaluation=evaluation,
                 )
                 self.log.info(f"📝 Trade outcome recorded for AI learning")
         except Exception as e:
@@ -6283,7 +6360,7 @@ class DeepSeekAIStrategy(Strategy):
     def _cmd_status(self) -> Dict[str, Any]:
         """Handle /status command - shows REAL account balance."""
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
 
             # Get current price from thread-safe cache
             # IMPORTANT: Do NOT access indicator_manager here - it's called from
@@ -6304,7 +6381,7 @@ class DeepSeekAIStrategy(Strategy):
             # Calculate uptime
             uptime_str = "N/A"
             if self.strategy_start_time:
-                uptime_delta = datetime.utcnow() - self.strategy_start_time
+                uptime_delta = datetime.now(timezone.utc) - self.strategy_start_time
                 hours = uptime_delta.total_seconds() // 3600
                 minutes = (uptime_delta.total_seconds() % 3600) // 60
                 uptime_str = f"{int(hours)}h {int(minutes)}m"
@@ -6643,7 +6720,7 @@ class DeepSeekAIStrategy(Strategy):
         Thread-safe: Uses Binance API directly.
         """
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             from utils.binance_account import get_binance_fetcher
 
             # 获取交易对 symbol
@@ -6673,7 +6750,7 @@ class DeepSeekAIStrategy(Strategy):
 
                 # 格式化时间
                 try:
-                    dt = datetime.utcfromtimestamp(ts / 1000) if ts else datetime.utcnow()
+                    dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc) if ts else datetime.now(timezone.utc)
                     time_str = dt.strftime("%m-%d %H:%M")
                 except (ValueError, TypeError, OSError):
                     time_str = "N/A"
@@ -6785,9 +6862,9 @@ class DeepSeekAIStrategy(Strategy):
         Thread-safe: Uses thread-safe state and cached data.
         """
         try:
-            from datetime import datetime, timedelta
+            from datetime import datetime, timedelta, timezone
 
-            today = datetime.utcnow().strftime('%Y-%m-%d')
+            today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
             # Get real balance from Binance
             real_balance = self.binance_account.get_balance()
@@ -6808,6 +6885,7 @@ class DeepSeekAIStrategy(Strategy):
             largest_loss = 0.0
 
             # v3.15: Fix variable name - was 'multi_agent_analyzer', should be 'multi_agent'
+            today_memories = []
             if hasattr(self, 'multi_agent') and self.multi_agent:
                 memories = self.multi_agent.decision_memory
                 today_memories = [m for m in memories if m.get('timestamp', '').startswith(today)]
@@ -6828,6 +6906,14 @@ class DeepSeekAIStrategy(Strategy):
             starting_equity = getattr(self, '_daily_starting_equity', current_equity)
             pnl_pct = ((current_equity - starting_equity) / starting_equity * 100) if starting_equity > 0 else 0.0
 
+            # v5.1: Compute evaluation stats for today's trades
+            eval_stats = {}
+            try:
+                from strategy.trading_logic import get_evaluation_summary
+                eval_stats = get_evaluation_summary(today_memories)
+            except Exception:
+                pass
+
             summary_data = {
                 'date': today,
                 'total_trades': total_trades,
@@ -6841,6 +6927,7 @@ class DeepSeekAIStrategy(Strategy):
                 'ending_equity': current_equity,
                 'signals_generated': signals_generated,
                 'signals_executed': signals_executed,
+                'evaluation': eval_stats,
             }
 
             if self.telegram_bot:
@@ -6870,9 +6957,9 @@ class DeepSeekAIStrategy(Strategy):
         Thread-safe: Uses thread-safe state and cached data.
         """
         try:
-            from datetime import datetime, timedelta
+            from datetime import datetime, timedelta, timezone
 
-            today = datetime.utcnow()
+            today = datetime.now(timezone.utc)
             # Calculate week start (Monday) and end (Sunday)
             week_start = today - timedelta(days=today.weekday())
             week_end = week_start + timedelta(days=6)
@@ -6892,6 +6979,7 @@ class DeepSeekAIStrategy(Strategy):
             max_drawdown_pct = 0.0
 
             # v3.15: Fix variable name - was 'multi_agent_analyzer', should be 'multi_agent'
+            week_memories = []
             if hasattr(self, 'multi_agent') and self.multi_agent:
                 memories = self.multi_agent.decision_memory
 
@@ -6899,6 +6987,7 @@ class DeepSeekAIStrategy(Strategy):
                 for m in memories:
                     ts = m.get('timestamp', '')[:10]  # YYYY-MM-DD
                     if ts >= week_start_str and ts <= week_end_str:
+                        week_memories.append(m)
                         pnl = m.get('pnl', 0)
                         if pnl != 0:
                             total_trades += 1
@@ -6933,6 +7022,14 @@ class DeepSeekAIStrategy(Strategy):
             starting_equity = getattr(self, '_weekly_starting_equity', current_equity)
             pnl_pct = ((current_equity - starting_equity) / starting_equity * 100) if starting_equity > 0 else 0.0
 
+            # v5.1: Compute evaluation stats for this week's trades
+            eval_stats = {}
+            try:
+                from strategy.trading_logic import get_evaluation_summary
+                eval_stats = get_evaluation_summary(week_memories)
+            except Exception:
+                pass
+
             summary_data = {
                 'week_start': week_start_str,
                 'week_end': week_end_str,
@@ -6948,6 +7045,7 @@ class DeepSeekAIStrategy(Strategy):
                 'ending_equity': current_equity,
                 'max_drawdown_pct': max_drawdown_pct,
                 'daily_breakdown': daily_breakdown,
+                'evaluation': eval_stats,
             }
 
             if self.telegram_bot:
@@ -7152,13 +7250,13 @@ class DeepSeekAIStrategy(Strategy):
     def _cmd_version(self) -> Dict[str, Any]:
         """Handle /version command - bot version and system info."""
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             import platform
             import sys
 
             uptime_str = "N/A"
             if self.strategy_start_time:
-                uptime_delta = datetime.utcnow() - self.strategy_start_time
+                uptime_delta = datetime.now(timezone.utc) - self.strategy_start_time
                 days = uptime_delta.days
                 hours = (uptime_delta.total_seconds() % 86400) // 3600
                 minutes = (uptime_delta.total_seconds() % 3600) // 60
@@ -7743,9 +7841,9 @@ class DeepSeekAIStrategy(Strategy):
             return
 
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             current_hour = now.hour
             current_weekday = now.weekday()  # 0=Monday, 6=Sunday
             today_str = now.strftime('%Y-%m-%d')

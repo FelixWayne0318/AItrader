@@ -16,6 +16,7 @@ from core.database import get_db
 from core.config import settings
 from models import SocialLink, CopyTradingLink, SiteSettings
 from services import config_service
+from services.trade_evaluation_service import get_trade_evaluation_service
 from api.deps import get_current_admin
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -534,9 +535,11 @@ async def get_uploaded_file(filename: str):
 @router.get("/performance")
 async def get_performance_data(admin=Depends(get_current_admin)):
     """Get performance data for admin dashboard"""
-    from services import binance_service
+    from services.performance_service import get_performance_service
 
-    stats = await binance_service.get_performance_stats(30)
+    # Use performance_service for consistent metrics calculation
+    service = get_performance_service()
+    stats = await service.get_performance_stats()
 
     # Build equity curve from cumulative PnL data
     # Frontend expects: [{time: "YYYY-MM-DD", value: number}]
@@ -599,3 +602,74 @@ async def get_recent_signals(
 
     # No signal data found
     return []
+
+
+# =============================================================================
+# Trade Evaluation Endpoints (v5.1) - Admin Only
+# Full access to trade quality metrics including sensitive data
+# =============================================================================
+
+
+@router.get("/trade-evaluation/full")
+async def get_full_trade_evaluations(
+    limit: int = 50,
+    admin=Depends(get_current_admin)
+):
+    """
+    Get detailed trade evaluations (admin only - includes all fields).
+
+    Includes sensitive data: entry/exit prices, conditions, full evaluation.
+
+    Parameters
+    ----------
+    limit : int, optional
+        Maximum number of trades (default: 50, max: 500)
+
+    Returns
+    -------
+    List[Dict]
+        Full trade evaluation data with all fields
+    """
+    service = get_trade_evaluation_service()
+    limit = min(limit, 500)
+    return service.get_recent_trades(limit=limit, include_details=True)
+
+
+@router.get("/trade-evaluation/export")
+async def export_trade_evaluations(
+    format: str = "json",
+    days: Optional[int] = None,
+    admin=Depends(get_current_admin)
+):
+    """
+    Export trade evaluation data (admin only).
+
+    Parameters
+    ----------
+    format : str
+        'json' or 'csv'
+    days : int, optional
+        Number of days to export (None = all time)
+
+    Returns
+    -------
+    Dict
+        Export package with data and metadata
+    """
+    service = get_trade_evaluation_service()
+    return service.export_data(format=format, days=days)
+
+
+@router.get("/trade-evaluation/summary-admin")
+async def get_trade_evaluation_summary_admin(
+    days: int = 30,
+    admin=Depends(get_current_admin)
+):
+    """
+    Get trade evaluation summary (admin only - same as public but with auth).
+
+    Useful for admin dashboard that needs authenticated access.
+    """
+    service = get_trade_evaluation_service()
+    days_filter = None if days == 0 else days
+    return service.get_evaluation_summary(days=days_filter)

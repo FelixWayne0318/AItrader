@@ -2,9 +2,33 @@
 AlgVex Web Configuration
 """
 import os
+import warnings
 from pathlib import Path
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import Optional
+
+
+def _detect_aitrader_path() -> str:
+    """Auto-detect AItrader project root path"""
+    # 1. Environment variable takes priority
+    env_path = os.getenv("AITRADER_PATH")
+    if env_path and Path(env_path).exists():
+        return env_path
+
+    # 2. Detect relative to this file (web/backend/core/config.py -> project root)
+    this_file = Path(__file__).resolve()
+    project_root = this_file.parent.parent.parent.parent  # core -> backend -> web -> AItrader
+    if (project_root / "main_live.py").exists():
+        return str(project_root)
+
+    # 3. Common server path
+    server_path = Path("/home/linuxuser/nautilus_AItrader")
+    if server_path.exists():
+        return str(server_path)
+
+    # 4. Fallback
+    return str(project_root)
 
 
 class Settings(BaseSettings):
@@ -33,13 +57,23 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./algvex.db"
 
-    # AItrader paths (configurable via environment variables)
-    AITRADER_PATH: Path = Path(os.getenv("AITRADER_PATH", "/home/linuxuser/nautilus_AItrader"))
+    # AItrader paths (auto-detected via validator - runs AFTER env load)
+    AITRADER_PATH: Optional[str] = None
+
+    @field_validator('AITRADER_PATH', mode='before')
+    @classmethod
+    def set_aitrader_path(cls, v):
+        if v is None:
+            return _detect_aitrader_path()
+        return v
 
     @property
     def aitrader_config_path(self) -> Path:
         """Derive config path from AITRADER_PATH"""
-        return self.AITRADER_PATH / "configs" / "strategy_config.yaml"
+        config_path = Path(self.AITRADER_PATH) / "configs" / "base.yaml"
+        if not config_path.exists():
+            warnings.warn(f"⚠️  Config file not found: {config_path}. Backend may fail to read trader config.")
+        return config_path
 
     AITRADER_ENV_PATH: Path = Path.home() / ".env.aitrader"
     AITRADER_SERVICE_NAME: str = "nautilus-trader"
@@ -52,10 +86,15 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = [
         "https://algvex.com",
         "http://algvex.com",
+        "https://www.algvex.com",
+        "http://www.algvex.com",
         "http://139.180.157.152:3000",
         "http://139.180.157.152",
+        "https://139.180.157.152:3000",
+        "https://139.180.157.152",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:8000",
     ]
 
     class Config:
@@ -66,14 +105,21 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Validate SECRET_KEY in production
-if not os.getenv("DEBUG", "False").lower() == "true":
+# Validate SECRET_KEY: only crash if .env file exists (production) but SECRET_KEY is default
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists() and not settings.DEBUG:
     if settings.SECRET_KEY == "change-this-in-production-use-secrets":
         raise ValueError(
-            "⚠️ SECURITY ERROR: Default SECRET_KEY detected in production!\n"
+            "SECURITY ERROR: Default SECRET_KEY detected in production!\n"
             "   Set a secure SECRET_KEY in your .env file:\n"
             "   SECRET_KEY=$(openssl rand -hex 32)"
         )
+elif not _env_file.exists() and settings.SECRET_KEY == "change-this-in-production-use-secrets":
+    # No .env file = development/first-run mode, just warn
+    warnings.warn(
+        "Using default SECRET_KEY. Create web/backend/.env with a secure SECRET_KEY for production.",
+        stacklevel=2,
+    )
 
 
 def load_aitrader_env():
