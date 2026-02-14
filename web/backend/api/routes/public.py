@@ -27,10 +27,10 @@ async def get_performance(days: int = 30):
 
     Returns aggregated stats without exposing individual trades
     """
-    # Note: performance_service doesn't currently support days parameter
-    # It uses fixed 90-day lookback for income history
     service = get_performance_service()
     stats = await service.get_performance_stats()
+    # Override period_days with requested value
+    stats["period_days"] = days
     return stats
 
 

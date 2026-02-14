@@ -342,7 +342,9 @@ class PerformanceService:
                 "today_pnl": 0,
                 "week_pnl": 0,
                 "month_pnl": 0,
-                "equity_curve": [],
+                "pnl_curve": [],
+                "period_days": 90,
+                "last_updated": datetime.now().isoformat(),
                 "initial_equity": 0,
                 "_debug": {
                     "api_key_loaded": bool(self.api_key),
@@ -497,8 +499,8 @@ class PerformanceService:
             cumulative_pnl += daily_pnl[date_str]
             equity_curve.append({
                 "date": date_str,
-                "pnl": round(daily_pnl[date_str], 2),
-                "cumulative": round(cumulative_pnl, 2)
+                "daily_pnl": round(daily_pnl[date_str], 2),
+                "cumulative_pnl": round(cumulative_pnl, 2)
             })
 
         # Calculate percentages using initial equity
@@ -530,7 +532,9 @@ class PerformanceService:
             "today_pnl": round(today_pnl, 2),
             "week_pnl": round(week_pnl, 2),
             "month_pnl": round(month_pnl, 2),
-            "equity_curve": equity_curve,
+            "pnl_curve": equity_curve,
+            "period_days": 90,
+            "last_updated": datetime.now().isoformat(),
             "initial_equity": round(initial_equity, 2),
             "_debug": {
                 "api_key_loaded": bool(self.api_key),
