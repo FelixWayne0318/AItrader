@@ -27,10 +27,15 @@ pydantic-settings>=2.1.0
 # CORS
 starlette>=0.35.0
 
-# Performance Metrics (v3.0.1 - use official libraries)
+# Performance Metrics (v3.0.2 - use official libraries, Python 3.12 compatible)
 # See: docs/research/EVALUATION_FRAMEWORK.md
-empyrical>=0.5.5          # Sharpe/Sortino/Calmar/MDD/VaR (Quantopian)
-scipy>=1.9.0              # Bootstrap, statistical tests
-statsmodels>=0.14.0       # Multiple hypothesis testing correction
-pandas>=2.0.0             # Time series processing
-numpy>=1.24.0             # Numerical computing
+# CRITICAL FIX: Use empyrical-reloaded instead of empyrical (Python 3.12 compatible)
+# - empyrical (original) is unmaintained since 2019 and breaks with Python 3.12
+# - empyrical-reloaded is actively maintained and does NOT force pandas-datareader dependency
+# - pandas-datareader is INCOMPATIBLE with Python 3.12 - DO NOT install it
+# Reference: https://github.com/stefan-jansen/empyrical-reloaded
+empyrical-reloaded>=0.5.12,<1.0  # Sharpe/Sortino/Calmar/MDD/VaR (Python 3.12 compatible)
+scipy>=1.9.0,<2.0                # Bootstrap, statistical tests
+statsmodels>=0.14.0,<1.0         # Multiple hypothesis testing correction
+pandas>=2.2.2,<4.0               # Time series processing (required for numpy>=2.0)
+numpy>=1.24.0,<3.0               # Numerical computing

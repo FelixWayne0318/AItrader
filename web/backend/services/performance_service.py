@@ -2,8 +2,10 @@
 Performance Analytics Service
 Calculates trading statistics, risk metrics, and performance data
 
-v3.0.1 Update: Uses official libraries for all metrics calculations
+v3.0.2 Update: Uses official libraries for all metrics calculations
 - empyrical-reloaded: Sharpe/Sortino/Calmar/MDD/VaR (Python 3.12 compatible)
+  CRITICAL: Use empyrical-reloaded instead of empyrical (original is unmaintained)
+  Reference: https://github.com/stefan-jansen/empyrical-reloaded
 - scipy: Bootstrap confidence intervals
 - statsmodels: Multiple hypothesis testing correction
 
@@ -22,14 +24,15 @@ import logging
 import numpy as np
 import pandas as pd
 
-# Official libraries for performance metrics (v3.0.1)
+# Official libraries for performance metrics (v3.0.2)
 # DO NOT self-implement these calculations - use official libraries!
+# CRITICAL: Use empyrical-reloaded (Python 3.12 compatible), NOT empyrical (unmaintained)
 try:
     import empyrical as ep
     EMPYRICAL_AVAILABLE = True
 except ImportError:
     EMPYRICAL_AVAILABLE = False
-    logging.warning("empyrical not installed. Run: pip install empyrical-reloaded>=0.5.12")
+    logging.warning("empyrical-reloaded not installed. Run: pip install empyrical-reloaded>=0.5.12")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
