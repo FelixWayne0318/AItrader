@@ -651,7 +651,7 @@ Environment=AUTO_CONFIRM=true
       - 根因：AI 返回结构正确但 R/R 极低的 SL/TP (如 0.1:1) 时直接通过验证
       - 修复：在 `validate_multiagent_sltp()` 中添加 R/R 硬性门槛检查
       - 配置：`configs/base.yaml: trading_logic.min_rr_ratio: 1.5`
-      - 当 R/R < 1.5:1 时，拒绝 AI SL/TP，回退到 `calculate_technical_sltp()` (已有 R/R 调整)
+      - 当 R/R < 1.5:1 时，拒绝 AI SL/TP，回退到 `calculate_sr_based_sltp()` (S/R zone + ATR buffer)
     - **问题 2**: Heartbeat 显示的信号来自上一个分析周期，但未标注
       - 根因：`_send_heartbeat_notification()` 在 AI 分析之前运行，读取 `self.last_signal`
       - 修复：信号后添加 "(上次)" 标签，避免用户误以为是当前周期结果

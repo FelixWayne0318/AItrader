@@ -64,7 +64,7 @@ class MathVerificationChecker(DiagnosticStep):
 
         # Import trading logic
         try:
-            from strategy.trading_logic import validate_multiagent_sltp, calculate_technical_sltp
+            from strategy.trading_logic import validate_multiagent_sltp
         except ImportError as e:
             print(f"  ❌ 无法导入 trading_logic: {e}")
             self.ctx.add_error(f"Math verification: import failed: {e}")
@@ -82,7 +82,7 @@ class MathVerificationChecker(DiagnosticStep):
         # Run all math checks
         self._check_rr_gate(price, validate_multiagent_sltp)
         self._check_sl_side(price, validate_multiagent_sltp)
-        self._check_technical_fallback(price, support, resistance, calculate_technical_sltp)
+        # v5.1: calculate_technical_sltp removed, production uses calculate_sr_based_sltp
         self._check_sl_favorable_direction(price)
         self._check_dynamic_threshold(price)
         self._check_emergency_sl(price)
@@ -208,90 +208,8 @@ class MathVerificationChecker(DiagnosticStep):
             self._record("M2b", "SL side: reject SHORT SL < entry", False,
                          actual=str(e))
 
-    # ── M3: Technical SL/TP Fallback ──
-
-    def _check_technical_fallback(self, price: float, support: float,
-                                   resistance: float, calc_fn):
-        print(f"  --- M3: Technical SL/TP Fallback ---")
-        print()
-
-        sl_buffer_pct = 0.005
-
-        for side, label, tag in [("BUY", "LONG", "a"), ("SELL", "SHORT", "b")]:
-            try:
-                sl, tp, method = calc_fn(
-                    side=side, entry_price=price, support=support,
-                    resistance=resistance, confidence="MEDIUM",
-                    use_support_resistance=True, sl_buffer_pct=sl_buffer_pct,
-                )
-                if side == "BUY":
-                    rr = (tp - price) / (price - sl) if price > sl else 0
-                    side_ok = sl < price < tp
-                else:
-                    rr = (price - tp) / (sl - price) if sl > price else 0
-                    side_ok = tp < price < sl
-                ok = rr >= 1.5 and side_ok
-                self._record(f"M3{tag}", f"Technical fallback: {label}", ok,
-                             actual=f"SL=${sl:,.2f} TP=${tp:,.2f} R/R={rr:.2f}:1 side_ok={side_ok}",
-                             detail=f"Method: {method}")
-
-                # ── Exact formula anchoring assertions ──
-                # Verify SL is anchored to S/R zone (not arbitrary %)
-                if side == "BUY" and support > 0:
-                    # LONG: SL = support × (1 - buffer) or default
-                    expected_sl = support * (1 - sl_buffer_pct)
-                    if expected_sl < price:
-                        sl_match = abs(sl - expected_sl) < price * 0.001  # 0.1% tolerance
-                        if sl_match:
-                            self._record(f"M3{tag}_anchor", f"SL anchored to support ({label})", True,
-                                         actual=f"SL=${sl:,.2f} ≈ support×(1-{sl_buffer_pct}) = ${expected_sl:,.2f}")
-                        else:
-                            # May be default % or R/R adjusted — check default
-                            from strategy.trading_logic import get_default_sl_pct
-                            default_sl = price * (1 - get_default_sl_pct())
-                            if abs(sl - default_sl) < price * 0.001:
-                                self._record(f"M3{tag}_anchor", f"SL default % ({label})", True,
-                                             actual=f"SL=${sl:,.2f} ≈ default {get_default_sl_pct()*100:.0f}% = ${default_sl:,.2f}")
-                            else:
-                                self._record(f"M3{tag}_anchor", f"SL anchor unknown ({label})", False,
-                                             expected=f"support-based=${expected_sl:,.2f} or default=${default_sl:,.2f}",
-                                             actual=f"SL=${sl:,.2f}")
-                elif side == "SELL" and resistance > 0:
-                    # SHORT: SL = resistance × (1 + buffer) or default
-                    expected_sl = resistance * (1 + sl_buffer_pct)
-                    if expected_sl > price:
-                        sl_match = abs(sl - expected_sl) < price * 0.001
-                        if sl_match:
-                            self._record(f"M3{tag}_anchor", f"SL anchored to resistance ({label})", True,
-                                         actual=f"SL=${sl:,.2f} ≈ resistance×(1+{sl_buffer_pct}) = ${expected_sl:,.2f}")
-                        else:
-                            from strategy.trading_logic import get_default_sl_pct
-                            default_sl = price * (1 + get_default_sl_pct())
-                            if abs(sl - default_sl) < price * 0.001:
-                                self._record(f"M3{tag}_anchor", f"SL default % ({label})", True,
-                                             actual=f"SL=${sl:,.2f} ≈ default {get_default_sl_pct()*100:.0f}% = ${default_sl:,.2f}")
-                            else:
-                                self._record(f"M3{tag}_anchor", f"SL anchor unknown ({label})", False,
-                                             expected=f"resistance-based=${expected_sl:,.2f} or default=${default_sl:,.2f}",
-                                             actual=f"SL=${sl:,.2f}")
-
-                # ── R/R precision cross-check ──
-                if side == "BUY" and price > sl:
-                    direct_rr = (tp - price) / (price - sl)
-                    if abs(direct_rr - rr) > 0.001:
-                        self._record(f"M3{tag}_rr", f"R/R formula mismatch ({label})", False,
-                                     expected=f"direct={direct_rr:.4f}:1",
-                                     actual=f"computed={rr:.4f}:1")
-                elif side == "SELL" and sl > price:
-                    direct_rr = (price - tp) / (sl - price)
-                    if abs(direct_rr - rr) > 0.001:
-                        self._record(f"M3{tag}_rr", f"R/R formula mismatch ({label})", False,
-                                     expected=f"direct={direct_rr:.4f}:1",
-                                     actual=f"computed={rr:.4f}:1")
-
-            except Exception as e:
-                self._record(f"M3{tag}", f"Technical fallback: {label}", False,
-                             actual=str(e))
+    # ── M3: Technical SL/TP Fallback — removed in v5.1 ──
+    # Production uses calculate_sr_based_sltp from utils/sr_sltp_calculator.py
 
     # ── M4: SL Favorable Direction ──
 

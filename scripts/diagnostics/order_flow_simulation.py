@@ -1127,7 +1127,7 @@ class BracketOrderFlowSimulator(DiagnosticStep):
         print("  │    ├─ 验证: validate_multiagent_sltp()                      │")
         print("  │    │   ├─ 检查 SL 在入场价正确一侧                          │")
         print("  │    │   └─ R/R >= 1.5:1 硬性门槛                             │")
-        print("  │    └─ 回退: calculate_technical_sltp() (S/R Zones)          │")
+        print("  │    └─ 回退: calculate_sr_based_sltp() (S/R Zones+ATR)      │")
         print("  └─────────────────────────────────────────────────────────────┘")
         print("                          ↓")
         print("  ┌─────────────────────────────────────────────────────────────┐")
