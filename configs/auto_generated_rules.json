@@ -4919,12 +4919,42 @@
       "pattern_type": "contains",
       "created": "2026-02-14T23:12:32.580807",
       "auto_generated": true
+    },
+    {
+      "id": "b1891e979ed0",
+      "commit": "4ef8245",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: remove Coinalyze funding rate fallback, use Binance exclusively",
+      "pattern": "raw_pct = funding.get('current_pct') or funding.get('settled_pct')",
+      "pattern_type": "contains",
+      "created": "2026-02-14T23:17:54.256737",
+      "auto_generated": true
+    },
+    {
+      "id": "ffb94e086386",
+      "commit": "4ef8245",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: remove Coinalyze funding rate fallback, use Binance exclusively",
+      "pattern": "fr_pct = fr.get('current_pct', 0) if fr else 0",
+      "pattern_type": "contains",
+      "created": "2026-02-14T23:17:54.280526",
+      "auto_generated": true
+    },
+    {
+      "id": "69e469a5880e",
+      "commit": "4ef8245",
+      "file": "utils/ai_data_assembler.py",
+      "message": "fix: remove Coinalyze funding rate fallback, use Binance exclusively",
+      "pattern": "funding_raw: Optional[Dict],  # v5.2: Kept for signature compat, no longer used for FR",
+      "pattern_type": "contains",
+      "created": "2026-02-14T23:17:54.303218",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-14T23:12:35.416617",
-    "count": 492,
+    "updated": "2026-02-14T23:17:57.489568",
+    "count": 495,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
