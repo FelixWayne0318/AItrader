@@ -3,9 +3,30 @@ WebSocket routes for real-time data streaming
 """
 import asyncio
 import json
-from typing import Set
+import logging
+from typing import Set, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from jose import jwt, JWTError
+from core.config import settings
 from services import trading_service, binance_service
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_ws_token(token: Optional[str]) -> bool:
+    """Validate JWT token for WebSocket connections"""
+    if not token:
+        return False
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        email = payload.get("sub")
+        if not email:
+            return False
+        if settings.ADMIN_EMAILS and email not in settings.ADMIN_EMAILS:
+            return False
+        return True
+    except JWTError:
+        return False
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
 
@@ -48,7 +69,7 @@ class ConnectionManager:
             for connection in self.ticker_connections[symbol]:
                 try:
                     await connection.send_json(message)
-                except:
+                except Exception:
                     disconnected.add(connection)
             for conn in disconnected:
                 self.disconnect(conn)
@@ -58,7 +79,7 @@ class ConnectionManager:
         for connection in self.account_connections:
             try:
                 await connection.send_json(message)
-            except:
+            except Exception:
                 disconnected.add(connection)
         for conn in disconnected:
             self.disconnect(conn)
@@ -68,7 +89,7 @@ class ConnectionManager:
         for connection in self.positions_connections:
             try:
                 await connection.send_json(message)
-            except:
+            except Exception:
                 disconnected.add(connection)
         for conn in disconnected:
             self.disconnect(conn)
@@ -141,7 +162,7 @@ async def websocket_prices(websocket: WebSocket):
                             "change": ticker.get("priceChangePercent"),
                         })
                 await asyncio.sleep(1)
-            except:
+            except Exception:
                 break
 
     price_task = None
@@ -192,8 +213,7 @@ async def websocket_account(
     Real-time account updates (balance, PnL)
     Requires authentication token
     """
-    # Simple token validation
-    if not token:
+    if not _validate_ws_token(token):
         await websocket.close(code=4001, reason="Authentication required")
         return
 
@@ -240,7 +260,7 @@ async def websocket_positions(
     Real-time position updates
     Requires authentication token
     """
-    if not token:
+    if not _validate_ws_token(token):
         await websocket.close(code=4001, reason="Authentication required")
         return
 
@@ -286,7 +306,7 @@ async def websocket_orders(
     Real-time open orders updates
     Requires authentication token
     """
-    if not token:
+    if not _validate_ws_token(token):
         await websocket.close(code=4001, reason="Authentication required")
         return
 
@@ -327,6 +347,7 @@ async def websocket_stream(
     """
     await manager.connect(websocket)
     subscriptions: Set[str] = set()
+    is_authenticated = _validate_ws_token(token)
 
     async def stream_data():
         while True:
@@ -348,7 +369,7 @@ async def websocket_stream(
                         })
 
                 # Account subscription
-                if "account" in subscriptions and token:
+                if "account" in subscriptions and is_authenticated:
                     account = await trading_service.get_account_info()
                     if account:
                         await websocket.send_json({
@@ -361,7 +382,7 @@ async def websocket_stream(
                         })
 
                 # Positions subscription
-                if "positions" in subscriptions and token:
+                if "positions" in subscriptions and is_authenticated:
                     positions = await trading_service.get_positions()
                     if positions:
                         active = [p for p in positions if float(p.get("positionAmt", 0)) != 0]
@@ -372,7 +393,7 @@ async def websocket_stream(
                         })
 
                 # Orders subscription
-                if "orders" in subscriptions and token:
+                if "orders" in subscriptions and is_authenticated:
                     orders = await trading_service.get_open_orders()
                     await websocket.send_json({
                         "type": "orders",
@@ -381,7 +402,7 @@ async def websocket_stream(
                     })
 
                 await asyncio.sleep(2)
-            except:
+            except Exception:
                 break
 
     stream_task = None

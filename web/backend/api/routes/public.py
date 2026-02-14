@@ -2,6 +2,7 @@
 Public API Routes - No authentication required
 """
 import os
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -155,9 +156,10 @@ async def get_latest_signal():
     from datetime import datetime
 
     # Try to read from the bot's signal state file
+    aitrader_path = Path(settings.AITRADER_PATH) if settings.AITRADER_PATH else Path(".")
     signal_file_paths = [
-        str(settings.AITRADER_PATH / "logs" / "latest_signal.json"),
-        str(settings.AITRADER_PATH / "state" / "latest_signal.json"),
+        str(aitrader_path / "logs" / "latest_signal.json"),
+        str(aitrader_path / "state" / "latest_signal.json"),
     ]
 
     for signal_file in signal_file_paths:
@@ -194,9 +196,10 @@ async def get_signal_history(limit: int = 10):
     import json
     from datetime import datetime
 
+    aitrader_path = Path(settings.AITRADER_PATH) if settings.AITRADER_PATH else Path(".")
     history_file_paths = [
-        str(settings.AITRADER_PATH / "logs" / "signal_history.json"),
-        str(settings.AITRADER_PATH / "state" / "signal_history.json"),
+        str(aitrader_path / "logs" / "signal_history.json"),
+        str(aitrader_path / "state" / "signal_history.json"),
     ]
 
     for history_file in history_file_paths:
@@ -229,9 +232,10 @@ async def get_ai_analysis():
     import json
     from datetime import datetime
 
+    aitrader_path = Path(settings.AITRADER_PATH) if settings.AITRADER_PATH else Path(".")
     analysis_file_paths = [
-        str(settings.AITRADER_PATH / "logs" / "latest_analysis.json"),
-        str(settings.AITRADER_PATH / "state" / "latest_analysis.json"),
+        str(aitrader_path / "logs" / "latest_analysis.json"),
+        str(aitrader_path / "state" / "latest_analysis.json"),
     ]
 
     for analysis_file in analysis_file_paths:

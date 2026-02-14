@@ -45,8 +45,17 @@ echo "      ✓ Build complete"
 echo ""
 echo "[4/4] Restarting PM2..."
 if command -v pm2 &> /dev/null; then
-    pm2 restart algvex-frontend || pm2 start npm --name "algvex-frontend" -- start
-    echo "      ✓ PM2 restarted"
+    ECOSYSTEM="$FRONTEND_DIR/../ecosystem.config.js"
+    # Try restart first; if process doesn't exist, start from ecosystem config
+    if pm2 restart algvex-frontend 2>/dev/null; then
+        echo "      ✓ PM2 restarted"
+    elif [ -f "$ECOSYSTEM" ]; then
+        pm2 start "$ECOSYSTEM" --only algvex-frontend
+        echo "      ✓ PM2 started from ecosystem.config.js"
+    else
+        pm2 start npm --name "algvex-frontend" -- start
+        echo "      ✓ PM2 started (standalone)"
+    fi
 else
     echo "      ⚠ PM2 not found, please restart manually"
 fi

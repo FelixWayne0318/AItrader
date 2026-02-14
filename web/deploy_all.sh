@@ -60,7 +60,8 @@ echo ""
 # ============================================================
 print_step "步骤 1/7: 拉取最新代码"
 
-git pull origin claude/trading-evaluation-standards-qBQP8 || handle_error "Git 拉取失败"
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+git pull origin "$CURRENT_BRANCH" || handle_error "Git 拉取失败 (branch: $CURRENT_BRANCH)"
 
 print_success "代码拉取完成"
 echo "当前 commit:"
@@ -191,7 +192,7 @@ echo ""
 
 # 检查后端健康
 print_warning "检查后端健康状态..."
-HEALTH_CHECK=$(curl -s http://localhost:8000/health 2>/dev/null || echo "FAILED")
+HEALTH_CHECK=$(curl -s http://localhost:8000/api/health 2>/dev/null || echo "FAILED")
 
 if [[ $HEALTH_CHECK == *"healthy"* ]]; then
     print_success "后端健康检查通过: $HEALTH_CHECK"
