@@ -27,6 +27,7 @@ import { Footer } from "@/components/layout/footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useTranslation, type Locale } from "@/lib/i18n";
+import { TradeQualityCard } from "@/components/trade-evaluation/TradeQualityCard";
 
 // Dynamic import with SSR disabled
 const HeroAnimatedCandlestick = dynamic(
@@ -368,6 +369,11 @@ export default function HomePage() {
                 </CardContent>
               </Card>
             )}
+
+            {/* Trade Quality Card */}
+            <div className="mt-6 sm:mt-8">
+              <TradeQualityCard days={30} />
+            </div>
           </div>
         </section>
 

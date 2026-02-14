@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { GradePieChart } from "@/components/trade-evaluation/GradePieChart";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -377,6 +378,9 @@ export default function ChartPage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Trade Quality */}
+              <GradePieChart limit={5} days={30} />
 
               {/* Recent Signals History */}
               <Card className="border-border/50">

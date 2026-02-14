@@ -25,12 +25,14 @@ import {
   Globe,
   Mail,
   FileText,
+  Target,
 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useTranslation, type Locale } from "@/lib/i18n";
+import { AdminTradeAnalysis } from "@/components/trade-evaluation/AdminTradeAnalysis";
 
 // Dynamic imports for animated components (SSR disabled)
 const EquityCurve = dynamic(
@@ -358,6 +360,7 @@ export default function AdminDashboard() {
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: Activity },
     { id: "strategy", label: "Strategy", icon: Settings },
+    { id: "trade-quality", label: "Trade Quality", icon: Target },
     { id: "links", label: "Links", icon: LinkIcon },
     { id: "site", label: "Site Settings", icon: Palette },
   ];
@@ -727,6 +730,11 @@ export default function AdminDashboard() {
                 </CardContent>
               </Card>
             </div>
+          )}
+
+          {/* Trade Quality Tab */}
+          {activeTab === "trade-quality" && (
+            <AdminTradeAnalysis />
           )}
 
           {/* Site Settings Tab */}
