@@ -24,7 +24,7 @@ from nautilus_trader.model.enums import OrderSide, TimeInForce, PositionSide, Pr
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.position import Position
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -709,7 +709,7 @@ class DeepSeekAIStrategy(Strategy):
         self.log.info("Starting DeepSeek AI Strategy...")
 
         # v2.2: 记录启动时间 (用于心跳消息显示运行时长)
-        from datetime import datetime
+        from datetime import datetime, timezone
         self._start_time = datetime.now()
 
         # Send immediate "initializing" notification BEFORE instrument loading
@@ -723,7 +723,7 @@ class DeepSeekAIStrategy(Strategy):
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"📊 {safe_id}\n"
                     f"⏳ Loading instruments...\n"
-                    f"\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                    f"\n⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
                 )
                 self.telegram_bot.send_message_sync(init_msg, use_queue=False)
             except Exception as e:
@@ -834,8 +834,8 @@ class DeepSeekAIStrategy(Strategy):
         self._sync_binance_leverage()
 
         # Record start time for uptime tracking
-        from datetime import datetime
-        self.strategy_start_time = datetime.utcnow()
+        from datetime import datetime, timezone
+        self.strategy_start_time = datetime.now(timezone.utc)
 
         # v2.1: Timer counter for heartbeat tracking
         self._timer_count = 0
@@ -964,7 +964,7 @@ class DeepSeekAIStrategy(Strategy):
                 # Calculate uptime
                 uptime_str = "N/A"
                 if self.strategy_start_time:
-                    uptime_delta = datetime.utcnow() - self.strategy_start_time
+                    uptime_delta = datetime.now(timezone.utc) - self.strategy_start_time
                     hours = int(uptime_delta.total_seconds() // 3600)
                     minutes = int((uptime_delta.total_seconds() % 3600) // 60)
                     uptime_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
@@ -1031,7 +1031,7 @@ class DeepSeekAIStrategy(Strategy):
         Returns:
             datetime: Next aligned UTC time
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Calculate next aligned minute
         current_minute = now.minute
@@ -3626,7 +3626,7 @@ class DeepSeekAIStrategy(Strategy):
                 'target_side': target_side,
                 'target_quantity': target_quantity,
                 'old_side': current_side,
-                'submitted_at': datetime.utcnow(),
+                'submitted_at': datetime.now(timezone.utc),
             }
             self.log.info(
                 f"📋 Reversal Phase 1: Stored pending reversal state "
@@ -5676,10 +5676,10 @@ class DeepSeekAIStrategy(Strategy):
             target_side = pending['target_side']
             target_quantity = pending['target_quantity']
             old_side = pending['old_side']
-            submitted_at = pending.get('submitted_at', datetime.utcnow())
+            submitted_at = pending.get('submitted_at', datetime.now(timezone.utc))
 
             # Calculate time elapsed since reversal was initiated
-            elapsed = (datetime.utcnow() - submitted_at).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - submitted_at).total_seconds()
 
             old_side_cn = '多' if old_side == 'long' else '空'
             new_side_cn = '多' if target_side == 'long' else '空'
@@ -5736,7 +5736,7 @@ class DeepSeekAIStrategy(Strategy):
                             f"*方向*: {old_side_cn} → {new_side_cn}\n"
                             f"*数量*: {target_quantity:.4f} BTC\n"
                             f"*耗时*: {elapsed:.1f}秒\n\n"
-                            f"⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                            f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
                         )
                         self.telegram_bot.send_message_sync(reversal_msg)
                     except Exception as e:
@@ -6360,7 +6360,7 @@ class DeepSeekAIStrategy(Strategy):
     def _cmd_status(self) -> Dict[str, Any]:
         """Handle /status command - shows REAL account balance."""
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
 
             # Get current price from thread-safe cache
             # IMPORTANT: Do NOT access indicator_manager here - it's called from
@@ -6381,7 +6381,7 @@ class DeepSeekAIStrategy(Strategy):
             # Calculate uptime
             uptime_str = "N/A"
             if self.strategy_start_time:
-                uptime_delta = datetime.utcnow() - self.strategy_start_time
+                uptime_delta = datetime.now(timezone.utc) - self.strategy_start_time
                 hours = uptime_delta.total_seconds() // 3600
                 minutes = (uptime_delta.total_seconds() % 3600) // 60
                 uptime_str = f"{int(hours)}h {int(minutes)}m"
@@ -6720,7 +6720,7 @@ class DeepSeekAIStrategy(Strategy):
         Thread-safe: Uses Binance API directly.
         """
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             from utils.binance_account import get_binance_fetcher
 
             # 获取交易对 symbol
@@ -6750,7 +6750,7 @@ class DeepSeekAIStrategy(Strategy):
 
                 # 格式化时间
                 try:
-                    dt = datetime.utcfromtimestamp(ts / 1000) if ts else datetime.utcnow()
+                    dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc) if ts else datetime.now(timezone.utc)
                     time_str = dt.strftime("%m-%d %H:%M")
                 except (ValueError, TypeError, OSError):
                     time_str = "N/A"
@@ -6862,9 +6862,9 @@ class DeepSeekAIStrategy(Strategy):
         Thread-safe: Uses thread-safe state and cached data.
         """
         try:
-            from datetime import datetime, timedelta
+            from datetime import datetime, timedelta, timezone
 
-            today = datetime.utcnow().strftime('%Y-%m-%d')
+            today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
             # Get real balance from Binance
             real_balance = self.binance_account.get_balance()
@@ -6957,9 +6957,9 @@ class DeepSeekAIStrategy(Strategy):
         Thread-safe: Uses thread-safe state and cached data.
         """
         try:
-            from datetime import datetime, timedelta
+            from datetime import datetime, timedelta, timezone
 
-            today = datetime.utcnow()
+            today = datetime.now(timezone.utc)
             # Calculate week start (Monday) and end (Sunday)
             week_start = today - timedelta(days=today.weekday())
             week_end = week_start + timedelta(days=6)
@@ -7250,13 +7250,13 @@ class DeepSeekAIStrategy(Strategy):
     def _cmd_version(self) -> Dict[str, Any]:
         """Handle /version command - bot version and system info."""
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             import platform
             import sys
 
             uptime_str = "N/A"
             if self.strategy_start_time:
-                uptime_delta = datetime.utcnow() - self.strategy_start_time
+                uptime_delta = datetime.now(timezone.utc) - self.strategy_start_time
                 days = uptime_delta.days
                 hours = (uptime_delta.total_seconds() % 86400) // 3600
                 minutes = (uptime_delta.total_seconds() % 3600) // 60
@@ -7841,9 +7841,9 @@ class DeepSeekAIStrategy(Strategy):
             return
 
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             current_hour = now.hour
             current_weekday = now.weekday()  # 0=Monday, 6=Sunday
             today_str = now.strftime('%Y-%m-%d')
