@@ -2,7 +2,7 @@
 Summary Module
 
 Generates comprehensive diagnostic summaries and analysis.
-Includes v5.0 machine-readable JSON output.
+Includes v5.1 machine-readable JSON output.
 """
 
 import json
@@ -637,13 +637,13 @@ class DeepAnalysis(DiagnosticStep):
 
 class MachineReadableSummary(DiagnosticStep):
     """
-    v5.0 机器可读 JSON 输出
+    v5.1 机器可读 JSON 输出
 
     Generates a structured JSON summary of all diagnostic results,
     matching the format used by diagnose_v412.py.
     """
 
-    name = "v5.0 机器可读 JSON 输出"
+    name = "v5.1 机器可读 JSON 输出"
 
     def run(self) -> bool:
         print()
@@ -691,7 +691,7 @@ class MachineReadableSummary(DiagnosticStep):
         warnings_count = len(self.ctx.warnings)
 
         summary = {
-            "version": "v5.0",
+            "version": "v5.1",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "total": total,
             "passed": passed,

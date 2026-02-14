@@ -1,5 +1,5 @@
 """
-Math Verification Module (v5.0)
+Math Verification Module (v5.1)
 
 Validates critical trading math with real market data:
   M1: R/R >= 1.5:1 hard gate (reject/accept)
@@ -35,7 +35,7 @@ def _compute_sr_from_klines(klines, current_price: float) -> Tuple[float, float]
 
 class MathVerificationChecker(DiagnosticStep):
     """
-    v5.0 数学验证
+    v5.1 数学验证
 
     Uses real market data to verify trading math:
     - R/R gate enforcement
@@ -46,7 +46,7 @@ class MathVerificationChecker(DiagnosticStep):
     - Emergency SL distance
     """
 
-    name = "v5.0 数学验证 (R/R, SL方向, 动态调整)"
+    name = "v5.1 数学验证 (R/R, SL方向, 动态调整)"
 
     def __init__(self, ctx: DiagnosticContext):
         super().__init__(ctx)
@@ -54,7 +54,7 @@ class MathVerificationChecker(DiagnosticStep):
 
     def run(self) -> bool:
         print()
-        print_box("v5.0 Math Verification (数学验证)", 65)
+        print_box("v5.1 Math Verification (数学验证)", 65)
         print()
 
         price = self.ctx.current_price
@@ -208,8 +208,10 @@ class MathVerificationChecker(DiagnosticStep):
             self._record("M2b", "SL side: reject SHORT SL < entry", False,
                          actual=str(e))
 
-    # ── M3: Technical SL/TP Fallback — removed in v5.1 ──
-    # Production uses calculate_sr_based_sltp from utils/sr_sltp_calculator.py
+    # ── M3: S/R-Based SL/TP with Quality-Aware TP (v5.1) ──
+    # Production uses calculate_sr_based_sltp() from utils/sr_sltp_calculator.py
+    # v5.1: _collect_tp_candidates() quality-aware sorting + TP buffer (Osler 2003)
+    # Old calculate_technical_sltp() deleted — percentage fallback removed since v4.2
 
     # ── M4: SL Favorable Direction ──
 

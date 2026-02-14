@@ -1,10 +1,10 @@
 """
-Lifecycle Test Module (v5.0)
+Lifecycle Test Module (v5.1)
 
 Tests post-trade lifecycle features and on_bar MTF routing logic.
 Restored from v11.16 monolithic script.
 
-v5.0 update: Trailing Stop removed, replaced by S/R dynamic reevaluation.
+v5.1 update: Trailing Stop removed, replaced by S/R dynamic reevaluation.
 """
 
 from typing import Dict, Optional
@@ -27,6 +27,7 @@ class PostTradeLifecycleTest(DiagnosticStep):
     - S/R Dynamic SL/TP reevaluation (_reevaluate_sltp_for_existing_position)
 
     v5.0: Trailing Stop removed. S/R reevaluation is the sole SL adjustment mechanism.
+    v5.1: Quality-aware TP sorting + TP buffer (Osler 2003) for hit probability asymmetry fix.
     Based on v11.16: [8.5/10] Post-Trade 生命周期测试
     """
 
@@ -47,7 +48,7 @@ class PostTradeLifecycleTest(DiagnosticStep):
         else:
             print("     ⚠️ enable_oco = False (跳过清理)")
 
-        # Test S/R dynamic SL/TP reevaluation (v5.0: replaces Trailing Stop)
+        # Test S/R dynamic SL/TP reevaluation (v5.1: replaces Trailing Stop)
         print()
         print("  📋 S/R 动态 SL/TP 重评估 (_reevaluate_sltp_for_existing_position):")
         enable_auto_sltp = getattr(cfg, 'enable_auto_sl_tp', True)

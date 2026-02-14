@@ -1,5 +1,5 @@
 """
-Code Integrity Checker Module (v5.0)
+Code Integrity Checker Module (v5.1)
 
 Static source code analysis without executing the strategy.
 Validates critical code patterns using regex/AST inspection.
@@ -16,7 +16,7 @@ Checks:
   P1.9:  on_order_filled OCO management
   P1.10: Emergency SL method exists
 
-v5.0 update: Trailing Stop removed, P1.4/P1.8 updated for S/R reevaluation.
+v5.1 update: Trailing Stop removed, P1.4/P1.8 updated for S/R reevaluation.
 """
 
 import re
@@ -66,13 +66,13 @@ def _extract_method(source_lines: List[str], method_name: str) -> Optional[str]:
 
 class CodeIntegrityChecker(DiagnosticStep):
     """
-    v5.0 静态代码完整性检查
+    v5.1 静态代码完整性检查
 
     Uses regex/AST to inspect deepseek_strategy.py source code
-    without executing it. Validates all v5.0 order flow safety patterns.
+    without executing it. Validates all v5.1 order flow safety patterns.
     """
 
-    name = "v5.0 代码完整性检查 (静态分析)"
+    name = "v5.1 代码完整性检查 (静态分析)"
 
     def __init__(self, ctx: DiagnosticContext):
         super().__init__(ctx)
@@ -80,7 +80,7 @@ class CodeIntegrityChecker(DiagnosticStep):
 
     def run(self) -> bool:
         print()
-        print_box("v5.0 Code Integrity (静态代码检查)", 65)
+        print_box("v5.1 Code Integrity (静态代码检查)", 65)
         print()
 
         strategy_path = self.ctx.project_root / "strategy" / "deepseek_strategy.py"
@@ -277,12 +277,15 @@ class CodeIntegrityChecker(DiagnosticStep):
         # v4.2: Level 3 (percentage fallback) removed — only S/R-based fallback remains
         has_no_pct_fallback = "calculate_technical_sltp" not in method
         has_price_chain = "binance_account" in method or "latest_price_data" in method
+        # v5.1: TP buffer support (quality-aware TP sorting + buffer before zone)
+        has_tp_buffer = "tp_buffer_multiplier" in method
         ok = has_rr and has_sr_fallback and has_no_pct_fallback
         self._record("P1.7", "Unified SL/TP validation (_validate_sltp_for_entry)", ok,
                      expected="validate_multiagent_sltp + calculate_sr_based_sltp fallback "
-                              "+ no percentage fallback (v4.2)",
+                              "+ no percentage fallback + tp_buffer (v5.1)",
                      actual=f"AI R/R={has_rr}, S/R fallback={has_sr_fallback}, "
-                            f"no_pct_fallback={has_no_pct_fallback}, price_chain={has_price_chain}")
+                            f"no_pct_fallback={has_no_pct_fallback}, tp_buffer={has_tp_buffer}, "
+                            f"price_chain={has_price_chain}")
 
     # ── P1.8: Dynamic SL/TP safety ──
 
@@ -297,13 +300,15 @@ class CodeIntegrityChecker(DiagnosticStep):
         has_sr_call = "calculate_sr_based_sltp" in method
         has_trigger_guard = ">= current_price" in method or "<= current_price" in method
         has_atomic_replace = "_replace_sltp_orders" in method
+        # v5.1: Quality-aware TP with buffer
+        has_tp_buffer = "tp_buffer_multiplier" in method
         ok = has_favorable and has_sr_call and has_threshold
-        self._record("P1.8", "Dynamic SL/TP: safety rules (v5.0)", ok,
-                     expected="SL favorable direction + S/R recalculation + dynamic threshold "
-                              "+ trigger guard (Trailing removed in v5.0)",
+        self._record("P1.8", "Dynamic SL/TP: safety rules (v5.1)", ok,
+                     expected="SL favorable direction + S/R recalculation (v5.1: quality-aware TP) "
+                              "+ dynamic threshold + trigger guard",
                      actual=f"favorable_sl={has_favorable}, sr_recalc={has_sr_call}, "
-                            f"threshold={has_threshold}, trigger_guard={has_trigger_guard}, "
-                            f"atomic_replace={has_atomic_replace}")
+                            f"threshold={has_threshold}, tp_buffer={has_tp_buffer}, "
+                            f"trigger_guard={has_trigger_guard}, atomic_replace={has_atomic_replace}")
 
     # ── P1.9: on_order_filled OCO ──
 

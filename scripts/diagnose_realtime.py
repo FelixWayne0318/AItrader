@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断工具 (v5.0)
+实盘信号诊断工具 (v5.1)
 
 100% 还原实盘 on_timer() → AIDataAssembler → MultiAgentAnalyzer.analyze() 全流程。
-融合 v5.0 完整订单流诊断 (代码完整性 + 数学验证 + 10 场景模拟)。
+融合 v5.1 完整订单流诊断 (代码完整性 + 数学验证 + 10 场景模拟)。
 
 AI 决策流程 (顺序执行，每次分析周期):
   Round 1: Bull Analyst → Bear Analyst  (2 API calls)
@@ -15,7 +15,7 @@ AI 决策流程 (顺序执行，每次分析周期):
 
 诊断阶段:
   Phase 0:  服务健康检查 + API 响应
-  Phase 1:  v5.0 代码完整性检查 (静态分析, P1.1-P1.10)
+  Phase 1:  v5.1 代码完整性检查 (静态分析, P1.1-P1.10)
   Phase 2:  配置验证
   Phase 3:  市场数据采集 (K线 + 情绪)
   Phase 4:  技术指标计算
@@ -25,7 +25,7 @@ AI 决策流程 (顺序执行，每次分析周期):
   Phase 8:  架构完整性验证
   Phase 9:  MTF + Telegram + 错误恢复
   Phase 10: 订单流程模拟 (10 场景)
-  Phase 11: v5.0 数学验证 (R/R, SL方向, 动态调整)
+  Phase 11: v5.1 数学验证 (R/R, SL方向, 动态调整)
   Phase 12: 汇总 + 深度分析 + JSON 输出
 """
 
@@ -113,7 +113,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v5.0 (TradingAgents + 完整订单流诊断)',
+        description='实盘信号诊断工具 v5.1 (TradingAgents + 完整订单流诊断)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -161,8 +161,8 @@ Examples:
     runner.add_step(ServiceHealthCheck)         # systemd/memory/logs
     runner.add_step(APIHealthCheck)             # API 响应时间
 
-    # ── Phase 1: v5.0 Code Integrity (静态分析, P1.1-P1.10) ──
-    runner.add_step(CodeIntegrityChecker)       # v5.0 代码完整性检查
+    # ── Phase 1: v5.1 Code Integrity (静态分析, P1.1-P1.10) ──
+    runner.add_step(CodeIntegrityChecker)       # v5.1 代码完整性检查
 
     # ── Phase 2: Configuration ──
     runner.add_step(CriticalConfigChecker)      # 关键配置
@@ -209,14 +209,14 @@ Examples:
     runner.add_step(ReversalStateSimulator)     # 反转状态机
     runner.add_step(BracketOrderFlowSimulator)  # Bracket 订单流程
 
-    # ── Phase 11: v5.0 Math Verification (R/R, SL, Threshold) ──
-    runner.add_step(MathVerificationChecker)    # v5.0 数学验证
+    # ── Phase 11: v5.1 Math Verification (R/R, SL, Threshold) ──
+    runner.add_step(MathVerificationChecker)    # v5.1 数学验证
 
     # ── Phase 12: Summary + JSON Output ──
     runner.add_step(DataFlowSummary)            # 数据流汇总
     runner.add_step(DeepAnalysis)               # 深度分析
     runner.add_step(SignalHistoryCheck)          # 历史信号追踪
-    runner.add_step(MachineReadableSummary)      # v5.0 机器可读 JSON 输出
+    runner.add_step(MachineReadableSummary)      # v5.1 机器可读 JSON 输出
 
     # Run all diagnostic steps
     success = runner.run_all()
