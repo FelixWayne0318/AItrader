@@ -659,28 +659,36 @@ class DiagnosticRunner:
     def _push_to_github_multi(self, filepaths: list) -> None:
         """Push multiple export files to GitHub in a single commit.
 
-        Uses ctx.push_branch (default: 'main') as target branch instead of
-        auto-detecting HEAD. This prevents failures when the server happens
-        to be on a feature branch (e.g. claude/* branches with session ID
-        restrictions).
+        Default: push to current branch (HEAD).
+        If current branch is claude/* (session-restricted), auto-fallback to main.
+        --push-branch overrides everything.
         """
         import subprocess
 
         filenames = [fp.name for fp in filepaths if fp.exists()]
         commit_msg = f"chore: Add diagnosis report + AI call trace ({', '.join(filenames)})"
-        branch = self.ctx.push_branch
 
         try:
             os.chdir(self.ctx.project_root)
 
-            # Ensure we're on the target branch before committing
             current_branch = subprocess.run(
                 ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 capture_output=True, text=True, check=True
             ).stdout.strip()
 
+            # Decide target branch
+            if self.ctx.push_branch != "main":
+                # User explicitly specified --push-branch, use it
+                branch = self.ctx.push_branch
+            elif current_branch.startswith("claude/"):
+                # claude/* branches have session ID restrictions, fallback to main
+                branch = "main"
+                print(f"  ℹ️  当前 {current_branch} 为受限分支，自动切换到 main")
+            else:
+                # Normal case: push to current branch
+                branch = current_branch
+
             if current_branch != branch:
-                print(f"  ℹ️  当前分支 {current_branch} ≠ 目标 {branch}，切换中...")
                 subprocess.run(['git', 'checkout', branch], check=True, capture_output=True)
 
             for fp in filepaths:
@@ -694,7 +702,7 @@ class DiagnosticRunner:
             for fn in filenames:
                 print(f"  📎 logs/{fn}")
 
-            # Switch back to original branch if we changed
+            # Switch back if we changed branches
             if current_branch != branch:
                 subprocess.run(['git', 'checkout', current_branch], check=True, capture_output=True)
                 print(f"  ℹ️  已切回 {current_branch}")
@@ -702,4 +710,4 @@ class DiagnosticRunner:
         except subprocess.CalledProcessError as e:
             print(f"  ⚠️ Git 推送失败: {e}")
             paths_str = ' '.join(str(fp) for fp in filepaths)
-            print(f"     请手动提交: git checkout {branch} && git add -f {paths_str} && git commit -m \"{commit_msg}\" && git push")
+            print(f"     请手动提交: git add -f {paths_str} && git commit && git push")
