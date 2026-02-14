@@ -232,22 +232,22 @@ class CoinalyzeClient:
             }
 
         # Fetch all data
+        # v5.2: Funding rate no longer fetched from Coinalyze (Binance is authoritative)
         oi = self.get_open_interest(symbol)
         liq = self.get_liquidations(symbol)
-        fr = self.get_funding_rate(symbol)
 
         # 🔍 Fix B8: Add data quality marker if any data is missing
-        missing_count = sum([oi is None, liq is None, fr is None])
-        data_quality = "COMPLETE" if missing_count == 0 else "PARTIAL" if missing_count < 3 else "MISSING"
+        missing_count = sum([oi is None, liq is None])
+        data_quality = "COMPLETE" if missing_count == 0 else "PARTIAL" if missing_count < 2 else "MISSING"
 
         return {
             "open_interest": oi,
             "liquidations": liq,
-            "funding_rate": fr,
+            "funding_rate": None,  # v5.2: Use Binance instead
             "enabled": True,
             "_data_quality": data_quality,  # Fix B8: Quality marker
             "_missing_fields": [
-                field for field, value in [("OI", oi), ("Liq", liq), ("FR", fr)]
+                field for field, value in [("OI", oi), ("Liq", liq)]
                 if value is None
             ],
         }
@@ -459,26 +459,26 @@ class CoinalyzeClient:
         # 获取当前值
         oi = self.get_open_interest(symbol)
         liq = self.get_liquidations(symbol)
-        fr = self.get_funding_rate(symbol)
+        # v5.2: Funding rate no longer fetched from Coinalyze.
+        # Binance is the authoritative source (exact 8h settlement cycle).
+        # Saves 2 API calls per cycle (get_funding_rate + get_funding_rate_history).
 
         # 获取历史数据
         oi_hist = self.get_open_interest_history(symbol, hours=history_hours)
-        fr_hist = self.get_funding_rate_history(symbol, hours=history_hours)
         ls_hist = self.get_long_short_ratio_history(symbol, hours=history_hours)
 
         # 计算趋势
         trends = {
             "oi_trend": self._calc_trend_from_history(oi_hist, "c"),
-            "funding_trend": self._calc_trend_from_history(fr_hist, "c"),
             "long_short_trend": self._calc_trend_from_history(ls_hist, "r"),
         }
 
         return {
             "open_interest": oi,
             "liquidations": liq,
-            "funding_rate": fr,
+            "funding_rate": None,
             "open_interest_history": oi_hist,
-            "funding_rate_history": fr_hist,
+            "funding_rate_history": None,
             "long_short_ratio_history": ls_hist,
             "trends": trends,
             "enabled": True,
