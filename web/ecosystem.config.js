@@ -35,9 +35,9 @@ module.exports = {
     {
       name: 'algvex-backend',
       cwd: path.join(REPO_DIR, 'web', 'backend'),
-      script: 'uvicorn',
+      script: 'venv/bin/uvicorn',
       args: 'main:app --host 0.0.0.0 --port 8000',
-      interpreter: 'python3',
+      interpreter: 'none',
       env: {
         PYTHONUNBUFFERED: '1',
         AITRADER_PATH: REPO_DIR

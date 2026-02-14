@@ -5656,11 +5656,16 @@ class DeepSeekAIStrategy(Strategy):
             f"P&L: {float(event.realized_pnl):.2f} USDT"
         )
         
-        # Clear trailing stop state
+        # Capture SL/TP before clearing state (needed for trade evaluation)
         instrument_key = str(self.instrument_id)
+        captured_sltp = None
         if instrument_key in self.sltp_state:
+            captured_sltp = self.sltp_state[instrument_key].copy()
             del self.sltp_state[instrument_key]
             self.log.debug(f"🗑️ Cleared trailing stop state for {instrument_key}")
+
+        # Store for trade evaluation later
+        self._captured_sltp_for_eval = captured_sltp
 
         # v3.18: Check for pending reversal (Phase 2 of two-phase commit)
         # If we have a pending reversal, open the new position now that old one is closed
@@ -5927,8 +5932,8 @@ class DeepSeekAIStrategy(Strategy):
                     planned_tp = None
                     instrument_key = str(self.instrument_id)
 
-                    # Priority 1: sltp_state (most accurate - actual submitted orders)
-                    state = self.sltp_state.get(instrument_key)
+                    # Priority 1: captured_sltp (most accurate - actual submitted orders before deletion)
+                    state = getattr(self, '_captured_sltp_for_eval', None)
                     if state:
                         planned_sl = state.get('current_sl_price')
                         planned_tp = state.get('current_tp_price')
@@ -5956,7 +5961,7 @@ class DeepSeekAIStrategy(Strategy):
                         confidence=confidence,
                         position_size_pct=position_size_pct,
                         entry_timestamp=entry_ts,
-                        exit_timestamp=datetime.utcnow().isoformat(),
+                        exit_timestamp=datetime.now(timezone.utc).isoformat(),
                     )
 
                     self.log.info(

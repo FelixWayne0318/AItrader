@@ -4,6 +4,7 @@ AlgVex Web Configuration
 import os
 import warnings
 from pathlib import Path
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -56,13 +57,23 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./algvex.db"
 
-    # AItrader paths (auto-detected)
-    AITRADER_PATH: Path = Path(_detect_aitrader_path())
+    # AItrader paths (auto-detected via validator - runs AFTER env load)
+    AITRADER_PATH: Optional[str] = None
+
+    @field_validator('AITRADER_PATH', mode='before')
+    @classmethod
+    def set_aitrader_path(cls, v):
+        if v is None:
+            return _detect_aitrader_path()
+        return v
 
     @property
     def aitrader_config_path(self) -> Path:
         """Derive config path from AITRADER_PATH"""
-        return self.AITRADER_PATH / "configs" / "base.yaml"
+        config_path = Path(self.AITRADER_PATH) / "configs" / "base.yaml"
+        if not config_path.exists():
+            warnings.warn(f"⚠️  Config file not found: {config_path}. Backend may fail to read trader config.")
+        return config_path
 
     AITRADER_ENV_PATH: Path = Path.home() / ".env.aitrader"
     AITRADER_SERVICE_NAME: str = "nautilus-trader"
