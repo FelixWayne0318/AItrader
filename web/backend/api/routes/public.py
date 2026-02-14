@@ -10,7 +10,7 @@ from sqlalchemy import select
 from core.database import get_db
 from core.config import settings
 from models import SocialLink, CopyTradingLink, SiteSettings
-from services import binance_service
+from services.performance_service import get_performance_service
 
 router = APIRouter(prefix="/public", tags=["Public"])
 
@@ -25,19 +25,18 @@ async def get_performance(days: int = 30):
 
     Returns aggregated stats without exposing individual trades
     """
-    if days > 365:
-        days = 365
-    if days < 1:
-        days = 1
-
-    stats = await binance_service.get_performance_stats(days)
+    # Note: performance_service doesn't currently support days parameter
+    # It uses fixed 90-day lookback for income history
+    service = get_performance_service()
+    stats = await service.get_performance_stats()
     return stats
 
 
 @router.get("/performance/summary")
 async def get_performance_summary():
     """Get quick performance summary for homepage"""
-    stats = await binance_service.get_performance_stats(30)
+    service = get_performance_service()
+    stats = await service.get_performance_stats()
 
     return {
         "total_return_percent": stats["total_pnl_percent"],

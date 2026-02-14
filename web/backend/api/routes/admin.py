@@ -534,9 +534,11 @@ async def get_uploaded_file(filename: str):
 @router.get("/performance")
 async def get_performance_data(admin=Depends(get_current_admin)):
     """Get performance data for admin dashboard"""
-    from services import binance_service
+    from services.performance_service import get_performance_service
 
-    stats = await binance_service.get_performance_stats(30)
+    # Use performance_service for consistent metrics calculation
+    service = get_performance_service()
+    stats = await service.get_performance_stats()
 
     # Build equity curve from cumulative PnL data
     # Frontend expects: [{time: "YYYY-MM-DD", value: number}]
