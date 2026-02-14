@@ -76,6 +76,8 @@ export function useTradeEvaluationSummary(days: number = 30) {
     {
       refreshInterval: 60000, // Refresh every minute
       revalidateOnFocus: false,
+      keepPreviousData: true, // Prevent flash to loading state on refresh
+      dedupingInterval: 5000, // Dedupe requests within 5 seconds
     }
   );
 
@@ -96,8 +98,10 @@ export function useRecentTrades(limit: number = 20) {
     `/api/public/trade-evaluation/recent?limit=${limit}`,
     fetcher,
     {
-      refreshInterval: 30000, // Refresh every 30 seconds
+      refreshInterval: 60000, // Refresh every minute (reduced from 30s to reduce flashing)
       revalidateOnFocus: false,
+      keepPreviousData: true, // Prevent flash to loading state on refresh
+      dedupingInterval: 5000, // Dedupe requests within 5 seconds
     }
   );
 
@@ -120,6 +124,8 @@ export function useFullTrades(limit: number = 50) {
     {
       refreshInterval: 60000, // Refresh every minute
       revalidateOnFocus: false,
+      keepPreviousData: true, // Prevent flash to loading state on refresh
+      dedupingInterval: 5000, // Dedupe requests within 5 seconds
     }
   );
 
@@ -142,6 +148,8 @@ export function useAdminSummary(days: number = 0) {
     {
       refreshInterval: 60000,
       revalidateOnFocus: false,
+      keepPreviousData: true, // Prevent flash to loading state on refresh
+      dedupingInterval: 5000, // Dedupe requests within 5 seconds
     }
   );
 
