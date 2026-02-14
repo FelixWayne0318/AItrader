@@ -104,7 +104,7 @@ pm2 status
 # Step 8: Check backend health
 echo ""
 echo -e "${BLUE}8. Checking backend health...${NC}"
-HEALTH_RESPONSE=$(curl -s http://localhost:8000/health 2>&1 || echo "FAILED")
+HEALTH_RESPONSE=$(curl -s http://localhost:8000/api/health 2>&1 || echo "FAILED")
 
 if echo "$HEALTH_RESPONSE" | grep -q "healthy"; then
     echo -e "${GREEN}  ✓ Backend health check passed${NC}"
