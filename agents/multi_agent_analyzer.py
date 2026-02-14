@@ -1572,10 +1572,16 @@ R/R 与价格位置的关系：
 
         if reask_decision:
             new_rr = self._compute_rr_ratio(reask_decision, current_price)
+            # v5.2: Use `or 0` to handle null SL/TP when RM returns HOLD
+            # .get('stop_loss', 0) returns None when key exists with null value;
+            # float(None) raises TypeError which propagated to analyze()'s
+            # except block, replacing the real AI reason with fallback message.
+            reask_sl = reask_decision.get('stop_loss') or 0
+            reask_tp = reask_decision.get('take_profit') or 0
             self.logger.info(
                 f"🔄 Reask result: R/R {new_rr:.2f}:1, "
-                f"SL=${float(reask_decision.get('stop_loss', 0)):,.2f}, "
-                f"TP=${float(reask_decision.get('take_profit', 0)):,.2f}, "
+                f"SL=${float(reask_sl):,.2f}, "
+                f"TP=${float(reask_tp):,.2f}, "
                 f"signal={reask_decision.get('signal', '?')}"
             )
             reask_decision["reask_applied"] = True
