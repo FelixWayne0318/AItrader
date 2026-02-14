@@ -11,8 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useTranslation, type Locale } from "@/lib/i18n";
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 // Exchange icons/colors
 const exchangeConfig: Record<string, { color: string; bgColor: string }> = {
   binance: { color: "#F0B90B", bgColor: "rgba(240, 185, 11, 0.1)" },
@@ -26,8 +24,8 @@ export default function CopyPage() {
   const locale = (router.locale || "en") as Locale;
   const { t } = useTranslation(locale);
 
-  const { data: copyLinks } = useSWR("/api/public/copy-trading", fetcher);
-  const { data: socialLinks } = useSWR("/api/public/social-links", fetcher);
+  const { data: copyLinks } = useSWR("/api/public/copy-trading");
+  const { data: socialLinks } = useSWR("/api/public/social-links");
 
   const telegram = socialLinks?.find((l: any) => l.platform === "telegram");
   const twitter = socialLinks?.find((l: any) => l.platform === "twitter");

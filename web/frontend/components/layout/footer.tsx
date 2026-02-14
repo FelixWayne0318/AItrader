@@ -5,8 +5,6 @@ import { useState, useEffect } from "react";
 import useSWR from "swr";
 import { Twitter, MessageCircle, Github } from "lucide-react";
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 interface FooterProps {
   t: (key: string) => string;
 }
@@ -21,14 +19,12 @@ export function Footer({ t }: FooterProps) {
   // Fetch site branding
   const { data: branding } = useSWR(
     mounted ? "/api/public/site-branding" : null,
-    fetcher,
     { refreshInterval: 300000 }
   );
 
   // Fetch social links from API
   const { data: socialLinks } = useSWR(
     mounted ? "/api/public/social-links" : null,
-    fetcher,
     { refreshInterval: 300000 }
   );
 

@@ -20,8 +20,6 @@ import {
 import { Button } from "@/components/ui/button";
 import type { Locale } from "@/lib/i18n";
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 interface HeaderProps {
   locale: Locale;
   t: (key: string) => string;
@@ -48,13 +46,13 @@ export function Header({ locale, t }: HeaderProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const { data: status } = useSWR(mounted ? "/api/public/system-status" : null, fetcher, { refreshInterval: 30000 });
-  const { data: sentiment } = useSWR(mounted ? "/api/trading/long-short-ratio/BTCUSDT" : null, fetcher, { refreshInterval: 60000 });
-  const { data: markPrice } = useSWR(mounted ? "/api/trading/mark-price/BTCUSDT" : null, fetcher, { refreshInterval: 30000 });
-  const { data: openInterest } = useSWR(mounted ? "/api/trading/open-interest/BTCUSDT" : null, fetcher, { refreshInterval: 60000 });
-  const { data: ticker } = useSWR(mounted ? "/api/trading/ticker/BTCUSDT" : null, fetcher, { refreshInterval: 10000 });
-  const { data: latestSignal } = useSWR(mounted ? "/api/public/latest-signal" : null, fetcher, { refreshInterval: 30000 });
-  const { data: branding } = useSWR(mounted ? "/api/public/site-branding" : null, fetcher, { refreshInterval: 300000 });
+  const { data: status } = useSWR(mounted ? "/api/public/system-status" : null, { refreshInterval: 30000 });
+  const { data: sentiment } = useSWR(mounted ? "/api/trading/long-short-ratio/BTCUSDT" : null, { refreshInterval: 60000 });
+  const { data: markPrice } = useSWR(mounted ? "/api/trading/mark-price/BTCUSDT" : null, { refreshInterval: 30000 });
+  const { data: openInterest } = useSWR(mounted ? "/api/trading/open-interest/BTCUSDT" : null, { refreshInterval: 60000 });
+  const { data: ticker } = useSWR(mounted ? "/api/trading/ticker/BTCUSDT" : null, { refreshInterval: 10000 });
+  const { data: latestSignal } = useSWR(mounted ? "/api/public/latest-signal" : null, { refreshInterval: 30000 });
+  const { data: branding } = useSWR(mounted ? "/api/public/site-branding" : null, { refreshInterval: 300000 });
 
   const toggleLocale = () => {
     const newLocale = locale === "en" ? "zh" : "en";

@@ -15,8 +15,6 @@ import { useTranslation, type Locale } from "@/lib/i18n";
 import { formatPercent, formatTimeAgo } from "@/lib/utils";
 import { TradeTable } from "@/components/trade-evaluation/TradeTable";
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 const periodOptions = [
   { days: 30, label: "30D" },
   { days: 90, label: "90D" },
@@ -32,7 +30,6 @@ export default function PerformancePage() {
 
   const { data: performance, error } = useSWR(
     `/api/public/performance?days=${selectedPeriod}`,
-    fetcher,
     { refreshInterval: 60000 }
   );
 

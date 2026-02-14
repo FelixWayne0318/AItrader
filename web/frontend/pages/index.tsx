@@ -47,8 +47,6 @@ const HeroAnimatedCandlestick = dynamic(
   }
 );
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 const formatPnL = (value: number) => {
   const formatted = Math.abs(value).toFixed(2);
   if (value >= 0) return `+$${formatted}`;
@@ -228,7 +226,6 @@ export default function HomePage() {
 
   const { data: performance, error: perfError } = useSWR(
     "/api/public/performance?days=30",
-    fetcher,
     { refreshInterval: 60000 }
   );
 

@@ -25,8 +25,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { GradePieChart } from "@/components/trade-evaluation/GradePieChart";
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
-
 const formatNumber = (num: number, decimals = 2) => {
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: decimals,
@@ -55,26 +53,25 @@ export default function ChartPage() {
   const [symbol, setSymbol] = useState("BINANCE:BTCUSDT.P");
 
   // Fetch real-time data
-  const { data: ticker } = useSWR("/api/trading/ticker/BTCUSDT", fetcher, {
+  const { data: ticker } = useSWR("/api/trading/ticker/BTCUSDT", {
     refreshInterval: 5000,
   });
 
-  const { data: markPrice } = useSWR("/api/trading/mark-price/BTCUSDT", fetcher, {
+  const { data: markPrice } = useSWR("/api/trading/mark-price/BTCUSDT", {
     refreshInterval: 5000,
   });
 
   const { data: longShortRatio } = useSWR(
     "/api/trading/long-short-ratio/BTCUSDT",
-    fetcher,
     { refreshInterval: 60000 }
   );
 
   // AI-specific data
-  const { data: aiAnalysis } = useSWR("/api/public/ai-analysis", fetcher, {
+  const { data: aiAnalysis } = useSWR("/api/public/ai-analysis", {
     refreshInterval: 30000,
   });
 
-  const { data: signalHistory } = useSWR("/api/public/signal-history?limit=5", fetcher, {
+  const { data: signalHistory } = useSWR("/api/public/signal-history?limit=5", {
     refreshInterval: 30000,
   });
 
