@@ -2242,6 +2242,8 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
 
         Based on TradingGroup paper: show both successes and failures
         to help AI identify patterns and avoid repeating mistakes.
+
+        v5.1: Enhanced with trade grades and R/R data for deeper pattern learning.
         """
         if not self.decision_memory:
             return ""
@@ -2250,9 +2252,9 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         successes = [m for m in self.decision_memory if m.get('pnl', 0) > 0]
         failures = [m for m in self.decision_memory if m.get('pnl', 0) <= 0]
 
-        # Take most recent 3 of each
-        recent_successes = successes[-3:] if successes else []
-        recent_failures = failures[-3:] if failures else []
+        # Take most recent 5 of each (increased from 3 for richer patterns)
+        recent_successes = successes[-5:] if successes else []
+        recent_failures = failures[-5:] if failures else []
 
         lines = []
 
@@ -2260,8 +2262,12 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
             lines.append("SUCCESSFUL TRADES (learn from these):")
             for mem in recent_successes:
                 conditions = mem.get('conditions', 'N/A')
+                ev = mem.get('evaluation', {})
+                grade = ev.get('grade', '')
+                rr_str = f" R/R={ev.get('actual_rr', 0):.1f}:1" if ev else ""
+                grade_str = f" [{grade}]" if grade else ""
                 lines.append(
-                    f"  ✅ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}% | "
+                    f"  ✅ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}%{grade_str}{rr_str} | "
                     f"Conditions: {conditions}"
                 )
 
@@ -2270,10 +2276,30 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
             for mem in recent_failures:
                 conditions = mem.get('conditions', 'N/A')
                 lesson = mem.get('lesson', 'N/A')
+                ev = mem.get('evaluation', {})
+                grade = ev.get('grade', '')
+                exit_type = ev.get('exit_type', '')
+                grade_str = f" [{grade}]" if grade else ""
+                exit_str = f" via {exit_type}" if exit_type else ""
                 lines.append(
-                    f"  ❌ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}% | "
+                    f"  ❌ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}%{grade_str}{exit_str} | "
                     f"Conditions: {conditions} | Lesson: {lesson}"
                 )
+
+        # v5.1: Add aggregate stats if enough evaluated trades
+        evaluated = [m for m in self.decision_memory if m.get('evaluation')]
+        if len(evaluated) >= 5:
+            grades = [m['evaluation'].get('grade', '?') for m in evaluated[-20:]]
+            grade_counts = {}
+            for g in grades:
+                grade_counts[g] = grade_counts.get(g, 0) + 1
+            grade_summary = " ".join(f"{g}:{c}" for g, c in sorted(grade_counts.items()))
+
+            correct = sum(1 for m in evaluated[-20:] if m['evaluation'].get('direction_correct'))
+            total = len(evaluated[-20:])
+            accuracy = round(correct / total * 100) if total > 0 else 0
+
+            lines.append(f"\nTRADE QUALITY (last {total}): {grade_summary} | Direction accuracy: {accuracy}%")
 
         return "\n".join(lines)
 
@@ -2283,6 +2309,7 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         pnl: float,
         conditions: str = "",
         lesson: str = "",
+        evaluation: Optional[Dict[str, Any]] = None,
     ):
         """
         Record trade outcome for learning.
@@ -2299,8 +2326,28 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
             Market conditions at entry (e.g., "RSI=65, trend=UP, funding=0.01%")
         lesson : str
             Lesson learned from this trade (auto-generated if empty)
+        evaluation : Dict, optional
+            Trade evaluation data from trading_logic.evaluate_trade()
+            Contains: grade, direction_correct, actual_rr, planned_rr,
+            execution_quality, exit_type, hold_duration_min, etc.
         """
-        # Auto-generate lesson based on outcome
+        # v5.1: Auto-generate lesson based on evaluation grade (if available)
+        if not lesson and evaluation:
+            grade = evaluation.get('grade', '')
+            actual_rr = evaluation.get('actual_rr', 0)
+            exit_type = evaluation.get('exit_type', '')
+            if grade in ('A+', 'A'):
+                lesson = f"Grade {grade}: Strong win (R/R {actual_rr:.1f}:1) - repeat this pattern"
+            elif grade == 'B':
+                lesson = f"Grade B: Acceptable profit (R/R {actual_rr:.1f}:1)"
+            elif grade == 'C':
+                lesson = f"Grade C: Small profit but low R/R ({actual_rr:.1f}:1) - tighten entry"
+            elif grade == 'D':
+                lesson = f"Grade D: Controlled loss via {exit_type} - discipline maintained"
+            elif grade == 'F':
+                lesson = f"Grade F: Uncontrolled loss - review SL placement"
+
+        # Fallback to original lesson generation
         if not lesson:
             if pnl < -2:
                 lesson = "Significant loss - review entry conditions carefully"
@@ -2313,23 +2360,30 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
             else:
                 lesson = "Breakeven - entry/exit timing needs improvement"
 
-        self.decision_memory.append({
+        entry = {
             "decision": decision,
             "pnl": round(pnl, 2),
             "conditions": conditions,
             "lesson": lesson,
             "timestamp": datetime.now().isoformat(),
-        })
+        }
 
-        # Keep only last 50 memories (enough for pattern recognition)
-        if len(self.decision_memory) > 50:
+        # v5.1: Attach evaluation data if provided
+        if evaluation:
+            entry["evaluation"] = evaluation
+
+        self.decision_memory.append(entry)
+
+        # v5.1: Increased from 50 to 500 for better statistical analysis
+        if len(self.decision_memory) > 500:
             self.decision_memory.pop(0)
 
         # Persist to file
         self._save_memory()
 
+        grade_str = f" [Grade: {evaluation.get('grade', '?')}]" if evaluation else ""
         self.logger.info(
-            f"📝 Recorded: {decision} → {pnl:+.2f}% | "
+            f"📝 Recorded: {decision} → {pnl:+.2f}%{grade_str} | "
             f"Conditions: {conditions[:50]}... | Lesson: {lesson}"
         )
 

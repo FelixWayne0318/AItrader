@@ -1177,6 +1177,18 @@ class TelegramBot:
         change = ending_equity - starting_equity
         msg += f" ({trend_icon} ${change:+,.2f})\n"
 
+        # v5.1: Trade evaluation stats
+        eval_stats = summary_data.get('evaluation', {})
+        if eval_stats and eval_stats.get('total_evaluated', 0) > 0:
+            msg += f"\n🏅 *Trade Quality*\n"
+            grades = eval_stats.get('grade_distribution', {})
+            grade_str = " ".join(f"{g}:{c}" for g, c in sorted(grades.items()))
+            msg += f"  Grades: {grade_str}\n"
+            msg += f"  Direction: {eval_stats.get('direction_accuracy', 0):.0f}% correct\n"
+            avg_rr = eval_stats.get('avg_winning_rr', 0)
+            if avg_rr > 0:
+                msg += f"  Avg Win R/R: {avg_rr:.1f}:1\n"
+
         return msg
 
     def format_weekly_summary(self, summary_data: Dict[str, Any]) -> str:
@@ -1232,6 +1244,28 @@ class TelegramBot:
                 p = day.get('pnl', 0)
                 icon = '🟢' if p >= 0 else '🔴'
                 msg += f"  {icon} {d}: ${p:+,.2f}\n"
+
+        # v5.1: Trade evaluation stats
+        eval_stats = summary_data.get('evaluation', {})
+        if eval_stats and eval_stats.get('total_evaluated', 0) > 0:
+            msg += f"\n🏅 *Trade Quality*\n"
+            grades = eval_stats.get('grade_distribution', {})
+            grade_str = " ".join(f"{g}:{c}" for g, c in sorted(grades.items()))
+            msg += f"  Grades: {grade_str}\n"
+            msg += f"  Direction: {eval_stats.get('direction_accuracy', 0):.0f}% correct\n"
+            avg_rr = eval_stats.get('avg_winning_rr', 0)
+            if avg_rr > 0:
+                msg += f"  Avg Win R/R: {avg_rr:.1f}:1\n"
+            # Confidence accuracy breakdown
+            conf_stats = eval_stats.get('confidence_accuracy', {})
+            if conf_stats:
+                conf_parts = []
+                for conf in ('HIGH', 'MEDIUM', 'LOW'):
+                    s = conf_stats.get(conf)
+                    if s and s.get('total', 0) > 0:
+                        conf_parts.append(f"{conf[0]}:{s['accuracy']:.0f}%({s['total']})")
+                if conf_parts:
+                    msg += f"  Confidence: {' '.join(conf_parts)}\n"
 
         return msg
 

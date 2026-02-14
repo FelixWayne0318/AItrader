@@ -5417,6 +5417,10 @@ class DeepSeekAIStrategy(Strategy):
         # v3.12: Store entry conditions for memory system
         self._last_entry_conditions = self._format_entry_conditions()
 
+        # v5.1: Store entry timestamp for trade evaluation (hold duration)
+        from datetime import datetime, timezone
+        self._last_entry_timestamp = datetime.now(timezone.utc).isoformat()
+
         instrument_key = str(self.instrument_id)
         entry_price = float(event.avg_px_open)
 
@@ -5895,24 +5899,80 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.warning(f"Failed to send Telegram position closed notification: {e}")
 
         # v3.12: Record outcome for AI learning
+        # v5.1: Enhanced with trade evaluation (grade, R/R, execution quality)
         try:
             if hasattr(self, 'multi_agent') and self.multi_agent:
                 # Get decision from last signal
                 decision = "UNKNOWN"
+                confidence = "MEDIUM"
+                position_size_pct = 0.0
                 if hasattr(self, 'last_signal') and self.last_signal:
                     signal = self.last_signal.get('signal', '')
                     # v3.12: Handle both legacy (BUY/SELL) and new (LONG/SHORT) formats
                     legacy_mapping = {'BUY': 'LONG', 'SELL': 'SHORT'}
                     decision = legacy_mapping.get(signal, signal)
+                    confidence = self.last_signal.get('confidence', 'MEDIUM')
+                    position_size_pct = self.last_signal.get('position_size_pct', 0) or 0
 
                 # Get entry conditions
                 conditions = getattr(self, '_last_entry_conditions', 'N/A')
 
-                # Record the outcome
+                # v5.1: Compute trade evaluation
+                evaluation = None
+                try:
+                    from strategy.trading_logic import evaluate_trade
+
+                    # Get planned SL/TP from sltp_state or latest_signal_data
+                    planned_sl = None
+                    planned_tp = None
+                    instrument_key = str(self.instrument_id)
+
+                    # Priority 1: sltp_state (most accurate - actual submitted orders)
+                    state = self.sltp_state.get(instrument_key)
+                    if state:
+                        planned_sl = state.get('current_sl_price')
+                        planned_tp = state.get('current_tp_price')
+
+                    # Priority 2: latest_signal_data (AI planned values)
+                    if not planned_sl and hasattr(self, 'latest_signal_data') and self.latest_signal_data:
+                        planned_sl = self.latest_signal_data.get('stop_loss')
+                        planned_tp = self.latest_signal_data.get('take_profit')
+
+                    # Get entry timestamp from sltp_state or event
+                    entry_ts = getattr(self, '_last_entry_timestamp', None)
+
+                    direction = event.side.name if hasattr(event, 'side') else decision
+                    # Normalize direction
+                    if direction in ('BUY', 'SELL'):
+                        direction = 'LONG' if direction == 'BUY' else 'SHORT'
+
+                    evaluation = evaluate_trade(
+                        entry_price=entry_price,
+                        exit_price=exit_price,
+                        planned_sl=planned_sl,
+                        planned_tp=planned_tp,
+                        direction=direction,
+                        pnl_pct=pnl_pct,
+                        confidence=confidence,
+                        position_size_pct=position_size_pct,
+                        entry_timestamp=entry_ts,
+                        exit_timestamp=datetime.utcnow().isoformat(),
+                    )
+
+                    self.log.info(
+                        f"📊 Trade evaluation: Grade={evaluation.get('grade', '?')} | "
+                        f"R/R planned={evaluation.get('planned_rr', 0):.1f} actual={evaluation.get('actual_rr', 0):.1f} | "
+                        f"Exit={evaluation.get('exit_type', '?')}"
+                    )
+                except Exception as eval_err:
+                    self.log.warning(f"Trade evaluation failed (non-critical): {eval_err}")
+
+                # Record the outcome (with evaluation if available)
                 self.multi_agent.record_outcome(
                     decision=decision,
                     pnl=pnl_pct,
                     conditions=conditions,
+                    evaluation=evaluation,
                 )
                 self.log.info(f"📝 Trade outcome recorded for AI learning")
         except Exception as e:
@@ -6820,6 +6880,7 @@ class DeepSeekAIStrategy(Strategy):
             largest_loss = 0.0
 
             # v3.15: Fix variable name - was 'multi_agent_analyzer', should be 'multi_agent'
+            today_memories = []
             if hasattr(self, 'multi_agent') and self.multi_agent:
                 memories = self.multi_agent.decision_memory
                 today_memories = [m for m in memories if m.get('timestamp', '').startswith(today)]
@@ -6840,6 +6901,14 @@ class DeepSeekAIStrategy(Strategy):
             starting_equity = getattr(self, '_daily_starting_equity', current_equity)
             pnl_pct = ((current_equity - starting_equity) / starting_equity * 100) if starting_equity > 0 else 0.0
 
+            # v5.1: Compute evaluation stats for today's trades
+            eval_stats = {}
+            try:
+                from strategy.trading_logic import get_evaluation_summary
+                eval_stats = get_evaluation_summary(today_memories)
+            except Exception:
+                pass
+
             summary_data = {
                 'date': today,
                 'total_trades': total_trades,
@@ -6853,6 +6922,7 @@ class DeepSeekAIStrategy(Strategy):
                 'ending_equity': current_equity,
                 'signals_generated': signals_generated,
                 'signals_executed': signals_executed,
+                'evaluation': eval_stats,
             }
 
             if self.telegram_bot:
@@ -6904,6 +6974,7 @@ class DeepSeekAIStrategy(Strategy):
             max_drawdown_pct = 0.0
 
             # v3.15: Fix variable name - was 'multi_agent_analyzer', should be 'multi_agent'
+            week_memories = []
             if hasattr(self, 'multi_agent') and self.multi_agent:
                 memories = self.multi_agent.decision_memory
 
@@ -6911,6 +6982,7 @@ class DeepSeekAIStrategy(Strategy):
                 for m in memories:
                     ts = m.get('timestamp', '')[:10]  # YYYY-MM-DD
                     if ts >= week_start_str and ts <= week_end_str:
+                        week_memories.append(m)
                         pnl = m.get('pnl', 0)
                         if pnl != 0:
                             total_trades += 1
@@ -6945,6 +7017,14 @@ class DeepSeekAIStrategy(Strategy):
             starting_equity = getattr(self, '_weekly_starting_equity', current_equity)
             pnl_pct = ((current_equity - starting_equity) / starting_equity * 100) if starting_equity > 0 else 0.0
 
+            # v5.1: Compute evaluation stats for this week's trades
+            eval_stats = {}
+            try:
+                from strategy.trading_logic import get_evaluation_summary
+                eval_stats = get_evaluation_summary(week_memories)
+            except Exception:
+                pass
+
             summary_data = {
                 'week_start': week_start_str,
                 'week_end': week_end_str,
@@ -6960,6 +7040,7 @@ class DeepSeekAIStrategy(Strategy):
                 'ending_equity': current_equity,
                 'max_drawdown_pct': max_drawdown_pct,
                 'daily_breakdown': daily_breakdown,
+                'evaluation': eval_stats,
             }
 
             if self.telegram_bot:

@@ -46,6 +46,23 @@ trading_logic:
   quantity_adjustment_step: 0.001 # BTC 仓位调整步长
 
 # =============================================================================
+# 交易评估 (v5.1: Trading Evaluation Standards)
+# =============================================================================
+evaluation:
+  # 记忆系统
+  memory_limit: 500               # 决策记忆保留条数 (原 50, 增至 500 支持统计分析)
+  memory_file: "data/trading_memory.json"  # 记忆持久化文件
+
+  # 评估报告
+  show_in_daily: true             # 日报中显示交易质量
+  show_in_weekly: true            # 周报中显示交易质量
+  show_in_ai_prompt: true         # AI prompt 中包含历史交易评级
+
+  # AI 学习回看
+  recent_successes_count: 5       # 展示给 AI 的最近成功交易数
+  recent_failures_count: 5        # 展示给 AI 的最近失败交易数
+
+# =============================================================================
 # 资金配置
 # =============================================================================
 capital:
