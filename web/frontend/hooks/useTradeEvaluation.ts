@@ -64,6 +64,25 @@ export interface TradeEvaluation {
 }
 
 /**
+ * Auth-aware fetcher for admin endpoints.
+ * Reads Bearer token from localStorage.
+ */
+const adminFetcher = async (url: string) => {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    const error = new Error('API request failed') as Error & { status: number };
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
+};
+
+/**
  * Hook to fetch trade evaluation summary statistics
  * @param days Number of days to look back (0 = all time, default 30)
  */
@@ -106,6 +125,7 @@ export function useRecentTrades(limit: number = 20) {
 export function useFullTrades(limit: number = 50) {
   const { data, error, mutate } = useSWR<TradeEvaluation[]>(
     `/api/admin/trade-evaluation/full?limit=${limit}`,
+    adminFetcher,
     { refreshInterval: 60000 }
   );
 
@@ -124,6 +144,7 @@ export function useFullTrades(limit: number = 50) {
 export function useAdminSummary(days: number = 0) {
   const { data, error, mutate } = useSWR<TradeEvaluationSummary>(
     `/api/admin/trade-evaluation/summary-admin?days=${days}`,
+    adminFetcher,
     { refreshInterval: 60000 }
   );
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
 import dynamic from "next/dynamic";
@@ -26,6 +26,21 @@ import {
   Mail,
   FileText,
   Target,
+  Terminal,
+  Wrench,
+  ChevronDown,
+  ChevronRight,
+  Check,
+  X,
+  Info,
+  AlertCircle,
+  CheckCircle,
+  Monitor,
+  Cpu,
+  HardDrive,
+  GitBranch,
+  Clock,
+  Save,
 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
@@ -85,12 +100,456 @@ function CardSkeleton() {
   );
 }
 
-/**
- * Admin Dashboard Page
- *
- * This page uses dynamic imports with ssr: false for all animated components
- * to prevent SSR issues with framer-motion and other browser-only libraries.
- */
+// ============================================================================
+// Config Field Renderer - renders fields from /api/admin/config/sections
+// ============================================================================
+interface ConfigField {
+  path: string;
+  label: string;
+  type: string;
+  value: any;
+  description?: string;
+  options?: string[];
+  sensitive?: boolean;
+}
+
+interface ConfigSection {
+  id: string;
+  title: string;
+  description: string;
+  fields: ConfigField[];
+}
+
+function ConfigFieldInput({
+  field,
+  onSave,
+}: {
+  field: ConfigField;
+  onSave: (path: string, value: any) => void;
+}) {
+  const [localValue, setLocalValue] = useState(field.value);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    setLocalValue(field.value);
+    setDirty(false);
+  }, [field.value]);
+
+  const handleChange = (newValue: any) => {
+    setLocalValue(newValue);
+    setDirty(true);
+  };
+
+  const handleSave = () => {
+    if (!dirty) return;
+    let val = localValue;
+    if (field.type === "number") {
+      val = Number(val);
+      if (isNaN(val)) return;
+    }
+    onSave(field.path, val);
+    setDirty(false);
+  };
+
+  const inputClass =
+    "w-full px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none text-sm transition-colors" +
+    (dirty ? " border-yellow-500/50" : "");
+
+  if (field.sensitive) {
+    return (
+      <div>
+        <label className="text-sm text-muted-foreground flex items-center gap-1.5">
+          {field.label}
+          {field.description && (
+            <span title={field.description} className="cursor-help">
+              <Info className="h-3 w-3 text-muted-foreground/50" />
+            </span>
+          )}
+        </label>
+        <input
+          type="password"
+          className={inputClass + " mt-1"}
+          value="********"
+          disabled
+        />
+        <p className="text-xs text-muted-foreground mt-1">Set via ~/.env.aitrader</p>
+      </div>
+    );
+  }
+
+  if (field.type === "boolean") {
+    return (
+      <div className="flex items-center justify-between py-1">
+        <div>
+          <label className="text-sm font-medium">{field.label}</label>
+          {field.description && (
+            <p className="text-xs text-muted-foreground">{field.description}</p>
+          )}
+        </div>
+        <button
+          onClick={() => {
+            const newVal = !localValue;
+            setLocalValue(newVal);
+            onSave(field.path, newVal);
+          }}
+          className={`relative w-11 h-6 rounded-full transition-colors ${
+            localValue ? "bg-primary" : "bg-muted-foreground/30"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm ${
+              localValue ? "translate-x-5" : ""
+            }`}
+          />
+        </button>
+      </div>
+    );
+  }
+
+  if (field.type === "select" && field.options) {
+    return (
+      <div>
+        <label className="text-sm text-muted-foreground flex items-center gap-1.5">
+          {field.label}
+          {field.description && (
+            <span title={field.description} className="cursor-help">
+              <Info className="h-3 w-3 text-muted-foreground/50" />
+            </span>
+          )}
+        </label>
+        <select
+          className={inputClass + " mt-1"}
+          value={localValue ?? ""}
+          onChange={(e) => {
+            setLocalValue(e.target.value);
+            onSave(field.path, e.target.value);
+          }}
+        >
+          {field.options.map((opt) => (
+            <option key={opt} value={opt}>
+              {opt}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  // number or string
+  return (
+    <div>
+      <label className="text-sm text-muted-foreground flex items-center gap-1.5">
+        {field.label}
+        {field.description && (
+          <span title={field.description} className="cursor-help">
+            <Info className="h-3 w-3 text-muted-foreground/50" />
+          </span>
+        )}
+      </label>
+      <div className="flex gap-2 mt-1">
+        <input
+          type={field.type === "number" ? "number" : "text"}
+          step={field.type === "number" ? "any" : undefined}
+          className={inputClass}
+          value={localValue ?? ""}
+          onChange={(e) => handleChange(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={(e) => e.key === "Enter" && handleSave()}
+        />
+        {dirty && (
+          <Button size="sm" onClick={handleSave} className="px-2 h-[38px]">
+            <Save className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ConfigSectionCard({
+  section,
+  onSave,
+  defaultOpen = false,
+}: {
+  section: ConfigSection;
+  onSave: (path: string, value: any) => void;
+  defaultOpen?: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader
+        className="cursor-pointer select-none pb-3"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <CardTitle className="flex items-center justify-between text-base">
+          <div>
+            <span>{section.title}</span>
+            <span className="text-xs text-muted-foreground font-normal ml-2">
+              ({section.fields.length} fields)
+            </span>
+          </div>
+          {isOpen ? (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          )}
+        </CardTitle>
+        {!isOpen && section.description && (
+          <p className="text-xs text-muted-foreground">{section.description}</p>
+        )}
+      </CardHeader>
+      {isOpen && (
+        <CardContent className="space-y-4 pt-0">
+          {section.description && (
+            <p className="text-xs text-muted-foreground pb-2 border-b border-border/30">
+              {section.description}
+            </p>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {section.fields.map((field) => (
+              <ConfigFieldInput key={field.path} field={field} onSave={onSave} />
+            ))}
+          </div>
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+// ============================================================================
+// Logs Viewer Component
+// ============================================================================
+function LogsViewer({ token }: { token: string }) {
+  const [logs, setLogs] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [lines, setLines] = useState(100);
+  const [source, setSource] = useState<"journalctl" | "file">("journalctl");
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
+  const fetchLogs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/admin/service/logs?lines=${lines}&source=${source}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const data = await res.json();
+      setLogs(data.logs || "No logs available");
+    } catch {
+      setLogs("Failed to fetch logs");
+    }
+    setLoading(false);
+  }, [token, lines, source]);
+
+  useEffect(() => {
+    fetchLogs();
+  }, [fetchLogs]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(fetchLogs, 5000);
+    return () => clearInterval(interval);
+  }, [autoRefresh, fetchLogs]);
+
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center justify-between text-lg">
+          <div className="flex items-center gap-2">
+            <Terminal className="h-5 w-5" />
+            Service Logs
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              className="px-2 py-1 rounded bg-muted border border-border text-xs"
+              value={source}
+              onChange={(e) => setSource(e.target.value as "journalctl" | "file")}
+            >
+              <option value="journalctl">journalctl</option>
+              <option value="file">Log File</option>
+            </select>
+            <select
+              className="px-2 py-1 rounded bg-muted border border-border text-xs"
+              value={lines}
+              onChange={(e) => setLines(Number(e.target.value))}
+            >
+              <option value={50}>50 lines</option>
+              <option value={100}>100 lines</option>
+              <option value={200}>200 lines</option>
+              <option value={500}>500 lines</option>
+            </select>
+            <Button
+              variant={autoRefresh ? "default" : "outline"}
+              size="sm"
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className="h-7 text-xs"
+            >
+              {autoRefresh ? "Auto" : "Manual"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchLogs}
+              disabled={loading}
+              className="h-7 text-xs"
+            >
+              <RefreshCw className={`h-3 w-3 mr-1 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="bg-black/80 rounded-lg p-4 max-h-[600px] overflow-auto font-mono text-xs text-green-400 whitespace-pre-wrap leading-relaxed">
+          {logs}
+          <div ref={logsEndRef} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================================
+// Diagnostics Component
+// ============================================================================
+function DiagnosticsPanel({ token }: { token: string }) {
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const runDiagnostics = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/system/diagnostics", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setDiagnostics(await res.json());
+    } catch {
+      setDiagnostics({ checks: [{ name: "Connection", status: "fail", message: "Failed to connect to backend" }] });
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    runDiagnostics();
+  }, []);
+
+  const statusIcon = (status: string) => {
+    if (status === "pass") return <CheckCircle className="h-4 w-4 text-green-500" />;
+    if (status === "warn") return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+    return <X className="h-4 w-4 text-red-500" />;
+  };
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center justify-between text-lg">
+          <div className="flex items-center gap-2">
+            <Wrench className="h-5 w-5" />
+            System Diagnostics
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={runDiagnostics}
+            disabled={loading}
+            className="h-7 text-xs"
+          >
+            <RefreshCw className={`h-3 w-3 mr-1 ${loading ? "animate-spin" : ""}`} />
+            Re-run
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {!diagnostics ? (
+          <div className="text-sm text-muted-foreground">Running diagnostics...</div>
+        ) : (
+          <div className="space-y-2">
+            {diagnostics.checks?.map((check: any, idx: number) => (
+              <div
+                key={idx}
+                className={`flex items-center gap-3 p-3 rounded-lg border ${
+                  check.status === "pass"
+                    ? "bg-green-500/5 border-green-500/20"
+                    : check.status === "warn"
+                    ? "bg-yellow-500/5 border-yellow-500/20"
+                    : "bg-red-500/5 border-red-500/20"
+                }`}
+              >
+                {statusIcon(check.status)}
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium">{check.name}</span>
+                  <p className="text-xs text-muted-foreground truncate">{check.message}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================================
+// System Info Component
+// ============================================================================
+function SystemInfoPanel({ token }: { token: string }) {
+  const [info, setInfo] = useState<any>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/system/info", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then(setInfo)
+      .catch(() => {});
+  }, [token]);
+
+  if (!info) return <CardSkeleton />;
+
+  const items = [
+    { icon: Cpu, label: "Python", value: info.python_version || "N/A" },
+    { icon: HardDrive, label: "NautilusTrader", value: info.nautilus_version || "N/A" },
+    { icon: GitBranch, label: "Git Branch", value: info.git_branch || "N/A" },
+    { icon: Clock, label: "Last Commit", value: info.git_commit ? `${info.git_commit} (${info.git_commit_date?.split(" ")[0] || ""})` : "N/A" },
+    { icon: Server, label: "Service", value: info.service_name || "N/A" },
+    { icon: Monitor, label: "Path", value: info.aitrader_path || "N/A" },
+  ];
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <Monitor className="h-5 w-5" />
+          System Info
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {items.map(({ icon: Icon, label, value }) => (
+            <div key={label} className="flex items-center gap-3 p-3 rounded-lg bg-muted/30 border border-border/30">
+              <Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">{label}</p>
+                <p className="text-sm font-mono truncate">{value}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================================
+// Main Dashboard
+// ============================================================================
 export default function AdminDashboard() {
   const router = useRouter();
   const locale = (router.locale || "en") as Locale;
@@ -99,6 +558,7 @@ export default function AdminDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [config, setConfig] = useState<any>(null);
+  const [configSections, setConfigSections] = useState<ConfigSection[]>([]);
   const [socialLinks, setSocialLinks] = useState<any[]>([]);
   const [copyLinks, setCopyLinks] = useState<any[]>([]);
   const [siteSettings, setSiteSettings] = useState<Record<string, string>>({});
@@ -166,9 +626,18 @@ export default function AdminDashboard() {
     { refreshInterval: 15000 }
   );
 
-  // Fetch config and links
+  // Fetch config sections (structured) and raw config
   useEffect(() => {
     if (token) {
+      // Structured sections for Strategy tab
+      fetch("/api/admin/config/sections", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((r) => r.json())
+        .then((data) => setConfigSections(data.sections || []))
+        .catch(console.error);
+
+      // Raw config
       fetch("/api/admin/config", {
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -199,6 +668,11 @@ export default function AdminDashboard() {
     }
   }, [token]);
 
+  const showMessage = useCallback((type: "success" | "error", text: string) => {
+    setMessage({ type, text });
+    setTimeout(() => setMessage(null), 4000);
+  }, []);
+
   const handleLogout = () => {
     localStorage.removeItem("admin_token");
     router.replace("/admin");
@@ -224,17 +698,15 @@ export default function AdminDashboard() {
       const data = await res.json();
 
       if (data.success) {
-        setMessage({ type: "success", text: data.message });
+        showMessage("success", data.message);
         setPendingRestart(false);
         refetchStatus();
       } else {
-        setMessage({ type: "error", text: data.message || "Failed" });
+        showMessage("error", data.message || "Failed");
       }
     } catch (e: any) {
-      setMessage({ type: "error", text: e.message });
+      showMessage("error", e.message);
     }
-
-    setTimeout(() => setMessage(null), 5000);
   };
 
   const handleConfigSave = async (path: string, value: any) => {
@@ -252,16 +724,23 @@ export default function AdminDashboard() {
       const data = await res.json();
 
       if (data.success) {
-        setMessage({ type: "success", text: `Updated ${path}` });
+        showMessage("success", `Updated ${path}`);
         setPendingRestart(true);
+        // Update local sections state
+        setConfigSections((prev) =>
+          prev.map((section) => ({
+            ...section,
+            fields: section.fields.map((field) =>
+              field.path === path ? { ...field, value } : field
+            ),
+          }))
+        );
       } else {
-        setMessage({ type: "error", text: "Failed to update config" });
+        showMessage("error", "Failed to update config");
       }
     } catch (e: any) {
-      setMessage({ type: "error", text: e.message });
+      showMessage("error", e.message);
     }
-
-    setTimeout(() => setMessage(null), 5000);
   };
 
   const handleSocialLinkSave = async (platform: string, url: string) => {
@@ -276,12 +755,10 @@ export default function AdminDashboard() {
         },
         body: JSON.stringify({ platform, url, enabled: !!url }),
       });
-      setMessage({ type: "success", text: `Updated ${platform} link` });
+      showMessage("success", `Updated ${platform} link`);
     } catch (e: any) {
-      setMessage({ type: "error", text: e.message });
+      showMessage("error", e.message);
     }
-
-    setTimeout(() => setMessage(null), 5000);
   };
 
   const handleSiteSettingSave = async (key: string, value: string) => {
@@ -295,12 +772,10 @@ export default function AdminDashboard() {
         },
       });
       setSiteSettings((prev) => ({ ...prev, [key]: value }));
-      setMessage({ type: "success", text: `Updated ${key}` });
+      showMessage("success", `Updated ${key}`);
     } catch (e: any) {
-      setMessage({ type: "error", text: e.message });
+      showMessage("error", e.message);
     }
-
-    setTimeout(() => setMessage(null), 5000);
   };
 
   const handleFileUpload = async (type: "logo" | "favicon", file: File) => {
@@ -325,17 +800,15 @@ export default function AdminDashboard() {
           ...prev,
           [`${type}_url`]: data.url,
         }));
-        setMessage({ type: "success", text: `${type} uploaded successfully` });
+        showMessage("success", `${type} uploaded successfully`);
       } else {
-        setMessage({ type: "error", text: data.detail || "Upload failed" });
+        showMessage("error", data.detail || "Upload failed");
       }
     } catch (e: any) {
-      setMessage({ type: "error", text: e.message });
+      showMessage("error", e.message);
     } finally {
       setUploading(false);
     }
-
-    setTimeout(() => setMessage(null), 5000);
   };
 
   // Loading state
@@ -360,9 +833,10 @@ export default function AdminDashboard() {
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: Activity },
     { id: "strategy", label: "Strategy", icon: Settings },
+    { id: "system", label: "System", icon: Terminal },
     { id: "trade-quality", label: "Trade Quality", icon: Target },
     { id: "links", label: "Links", icon: LinkIcon },
-    { id: "site", label: "Site Settings", icon: Palette },
+    { id: "site", label: "Site", icon: Palette },
   ];
 
   return (
@@ -387,6 +861,11 @@ export default function AdminDashboard() {
                     Live
                   </span>
                 )}
+                {serviceStatus?.uptime && (
+                  <span className="text-xs text-muted-foreground hidden sm:inline">
+                    Uptime: {serviceStatus.uptime}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="icon" className="relative h-8 w-8">
@@ -407,13 +886,20 @@ export default function AdminDashboard() {
         {/* Message Toast */}
         {message && (
           <div
-            className={`fixed top-20 right-4 p-4 rounded-lg z-50 shadow-lg ${
+            className={`fixed top-32 right-4 p-4 rounded-lg z-50 shadow-lg max-w-sm ${
               message.type === "success"
                 ? "bg-green-500/10 text-green-500 border border-green-500/30"
                 : "bg-red-500/10 text-red-500 border border-red-500/30"
             }`}
           >
-            {message.text}
+            <div className="flex items-center gap-2">
+              {message.type === "success" ? (
+                <CheckCircle className="h-4 w-4 flex-shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              )}
+              <span className="text-sm">{message.text}</span>
+            </div>
           </div>
         )}
 
@@ -429,6 +915,7 @@ export default function AdminDashboard() {
                   variant={activeTab === tab.id ? "default" : "outline"}
                   onClick={() => setActiveTab(tab.id)}
                   className="whitespace-nowrap"
+                  size="sm"
                 >
                   <Icon className="h-4 w-4 mr-2" />
                   {tab.label}
@@ -437,7 +924,22 @@ export default function AdminDashboard() {
             })}
           </div>
 
+          {/* Pending Restart Banner */}
+          {pendingRestart && activeTab !== "dashboard" && (
+            <div className="mb-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-center gap-3">
+              <AlertTriangle className="h-4 w-4 text-yellow-500 flex-shrink-0" />
+              <span className="text-sm text-yellow-500 flex-1">
+                Configuration changed. Restart service to apply.
+              </span>
+              <Button size="sm" onClick={() => handleServiceControl("restart")} className="h-7 text-xs">
+                Restart Now
+              </Button>
+            </div>
+          )}
+
+          {/* ================================================================ */}
           {/* Dashboard Tab */}
+          {/* ================================================================ */}
           {activeTab === "dashboard" && (
             <div className="space-y-6">
               {/* Service Status Card */}
@@ -464,6 +966,9 @@ export default function AdminDashboard() {
                         </p>
                         <p className="text-sm text-muted-foreground">
                           {serviceStatus?.state} / {serviceStatus?.sub_state}
+                          {serviceStatus?.memory && serviceStatus.memory !== "N/A" && (
+                            <span className="ml-2">| {serviceStatus.memory}</span>
+                          )}
                         </p>
                       </div>
                     </div>
@@ -516,7 +1021,6 @@ export default function AdminDashboard() {
 
               {/* Charts Row */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Equity Curve */}
                 <Card className="border-border/50">
                   <CardHeader className="pb-3">
                     <CardTitle className="flex items-center gap-2 text-lg">
@@ -529,7 +1033,6 @@ export default function AdminDashboard() {
                   </CardContent>
                 </Card>
 
-                {/* Risk Metrics */}
                 <Card className="border-border/50">
                   <CardHeader className="pb-3">
                     <CardTitle className="flex items-center gap-2 text-lg">
@@ -545,7 +1048,6 @@ export default function AdminDashboard() {
 
               {/* Activity Row */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Recent Trades */}
                 <Card className="border-border/50">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg">Recent Trades</CardTitle>
@@ -555,7 +1057,6 @@ export default function AdminDashboard() {
                   </CardContent>
                 </Card>
 
-                {/* AI Signals */}
                 <Card className="border-border/50">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg">AI Signal Log</CardTitle>
@@ -568,90 +1069,122 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* Strategy Tab */}
-          {activeTab === "strategy" && config && (
-            <div className="space-y-6">
-              {/* Equity Settings */}
-              <Card className="border-border/50">
-                <CardHeader>
-                  <CardTitle>Equity & Leverage</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm text-muted-foreground">Leverage</label>
-                      <input
-                        type="number"
-                        className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none"
-                        defaultValue={config.equity?.leverage || 5}
-                        onBlur={(e) =>
-                          handleConfigSave("equity.leverage", parseInt(e.target.value))
-                        }
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm text-muted-foreground">Base USDT Amount</label>
-                      <input
-                        type="number"
-                        className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none"
-                        defaultValue={config.position_management?.base_usdt_amount || 100}
-                        onBlur={(e) =>
-                          handleConfigSave(
-                            "position_management.base_usdt_amount",
-                            parseFloat(e.target.value)
-                          )
-                        }
-                      />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+          {/* ================================================================ */}
+          {/* Strategy Tab - Full Configuration */}
+          {/* ================================================================ */}
+          {activeTab === "strategy" && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold">Strategy Configuration</h2>
+                  <p className="text-sm text-muted-foreground">
+                    All parameters from configs/base.yaml. Changes require service restart.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    // Reload sections from server
+                    fetch("/api/admin/config/sections", {
+                      headers: { Authorization: `Bearer ${token}` },
+                    })
+                      .then((r) => r.json())
+                      .then((data) => {
+                        setConfigSections(data.sections || []);
+                        showMessage("success", "Configuration reloaded");
+                      })
+                      .catch(() => showMessage("error", "Failed to reload"));
+                  }}
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Reload
+                </Button>
+              </div>
 
-              {/* Risk Settings */}
-              <Card className="border-border/50">
-                <CardHeader>
-                  <CardTitle>Risk Management</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm text-muted-foreground">
-                        Min Confidence to Trade
-                      </label>
-                      <select
-                        className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none"
-                        defaultValue={config.risk?.min_confidence_to_trade || "MEDIUM"}
-                        onChange={(e) =>
-                          handleConfigSave("risk.min_confidence_to_trade", e.target.value)
-                        }
-                      >
-                        <option value="LOW">LOW</option>
-                        <option value="MEDIUM">MEDIUM</option>
-                        <option value="HIGH">HIGH</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-sm text-muted-foreground">Max Position Ratio</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        className="w-full mt-1 px-3 py-2 rounded-lg bg-muted border border-border focus:border-primary focus:outline-none"
-                        defaultValue={config.position_management?.max_position_ratio || 0.3}
-                        onBlur={(e) =>
-                          handleConfigSave(
-                            "position_management.max_position_ratio",
-                            parseFloat(e.target.value)
-                          )
-                        }
-                      />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              {configSections.length === 0 ? (
+                <Card className="border-border/50">
+                  <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                    Loading configuration sections...
+                  </CardContent>
+                </Card>
+              ) : (
+                configSections.map((section, idx) => (
+                  <ConfigSectionCard
+                    key={section.id}
+                    section={section}
+                    onSave={handleConfigSave}
+                    defaultOpen={idx < 3}
+                  />
+                ))
+              )}
             </div>
           )}
 
+          {/* ================================================================ */}
+          {/* System Tab - Logs + Diagnostics + System Info */}
+          {/* ================================================================ */}
+          {activeTab === "system" && (
+            <div className="space-y-6">
+              {/* Service Control (compact) */}
+              <Card className="border-border/50">
+                <CardContent className="py-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2 mr-4">
+                      <div
+                        className={`h-3 w-3 rounded-full ${
+                          serviceStatus?.running ? "bg-green-500 animate-pulse" : "bg-red-500"
+                        }`}
+                      />
+                      <span className="text-sm font-medium">
+                        {serviceStatus?.running ? "Running" : "Stopped"}
+                      </span>
+                      {serviceStatus?.uptime && (
+                        <span className="text-xs text-muted-foreground">({serviceStatus.uptime})</span>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => handleServiceControl("restart")} className="h-8">
+                        <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                        Restart
+                      </Button>
+                      {serviceStatus?.running ? (
+                        <Button variant="outline" size="sm" onClick={() => handleServiceControl("stop")} className="h-8">
+                          <Power className="h-3.5 w-3.5 mr-1.5" />
+                          Stop
+                        </Button>
+                      ) : (
+                        <Button size="sm" onClick={() => handleServiceControl("start")} className="h-8">
+                          <Play className="h-3.5 w-3.5 mr-1.5" />
+                          Start
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* System Info */}
+              <SystemInfoPanel token={token} />
+
+              {/* Diagnostics */}
+              <DiagnosticsPanel token={token} />
+
+              {/* Logs */}
+              <LogsViewer token={token} />
+            </div>
+          )}
+
+          {/* ================================================================ */}
+          {/* Trade Quality Tab */}
+          {/* ================================================================ */}
+          {activeTab === "trade-quality" && (
+            <AdminTradeAnalysis />
+          )}
+
+          {/* ================================================================ */}
           {/* Links Tab */}
+          {/* ================================================================ */}
           {activeTab === "links" && (
             <div className="space-y-6">
               {/* Social Links */}
@@ -721,8 +1254,7 @@ export default function AdminDashboard() {
                             },
                             body: JSON.stringify({ url: e.target.value }),
                           });
-                          setMessage({ type: "success", text: "Link updated" });
-                          setTimeout(() => setMessage(null), 3000);
+                          showMessage("success", "Link updated");
                         }}
                       />
                     </div>
@@ -732,12 +1264,9 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* Trade Quality Tab */}
-          {activeTab === "trade-quality" && (
-            <AdminTradeAnalysis />
-          )}
-
+          {/* ================================================================ */}
           {/* Site Settings Tab */}
+          {/* ================================================================ */}
           {activeTab === "site" && (
             <div className="space-y-6">
               {/* Logo & Branding */}
