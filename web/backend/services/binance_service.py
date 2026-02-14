@@ -4,6 +4,7 @@ Binance API Service - Fetch trading performance data
 import hmac
 import hashlib
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 import httpx
@@ -20,6 +21,17 @@ class BinanceService:
         load_aitrader_env()
         self.api_key = settings.BINANCE_API_KEY
         self.api_secret = settings.BINANCE_API_SECRET
+        self._client: Optional[httpx.AsyncClient] = None
+
+    @asynccontextmanager
+    async def _get_client(self):
+        """Shared httpx client with connection pooling"""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(10.0, connect=5.0),
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            )
+        yield self._client
 
     def _sign(self, params: dict) -> dict:
         """Sign request with HMAC SHA256"""
@@ -44,7 +56,7 @@ class BinanceService:
         """Get futures account information"""
         try:
             params = self._sign({})
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v2/account",
                     params=params,
@@ -80,7 +92,7 @@ class BinanceService:
                 "limit": limit,
             })
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/income",
                     params=params,
@@ -103,7 +115,7 @@ class BinanceService:
                 "limit": 1000,
             })
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/userTrades",
                     params=params,
