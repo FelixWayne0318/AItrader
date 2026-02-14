@@ -4909,12 +4909,22 @@
       "pattern_type": "import",
       "created": "2026-02-14T14:14:20.816992",
       "auto_generated": true
+    },
+    {
+      "id": "75c31b5b5f60",
+      "commit": "2a1a2d2",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: handle null SL/TP in Risk Manager reask logging to preserve AI reason",
+      "pattern": "# .get('stop_loss', 0) returns None when key exists with null value;",
+      "pattern_type": "contains",
+      "created": "2026-02-14T23:12:32.580807",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-14T14:14:21.910474",
-    "count": 491,
+    "updated": "2026-02-14T23:12:35.416617",
+    "count": 492,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }

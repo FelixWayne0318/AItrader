@@ -414,7 +414,10 @@ class AIInputDataValidator(DiagnosticStep):
             fr = dr.get('funding_rate', {})
             liq = dr.get('liquidations', {})
             print(f"      OI value (BTC):  {oi.get('value', 0) if oi else 0:,.2f}")
-            print(f"      Funding rate:    {fr.get('value', 0) if fr else 0:.6f} ({fr.get('value', 0)*100 if fr else 0:.4f}%)")
+            # v5.2: Use current_pct (already in %) instead of value*100 (source-dependent)
+            fr_pct = fr.get('current_pct', 0) if fr else 0
+            fr_source = fr.get('source', 'unknown') if fr else 'N/A'
+            print(f"      Funding rate:    {fr_pct:.4f}% (source: {fr_source})")
 
             # v5.1: Binance funding rate (settled + predicted)
             if self.ctx.binance_funding_rate:

@@ -218,11 +218,13 @@ class AIDataAssembler:
         self,
         oi_raw: Optional[Dict],
         liq_raw: Optional[Dict],
-        funding_raw: Optional[Dict],
+        funding_raw: Optional[Dict],  # v5.2: Kept for signature compat, no longer used for FR
         current_price: float,
     ) -> Dict[str, Any]:
         """
-        Coinalyze API → 统一格式转换
+        Coinalyze API (OI + Liquidations) + Binance API (Funding Rate) → 统一格式转换
+
+        v5.2: Funding rate now exclusively from Binance. Coinalyze funding_raw is ignored.
         """
         result = {
             "open_interest": None,
@@ -322,44 +324,12 @@ class AIDataAssembler:
                 "premium_index": binance_funding.get('premium_index'),
                 "mark_price": binance_funding.get('mark_price'),
                 "index_price": binance_funding.get('index_price'),
-                # 保留 Coinalyze 对比 (仅参考)
-                "coinalyze_pct": None,
-                "binance_pct": funding_pct,
-            }
-
-            # 记录 Coinalyze 对比值 (如果可用)
-            if funding_raw:
-                try:
-                    coinalyze_pct = round(float(funding_raw.get('value', 0)) * 100, 4)
-                    result["funding_rate"]["coinalyze_pct"] = coinalyze_pct
-                except (ValueError, TypeError):
-                    pass
-        elif funding_raw:
-            # Binance 不可用时降级到 Coinalyze
-            try:
-                coinalyze_value = float(funding_raw.get('value', 0))
-                coinalyze_pct = round(coinalyze_value * 100, 4)
-                result["funding_rate"] = {
-                    "value": coinalyze_value,
-                    "current": coinalyze_value,
-                    "current_pct": coinalyze_pct,
-                    "interpretation": self._interpret_funding(coinalyze_value),
-                    "source": "coinalyze_fallback",
-                    "period": "aggregated",
-                    "predicted_rate": None,
-                    "predicted_rate_pct": None,
-                    "next_funding_time": None,
-                    "next_funding_countdown_min": None,
-                    "history": [],
-                    "trend": "N/A",
-                    "premium_index": None,
-                    "mark_price": None,
-                    "index_price": None,
-                    "coinalyze_pct": coinalyze_pct,
-                    "binance_pct": None,
                 }
-            except Exception as e:
-                self.logger.warning(f"⚠️ Funding parse error: {e}")
+        # v5.2: Coinalyze funding rate fallback removed.
+        # Coinalyze returns value in different units (percentage-decimal vs raw-decimal),
+        # causing 100x display error (-0.3094% instead of -0.003094%).
+        # Binance is the authoritative source for funding rate.
+        # If Binance is unavailable, funding_rate stays None (neutral for AI).
 
         # Liquidation 转换 (嵌套结构)
         # v2.1: 即使 history 为空也返回结构 (区分"无爆仓"和"数据缺失")

@@ -2538,10 +2538,10 @@ ORDER FLOW (Binance Taker Data):
         parts = []
 
         # =========================================================================
-        # Section 1: Coinalyze Data
+        # Section 1: Derivatives Data (OI/Liq from Coinalyze, FR from Binance)
         # =========================================================================
         if data and data.get('enabled', True):
-            parts.append("COINALYZE DERIVATIVES:")
+            parts.append("DERIVATIVES DATA:")
 
             # Open Interest (v5.2: add hourly history series for OI×Price analysis)
             trends = data.get('trends', {})
@@ -2567,15 +2567,20 @@ ORDER FLOW (Binance Taker Data):
             else:
                 parts.append("- Open Interest: N/A")
 
-            # Funding Rate (v5.1: 已结算 + 预期，语义修正)
+            # Funding Rate (v5.2: use current_pct directly from Binance, no manual *100)
             funding = data.get('funding_rate')
             if funding:
-                # 已结算费率 (from /fapi/v1/fundingRate)
+                # 已结算费率 (from Binance /fapi/v1/fundingRate, already in % form)
+                settled_pct = 0.0
                 try:
-                    settled_rate = float(funding.get('value', 0) or 0)
+                    # Prefer current_pct (already in percentage), fall back to value * 100
+                    raw_pct = funding.get('current_pct') or funding.get('settled_pct')
+                    if raw_pct is not None:
+                        settled_pct = float(raw_pct)
+                    else:
+                        settled_pct = float(funding.get('value', 0) or 0) * 100
                 except (ValueError, TypeError):
-                    settled_rate = 0.0
-                settled_pct = settled_rate * 100
+                    settled_pct = 0.0
                 parts.append(f"- Last Settled Funding Rate: {settled_pct:.4f}%")
 
                 # 预期费率 (from premiumIndex.lastFundingRate, 实时变化)
