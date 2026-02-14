@@ -4389,12 +4389,532 @@
       "pattern_type": "function_exists",
       "created": "2026-02-13T15:10:51.808705",
       "auto_generated": true
+    },
+    {
+      "id": "fa14a1d3c426",
+      "commit": "8541c5e",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix: --push restores current-branch behavior, show stderr on failure",
+      "pattern": "# Use --push-branch if explicitly set, otherwise current branch",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.229067",
+      "auto_generated": true
+    },
+    {
+      "id": "ede9bda114cd",
+      "commit": "0c01711",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix: --push defaults to current branch, auto-fallback for claude/* only",
+      "pattern": "if self.ctx.push_branch != \"main\":",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.269909",
+      "auto_generated": true
+    },
+    {
+      "id": "4dab49d34b16",
+      "commit": "8f3ef15",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: diagnose --push defaults to main branch, not HEAD",
+      "pattern": "help='导出并推送到 GitHub (默认推到 main 分支)'",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.304487",
+      "auto_generated": true
+    },
+    {
+      "id": "4a870ec68c85",
+      "commit": "8f3ef15",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix: diagnose --push defaults to main branch, not HEAD",
+      "pattern": "capture_output=True, text=True, check=True",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.323689",
+      "auto_generated": true
+    },
+    {
+      "id": "42d3c00f650c",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "runner.add_step(MachineReadableSummary)      # v5.1 机器可读 JSON 输出",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.357285",
+      "auto_generated": true
+    },
+    {
+      "id": "95ca4d2beb30",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/__init__.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "- order_flow_simulation.py: v5.1 order flow simulation (10 scenarios)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.376082",
+      "auto_generated": true
+    },
+    {
+      "id": "62af5367a223",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/code_integrity.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "expected=\"SL favorable direction + S/R recalculation (v5.1: quality-aware TP) \"",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.394080",
+      "auto_generated": true
+    },
+    {
+      "id": "b0e92d725ccf",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/lifecycle_test.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "v5.1: Quality-aware TP sorting + TP buffer (Osler 2003) for hit probability asymmetry fix.",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.415062",
+      "auto_generated": true
+    },
+    {
+      "id": "2f53b223ad3f",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/math_verification.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "print_box(\"v5.1 Math Verification (数学验证)\", 65)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.435268",
+      "auto_generated": true
+    },
+    {
+      "id": "5a1e766f84a2",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/order_flow_simulation.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "CUMULATIVE_POSITION_LIMIT = \"cumulative_position_limit\"  # v5.1: 30% max position cap",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.454294",
+      "auto_generated": true
+    },
+    {
+      "id": "aab092c56a9f",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "Includes v5.1 machine-readable JSON output.",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.475315",
+      "auto_generated": true
+    },
+    {
+      "id": "e9397741ffaf",
+      "commit": "610809b",
+      "file": "scripts/diagnose_position_management.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "print(\"  ⏭️  Production uses calculate_sr_based_sltp (S/R zone + ATR buffer)\")",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.520203",
+      "auto_generated": true
+    },
+    {
+      "id": "1c47179bebe3",
+      "commit": "610809b",
+      "file": "scripts/diagnose_v412.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "from strategy.trading_logic import validate_multiagent_sltp",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.542634",
+      "auto_generated": true
+    },
+    {
+      "id": "10c02e2940f9",
+      "commit": "610809b",
+      "file": "scripts/diagnostics/math_verification.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "from strategy.trading_logic import validate_multiagent_sltp",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.561940",
+      "auto_generated": true
+    },
+    {
+      "id": "c158f2cda140",
+      "commit": "610809b",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "print(\"     ✅ validate_multiagent_sltp 失败 → 回退到 calculate_sr_based_sltp\")",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.581955",
+      "auto_generated": true
+    },
+    {
+      "id": "3968f5a1d183",
+      "commit": "610809b",
+      "file": "scripts/diagnostics/order_flow_simulation.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "print(\"  │    └─ 回退: calculate_sr_based_sltp() (S/R Zones+ATR)      │\")",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.602875",
+      "auto_generated": true
+    },
+    {
+      "id": "91654dad51e6",
+      "commit": "610809b",
+      "file": "strategy/trading_logic.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "- validate_multiagent_sltp() — AI SL/TP 验证 (Level 1)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.623817",
+      "auto_generated": true
+    },
+    {
+      "id": "ecef2c760740",
+      "commit": "4614bdc",
+      "file": "main_live.py",
+      "message": "feat(sltp): v5.1 TP asymmetry fix — quality-aware sorting + TP buffer",
+      "pattern": "tp_buffer_multiplier=config_manager.get('trading_logic', 'tp_buffer_multiplier', default=0.25),",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.661025",
+      "auto_generated": true
+    },
+    {
+      "id": "2e7983666178",
+      "commit": "4614bdc",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "feat(sltp): v5.1 TP asymmetry fix — quality-aware sorting + TP buffer",
+      "pattern": "self.tp_buffer_multiplier = config.tp_buffer_multiplier",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.687536",
+      "auto_generated": true
+    },
+    {
+      "id": "4d52c3c4574f",
+      "commit": "4614bdc",
+      "file": "utils/sr_sltp_calculator.py",
+      "message": "feat(sltp): v5.1 TP asymmetry fix — quality-aware sorting + TP buffer",
+      "pattern": "source_quality = _SOURCE_QUALITY.get(_get_source_type(zone), 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.705911",
+      "auto_generated": true
+    },
+    {
+      "id": "44ab9a40cea6",
+      "commit": "6bebc44",
+      "file": "main_live.py",
+      "message": "feat: integrate RiskController circuit breakers, fix order book attr, remove dead BB block config",
+      "pattern": "# v3.12: Risk Controller / Circuit Breakers configuration",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.760581",
+      "auto_generated": true
+    },
+    {
+      "id": "0c775768c8c4",
+      "commit": "6bebc44",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "feat: integrate RiskController circuit breakers, fix order book attr, remove dead BB block config",
+      "pattern": "from utils.risk_controller import RiskController, TradingState",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.789710",
+      "auto_generated": true
+    },
+    {
+      "id": "551fcd363581",
+      "commit": "731d2de",
+      "file": "web/backend/api/routes/performance.py",
+      "message": "fix(web): fix PnL curve and performance data not loading on frontend",
+      "pattern": "return {\"success\": True, \"data\": stats.get(\"pnl_curve\", [])}",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.846364",
+      "auto_generated": true
+    },
+    {
+      "id": "f74dbe5d0719",
+      "commit": "731d2de",
+      "file": "web/backend/api/routes/public.py",
+      "message": "fix(web): fix PnL curve and performance data not loading on frontend",
+      "pattern": "stats[\"period_days\"] = days",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.869229",
+      "auto_generated": true
+    },
+    {
+      "id": "422389d95d23",
+      "commit": "731d2de",
+      "file": "web/backend/services/performance_service.py",
+      "message": "fix(web): fix PnL curve and performance data not loading on frontend",
+      "pattern": "\"last_updated\": datetime.now().isoformat(),",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.891166",
+      "auto_generated": true
+    },
+    {
+      "id": "0ad577939753",
+      "commit": "b766db6",
+      "file": "web/backend/services/binance_service.py",
+      "message": "fix(web): fix script permissions, python3, connection pooling in remaining services",
+      "pattern": "from contextlib import asynccontextmanager",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.931996",
+      "auto_generated": true
+    },
+    {
+      "id": "7a82e7be7beb",
+      "commit": "b766db6",
+      "file": "web/backend/services/performance_service.py",
+      "message": "fix(web): fix script permissions, python3, connection pooling in remaining services",
+      "pattern": "from contextlib import asynccontextmanager",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.953332",
+      "auto_generated": true
+    },
+    {
+      "id": "bcf9979e9647",
+      "commit": "40c85c0",
+      "file": "web/backend/api/routes/admin.py",
+      "message": "fix(web): fix critical backend bugs - path TypeError, WebSocket auth, connection pooling",
+      "pattern": "from pathlib import Path",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.992103",
+      "auto_generated": true
+    },
+    {
+      "id": "1033c7a20251",
+      "commit": "40c85c0",
+      "file": "web/backend/api/routes/public.py",
+      "message": "fix(web): fix critical backend bugs - path TypeError, WebSocket auth, connection pooling",
+      "pattern": "from pathlib import Path",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.014633",
+      "auto_generated": true
+    },
+    {
+      "id": "2e566d57bb41",
+      "commit": "40c85c0",
+      "file": "web/backend/api/routes/websocket.py",
+      "message": "fix(web): fix critical backend bugs - path TypeError, WebSocket auth, connection pooling",
+      "pattern": "import logging",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.035782",
+      "auto_generated": true
+    },
+    {
+      "id": "b1725ddd41dd",
+      "commit": "40c85c0",
+      "file": "web/backend/services/trading_service.py",
+      "message": "fix(web): fix critical backend bugs - path TypeError, WebSocket auth, connection pooling",
+      "pattern": "from contextlib import asynccontextmanager",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.056585",
+      "auto_generated": true
+    },
+    {
+      "id": "1871e4a580f9",
+      "commit": "22608ad",
+      "file": "web/backend/services/performance_service.py",
+      "message": "fix(web): replace empyrical with empyrical-reloaded for Python 3.12 compatibility",
+      "pattern": "logging.warning(\"empyrical-reloaded not installed. Run: pip install empyrical-reloaded>=0.5.12\")",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.186636",
+      "auto_generated": true
+    },
+    {
+      "id": "4dc1d8e80fd5",
+      "commit": "491735e",
+      "file": "web/backend/services/config_service.py",
+      "message": "fix(web): convert AITRADER_PATH string to Path object in ConfigService",
+      "pattern": "self.aitrader_path = Path(settings.AITRADER_PATH)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.218822",
+      "auto_generated": true
+    },
+    {
+      "id": "1f46a942e64d",
+      "commit": "d46153e",
+      "file": "web/backend/api/routes/admin.py",
+      "message": "refactor(web): unify performance data source and split system service",
+      "pattern": "from services.performance_service import get_performance_service",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.281058",
+      "auto_generated": true
+    },
+    {
+      "id": "83fa554269df",
+      "commit": "d46153e",
+      "file": "web/backend/api/routes/public.py",
+      "message": "refactor(web): unify performance data source and split system service",
+      "pattern": "from services.performance_service import get_performance_service",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.297141",
+      "auto_generated": true
+    },
+    {
+      "id": "8b7603385f7a",
+      "commit": "d46153e",
+      "file": "web/backend/services/system_service.py",
+      "message": "refactor(web): unify performance data source and split system service",
+      "pattern": "import subprocess",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.313833",
+      "auto_generated": true
+    },
+    {
+      "id": "441fb8a760fe",
+      "commit": "b0d64cb",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(strategy): replace all remaining datetime.utcnow() with timezone-aware datetime.now(timezone.utc",
+      "pattern": "from datetime import datetime, timedelta, timezone",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.353373",
+      "auto_generated": true
+    },
+    {
+      "id": "8442c310ab40",
+      "commit": "3c5f093",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(web+strategy): comprehensive fix for backend crash and trade evaluation issues",
+      "pattern": "captured_sltp = self.sltp_state[instrument_key].copy()",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.393136",
+      "auto_generated": true
+    },
+    {
+      "id": "47b145324052",
+      "commit": "3c5f093",
+      "file": "web/backend/core/config.py",
+      "message": "fix(web+strategy): comprehensive fix for backend crash and trade evaluation issues",
+      "pattern": "from pydantic import field_validator",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.409935",
+      "auto_generated": true
+    },
+    {
+      "id": "ba6075ccc3a7",
+      "commit": "418db32",
+      "file": "web/backend/core/config.py",
+      "message": "fix(web): resolve backend crash and deployment path issues",
+      "pattern": "import warnings",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.441665",
+      "auto_generated": true
+    },
+    {
+      "id": "5020150a9e9d",
+      "commit": "418db32",
+      "file": "web/backend/services/performance_service.py",
+      "message": "fix(web): resolve backend crash and deployment path issues",
+      "pattern": "os.path.join(os.path.dirname(__file__), \"../.env\"),",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.458410",
+      "auto_generated": true
+    },
+    {
+      "id": "a2afa035d7a0",
+      "commit": "bfe502d",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix(ai): align Risk Manager prompt with validation rules to reduce false rejections",
+      "pattern": "# v4.16: Reask mechanism — validate R/R before accepting SL/TP",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.493268",
+      "auto_generated": true
+    },
+    {
+      "id": "217c2ebf5877",
+      "commit": "b185cbe",
+      "file": "scripts/diagnose_order_rejection.py",
+      "message": "fix(scripts): remove dotenv dependency from order rejection diagnostic",
+      "pattern": "_load_env_file",
+      "pattern_type": "function_exists",
+      "created": "2026-02-14T14:14:20.525546",
+      "auto_generated": true
+    },
+    {
+      "id": "fc10b75c2d0a",
+      "commit": "2e66225",
+      "file": "scripts/diagnose_order_rejection.py",
+      "message": "fix(scripts): fix BinanceAccountClient → BinanceAccountFetcher in order rejection diagnostic",
+      "pattern": "from utils.binance_account import BinanceAccountFetcher",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.558328",
+      "auto_generated": true
+    },
+    {
+      "id": "79b01f0a4fc1",
+      "commit": "3fc6e88",
+      "file": "scripts/diagnose_order_rejection.py",
+      "message": "fix(telegram): clear stale signal status when position closed + add order rejection diagnostic",
+      "pattern": "import os",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.589135",
+      "auto_generated": true
+    },
+    {
+      "id": "79f723aae44f",
+      "commit": "3fc6e88",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(telegram): clear stale signal status when position closed + add order rejection diagnostic",
+      "pattern": "cached_executed = signal_status_heartbeat.get('executed', False)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.613124",
+      "auto_generated": true
+    },
+    {
+      "id": "ee1c2f2db142",
+      "commit": "3fc6e88",
+      "file": "utils/telegram_bot.py",
+      "message": "fix(telegram): clear stale signal status when position closed + add order rejection diagnostic",
+      "pattern": "# Only show \"✅ 开仓\" if we actually have a position",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.630826",
+      "auto_generated": true
+    },
+    {
+      "id": "506a51f407b3",
+      "commit": "e6e8cd2",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "feat(agents): add R/R reask mechanism for Risk Manager SL/TP quality (v4.15)",
+      "pattern": "_compute_rr_ratio",
+      "pattern_type": "function_exists",
+      "created": "2026-02-14T14:14:20.696443",
+      "auto_generated": true
+    },
+    {
+      "id": "5b7cce635469",
+      "commit": "9e705f5",
+      "file": "web/backend/api/routes/admin.py",
+      "message": "fix(web): remove fake data generators, add real empty states, fix hardcoded paths",
+      "pattern": "from core.config import settings",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.730700",
+      "auto_generated": true
+    },
+    {
+      "id": "b99d252b66ed",
+      "commit": "9e705f5",
+      "file": "web/backend/api/routes/public.py",
+      "message": "fix(web): remove fake data generators, add real empty states, fix hardcoded paths",
+      "pattern": "from core.config import settings",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.746441",
+      "auto_generated": true
+    },
+    {
+      "id": "e67592269ee1",
+      "commit": "9e705f5",
+      "file": "web/backend/services/binance_service.py",
+      "message": "fix(web): remove fake data generators, add real empty states, fix hardcoded paths",
+      "pattern": "import statistics",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.763007",
+      "auto_generated": true
+    },
+    {
+      "id": "5aadc4be4c7c",
+      "commit": "5dfb8d0",
+      "file": "web/backend/api/routes/performance.py",
+      "message": "fix(web): remove fake demo data, update outdated content to match real system",
+      "pattern": "from services.signal_log_service import get_signal_log_service",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.816992",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-13T15:10:52.701373",
-    "count": 439,
+    "updated": "2026-02-14T14:14:21.910474",
+    "count": 491,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
