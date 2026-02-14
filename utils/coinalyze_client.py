@@ -11,7 +11,7 @@ class CoinalyzeClient:
     """
     Coinalyze API 客户端 (同步版本)
 
-    获取衍生品数据: OI, 清算, 资金费率
+    获取衍生品数据: OI, 清算, 多空比
 
     设计原则:
     - 同步调用，兼容 on_timer() 回调
@@ -191,26 +191,6 @@ class CoinalyzeClient:
             },
         )
 
-    def get_funding_rate(self, symbol: str = None) -> Optional[Dict]:
-        """
-        获取当前资金费率
-
-        Returns:
-            {
-                "symbol": "BTCUSDT_PERP.A",
-                "value": 0.002847,       # 0.2847%
-                "update": 1769420174380  # 毫秒时间戳
-            }
-        """
-        if not self._enabled:
-            return None
-
-        symbol = symbol or self.DEFAULT_SYMBOL
-        return self._request_with_retry(
-            endpoint="/funding-rate",
-            params={"symbols": symbol},
-        )
-
     def fetch_all(self, symbol: str = None) -> Dict[str, Any]:
         """
         一次性获取所有衍生品数据 (便捷方法)
@@ -219,7 +199,6 @@ class CoinalyzeClient:
             {
                 "open_interest": {...} or None,
                 "liquidations": {...} or None,
-                "funding_rate": {...} or None,
                 "enabled": bool,
             }
         """
@@ -227,12 +206,9 @@ class CoinalyzeClient:
             return {
                 "open_interest": None,
                 "liquidations": None,
-                "funding_rate": None,
                 "enabled": False,
             }
 
-        # Fetch all data
-        # v5.2: Funding rate no longer fetched from Coinalyze (Binance is authoritative)
         oi = self.get_open_interest(symbol)
         liq = self.get_liquidations(symbol)
 
@@ -243,7 +219,6 @@ class CoinalyzeClient:
         return {
             "open_interest": oi,
             "liquidations": liq,
-            "funding_rate": None,  # v5.2: Use Binance instead
             "enabled": True,
             "_data_quality": data_quality,  # Fix B8: Quality marker
             "_missing_fields": [
@@ -301,51 +276,6 @@ class CoinalyzeClient:
 
         return self._request_with_retry(
             endpoint="/open-interest-history",
-            params={
-                "symbols": symbol,
-                "interval": interval,
-                "from": now - (hours * 3600),
-                "to": now,
-            },
-        )
-
-    def get_funding_rate_history(
-        self,
-        symbol: str = None,
-        interval: str = "1hour",
-        hours: int = 24,
-    ) -> Optional[Dict]:
-        """
-        获取资金费率历史数据 (OHLC 格式)
-
-        Parameters
-        ----------
-        symbol : str
-            交易对
-        interval : str
-            时间周期 (1hour, 4hour, daily)
-        hours : int
-            回溯小时数
-
-        Returns
-        -------
-        Dict or None
-            {
-                "symbol": "BTCUSDT_PERP.A",
-                "history": [
-                    {"t": 1769832000, "o": 0.009693, "h": 0.009693, "l": 0.009693, "c": 0.009693},
-                    ...
-                ]
-            }
-        """
-        if not self._enabled:
-            return None
-
-        symbol = symbol or self.DEFAULT_SYMBOL
-        now = int(time.time())
-
-        return self._request_with_retry(
-            endpoint="/funding-rate-history",
             params={
                 "symbols": symbol,
                 "interval": interval,
@@ -424,23 +354,14 @@ class CoinalyzeClient:
         -------
         Dict
             {
-                # 当前值
                 "open_interest": {...},
                 "liquidations": {...},
-                "funding_rate": {...},
-
-                # 历史数据 (新增)
                 "open_interest_history": {...},
-                "funding_rate_history": {...},
                 "long_short_ratio_history": {...},
-
-                # 计算的趋势
                 "trends": {
                     "oi_trend": "RISING" / "FALLING" / "STABLE",
-                    "funding_trend": "RISING" / "FALLING" / "STABLE",
                     "long_short_trend": "RISING" / "FALLING" / "STABLE",
                 },
-
                 "enabled": True,
             }
         """
@@ -448,9 +369,7 @@ class CoinalyzeClient:
             return {
                 "open_interest": None,
                 "liquidations": None,
-                "funding_rate": None,
                 "open_interest_history": None,
-                "funding_rate_history": None,
                 "long_short_ratio_history": None,
                 "trends": {},
                 "enabled": False,
@@ -459,15 +378,10 @@ class CoinalyzeClient:
         # 获取当前值
         oi = self.get_open_interest(symbol)
         liq = self.get_liquidations(symbol)
-        # v5.2: Funding rate no longer fetched from Coinalyze.
-        # Binance is the authoritative source (exact 8h settlement cycle).
-        # Saves 2 API calls per cycle (get_funding_rate + get_funding_rate_history).
 
-        # 获取历史数据
         oi_hist = self.get_open_interest_history(symbol, hours=history_hours)
         ls_hist = self.get_long_short_ratio_history(symbol, hours=history_hours)
 
-        # 计算趋势
         trends = {
             "oi_trend": self._calc_trend_from_history(oi_hist, "c"),
             "long_short_trend": self._calc_trend_from_history(ls_hist, "r"),
@@ -476,9 +390,7 @@ class CoinalyzeClient:
         return {
             "open_interest": oi,
             "liquidations": liq,
-            "funding_rate": None,
             "open_interest_history": oi_hist,
-            "funding_rate_history": None,
             "long_short_ratio_history": ls_hist,
             "trends": trends,
             "enabled": True,
@@ -555,14 +467,6 @@ class CoinalyzeClient:
             oi_usd = oi_btc * current_price if current_price > 0 else 0
             oi_trend = data.get("trends", {}).get("oi_trend", "N/A")
             parts.append(f"- Open Interest: {oi_btc:,.0f} BTC (${oi_usd:,.0f}) [Trend: {oi_trend}]")
-
-        # Funding Rate
-        fr = data.get("funding_rate")
-        if fr:
-            fr_value = float(fr.get("value", 0))
-            fr_pct = fr_value * 100
-            fr_trend = data.get("trends", {}).get("funding_trend", "N/A")
-            parts.append(f"- Funding Rate: {fr_pct:.4f}% [Trend: {fr_trend}]")
 
         # Liquidations
         liq = data.get("liquidations")

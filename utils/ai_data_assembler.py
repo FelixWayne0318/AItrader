@@ -20,7 +20,7 @@ class AIDataAssembler:
 
     v3.0 更新:
     - 整合 BinanceDerivativesClient (大户数据、Taker 比等)
-    - 整合 Coinalyze 历史数据 (OI/Funding/多空比趋势)
+    - 整合 Coinalyze 历史数据 (OI/多空比趋势)
     - 添加 format_complete_report() 供 AI 使用
 
     v3.0.1 更新 (IMPLEMENTATION_PLAN Section 4.2.1):
@@ -128,7 +128,6 @@ class AIDataAssembler:
         derivatives = self._convert_derivatives(
             oi_raw=coinalyze_data.get('open_interest'),
             liq_raw=coinalyze_data.get('liquidations'),
-            funding_raw=coinalyze_data.get('funding_rate'),
             current_price=current_price,
         )
 
@@ -218,13 +217,10 @@ class AIDataAssembler:
         self,
         oi_raw: Optional[Dict],
         liq_raw: Optional[Dict],
-        funding_raw: Optional[Dict],  # v5.2: Kept for signature compat, no longer used for FR
         current_price: float,
     ) -> Dict[str, Any]:
         """
         Coinalyze API (OI + Liquidations) + Binance API (Funding Rate) → 统一格式转换
-
-        v5.2: Funding rate now exclusively from Binance. Coinalyze funding_raw is ignored.
         """
         result = {
             "open_interest": None,
@@ -304,7 +300,7 @@ class AIDataAssembler:
 
             result["funding_rate"] = {
                 "value": funding_rate,              # 已结算费率 (向后兼容)
-                "current": funding_rate,             # 消费者兼容 (与 Coinalyze 降级路径一致)
+                "current": funding_rate,
                 "current_pct": funding_pct,          # 消费者兼容 (format_complete_report + multi_agent_analyzer 读此字段)
                 "settled": funding_rate,             # 已结算费率 (明确语义)
                 "settled_pct": funding_pct,          # 已结算费率 (%)
@@ -325,10 +321,6 @@ class AIDataAssembler:
                 "mark_price": binance_funding.get('mark_price'),
                 "index_price": binance_funding.get('index_price'),
                 }
-        # v5.2: Coinalyze funding rate fallback removed.
-        # Coinalyze returns value in different units (percentage-decimal vs raw-decimal),
-        # causing 100x display error (-0.3094% instead of -0.003094%).
-        # Binance is the authoritative source for funding rate.
         # If Binance is unavailable, funding_rate stays None (neutral for AI).
 
         # Liquidation 转换 (嵌套结构)
@@ -450,7 +442,7 @@ class AIDataAssembler:
             # Funding Rate (v3.22: 增强版 — 当前 + 预期 + 历史趋势)
             fr = derivatives.get("funding_rate")
             if fr:
-                fr_trend = fr.get("trend") or trends.get("funding_trend", "N/A")
+                fr_trend = fr.get("trend", "N/A")
                 parts.append(
                     f"  - Funding Rate (last settled): {fr.get('current_pct', 0):.4f}% "
                     f"({fr.get('interpretation', 'N/A')}) [Trend: {fr_trend}]"

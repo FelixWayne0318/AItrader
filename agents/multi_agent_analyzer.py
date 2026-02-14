@@ -2524,7 +2524,7 @@ ORDER FLOW (Binance Taker Data):
         Parameters
         ----------
         data : Dict, optional
-            Coinalyze derivatives data (OI, funding rate, liquidations)
+            Coinalyze derivatives data (OI, liquidations) + Binance funding rate
         current_price : float
             Current BTC price for converting liquidations from BTC to USD
         binance_derivatives : Dict, optional
