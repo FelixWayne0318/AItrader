@@ -115,9 +115,9 @@ def phase1_binance_trade():
     current_price = float(ticker['price'])
     info("当前 BTC 价格", f"${current_price:,.2f}")
 
-    # 最小下单量: BTCUSDT 最小 0.001 BTC
-    qty = "0.001"
-    info("下单数量", f"{qty} BTC (最小单, 约 ${current_price * 0.001:,.2f})")
+    # 最小下单量: BTCUSDT 最小 0.002 BTC
+    qty = "0.002"
+    info("下单数量", f"{qty} BTC (最小单, 约 ${current_price * 0.002:,.2f})")
 
     # Step 1: 开多 (LONG)
     entry_time = datetime.now(timezone.utc)
@@ -498,7 +498,7 @@ def main():
 
     # 安全确认
     print(f"\n{YELLOW}{BOLD}注意:{RESET}")
-    print(f"  1. 此脚本将在 Binance Futures 开一个 {BOLD}0.001 BTC{RESET} 的 LONG 并立即平仓")
+    print(f"  1. 此脚本将在 Binance Futures 开一个 {BOLD}0.002 BTC{RESET} 的 LONG 并立即平仓")
     print(f"  2. 预计损失: 仅点差+手续费 (约 $0.05-0.20)")
     print(f"  3. 请确保 Bot 已停止: sudo systemctl stop nautilus-trader")
     print(f"  4. 确保 ~/.env.aitrader 中有正确的 API 密钥\n")
