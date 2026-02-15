@@ -234,7 +234,9 @@ class DiagnosticSummaryBox(DiagnosticStep):
             pos = self.ctx.current_position
             side = pos.get('side', 'N/A').upper()
             qty = pos.get('quantity', 0)
-            print(f"  📊 Current Position: {side} {qty:.4f} BTC")
+            bc = self.ctx.base_currency
+            notional = float(qty) * float(pos.get('avg_px', 0))
+            print(f"  📊 Current Position: {side} ${notional:,.0f} ({float(qty):.4f} {bc})")
         else:
             print("  📊 Current Position: FLAT (无持仓)")
         print()
@@ -291,8 +293,8 @@ class DiagnosticSummaryBox(DiagnosticStep):
         action = "BUY" if signal in ['BUY', 'LONG'] else "SELL"
         emoji = "🟢" if signal in ['BUY', 'LONG'] else "🔴"
 
-        print(f"  {emoji} WOULD EXECUTE: {action} {quantity:.4f} BTC @ ${self.ctx.current_price:,.2f}")
-        print(f"     Notional: ${notional:,.2f}")
+        bc = self.ctx.base_currency
+        print(f"  {emoji} WOULD EXECUTE: {action} ${notional:,.0f} ({quantity:.4f} {bc}) @ ${self.ctx.current_price:,.2f}")
 
         if sl:
             try:

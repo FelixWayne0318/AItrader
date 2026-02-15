@@ -413,7 +413,10 @@ class AIInputDataValidator(DiagnosticStep):
             oi = dr.get('open_interest', {})
             fr = dr.get('funding_rate', {})
             liq = dr.get('liquidations', {})
-            print(f"      OI value (BTC):  {oi.get('value', 0) if oi else 0:,.2f}")
+            bc = self.ctx.base_currency
+            oi_val = oi.get('value', 0) if oi else 0
+            oi_usd = oi.get('total_usd', 0) if oi else 0
+            print(f"      OI value:        ${oi_usd:,.0f} ({oi_val:,.2f} {bc})")
             # v5.2: Use current_pct (already in %) instead of value*100 (source-dependent)
             fr_pct = fr.get('current_pct', 0) if fr else 0
             fr_source = fr.get('source', 'unknown') if fr else 'N/A'
@@ -428,7 +431,8 @@ class AIInputDataValidator(DiagnosticStep):
                 history = liq.get('history', [])
                 if history:
                     latest = history[-1]
-                    print(f"      Liq history[-1]:  l={latest.get('l', 0)} BTC, s={latest.get('s', 0)} BTC")
+                    bc = self.ctx.base_currency
+                    print(f"      Liq history[-1]:  l={latest.get('l', 0)} {bc}, s={latest.get('s', 0)} {bc}")
                 else:
                     print("      Liq history:      empty")
             else:
@@ -570,7 +574,9 @@ class AIInputDataValidator(DiagnosticStep):
         if pos:
             print("  [10] current_position (当前持仓 - 25 fields v4.8.1):")
             print(f"      side:            {pos.get('side', 'N/A')}")
-            print(f"      quantity:        {pos.get('quantity', 0)} BTC")
+            bc = self.ctx.base_currency
+            qty = pos.get('quantity', 0)
+            print(f"      quantity:        {qty} {bc}")
             entry = pos.get('entry_price') or pos.get('avg_px', 0)
             print(f"      entry_price:     ${entry:,.2f}")
             print(f"      unrealized_pnl:  ${pos.get('unrealized_pnl', 0):,.2f}")
@@ -716,7 +722,10 @@ class AIInputDataValidator(DiagnosticStep):
             # Nearest support
             nearest_sup = sr_data.get('nearest_support')
             if nearest_sup and hasattr(nearest_sup, 'price_center'):
-                wall_info = f" [Order Wall: {nearest_sup.wall_size_btc:.1f} BTC]" if nearest_sup.has_order_wall else ""
+                bc = self.ctx.base_currency
+                wall_usd = nearest_sup.wall_size_btc * self.ctx.current_price if self.ctx.current_price else 0
+                wall_str = f"${wall_usd/1e6:.1f}M" if wall_usd >= 1e6 else f"${wall_usd/1e3:.0f}K"
+                wall_info = f" [Order Wall: {wall_str} ({nearest_sup.wall_size_btc:.1f} {bc})]" if nearest_sup.has_order_wall else ""
                 print(f"      最近支撑: ${nearest_sup.price_center:,.0f} ({nearest_sup.distance_pct:.1f}% away)")
                 print(f"        强度: {nearest_sup.strength} | 级别: {nearest_sup.level}{wall_info}")
                 print(f"        来源: {', '.join(nearest_sup.sources)}")
@@ -728,7 +737,10 @@ class AIInputDataValidator(DiagnosticStep):
             # Nearest resistance
             nearest_res = sr_data.get('nearest_resistance')
             if nearest_res and hasattr(nearest_res, 'price_center'):
-                wall_info = f" [Order Wall: {nearest_res.wall_size_btc:.1f} BTC]" if nearest_res.has_order_wall else ""
+                bc = self.ctx.base_currency
+                wall_usd = nearest_res.wall_size_btc * self.ctx.current_price if self.ctx.current_price else 0
+                wall_str = f"${wall_usd/1e6:.1f}M" if wall_usd >= 1e6 else f"${wall_usd/1e3:.0f}K"
+                wall_info = f" [Order Wall: {wall_str} ({nearest_res.wall_size_btc:.1f} {bc})]" if nearest_res.has_order_wall else ""
                 print(f"      最近阻力: ${nearest_res.price_center:,.0f} ({nearest_res.distance_pct:.1f}% away)")
                 print(f"        强度: {nearest_res.strength} | 级别: {nearest_res.level}{wall_info}")
                 print(f"        来源: {', '.join(nearest_res.sources)}")
@@ -1375,7 +1387,9 @@ class OrderSimulator(DiagnosticStep):
         print()
         print("  📋 最终订单参数 (模拟):")
         print(f"     order_side: {'BUY' if signal in ['BUY', 'LONG'] else 'SELL'}")
-        print(f"     quantity: {quantity:.6f} BTC")
+        bc = self.ctx.base_currency
+        notional = quantity * self.ctx.current_price if self.ctx.current_price else 0
+        print(f"     quantity: ${notional:,.0f} ({quantity:.6f} {bc})")
         print(f"     entry_price: ${self.ctx.current_price:,.2f} (MARKET)")
         print(f"     sl_trigger_price: ${final_sl:,.2f}")
         print(f"     tp_price: ${final_tp:,.2f}")
@@ -1550,11 +1564,12 @@ class PositionCalculator(DiagnosticStep):
             print(f"     max_position_value: ${max_usdt:,.2f}")
             print()
 
+            bc = self.ctx.base_currency
             print("  📋 v4.8 信心百分比映射:")
             for conf, pct in confidence_mapping.items():
                 usdt = max_usdt * (pct / 100)
-                btc = usdt / self.ctx.current_price if self.ctx.current_price else 0
-                print(f"     {conf} ({pct}%): ${usdt:,.0f} ({btc:.6f} BTC)")
+                base_qty = usdt / self.ctx.current_price if self.ctx.current_price else 0
+                print(f"     {conf} ({pct}%): ${usdt:,.0f} ({base_qty:.6f} {bc})")
             print()
 
             # v4.8: Show cumulative mode status
@@ -1588,10 +1603,10 @@ class PositionCalculator(DiagnosticStep):
                 if self.ctx.current_position:
                     usdt_amount = min(usdt_amount, remaining_capacity)
 
-                btc_qty = usdt_amount / self.ctx.current_price if self.ctx.current_price else 0
+                base_qty = usdt_amount / self.ctx.current_price if self.ctx.current_price else 0
 
                 capped = " (受限)" if usdt_amount < max_usdt * (size_pct / 100) else ""
-                print(f"     {conf_level}: {btc_qty:.6f} BTC (${usdt_amount:,.2f}){capped}")
+                print(f"     {conf_level}: ${usdt_amount:,.2f} ({base_qty:.6f} {bc}){capped}")
 
             print()
             print("  ✅ v4.8 仓位计算测试完成")

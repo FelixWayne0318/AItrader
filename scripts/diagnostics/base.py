@@ -352,6 +352,13 @@ class DiagnosticContext:
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
+    @property
+    def base_currency(self) -> str:
+        """Extract base currency from symbol (e.g., BTCUSDT → BTC, ETHUSDT → ETH)."""
+        if 'USDT' in self.symbol:
+            return self.symbol.replace('USDT', '')
+        return self.symbol.split('-')[0] if '-' in self.symbol else 'BTC'
+
     def add_error(self, message: str) -> None:
         """Add an error message."""
         self.errors.append(message)

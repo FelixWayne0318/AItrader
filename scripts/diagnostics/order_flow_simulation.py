@@ -101,7 +101,9 @@ class OrderFlowSimulator(DiagnosticStep):
         print(f"     持仓: {'有' if current_position else '无'}")
         if current_position:
             print(f"     持仓方向: {current_position.get('side', 'N/A')}")
-            print(f"     持仓数量: {current_position.get('quantity', 0):.4f} BTC")
+            bc = self.ctx.base_currency
+            qty = current_position.get('quantity', 0)
+            print(f"     持仓数量: {float(qty):.4f} {bc}")
         print()
 
         # Run all scenario simulations
@@ -1107,7 +1109,9 @@ class BracketOrderFlowSimulator(DiagnosticStep):
         print(f"     入场价: ${entry_price:,.2f}")
         print(f"     止损价: ${sl_price:,.2f} ({(abs(entry_price - sl_price) / entry_price * 100):.2f}%)")
         print(f"     止盈价: ${tp_price:,.2f} ({(abs(tp_price - entry_price) / entry_price * 100):.2f}%)")
-        print(f"     数量: {quantity:.4f} BTC")
+        bc = self.ctx.base_currency
+        notional = quantity * entry_price if entry_price > 0 else 0
+        print(f"     数量: ${notional:,.0f} ({quantity:.4f} {bc})")
         print()
 
         # Flow diagram

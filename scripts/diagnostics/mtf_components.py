@@ -138,7 +138,10 @@ class MTFComponentTester(DiagnosticStep):
                 # Test Open Interest
                 oi_data = coinalyze_client.get_open_interest(symbol=symbol)
                 if oi_data:
-                    print(f"        ✅ OI (BTC): {oi_data.get('value', 0):,.2f}")
+                    bc = self.ctx.base_currency
+                    oi_val = oi_data.get('value', 0)
+                    oi_usd = float(oi_val) * self.ctx.current_price if self.ctx.current_price else 0
+                    print(f"        ✅ OI: ${oi_usd:,.0f} ({float(oi_val):,.2f} {bc})")
                 else:
                     print("        ❌ OI 获取失败")
 
@@ -344,15 +347,26 @@ class MTFComponentTester(DiagnosticStep):
             # Display resistance zones
             resistance_zones = sr_result.get('resistance_zones', [])
             print(f"     🔴 阻力位: {len(resistance_zones)} zones")
+            bc = self.ctx.base_currency
             for i, zone in enumerate(resistance_zones[:2]):
-                wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+                if zone.has_order_wall:
+                    w_usd = zone.wall_size_btc * self.ctx.current_price if self.ctx.current_price else 0
+                    w_str = f"${w_usd/1e6:.1f}M" if w_usd >= 1e6 else f"${w_usd/1e3:.0f}K"
+                    wall_info = f" [Wall: {w_str} ({zone.wall_size_btc:.1f} {bc})]"
+                else:
+                    wall_info = ""
                 print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
 
             # Display support zones
             support_zones = sr_result.get('support_zones', [])
             print(f"     🟢 支撑位: {len(support_zones)} zones")
             for i, zone in enumerate(support_zones[:2]):
-                wall_info = f" [Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+                if zone.has_order_wall:
+                    w_usd = zone.wall_size_btc * self.ctx.current_price if self.ctx.current_price else 0
+                    w_str = f"${w_usd/1e6:.1f}M" if w_usd >= 1e6 else f"${w_usd/1e3:.0f}K"
+                    wall_info = f" [Wall: {w_str} ({zone.wall_size_btc:.1f} {bc})]"
+                else:
+                    wall_info = ""
                 print(f"        {i+1}. ${zone.price_center:,.0f} ({zone.distance_pct:.1f}% away) [{zone.strength}]{wall_info}")
 
             # Hard control status (v3.16: AI 建议，非本地覆盖)
