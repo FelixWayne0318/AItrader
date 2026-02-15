@@ -5109,12 +5109,32 @@
       "pattern_type": "contains",
       "created": "2026-02-15T01:12:47.270080",
       "auto_generated": true
+    },
+    {
+      "id": "0db1bc48b0c1",
+      "commit": "89403a3",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: RSI/MACD series vs snapshot mismatch + Judge 1D data gap + R2 debate depth",
+      "pattern": "if history and bear_argument:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:46:14.620280",
+      "auto_generated": true
+    },
+    {
+      "id": "07e4f6c19eac",
+      "commit": "89403a3",
+      "file": "indicators/technical_manager.py",
+      "message": "fix: RSI/MACD series vs snapshot mismatch + Judge 1D data gap + R2 debate depth",
+      "pattern": "import logging",
+      "pattern_type": "import",
+      "created": "2026-02-15T01:46:14.647072",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-15T01:12:49.943283",
-    "count": 511,
+    "updated": "2026-02-15T01:46:18.731049",
+    "count": 513,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }

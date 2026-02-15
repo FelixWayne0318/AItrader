@@ -1684,7 +1684,11 @@ class DeepSeekAIStrategy(Strategy):
                         'bb_middle': decision_layer_data.get('bb_middle', 0),
                         'bb_lower': decision_layer_data.get('bb_lower', 0),
                         'bb_position': decision_layer_data.get('bb_position', 50),  # v3.5: 支撑/阻力距离
-                        # 'overall_trend' 已移除 - AI 使用 INDICATOR_DEFINITIONS 自己判断
+                        # v5.6: Add ADX/DI to 4H decision layer (was missing → AI blind to 4H trend strength)
+                        'adx': decision_layer_data.get('adx', 0),
+                        'di_plus': decision_layer_data.get('di_plus', 0),
+                        'di_minus': decision_layer_data.get('di_minus', 0),
+                        'adx_regime': decision_layer_data.get('adx_regime', 'UNKNOWN'),
                     }
                     self.log.info(f"[MTF] AI 分析使用 4H 决策层数据: RSI={ai_technical_data['mtf_decision_layer']['rsi']:.1f}")
 
@@ -1775,6 +1779,56 @@ class DeepSeekAIStrategy(Strategy):
                             self.log.debug("Coinalyze client disabled, no derivatives data")
                     except Exception as e:
                         self.log.warning(f"⚠️ Derivatives fetch failed: {e}")
+
+                # ========== v5.6: 合并 Binance Funding Rate 到 derivatives_data ==========
+                # Coinalyze fetch_all() 只返回 OI + Liquidations，不含 Funding Rate
+                # Binance FR 需要单独获取并注入，否则 AI 看到 "Funding Rate: N/A"
+                if self.binance_kline_client:
+                    try:
+                        binance_fr = self.binance_kline_client.get_funding_rate()
+                        if binance_fr:
+                            if derivatives_data is None:
+                                derivatives_data = {'enabled': True}
+                            # Build funding_rate dict in format expected by _format_derivatives_report
+                            fr_dict = {
+                                'current_pct': binance_fr.get('funding_rate_pct', 0),
+                                'settled_pct': binance_fr.get('funding_rate_pct', 0),
+                                'predicted_rate_pct': binance_fr.get('predicted_rate_pct'),
+                                'premium_index': binance_fr.get('premium_index'),
+                                'mark_price': binance_fr.get('mark_price', 0),
+                                'index_price': binance_fr.get('index_price', 0),
+                                'next_funding_countdown_min': binance_fr.get('next_funding_countdown_min'),
+                                'source': 'binance_direct',
+                            }
+                            # Also fetch history for trend analysis
+                            try:
+                                fr_history = self.binance_kline_client.get_funding_rate_history(limit=10)
+                                if fr_history and len(fr_history) >= 2:
+                                    history_list = []
+                                    for h in fr_history:
+                                        rate = float(h.get('fundingRate', 0))
+                                        history_list.append({
+                                            'rate_pct': round(rate * 100, 4),
+                                            'time': h.get('fundingTime'),
+                                        })
+                                    fr_dict['history'] = history_list
+                                    # Calculate trend
+                                    rates = [entry['rate_pct'] for entry in history_list]
+                                    if rates[-1] > rates[0] * 1.1:
+                                        fr_dict['trend'] = 'RISING'
+                                    elif rates[-1] < rates[0] * 0.9:
+                                        fr_dict['trend'] = 'FALLING'
+                                    else:
+                                        fr_dict['trend'] = 'STABLE'
+                            except Exception:
+                                pass  # History is best-effort
+                            derivatives_data['funding_rate'] = fr_dict
+                            self.log.info(
+                                f"📊 Funding Rate (Binance): settled={binance_fr.get('funding_rate_pct', 0):.4f}%, "
+                                f"predicted={binance_fr.get('predicted_rate_pct', 'N/A')}"
+                            )
+                    except Exception as e:
+                        self.log.warning(f"⚠️ Binance funding rate merge failed: {e}")
 
                 # ========== 获取订单簿深度数据 (v3.7) ==========
                 orderbook_data = None

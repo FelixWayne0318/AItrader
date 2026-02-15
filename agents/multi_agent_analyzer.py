@@ -835,15 +835,29 @@ Last Bull Argument:
 
         # System prompt: Role + Indicator manual (v3.25: regime-aware)
         # v3.28: Chinese instructions for better DeepSeek instruction-following
-        system_prompt = f"""你是 {symbol} 的专业空头分析师 (Bear Analyst)。
-你的职责是分析原始市场数据，构建最强有力的反对做多 (或支持做空) 的论据。
+        # v5.6: Adversarial mandate — structurally enforce opposition to Bull
+        system_prompt = f"""你是 {symbol} 的专业空头分析师 (Bear Analyst) — 你的角色是辩论中的 **反方**。
+
+🚨 【核心使命 — 你必须与 Bull 对立】
+你的存在价值就是找出 Bull 看不到或故意忽视的风险。
+- 如果 Bull 说 "做多"，你必须解释为什么做多是危险的
+- 如果 Bull 引用某个指标支持多头，你必须找到该指标的弱点或相反解读
+- 你**禁止**得出与 Bull 相同的方向结论
+- 如果你真的找不到反对 Bull 的理由，你必须解释为什么当前不是好的入场时机 (timing risk)
+
+🔍 【分析优先级 — 从宏观到微观】
+你必须按此顺序分析数据，而不是从 15M 开始：
+1. **1D 宏观趋势** — 最高权重：SMA_200 方向、ADX 趋势强度、MACD 趋势
+2. **4H 中期动量** — 次高权重：RSI 位置、MACD 交叉、BB 位置
+3. **15M 微观执行** — 最低权重：仅用于入场时机判断
+⚠️ 如果 1D 和 15M 信号矛盾，1D 优先。
 
 {INDICATOR_DEFINITIONS}
 
 【关键规则 — 必须遵守】
 ⚠️ 你必须先判断 market regime (指标手册第一步)，然后用对应 regime 的规则解读所有指标。
 ⚠️ 在趋势市场使用震荡市场逻辑 (或反之) 是致命错误。
-⚠️ 聚焦于数据中的风险和看空信号。"""
+⚠️ 聚焦于 Bull 论点中最薄弱的环节 — 用数据拆解它。"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["bear"] = {
@@ -1791,6 +1805,105 @@ R/R 与价格位置的关系：
 
         return decision
 
+    def _compute_trend_verdict(self, data: Dict[str, Any]) -> str:
+        """
+        v5.6: Pre-compute 1D macro trend verdict and place it at TOP of technical report.
+
+        This ensures AI reads the highest-weight timeframe FIRST, preventing
+        the weight inversion bug where 15M data (presented first) dominates analysis.
+
+        Returns
+        -------
+        str
+            Formatted 1D TREND VERDICT block, or empty string if no 1D data.
+        """
+        mtf_trend = data.get('mtf_trend_layer')
+        if not mtf_trend:
+            return ""
+
+        def tget(key, default=0):
+            val = mtf_trend.get(key)
+            return float(val) if val is not None else default
+
+        sma_200 = tget('sma_200')
+        macd_1d = tget('macd')
+        macd_signal_1d = tget('macd_signal')
+        rsi_1d = tget('rsi')
+        adx_1d = tget('adx')
+        di_plus_1d = tget('di_plus')
+        di_minus_1d = tget('di_minus')
+        adx_regime = mtf_trend.get('adx_regime', 'UNKNOWN')
+        price = data.get('price', 0)
+
+        # Determine macro assessment
+        above_sma200 = price > sma_200 if sma_200 > 0 else None
+        macd_bullish = macd_1d > macd_signal_1d
+        di_bullish = di_plus_1d > di_minus_1d
+
+        # Count bullish/bearish signals
+        bull_count = sum([
+            above_sma200 is True,
+            macd_bullish,
+            di_bullish,
+            rsi_1d > 50,
+        ])
+        bear_count = 4 - bull_count
+
+        if adx_1d < 20:
+            regime = "RANGING (weak trend)"
+            if bull_count >= 3:
+                verdict = "NEUTRAL_BULLISH — No strong trend, slight bullish lean"
+            elif bear_count >= 3:
+                verdict = "NEUTRAL_BEARISH — No strong trend, slight bearish lean"
+            else:
+                verdict = "NEUTRAL — No clear macro direction"
+        elif bull_count >= 3:
+            if adx_1d >= 30:
+                verdict = "STRONG_BULLISH — Clear uptrend with momentum"
+            else:
+                verdict = "BULLISH — Uptrend developing"
+            regime = f"TRENDING ({adx_regime})"
+        elif bear_count >= 3:
+            if adx_1d >= 30:
+                verdict = "STRONG_BEARISH — Clear downtrend with momentum"
+            else:
+                verdict = "BEARISH — Downtrend developing"
+            regime = f"TRENDING ({adx_regime})"
+        else:
+            verdict = "MIXED — Conflicting macro signals"
+            regime = f"TRANSITIONAL ({adx_regime})"
+
+        pct_vs_sma = ((price / sma_200 - 1) * 100) if sma_200 > 0 else 0
+
+        # Also include 4H mini-summary if available
+        mtf_decision = data.get('mtf_decision_layer')
+        decision_line = ""
+        if mtf_decision:
+            def dget(key, default=0):
+                val = mtf_decision.get(key)
+                return float(val) if val is not None else default
+            rsi_4h = dget('rsi')
+            macd_4h = dget('macd')
+            macd_sig_4h = dget('macd_signal')
+            adx_4h = dget('adx')
+            adx_regime_4h = mtf_decision.get('adx_regime', 'N/A')
+            decision_line = f"""
+4H SNAPSHOT: RSI={rsi_4h:.1f} | MACD={macd_4h:.4f} vs Signal={macd_sig_4h:.4f} | ADX={adx_4h:.1f} ({adx_regime_4h})"""
+
+        return f"""
+╔══════════════════════════════════════════════════════════╗
+║  1D MACRO TREND VERDICT (HIGHEST WEIGHT — READ FIRST)   ║
+╚══════════════════════════════════════════════════════════╝
+VERDICT: {verdict}
+REGIME: {regime}
+- Price vs SMA_200: {pct_vs_sma:+.2f}% ({'ABOVE' if above_sma200 else 'BELOW' if above_sma200 is False else 'N/A'})
+- 1D MACD: {macd_1d:.4f} vs Signal {macd_signal_1d:.4f} ({'BULLISH' if macd_bullish else 'BEARISH'})
+- 1D RSI: {rsi_1d:.1f} ({'Above 50' if rsi_1d > 50 else 'Below 50'})
+- 1D ADX: {adx_1d:.1f} | DI+ {di_plus_1d:.1f} / DI- {di_minus_1d:.1f} ({'Bulls lead' if di_bullish else 'Bears lead'})
+{decision_line}
+⚠️ 15M data below is for EXECUTION TIMING only — macro trend above has priority.
+"""
+
     def _format_technical_report(self, data: Dict[str, Any]) -> str:
         """Format technical data for prompts."""
         if not data:
@@ -1800,10 +1913,13 @@ R/R 与价格位置的关系：
             val = data.get(key)
             return float(val) if val is not None else default
 
+        # v5.6: Prepend 1D TREND VERDICT at TOP of report so AI reads it first
+        report = self._compute_trend_verdict(data)
+
         # Base report (15M execution layer data)
         # TradingAgents v3.6: Added period statistics for trend assessment
         period_hours = safe_get('period_hours')
-        report = f"""
+        report += f"""
 === MARKET DATA (15M Timeframe) ===
 
 PRICE:
@@ -1850,6 +1966,11 @@ VOLUME:
             mtf_macd = mtf_safe_get('macd')
 
             # TradingAgents v3.3: Raw 4H data without interpretation guidance
+            # v5.6: Added ADX/DI to 4H section (was missing → AI blind to 4H trend strength)
+            mtf_adx = mtf_safe_get('adx')
+            mtf_di_plus = mtf_safe_get('di_plus')
+            mtf_di_minus = mtf_safe_get('di_minus')
+            mtf_adx_regime = mtf_decision.get('adx_regime', 'N/A')
             report += f"""
 === MARKET DATA (4H Timeframe) ===
 
@@ -1857,6 +1978,10 @@ MOMENTUM (4H):
 - RSI: {mtf_rsi:.1f}
 - MACD: {mtf_macd:.4f}
 - MACD Signal: {mtf_safe_get('macd_signal'):.4f}
+
+TREND STRENGTH (4H ADX):
+- ADX(14): {mtf_adx:.1f} ({mtf_adx_regime})
+- DI+: {mtf_di_plus:.1f}, DI-: {mtf_di_minus:.1f} → {'BULLISH' if mtf_di_plus > mtf_di_minus else 'BEARISH'} direction
 
 MOVING AVERAGES (4H):
 - SMA 20: ${mtf_safe_get('sma_20'):,.2f}
