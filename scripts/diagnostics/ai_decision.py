@@ -148,6 +148,46 @@ class AIInputDataValidator(DiagnosticStep):
                 except Exception as e:
                     print(f"  ⚠️ Derivatives fetch failed: {e}")
 
+            # ========== 2b. v5.6: Inject Binance Funding Rate into derivatives_report ==========
+            # Coinalyze fetch_all() only returns OI + Liquidations, NOT funding rate.
+            # Production (deepseek_strategy.py:1783-1831) manually injects Binance FR.
+            # Without this, AI sees "Funding Rate: N/A" and loses a key decision input.
+            if self.ctx.binance_funding_rate and self.ctx.derivatives_report is not None:
+                bfr = self.ctx.binance_funding_rate
+                fr_dict = {
+                    'current_pct': bfr.get('funding_rate_pct', 0),
+                    'settled_pct': bfr.get('funding_rate_pct', 0),
+                    'predicted_rate_pct': bfr.get('predicted_rate_pct'),
+                    'premium_index': bfr.get('premium_index'),
+                    'mark_price': bfr.get('mark_price', 0),
+                    'index_price': bfr.get('index_price', 0),
+                    'next_funding_countdown_min': bfr.get('next_funding_countdown_min'),
+                    'source': 'binance_direct',
+                }
+                # Fetch history for trend analysis (same as production)
+                try:
+                    fr_history = kline_client.get_funding_rate_history(limit=10)
+                    if fr_history and len(fr_history) >= 2:
+                        history_list = []
+                        for h in fr_history:
+                            rate = float(h.get('fundingRate', 0))
+                            history_list.append({
+                                'rate_pct': round(rate * 100, 4),
+                                'time': h.get('fundingTime'),
+                            })
+                        fr_dict['history'] = history_list
+                        rates = [entry['rate_pct'] for entry in history_list]
+                        if rates[-1] > rates[0] * 1.1:
+                            fr_dict['trend'] = 'RISING'
+                        elif rates[-1] < rates[0] * 0.9:
+                            fr_dict['trend'] = 'FALLING'
+                        else:
+                            fr_dict['trend'] = 'STABLE'
+                except Exception:
+                    pass
+
+                self.ctx.derivatives_report['funding_rate'] = fr_dict
+
             # ========== 3. Order book (matches live L1764-1797) ==========
             order_book_cfg = self.ctx.base_config.get('order_book', {})
             order_book_enabled = order_book_cfg.get('enabled', False)
@@ -414,8 +454,11 @@ class AIInputDataValidator(DiagnosticStep):
             fr = dr.get('funding_rate', {})
             liq = dr.get('liquidations', {})
             bc = self.ctx.base_currency
-            oi_val = oi.get('value', 0) if oi else 0
+            oi_val = float(oi.get('value', 0) or 0) if oi else 0
+            # Coinalyze returns BTC only; convert to USD using current price
             oi_usd = oi.get('total_usd', 0) if oi else 0
+            if not oi_usd and oi_val > 0:
+                oi_usd = oi_val * (self.ctx.current_price or 0)
             print(f"      OI value:        ${oi_usd:,.0f} ({oi_val:,.2f} {bc})")
             # v5.2: Use current_pct (already in %) instead of value*100 (source-dependent)
             fr_pct = fr.get('current_pct', 0) if fr else 0
