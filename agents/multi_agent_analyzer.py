@@ -881,7 +881,12 @@ class MultiAgentAnalyzer:
             debate_history = ""
             bull_argument = ""
             bear_argument = ""
-            past_memories = self._get_past_memories()  # v5.9: Load once for all agents
+
+            # v5.10: Build current conditions snapshot for similarity-based memory retrieval
+            current_conditions = self._build_current_conditions(
+                technical_report, sentiment_report
+            )
+            past_memories = self._get_past_memories(current_conditions)
 
             for round_num in range(self.debate_rounds):
                 self.logger.info(f"Debate Round {round_num + 1}/{self.debate_rounds}")
@@ -2827,14 +2832,216 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         except Exception as e:
             self.logger.warning(f"Failed to save memory: {e}")
 
-    def _get_past_memories(self) -> str:
+    def _build_current_conditions(
+        self,
+        technical_report: Optional[Dict[str, Any]],
+        sentiment_report: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        v5.10: Build a conditions snapshot from raw analysis data for memory matching.
+
+        Extracts the same fields that _format_entry_conditions() stores in conditions
+        string, so scoring is apple-to-apple.
+        """
+        result: Dict[str, Any] = {}
+        if technical_report:
+            rsi = technical_report.get('rsi')
+            if rsi is not None:
+                result['rsi'] = float(rsi)
+
+            macd = technical_report.get('macd')
+            macd_signal = technical_report.get('macd_signal')
+            if macd is not None and macd_signal is not None:
+                result['macd'] = 'bullish' if float(macd) > float(macd_signal) else 'bearish'
+
+            bb_pos = technical_report.get('bb_position')
+            if bb_pos is not None:
+                result['bb'] = float(bb_pos) * 100  # 0-1 → 0-100 to match stored format
+
+        if sentiment_report:
+            ls_ratio = sentiment_report.get('long_short_ratio')
+            if ls_ratio is not None:
+                try:
+                    ratio = float(ls_ratio)
+                    if ratio > 2.0:
+                        result['sentiment'] = 'crowded_long'
+                    elif ratio < 0.5:
+                        result['sentiment'] = 'crowded_short'
+                    else:
+                        result['sentiment'] = 'neutral'
+                except (ValueError, TypeError):
+                    result['sentiment'] = 'neutral'
+
+        # v5.11: Derive preliminary direction from MACD + RSI lean.
+        # Direction (weight=3) is the highest-scored similarity dimension,
+        # but the actual trade direction is unknown before the debate.
+        # Use the technical lean so the dimension is not always zero.
+        macd_lean = result.get('macd', '')
+        rsi_val = result.get('rsi')
+        if macd_lean:
+            if macd_lean == 'bullish':
+                result['direction'] = 'LONG'
+            else:
+                result['direction'] = 'SHORT'
+        elif rsi_val is not None:
+            result['direction'] = 'LONG' if rsi_val >= 50 else 'SHORT'
+
+        return result
+
+    # ── v5.10: Structured similarity matching for memory retrieval ──
+
+    @staticmethod
+    def _parse_conditions(conditions_str: str) -> Dict[str, str]:
+        """
+        Parse conditions string into structured fields.
+
+        Input:  "price=$70,412, RSI=65, MACD=bullish, BB=72%, conf=HIGH, winner=bull, sentiment=neutral"
+        Output: {"rsi": "65", "macd": "bullish", "bb": "72", "conf": "HIGH",
+                 "sentiment": "neutral", "decision": ""}
+        """
+        result = {}
+        if not conditions_str or conditions_str == 'N/A':
+            return result
+        for part in conditions_str.split(','):
+            part = part.strip()
+            if '=' not in part:
+                continue
+            key, val = part.split('=', 1)
+            key = key.strip().lower()
+            val = val.strip().rstrip('%')
+            result[key] = val
+        return result
+
+    @staticmethod
+    def _classify_rsi(rsi_val: float) -> str:
+        if rsi_val < 35:
+            return "oversold"
+        if rsi_val > 65:
+            return "overbought"
+        return "neutral"
+
+    @staticmethod
+    def _classify_bb(bb_val: float) -> str:
+        if bb_val < 30:
+            return "low"
+        if bb_val > 70:
+            return "high"
+        return "mid"
+
+    @staticmethod
+    def _classify_sentiment(raw: str) -> str:
+        raw = raw.lower()
+        if "crowded_long" in raw:
+            return "crowded_long"
+        if "crowded_short" in raw:
+            return "crowded_short"
+        return "neutral"
+
+    def _score_memory(self, mem: Dict, current: Dict) -> float:
+        """
+        Score how similar a memory entry is to current market conditions.
+
+        Dimensions and weights:
+          direction  (LONG/SHORT)              : 3   — most important
+          rsi_zone   (oversold/neutral/overbought) : 2
+          macd       (bullish/bearish)          : 1
+          bb_zone    (low/mid/high)             : 1
+          sentiment  (crowded_long/neutral/crowded_short) : 1
+          confidence (HIGH/MEDIUM/LOW)          : 0.5
+          grade_value (A+/A→high, F→high for losses) : 1  — v5.11
+
+        Returns 0..9.5 (higher = more similar / more instructive).
+        """
+        mem_cond = self._parse_conditions(mem.get('conditions', ''))
+        if not mem_cond:
+            return 0.0
+
+        score = 0.0
+
+        # Direction (from decision field, weight=3)
+        cur_dir = current.get('direction', '').upper()
+        mem_dir = mem.get('decision', '').upper()
+        # Normalize BUY/SELL → LONG/SHORT
+        dir_map = {'BUY': 'LONG', 'SELL': 'SHORT'}
+        cur_dir = dir_map.get(cur_dir, cur_dir)
+        mem_dir = dir_map.get(mem_dir, mem_dir)
+        if cur_dir and mem_dir and cur_dir == mem_dir:
+            score += 3.0
+
+        # RSI zone (weight=2)
+        try:
+            cur_rsi_zone = self._classify_rsi(float(current.get('rsi', 50)))
+            mem_rsi_zone = self._classify_rsi(float(mem_cond.get('rsi', 50)))
+            if cur_rsi_zone == mem_rsi_zone:
+                score += 2.0
+            elif {cur_rsi_zone, mem_rsi_zone} != {"oversold", "overbought"}:
+                score += 0.6  # adjacent zones
+        except (ValueError, TypeError):
+            pass
+
+        # MACD direction (weight=1)
+        cur_macd = current.get('macd', '').lower()
+        mem_macd = mem_cond.get('macd', '').lower()
+        if cur_macd and mem_macd and cur_macd == mem_macd:
+            score += 1.0
+
+        # BB zone (weight=1)
+        try:
+            cur_bb_zone = self._classify_bb(float(current.get('bb', 50)))
+            mem_bb_zone = self._classify_bb(float(mem_cond.get('bb', 50)))
+            if cur_bb_zone == mem_bb_zone:
+                score += 1.0
+            elif {cur_bb_zone, mem_bb_zone} != {"low", "high"}:
+                score += 0.3
+        except (ValueError, TypeError):
+            pass
+
+        # Sentiment (weight=1)
+        cur_sent = self._classify_sentiment(current.get('sentiment', 'neutral'))
+        mem_sent = self._classify_sentiment(mem_cond.get('sentiment', 'neutral'))
+        if cur_sent == mem_sent:
+            score += 1.0
+
+        # Confidence (weight=0.5)
+        cur_conf = current.get('conf', '').upper()
+        mem_conf = mem_cond.get('conf', '').upper()
+        if cur_conf and mem_conf and cur_conf == mem_conf:
+            score += 0.5
+
+        # v5.11: Grade instructive value (weight=1)
+        # Among similar conditions, prefer memories with more extreme grades:
+        #   Wins:  A+ (1.0) > A (0.7) > B (0.4) > C (0.2) — stronger wins teach more
+        #   Losses: F (1.0) > D (0.3)                      — bigger failures warn more
+        ev = mem.get('evaluation', {})
+        grade = ev.get('grade', '') if ev else ''
+        if grade:
+            _grade_value = {
+                'A+': 1.0, 'A': 0.7, 'B': 0.4, 'C': 0.2,
+                'D': 0.3, 'F': 1.0,
+            }
+            score += _grade_value.get(grade, 0)
+
+        return score
+
+    def _get_past_memories(self, current_conditions: Optional[Dict[str, Any]] = None) -> str:
         """
         Get past decision memories formatted for AI learning.
 
-        Based on TradingGroup paper: show both successes and failures
-        to help AI identify patterns and avoid repeating mistakes.
+        v5.10: Similarity-based retrieval.
+        When current_conditions is provided AND memory pool >= 20 entries,
+        scores each memory by structured similarity (RSI zone, MACD direction,
+        BB position, sentiment, direction match) and returns the top-5 most
+        similar successes + top-5 most similar failures.
 
-        v5.1: Enhanced with trade grades and R/R data for deeper pattern learning.
+        When memory pool < 20 entries, uses most-recent ordering (not enough
+        data for meaningful similarity matching).
+
+        Parameters
+        ----------
+        current_conditions : dict, optional
+            Current market snapshot. Expected keys:
+            rsi (float), macd (str), bb (float), sentiment (str),
+            direction (str), conf (str).
         """
         if not self.decision_memory:
             return ""
@@ -2843,28 +3050,54 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         successes = [m for m in self.decision_memory if m.get('pnl', 0) > 0]
         failures = [m for m in self.decision_memory if m.get('pnl', 0) <= 0]
 
-        # Take most recent 5 of each (increased from 3 for richer patterns)
-        recent_successes = successes[-5:] if successes else []
-        recent_failures = failures[-5:] if failures else []
+        use_similarity = (
+            current_conditions
+            and len(self.decision_memory) >= 20
+        )
+
+        if use_similarity:
+            # Score and rank by similarity
+            scored_wins = sorted(
+                successes,
+                key=lambda m: self._score_memory(m, current_conditions),
+                reverse=True,
+            )
+            scored_losses = sorted(
+                failures,
+                key=lambda m: self._score_memory(m, current_conditions),
+                reverse=True,
+            )
+            selected_successes = scored_wins[:5]
+            selected_failures = scored_losses[:5]
+            retrieval_mode = "similarity"
+        else:
+            # Not enough data — use most recent
+            selected_successes = successes[-5:] if successes else []
+            selected_failures = failures[-5:] if failures else []
+            retrieval_mode = "recent"
 
         lines = []
 
-        if recent_successes:
+        if selected_successes:
             lines.append("SUCCESSFUL TRADES (learn from these):")
-            for mem in recent_successes:
+            for mem in selected_successes:
                 conditions = mem.get('conditions', 'N/A')
                 ev = mem.get('evaluation', {})
                 grade = ev.get('grade', '')
                 rr_str = f" R/R={ev.get('actual_rr', 0):.1f}:1" if ev else ""
                 grade_str = f" [{grade}]" if grade else ""
+                sim_str = ""
+                if use_similarity:
+                    sim = self._score_memory(mem, current_conditions)
+                    sim_str = f" (sim={sim:.1f})"
                 lines.append(
-                    f"  ✅ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}%{grade_str}{rr_str} | "
+                    f"  ✅ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}%{grade_str}{rr_str}{sim_str} | "
                     f"Conditions: {conditions}"
                 )
 
-        if recent_failures:
+        if selected_failures:
             lines.append("FAILED TRADES (avoid repeating):")
-            for mem in recent_failures:
+            for mem in selected_failures:
                 conditions = mem.get('conditions', 'N/A')
                 lesson = mem.get('lesson', 'N/A')
                 ev = mem.get('evaluation', {})
@@ -2872,16 +3105,20 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
                 exit_type = ev.get('exit_type', '')
                 grade_str = f" [{grade}]" if grade else ""
                 exit_str = f" via {exit_type}" if exit_type else ""
+                sim_str = ""
+                if use_similarity:
+                    sim = self._score_memory(mem, current_conditions)
+                    sim_str = f" (sim={sim:.1f})"
                 lines.append(
-                    f"  ❌ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}%{grade_str}{exit_str} | "
+                    f"  ❌ {mem.get('decision')} → {mem.get('pnl', 0):+.2f}%{grade_str}{exit_str}{sim_str} | "
                     f"Conditions: {conditions} | Lesson: {lesson}"
                 )
 
-        # v5.1: Add aggregate stats if enough evaluated trades
+        # Aggregate stats (always based on full history, not filtered)
         evaluated = [m for m in self.decision_memory if m.get('evaluation')]
         if len(evaluated) >= 5:
             grades = [m['evaluation'].get('grade', '?') for m in evaluated[-20:]]
-            grade_counts = {}
+            grade_counts: Dict[str, int] = {}
             for g in grades:
                 grade_counts[g] = grade_counts.get(g, 0) + 1
             grade_summary = " ".join(f"{g}:{c}" for g, c in sorted(grade_counts.items()))
@@ -2891,6 +3128,11 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
             accuracy = round(correct / total * 100) if total > 0 else 0
 
             lines.append(f"\nTRADE QUALITY (last {total}): {grade_summary} | Direction accuracy: {accuracy}%")
+
+        self.logger.info(
+            f"📚 Memory retrieval: mode={retrieval_mode}, pool={len(self.decision_memory)}, "
+            f"wins={len(selected_successes)}, losses={len(selected_failures)}"
+        )
 
         return "\n".join(lines)
 
