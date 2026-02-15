@@ -2872,6 +2872,20 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
                 except (ValueError, TypeError):
                     result['sentiment'] = 'neutral'
 
+        # v5.11: Derive preliminary direction from MACD + RSI lean.
+        # Direction (weight=3) is the highest-scored similarity dimension,
+        # but the actual trade direction is unknown before the debate.
+        # Use the technical lean so the dimension is not always zero.
+        macd_lean = result.get('macd', '')
+        rsi_val = result.get('rsi')
+        if macd_lean:
+            if macd_lean == 'bullish':
+                result['direction'] = 'LONG'
+            else:
+                result['direction'] = 'SHORT'
+        elif rsi_val is not None:
+            result['direction'] = 'LONG' if rsi_val >= 50 else 'SHORT'
+
         return result
 
     # ── v5.10: Structured similarity matching for memory retrieval ──
@@ -2934,8 +2948,9 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
           bb_zone    (low/mid/high)             : 1
           sentiment  (crowded_long/neutral/crowded_short) : 1
           confidence (HIGH/MEDIUM/LOW)          : 0.5
+          grade_value (A+/A→high, F→high for losses) : 1  — v5.11
 
-        Returns 0..8.5 (higher = more similar).
+        Returns 0..9.5 (higher = more similar / more instructive).
         """
         mem_cond = self._parse_conditions(mem.get('conditions', ''))
         if not mem_cond:
@@ -2992,6 +3007,19 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         mem_conf = mem_cond.get('conf', '').upper()
         if cur_conf and mem_conf and cur_conf == mem_conf:
             score += 0.5
+
+        # v5.11: Grade instructive value (weight=1)
+        # Among similar conditions, prefer memories with more extreme grades:
+        #   Wins:  A+ (1.0) > A (0.7) > B (0.4) > C (0.2) — stronger wins teach more
+        #   Losses: F (1.0) > D (0.3)                      — bigger failures warn more
+        ev = mem.get('evaluation', {})
+        grade = ev.get('grade', '') if ev else ''
+        if grade:
+            _grade_value = {
+                'A+': 1.0, 'A': 0.7, 'B': 0.4, 'C': 0.2,
+                'D': 0.3, 'F': 1.0,
+            }
+            score += _grade_value.get(grade, 0)
 
         return score
 
