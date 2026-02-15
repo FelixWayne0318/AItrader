@@ -4271,6 +4271,69 @@ class DeepSeekAIStrategy(Strategy):
             'action_taken': f'开{side_cn}仓 {quantity:.4f} BTC',
         }
 
+    def _adjust_tp_for_fill_price(
+        self,
+        tp_price: float,
+        sl_price: float,
+        fill_price: float,
+        side: str,
+    ) -> tuple:
+        """
+        v4.16: Pre-adjust TP price using actual fill price before order submission.
+
+        Replaces the old cancel+resubmit approach in _validate_and_adjust_rr_post_fill
+        for new position entries, eliminating the async race condition that caused
+        -2022 ReduceOnly rejection on Binance.
+
+        Returns
+        -------
+        tuple of (adjusted_tp_price, was_adjusted: bool)
+        """
+        try:
+            from strategy.trading_logic import get_min_rr_ratio
+            min_rr = get_min_rr_ratio()
+
+            is_long = side.upper() in ('LONG', 'BUY')
+
+            if is_long:
+                risk = fill_price - sl_price
+                reward = tp_price - fill_price
+            else:
+                risk = sl_price - fill_price
+                reward = fill_price - tp_price
+
+            if risk <= 0:
+                self.log.warning(
+                    f"⚠️ TP fill-adjust: SL on wrong side "
+                    f"(fill=${fill_price:,.2f}, SL=${sl_price:,.2f}, side={side})"
+                )
+                return tp_price, False
+
+            actual_rr = reward / risk
+
+            if actual_rr >= min_rr:
+                self.log.info(
+                    f"✅ Pre-submit R/R check: {actual_rr:.2f}:1 >= {min_rr}:1 "
+                    f"(fill=${fill_price:,.2f}) — TP unchanged"
+                )
+                return tp_price, False
+
+            # R/R below minimum — adjust TP
+            if is_long:
+                new_tp = fill_price + (risk * min_rr)
+            else:
+                new_tp = fill_price - (risk * min_rr)
+
+            self.log.warning(
+                f"⚠️ Fill slippage degraded R/R: {actual_rr:.2f}:1 < {min_rr}:1 "
+                f"(fill=${fill_price:,.2f}). Adjusting TP: ${tp_price:,.2f} → ${new_tp:,.2f}"
+            )
+            return new_tp, True
+
+        except Exception as e:
+            self.log.error(f"❌ _adjust_tp_for_fill_price failed: {e}")
+            return tp_price, False
+
     def _validate_and_adjust_rr_post_fill(
         self,
         instrument_key: str,
@@ -5602,13 +5665,25 @@ class DeepSeekAIStrategy(Strategy):
             side_name = event.side.name  # "LONG" or "SHORT"
             sl_price = self._validate_sl_against_current_price(sl_price, side_name, entry_price)
 
+            # v4.16: Pre-adjust TP using actual fill price BEFORE submitting
+            # Previously, TP was submitted with estimated price then cancelled+resubmitted
+            # via _validate_and_adjust_rr_post_fill(). This caused -2022 ReduceOnly rejection
+            # due to async cancel race condition (old TP not yet cancelled when new TP arrives).
+            # Fix: compute correct TP upfront using fill price, submit once.
+            tp_price, tp_adjusted = self._adjust_tp_for_fill_price(
+                tp_price=tp_price,
+                sl_price=sl_price,
+                fill_price=entry_price,
+                side=side_name,
+            )
+
             # Determine exit side (opposite of position)
             exit_side = OrderSide.SELL if event.side == PositionSide.LONG else OrderSide.BUY
 
             self.log.info(
                 f"📋 Submitting SL/TP for {event.side.name} position:\n"
                 f"   SL: ${sl_price:,.2f} (STOP_MARKET)\n"
-                f"   TP: ${tp_price:,.2f} (LIMIT)"
+                f"   TP: ${tp_price:,.2f} (LIMIT){' [adjusted for fill]' if tp_adjusted else ''}"
             )
 
             sl_submitted = False
@@ -5671,12 +5746,33 @@ class DeepSeekAIStrategy(Strategy):
                     "Will rely on trailing stop or next signal for exit."
                 )
 
-            # v4.9: Post-fill R/R validation (always run)
-            self._validate_and_adjust_rr_post_fill(
-                instrument_key=instrument_key,
-                fill_price=entry_price,
-                side=event.side.name,
-            )
+            # v4.16: Send Telegram alert if TP was adjusted for fill price
+            if tp_adjusted and tp_submitted:
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        original_tp = pending['tp_price']
+                        is_long = side_name.upper() == 'LONG'
+                        risk = (entry_price - sl_price) if is_long else (sl_price - entry_price)
+                        reward = (tp_price - entry_price) if is_long else (entry_price - tp_price)
+                        original_reward = (original_tp - entry_price) if is_long else (entry_price - original_tp)
+                        original_rr = original_reward / risk if risk > 0 else 0
+                        from strategy.trading_logic import get_min_rr_ratio
+                        min_rr = get_min_rr_ratio()
+                        alert_msg = (
+                            f"🔄 *TP 自动调整 (成交后)*\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"原因: 实际成交价 ${entry_price:,.2f} 导致 R/R 降至 {original_rr:.2f}:1\n"
+                            f"旧 TP: ${original_tp:,.2f}\n"
+                            f"新 TP: ${tp_price:,.2f}\n"
+                            f"R/R: {original_rr:.2f}:1 → {min_rr}:1\n"
+                            f"SL: ${sl_price:,.2f} (不变)"
+                        )
+                        self.telegram_bot.send_message_sync(alert_msg)
+                    except Exception:
+                        pass
+
+            # v4.16: Post-fill R/R validation no longer needed for new positions
+            # since TP is pre-adjusted above. Keep it for reversal/add-to-position path only.
         else:
             # No pending SL/TP (e.g. reversal Phase 2 or add-to-position)
             # Still do post-fill R/R validation
