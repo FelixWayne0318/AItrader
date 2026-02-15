@@ -148,6 +148,52 @@ class AIInputDataValidator(DiagnosticStep):
                 except Exception as e:
                     print(f"  ⚠️ Derivatives fetch failed: {e}")
 
+            # ========== 2b. v5.6: Inject Binance Funding Rate into derivatives_report ==========
+            # Coinalyze fetch_all() only returns OI + Liquidations, NOT funding rate.
+            # Production (deepseek_strategy.py:1783-1831) manually fetches Binance FR
+            # and injects it. Without this, AI sees "Funding Rate: N/A".
+            # NOTE: We fetch directly here (not from ctx.binance_funding_rate which
+            # is set later in step [20/34] MTF Components — too late for analyze()).
+            if self.ctx.derivatives_report is not None:
+                try:
+                    binance_fr = kline_client.get_funding_rate()
+                    if binance_fr:
+                        fr_dict = {
+                            'current_pct': binance_fr.get('funding_rate_pct', 0),
+                            'settled_pct': binance_fr.get('funding_rate_pct', 0),
+                            'predicted_rate_pct': binance_fr.get('predicted_rate_pct'),
+                            'premium_index': binance_fr.get('premium_index'),
+                            'mark_price': binance_fr.get('mark_price', 0),
+                            'index_price': binance_fr.get('index_price', 0),
+                            'next_funding_countdown_min': binance_fr.get('next_funding_countdown_min'),
+                            'source': 'binance_direct',
+                        }
+                        # Fetch history for trend analysis (same as production)
+                        try:
+                            fr_history = kline_client.get_funding_rate_history(limit=10)
+                            if fr_history and len(fr_history) >= 2:
+                                history_list = []
+                                for h in fr_history:
+                                    rate = float(h.get('fundingRate', 0))
+                                    history_list.append({
+                                        'rate_pct': round(rate * 100, 6),
+                                        'time': h.get('fundingTime'),
+                                    })
+                                fr_dict['history'] = history_list
+                                rates = [entry['rate_pct'] for entry in history_list]
+                                if rates[-1] > rates[0] * 1.1:
+                                    fr_dict['trend'] = 'RISING'
+                                elif rates[-1] < rates[0] * 0.9:
+                                    fr_dict['trend'] = 'FALLING'
+                                else:
+                                    fr_dict['trend'] = 'STABLE'
+                        except Exception:
+                            pass
+
+                        self.ctx.derivatives_report['funding_rate'] = fr_dict
+                except Exception as e:
+                    print(f"  ⚠️ Binance FR injection failed: {e}")
+
             # ========== 3. Order book (matches live L1764-1797) ==========
             order_book_cfg = self.ctx.base_config.get('order_book', {})
             order_book_enabled = order_book_cfg.get('enabled', False)
@@ -413,19 +459,29 @@ class AIInputDataValidator(DiagnosticStep):
             oi = dr.get('open_interest', {})
             fr = dr.get('funding_rate', {})
             liq = dr.get('liquidations', {})
-            print(f"      OI value (BTC):  {oi.get('value', 0) if oi else 0:,.2f}")
-            print(f"      Funding rate:    {fr.get('value', 0) if fr else 0:.6f} ({fr.get('value', 0)*100 if fr else 0:.4f}%)")
+            bc = self.ctx.base_currency
+            oi_val = float(oi.get('value', 0) or 0) if oi else 0
+            # Coinalyze returns BTC only; convert to USD using current price
+            oi_usd = oi.get('total_usd', 0) if oi else 0
+            if not oi_usd and oi_val > 0:
+                oi_usd = oi_val * (self.ctx.current_price or 0)
+            print(f"      OI value:        ${oi_usd:,.0f} ({oi_val:,.2f} {bc})")
+            # v5.2: Use current_pct (already in %) instead of value*100 (source-dependent)
+            fr_pct = fr.get('current_pct', 0) if fr else 0
+            fr_source = fr.get('source', 'unknown') if fr else 'N/A'
+            print(f"      Funding rate:    {fr_pct:.5f}% (source: {fr_source})")
 
             # v5.1: Binance funding rate (settled + predicted)
             if self.ctx.binance_funding_rate:
                 bfr = self.ctx.binance_funding_rate
-                print(f"      [Binance FR] Settled: {bfr.get('funding_rate_pct', 0):.4f}% | Predicted: {bfr.get('predicted_rate_pct', 0):.4f}%")
+                print(f"      [Binance FR] Settled: {bfr.get('funding_rate_pct', 0):.5f}% | Predicted: {bfr.get('predicted_rate_pct', 0):.5f}%")
 
             if liq:
                 history = liq.get('history', [])
                 if history:
                     latest = history[-1]
-                    print(f"      Liq history[-1]:  l={latest.get('l', 0)} BTC, s={latest.get('s', 0)} BTC")
+                    bc = self.ctx.base_currency
+                    print(f"      Liq history[-1]:  l={latest.get('l', 0)} {bc}, s={latest.get('s', 0)} {bc}")
                 else:
                     print("      Liq history:      empty")
             else:
@@ -538,6 +594,14 @@ class AIInputDataValidator(DiagnosticStep):
             print(f"      bb_lower:        ${mtf_decision.get('bb_lower', 0):,.2f}")
             bb_pos = mtf_decision.get('bb_position', 0.5)
             print(f"      bb_position:     {bb_pos * 100:.1f}%")
+            # v5.6: Display 4H ADX/DI (match production multi_agent_analyzer.py)
+            adx_4h = mtf_decision.get('adx', 0)
+            di_plus_4h = mtf_decision.get('di_plus', 0)
+            di_minus_4h = mtf_decision.get('di_minus', 0)
+            adx_regime_4h = mtf_decision.get('adx_regime', 'UNKNOWN')
+            direction_4h = 'BULLISH' if di_plus_4h > di_minus_4h else 'BEARISH'
+            print(f"      adx:             {adx_4h:.1f} ({adx_regime_4h})")
+            print(f"      di+/di-:         {di_plus_4h:.1f} / {di_minus_4h:.1f} → {direction_4h}")
         else:
             print("  [8] mtf_decision_layer (4H): 未初始化或未启用")
         print()
@@ -556,6 +620,14 @@ class AIInputDataValidator(DiagnosticStep):
                 print(f"      price vs SMA200: {'+' if price_vs_sma200 >= 0 else ''}{price_vs_sma200:.2f}%")
             print(f"      macd:            {mtf_trend.get('macd', 0):.4f}")
             print(f"      macd_signal:     {mtf_trend.get('macd_signal', 0):.4f}")
+            # v5.6: Display 1D ADX/DI (match indicator_test.py)
+            adx_1d = mtf_trend.get('adx', 0)
+            di_plus_1d = mtf_trend.get('di_plus', 0)
+            di_minus_1d = mtf_trend.get('di_minus', 0)
+            adx_regime_1d = mtf_trend.get('adx_regime', 'UNKNOWN')
+            print(f"      rsi:             {mtf_trend.get('rsi', 0):.1f}")
+            print(f"      adx:             {adx_1d:.1f} ({adx_regime_1d})")
+            print(f"      di+/di-:         {di_plus_1d:.1f} / {di_minus_1d:.1f}")
         else:
             print("  [9] mtf_trend_layer (1D): 未初始化或未启用")
         print()
@@ -567,7 +639,9 @@ class AIInputDataValidator(DiagnosticStep):
         if pos:
             print("  [10] current_position (当前持仓 - 25 fields v4.8.1):")
             print(f"      side:            {pos.get('side', 'N/A')}")
-            print(f"      quantity:        {pos.get('quantity', 0)} BTC")
+            bc = self.ctx.base_currency
+            qty = pos.get('quantity', 0)
+            print(f"      quantity:        {qty} {bc}")
             entry = pos.get('entry_price') or pos.get('avg_px', 0)
             print(f"      entry_price:     ${entry:,.2f}")
             print(f"      unrealized_pnl:  ${pos.get('unrealized_pnl', 0):,.2f}")
@@ -713,7 +787,10 @@ class AIInputDataValidator(DiagnosticStep):
             # Nearest support
             nearest_sup = sr_data.get('nearest_support')
             if nearest_sup and hasattr(nearest_sup, 'price_center'):
-                wall_info = f" [Order Wall: {nearest_sup.wall_size_btc:.1f} BTC]" if nearest_sup.has_order_wall else ""
+                bc = self.ctx.base_currency
+                wall_usd = nearest_sup.wall_size_btc * self.ctx.current_price if self.ctx.current_price else 0
+                wall_str = f"${wall_usd/1e6:.1f}M" if wall_usd >= 1e6 else f"${wall_usd/1e3:.0f}K"
+                wall_info = f" [Order Wall: {wall_str} ({nearest_sup.wall_size_btc:.1f} {bc})]" if nearest_sup.has_order_wall else ""
                 print(f"      最近支撑: ${nearest_sup.price_center:,.0f} ({nearest_sup.distance_pct:.1f}% away)")
                 print(f"        强度: {nearest_sup.strength} | 级别: {nearest_sup.level}{wall_info}")
                 print(f"        来源: {', '.join(nearest_sup.sources)}")
@@ -725,7 +802,10 @@ class AIInputDataValidator(DiagnosticStep):
             # Nearest resistance
             nearest_res = sr_data.get('nearest_resistance')
             if nearest_res and hasattr(nearest_res, 'price_center'):
-                wall_info = f" [Order Wall: {nearest_res.wall_size_btc:.1f} BTC]" if nearest_res.has_order_wall else ""
+                bc = self.ctx.base_currency
+                wall_usd = nearest_res.wall_size_btc * self.ctx.current_price if self.ctx.current_price else 0
+                wall_str = f"${wall_usd/1e6:.1f}M" if wall_usd >= 1e6 else f"${wall_usd/1e3:.0f}K"
+                wall_info = f" [Order Wall: {wall_str} ({nearest_res.wall_size_btc:.1f} {bc})]" if nearest_res.has_order_wall else ""
                 print(f"      最近阻力: ${nearest_res.price_center:,.0f} ({nearest_res.distance_pct:.1f}% away)")
                 print(f"        强度: {nearest_res.strength} | 级别: {nearest_res.level}{wall_info}")
                 print(f"        来源: {', '.join(nearest_res.sources)}")
@@ -1073,17 +1153,23 @@ class MultiAgentAnalyzer(DiagnosticStep):
             # Check INDICATOR_DEFINITIONS in System Prompt
             has_indicator_defs = "INDICATOR REFERENCE" in system_prompt
 
-            # Check PAST REFLECTIONS (memory) in Judge's User Prompt
-            has_past_memories = "PAST REFLECTIONS" in user_prompt
+            # v5.9: Check memory in ALL agents (not just Judge)
+            has_past_memories = (
+                "PAST REFLECTIONS" in user_prompt or
+                "PAST TRADE PATTERNS" in user_prompt
+            )
 
             print(f"  [{agent_name.upper()}] Prompt 结构:")
             print(f"     System Prompt 长度: {len(system_prompt)} 字符")
             print(f"     User Prompt 长度:   {len(user_prompt)} 字符")
             print(f"     INDICATOR_DEFINITIONS 在 System: {'✅ 是' if has_indicator_defs else '❌ 否'}")
 
-            # Judge-specific check - memory system
-            if agent_name == "judge":
-                print(f"     PAST REFLECTIONS (记忆): {'✅ 是' if has_past_memories else '⚠️ 无历史交易'}")
+            # v5.9: All agents should receive memory context
+            memory_label = "PAST REFLECTIONS" if agent_name == "judge" else "PAST TRADE PATTERNS"
+            if has_past_memories:
+                print(f"     {memory_label} (记忆): ✅ 是")
+            else:
+                print(f"     {memory_label} (记忆): ⚠️ 无历史交易")
 
             # Show System Prompt preview (first 150 chars)
             if system_prompt:
@@ -1095,24 +1181,43 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 preview = user_prompt[:150].replace('\n', ' ')
                 print(f"     User 预览:   {preview}...")
 
-            # For Judge, show memory section preview
-            if agent_name == "judge" and has_past_memories:
-                start_idx = user_prompt.find("PAST REFLECTIONS")
-                if start_idx != -1:
-                    end_idx = user_prompt.find("\n\nYOUR TASK", start_idx)
-                    if end_idx == -1:
-                        end_idx = start_idx + 300
-                    memory_section = user_prompt[start_idx:end_idx]
-                    memory_preview = memory_section[:200].replace('\n', '\n        ')
-                    print(f"     📝 记忆内容预览:")
-                    print(f"        {memory_preview}...")
+            # Show memory section preview for any agent that has it
+            if has_past_memories:
+                # Find memory section (either PAST REFLECTIONS or PAST TRADE PATTERNS)
+                for marker in ["PAST REFLECTIONS", "PAST TRADE PATTERNS"]:
+                    start_idx = user_prompt.find(marker)
+                    if start_idx != -1:
+                        end_idx = min(start_idx + 300, len(user_prompt))
+                        # Find next section boundary
+                        next_section = user_prompt.find("\n\n##", start_idx + 10)
+                        if next_section != -1:
+                            end_idx = min(next_section, end_idx)
+                        memory_section = user_prompt[start_idx:end_idx]
+                        memory_preview = memory_section[:200].replace('\n', '\n        ')
+                        print(f"     📝 记忆内容预览:")
+                        print(f"        {memory_preview}...")
+                        break
+
+            # v5.9: Check ADX-aware dynamic weights (Judge/Bear only)
+            if agent_name == "judge":
+                has_adx_dynamic = "ADX" in system_prompt and "层级权重" in system_prompt
+                if has_adx_dynamic:
+                    print(f"     ✅ JUDGE: ADX-aware 动态层级权重 (v5.8)")
+            elif agent_name == "bear":
+                has_bear_adx = "分析优先级" in system_prompt and "ADX" in system_prompt
+                if has_bear_adx:
+                    print(f"     ✅ BEAR: ADX-aware 分析优先级 (v5.8)")
+            elif agent_name == "risk":
+                has_invalidation = "invalidation" in user_prompt
+                if has_invalidation:
+                    print(f"     ✅ RISK: invalidation 字段要求")
 
             print()
 
         print("  📋 Prompt 架构要求:")
         print("     - System Prompt: 角色定义 + INDICATOR_DEFINITIONS")
         print("     - User Prompt: 原始数据 + 任务指令 (纯知识，无指令性语句)")
-        print("     - Judge Prompt: 包含 PAST REFLECTIONS (过去交易记忆)")
+        print("     - ALL Prompts: 包含历史交易记忆 (v5.9: Bull/Bear/Judge/Risk)")
         print("     - Risk Manager output: 包含 invalidation 字段")
 
 
@@ -1199,6 +1304,7 @@ class OrderSimulator(DiagnosticStep):
         from strategy.trading_logic import (
             calculate_position_size,
             validate_multiagent_sltp,
+            get_min_sl_distance_pct,
         )
         from utils.sr_sltp_calculator import calculate_sr_based_sltp
 
@@ -1309,6 +1415,9 @@ class OrderSimulator(DiagnosticStep):
                 if self.ctx.sr_zones_data:
                     atr_val = self.ctx.atr_value or 0.0
                     atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5)
+                    tp_buf_mult = getattr(cfg, 'tp_buffer_multiplier', 0.25)
+                    # v5.10: Match production — Level 2 uses half of Level 1's min SL distance
+                    sr_min_sl = get_min_sl_distance_pct() * 0.5
                     sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
                         current_price=self.ctx.current_price,
                         side=signal,
@@ -1316,6 +1425,8 @@ class OrderSimulator(DiagnosticStep):
                         atr_value=atr_val,
                         min_rr_ratio=min_rr,
                         atr_buffer_multiplier=atr_buf_mult,
+                        tp_buffer_multiplier=tp_buf_mult,
+                        min_sl_distance_pct=sr_min_sl,
                     )
                     if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
                         final_sl, final_tp = sr_sl, sr_tp
@@ -1345,6 +1456,9 @@ class OrderSimulator(DiagnosticStep):
             if self.ctx.sr_zones_data:
                 atr_val = self.ctx.atr_value or 0.0
                 atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5)
+                tp_buf_mult = getattr(cfg, 'tp_buffer_multiplier', 0.25)
+                # v5.10: Match production — Level 2 uses half of Level 1's min SL distance
+                sr_min_sl = get_min_sl_distance_pct() * 0.5
                 sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
                     current_price=self.ctx.current_price,
                     side=signal,
@@ -1352,6 +1466,8 @@ class OrderSimulator(DiagnosticStep):
                     atr_value=atr_val,
                     min_rr_ratio=min_rr,
                     atr_buffer_multiplier=atr_buf_mult,
+                    tp_buffer_multiplier=tp_buf_mult,
+                    min_sl_distance_pct=sr_min_sl,
                 )
                 if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
                     final_sl, final_tp = sr_sl, sr_tp
@@ -1372,8 +1488,10 @@ class OrderSimulator(DiagnosticStep):
         print()
         print("  📋 最终订单参数 (模拟):")
         print(f"     order_side: {'BUY' if signal in ['BUY', 'LONG'] else 'SELL'}")
-        print(f"     quantity: {quantity:.6f} BTC")
-        print(f"     entry_price: ${self.ctx.current_price:,.2f} (MARKET)")
+        bc = self.ctx.base_currency
+        notional = quantity * self.ctx.current_price if self.ctx.current_price else 0
+        print(f"     quantity: ${notional:,.0f} ({quantity:.6f} {bc})")
+        print(f"     entry_price: ${self.ctx.current_price:,.2f} (LIMIT @ validated price)")
         print(f"     sl_trigger_price: ${final_sl:,.2f}")
         print(f"     tp_price: ${final_tp:,.2f}")
 
@@ -1547,11 +1665,12 @@ class PositionCalculator(DiagnosticStep):
             print(f"     max_position_value: ${max_usdt:,.2f}")
             print()
 
+            bc = self.ctx.base_currency
             print("  📋 v4.8 信心百分比映射:")
             for conf, pct in confidence_mapping.items():
                 usdt = max_usdt * (pct / 100)
-                btc = usdt / self.ctx.current_price if self.ctx.current_price else 0
-                print(f"     {conf} ({pct}%): ${usdt:,.0f} ({btc:.6f} BTC)")
+                base_qty = usdt / self.ctx.current_price if self.ctx.current_price else 0
+                print(f"     {conf} ({pct}%): ${usdt:,.0f} ({base_qty:.6f} {bc})")
             print()
 
             # v4.8: Show cumulative mode status
@@ -1585,10 +1704,10 @@ class PositionCalculator(DiagnosticStep):
                 if self.ctx.current_position:
                     usdt_amount = min(usdt_amount, remaining_capacity)
 
-                btc_qty = usdt_amount / self.ctx.current_price if self.ctx.current_price else 0
+                base_qty = usdt_amount / self.ctx.current_price if self.ctx.current_price else 0
 
                 capped = " (受限)" if usdt_amount < max_usdt * (size_pct / 100) else ""
-                print(f"     {conf_level}: {btc_qty:.6f} BTC (${usdt_amount:,.2f}){capped}")
+                print(f"     {conf_level}: ${usdt_amount:,.2f} ({base_qty:.6f} {bc}){capped}")
 
             print()
             print("  ✅ v4.8 仓位计算测试完成")

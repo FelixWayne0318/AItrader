@@ -1,21 +1,21 @@
 """
-Order Flow Simulation Module v5.0
+Order Flow Simulation Module v5.1
 
 Comprehensive simulation of the entire order submission process,
-covering all v3.18 + v5.0 fixes and various trading scenarios.
+covering all v3.18 + v5.1 fixes and various trading scenarios.
 
 v3.18 修复验证:
 - 反转两阶段提交 (Reversal Two-Phase Commit)
 - Bracket 订单失败处理 (No unprotected fallback)
 - 加仓后 SL/TP 数量更新 (_update_sltp_quantity)
 
-v5.0 新增/更新场景:
+v5.1 新增/更新场景:
 - S/R 动态 SL/TP 重评估 (S/R Dynamic Reevaluation)
 - 崩溃恢复 (Crash Recovery on Startup)
 - 停机保护 (on_stop SL/TP Preserved)
 - 累加仓位上限验证 (Cumulative Position Limit 30%)
 
-v5.0 update: Trailing Stop removed, replaced by S/R dynamic reevaluation.
+v5.1 update: Trailing Stop removed, replaced by S/R dynamic reevaluation.
 
 订单场景模拟 (10 场景):
 1. 新开仓 (无持仓 → 开仓)
@@ -25,9 +25,9 @@ v5.0 update: Trailing Stop removed, replaced by S/R dynamic reevaluation.
 5. 反转交易 (两阶段提交)
 6. Bracket 订单失败
 7. SL/TP modify 失败回退
-8. S/R 动态 SL/TP 重评估 (v5.0)
-9. 停机保护 — SL/TP 保留 (v5.0)
-10. 累加仓位上限验证 (v5.0)
+8. S/R 动态 SL/TP 重评估 (v5.1)
+9. 停机保护 — SL/TP 保留 (v5.1)
+10. 累加仓位上限验证 (v5.1)
 """
 
 from dataclasses import dataclass
@@ -47,9 +47,9 @@ class OrderScenario(Enum):
     REVERSAL = "reversal"               # Close → Open opposite
     BRACKET_FAILURE = "bracket_failure" # Bracket order fails
     SLTP_MODIFY_FAILURE = "sltp_modify_failure"  # modify_order fails
-    DYNAMIC_SLTP_UPDATE = "dynamic_sltp_update"  # v5.0: S/R Dynamic SL/TP reevaluation
-    ONSTOP_PRESERVATION = "onstop_preservation"  # v5.0: on_stop preserves SL/TP
-    CUMULATIVE_POSITION_LIMIT = "cumulative_position_limit"  # v5.0: 30% max position cap
+    DYNAMIC_SLTP_UPDATE = "dynamic_sltp_update"  # v5.1: S/R Dynamic SL/TP reevaluation
+    ONSTOP_PRESERVATION = "onstop_preservation"  # v5.1: on_stop preserves SL/TP
+    CUMULATIVE_POSITION_LIMIT = "cumulative_position_limit"  # v5.1: 30% max position cap
 
 
 @dataclass
@@ -84,12 +84,12 @@ class OrderFlowSimulator(DiagnosticStep):
     Validates v3.18 fixes are correctly implemented.
     """
 
-    name = "v5.0 订单流程完整模拟"
+    name = "v5.1 订单流程完整模拟"
 
     def run(self) -> bool:
         print("-" * 70)
         print()
-        print_box("v5.0 订单流程模拟 (10 种场景)", 65)
+        print_box("v5.1 订单流程模拟 (10 种场景)", 65)
         print()
 
         # Determine current scenario based on signal and position
@@ -101,7 +101,9 @@ class OrderFlowSimulator(DiagnosticStep):
         print(f"     持仓: {'有' if current_position else '无'}")
         if current_position:
             print(f"     持仓方向: {current_position.get('side', 'N/A')}")
-            print(f"     持仓数量: {current_position.get('quantity', 0):.4f} BTC")
+            bc = self.ctx.base_currency
+            qty = current_position.get('quantity', 0)
+            print(f"     持仓数量: {float(qty):.4f} {bc}")
         print()
 
         # Run all scenario simulations
@@ -131,7 +133,7 @@ class OrderFlowSimulator(DiagnosticStep):
         print()
         print("  " + "═" * 65)
         print()
-        print_box("v5.0 订单流程验证总结", 65)
+        print_box("v5.1 订单流程验证总结", 65)
         print()
 
         passed = sum(1 for r in results if r.success)
@@ -139,11 +141,11 @@ class OrderFlowSimulator(DiagnosticStep):
         print(f"  通过场景: {passed}/{total}")
         print()
 
-        # Highlight v3.18 + v5.0 fixes
+        # Highlight v3.18 + v5.1 fixes
         self._print_v50_verification()
 
         print()
-        print("  ✅ v5.0 订单流程模拟完成")
+        print("  ✅ v5.1 订单流程模拟完成")
         return True
 
     def _simulate_scenario(self, scenario: OrderScenario) -> SimulationResult:
@@ -199,16 +201,16 @@ class OrderFlowSimulator(DiagnosticStep):
         sl_price = entry_price * 0.98  # 2% SL
         tp_price = entry_price * 1.03  # 3% TP
 
-        # Entry order
+        # Entry order (v4.17: LIMIT at validated entry_price)
         entry_order = MockOrder(
             client_order_id="O-ENTRY-001",
-            order_type="MARKET",
+            order_type="LIMIT",
             side="BUY",
             quantity=quantity,
             status="FILLED",
         )
         orders.append(entry_order)
-        events.append("submit_order(MARKET BUY)")
+        events.append("submit_order(LIMIT BUY @ validated entry_price)")
 
         # SL order (OTO linked)
         sl_order = MockOrder(
@@ -276,16 +278,16 @@ class OrderFlowSimulator(DiagnosticStep):
         add_qty = 0.005
         new_total_qty = existing_qty + add_qty
 
-        # Add position order
+        # Add position order (v4.17: LIMIT at validated entry_price)
         add_order = MockOrder(
             client_order_id="O-ADD-001",
-            order_type="MARKET",
+            order_type="LIMIT",
             side="BUY",
             quantity=add_qty,
             status="FILLED",
         )
         orders.append(add_order)
-        events.append("submit_order(MARKET BUY - add position)")
+        events.append("submit_order(LIMIT BUY - add position)")
         events.append("on_order_filled(ADD)")
 
         # v3.18: Update SL/TP quantities
@@ -651,7 +653,7 @@ class OrderFlowSimulator(DiagnosticStep):
 
     def _simulate_dynamic_sltp_update(self) -> SimulationResult:
         """
-        场景 8: S/R 动态 SL/TP 重评估 (v5.0)
+        场景 8: S/R 动态 SL/TP 重评估 (v5.1)
 
         v5.1: 使用真实 calculate_sr_based_sltp() 替代硬编码 mock，
         与生产 _reevaluate_sltp_for_existing_position() 100% 一致。
@@ -685,12 +687,15 @@ class OrderFlowSimulator(DiagnosticStep):
         if self.ctx.sr_zones_data:
             try:
                 from utils.sr_sltp_calculator import calculate_sr_based_sltp
-                from strategy.trading_logic import get_min_rr_ratio
+                from strategy.trading_logic import get_min_rr_ratio, get_min_sl_distance_pct
 
                 atr_val = getattr(self.ctx, 'atr_value', None) or 0.0
                 cfg = self.ctx.strategy_config
                 min_rr = get_min_rr_ratio()
                 atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5) if cfg else 0.5
+                tp_buf_mult = getattr(cfg, 'tp_buffer_multiplier', 0.25) if cfg else 0.25
+                # v5.10: Match production — Level 2 uses half of Level 1's min SL distance
+                sr_min_sl = get_min_sl_distance_pct() * 0.5
 
                 new_sl, new_tp, sr_method = calculate_sr_based_sltp(
                     current_price=entry_price,
@@ -699,6 +704,8 @@ class OrderFlowSimulator(DiagnosticStep):
                     atr_value=atr_val,
                     min_rr_ratio=min_rr,
                     atr_buffer_multiplier=atr_buf_mult,
+                    tp_buffer_multiplier=tp_buf_mult,
+                    min_sl_distance_pct=sr_min_sl,
                 )
                 real_calc_used = True
                 events.append(f"  2. calculate_sr_based_sltp() → {sr_method}")
@@ -750,7 +757,7 @@ class OrderFlowSimulator(DiagnosticStep):
         if should_update:
             events.append("  7. _replace_sltp_orders (atomic cancel+recreate)")
 
-        notes.append("v5.0: Trailing Stop 已移除, S/R 重评估是唯一 SL 调整机制")
+        notes.append("v5.1: Trailing Stop 已移除, S/R 重评估是唯一 SL 调整机制")
         notes.append("SL 只能向有利方向移动 (LONG: UP, SHORT: DOWN)")
         notes.append("TP 由 S/R 重评估自由调整 (v2.2: AI 职责, 非 LOCAL 保护)")
         notes.append(f"阈值 {threshold_pct:.1f}% 避免频繁修改订单 (生产 dynamic_update_threshold_pct={threshold})")
@@ -814,7 +821,7 @@ class OrderFlowSimulator(DiagnosticStep):
 
     def _simulate_onstop_preservation(self) -> SimulationResult:
         """
-        场景 9: 停机保护 — SL/TP 保留在 Binance (v5.0)
+        场景 9: 停机保护 — SL/TP 保留在 Binance (v5.1)
 
         Flow:
         1. on_stop() called (bot shutdown)
@@ -836,9 +843,9 @@ class OrderFlowSimulator(DiagnosticStep):
         events.append("结果: SL/TP 挂单保留在 Binance 交易所")
         events.append("用户可在 Binance APP 查看这些保护单")
 
-        notes.append("v5.0: 机器人停止后，止损止盈单保留在 Binance")
-        notes.append("v5.0: 仅取消非 reduce_only 订单")
-        notes.append("v5.0: except 块中有 cancel_all_orders 作为后备")
+        notes.append("v5.1: 机器人停止后，止损止盈单保留在 Binance")
+        notes.append("v5.1: 仅取消非 reduce_only 订单")
+        notes.append("v5.1: except 块中有 cancel_all_orders 作为后备")
         notes.append("用户重启后, _recover_sltp_on_start 恢复状态")
 
         return SimulationResult(
@@ -856,7 +863,7 @@ class OrderFlowSimulator(DiagnosticStep):
 
     def _simulate_cumulative_position_limit(self) -> SimulationResult:
         """
-        场景 10: 累加仓位上限验证 (v5.0)
+        场景 10: 累加仓位上限验证 (v5.1)
 
         Flow:
         1. Check current position value
@@ -901,7 +908,7 @@ class OrderFlowSimulator(DiagnosticStep):
         events.append(f"  remaining = ${full_remaining:,.2f}")
         events.append(f"  → 拒绝加仓, 等待减仓后释放容量")
 
-        notes.append("v5.0 E5: 累加仓位上限 = equity × max_position_ratio × leverage")
+        notes.append("v5.1 E5: 累加仓位上限 = equity × max_position_ratio × leverage")
         notes.append("每次加仓前检查 remaining_capacity")
         notes.append("remaining_capacity = max_usdt - current_position_value")
         notes.append("防止无限加仓, 总仓位不超过 30% × equity × leverage")
@@ -930,9 +937,9 @@ class OrderFlowSimulator(DiagnosticStep):
             OrderScenario.REVERSAL: "场景 5: 反转交易 (v3.18)",
             OrderScenario.BRACKET_FAILURE: "场景 6: Bracket 失败 (v3.18)",
             OrderScenario.SLTP_MODIFY_FAILURE: "场景 7: SL/TP modify 失败 (v3.18)",
-            OrderScenario.DYNAMIC_SLTP_UPDATE: "场景 8: S/R 动态重评估 (v5.0)",
-            OrderScenario.ONSTOP_PRESERVATION: "场景 9: 停机保护 (v5.0)",
-            OrderScenario.CUMULATIVE_POSITION_LIMIT: "场景 10: 累加仓位上限 (v5.0)",
+            OrderScenario.DYNAMIC_SLTP_UPDATE: "场景 8: S/R 动态重评估 (v5.1)",
+            OrderScenario.ONSTOP_PRESERVATION: "场景 9: 停机保护 (v5.1)",
+            OrderScenario.CUMULATIVE_POSITION_LIMIT: "场景 10: 累加仓位上限 (v5.1)",
         }
 
         name = scenario_names.get(result.scenario, str(result.scenario))
@@ -963,8 +970,8 @@ class OrderFlowSimulator(DiagnosticStep):
         print()
 
     def _print_v50_verification(self) -> None:
-        """Print v5.0 specific verification summary."""
-        print("  📋 v3.18 + v5.0 修复验证:")
+        """Print v5.1 specific verification summary."""
+        print("  📋 v3.18 + v5.1 修复验证:")
         print()
         print("  ┌──────────────────────────────────────────────────────────────────┐")
         print("  │ 修复项                          │ 状态 │ 验证场景               │")
@@ -973,9 +980,9 @@ class OrderFlowSimulator(DiagnosticStep):
         print("  │ Bracket 失败不回退 (v3.18)      │ ✅   │ 场景 6: Bracket 失败   │")
         print("  │ SL/TP 数量更新 (v3.18)          │ ✅   │ 场景 2: 同向加仓       │")
         print("  │ modify 失败回退 (v3.18)         │ ✅   │ 场景 7: modify 失败    │")
-        print("  │ S/R 动态重评估 + 阈值 (v5.0)   │ ✅   │ 场景 8: S/R 重评估     │")
-        print("  │ 停机保护 SL/TP 保留 (v5.0)     │ ✅   │ 场景 9: on_stop        │")
-        print("  │ 累加仓位上限 30% (v5.0)        │ ✅   │ 场景 10: 容量检查      │")
+        print("  │ S/R 动态重评估 + 阈值 (v5.1)   │ ✅   │ 场景 8: S/R 重评估     │")
+        print("  │ 停机保护 SL/TP 保留 (v5.1)     │ ✅   │ 场景 9: on_stop        │")
+        print("  │ 累加仓位上限 30% (v5.1)        │ ✅   │ 场景 10: 容量检查      │")
         print("  └──────────────────────────────────────────────────────────────────┘")
 
     def should_skip(self) -> bool:
@@ -1107,7 +1114,9 @@ class BracketOrderFlowSimulator(DiagnosticStep):
         print(f"     入场价: ${entry_price:,.2f}")
         print(f"     止损价: ${sl_price:,.2f} ({(abs(entry_price - sl_price) / entry_price * 100):.2f}%)")
         print(f"     止盈价: ${tp_price:,.2f} ({(abs(tp_price - entry_price) / entry_price * 100):.2f}%)")
-        print(f"     数量: {quantity:.4f} BTC")
+        bc = self.ctx.base_currency
+        notional = quantity * entry_price if entry_price > 0 else 0
+        print(f"     数量: ${notional:,.0f} ({quantity:.4f} {bc})")
         print()
 
         # Flow diagram
@@ -1127,14 +1136,14 @@ class BracketOrderFlowSimulator(DiagnosticStep):
         print("  │    ├─ 验证: validate_multiagent_sltp()                      │")
         print("  │    │   ├─ 检查 SL 在入场价正确一侧                          │")
         print("  │    │   └─ R/R >= 1.5:1 硬性门槛                             │")
-        print("  │    └─ 回退: calculate_technical_sltp() (S/R Zones)          │")
+        print("  │    └─ 回退: calculate_sr_based_sltp() (S/R Zones+ATR)      │")
         print("  └─────────────────────────────────────────────────────────────┘")
         print("                          ↓")
         print("  ┌─────────────────────────────────────────────────────────────┐")
-        print("  │ 3. Bracket 订单创建 (order_factory.bracket)                 │")
-        print("  │    ├─ entry_order: MARKET (trigger OTO)                     │")
-        print("  │    ├─ sl_order: STOP_MARKET (OTO linked, reduce_only)       │")
-        print("  │    └─ tp_order: LIMIT (OTO linked, OCO with SL)             │")
+        print("  │ 3. 两阶段订单提交 (v4.17)                                    │")
+        print("  │    ├─ entry_order: LIMIT @ validated entry_price (GTC)      │")
+        print("  │    ├─ sl_order: STOP_MARKET (on_position_opened, reduce)    │")
+        print("  │    └─ tp_order: LIMIT (on_position_opened, reduce)          │")
         print("  └─────────────────────────────────────────────────────────────┘")
         print("                          ↓")
         print("  ┌─────────────────────────────────────────────────────────────┐")

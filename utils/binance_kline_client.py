@@ -183,9 +183,9 @@ class BinanceKlineClient:
             return {
                 "symbol": data.get('symbol'),
                 "funding_rate": settled_rate,                          # 已结算费率
-                "funding_rate_pct": round(settled_rate * 100, 4),      # 已结算费率 (%)
+                "funding_rate_pct": round(settled_rate * 100, 6),      # 已结算费率 (%, 6位匹配币安精度)
                 "predicted_rate": predicted_rate,                      # 预期费率 (from lastFundingRate)
-                "predicted_rate_pct": round(predicted_rate * 100, 4),  # 预期费率 (%)
+                "predicted_rate_pct": round(predicted_rate * 100, 6),  # 预期费率 (%, 6位匹配币安精度)
                 "next_funding_time": next_funding_time,
                 "next_funding_countdown_min": countdown_min,
                 "mark_price": mark_price,

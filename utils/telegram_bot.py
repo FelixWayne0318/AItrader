@@ -616,7 +616,7 @@ class TelegramBot:
                     flow_parts.append(f"买入 {buy_ratio*100:.0f}% {br_icon}")
                 if funding_rate_pct is not None:
                     fr_icon = '🔴' if funding_rate_pct > 0.01 else '🟢' if funding_rate_pct < -0.01 else '⚪'
-                    fr_str = f"已结算 {funding_rate_pct:.4f}% {fr_icon}"
+                    fr_str = f"已结算 {funding_rate_pct:.5f}% {fr_icon}"
                     if funding_trend:
                         ft_icon = '📈' if funding_trend == 'RISING' else '📉' if funding_trend == 'FALLING' else '➖'
                         fr_str += f" {ft_icon}"
@@ -624,10 +624,10 @@ class TelegramBot:
                     # 预期费率 (from premiumIndex.lastFundingRate)
                     if predicted_rate_pct is not None:
                         pr_icon = '🔴' if predicted_rate_pct > 0.01 else '🟢' if predicted_rate_pct < -0.01 else '⚪'
-                        flow_parts.append(f"预期 {predicted_rate_pct:.4f}% {pr_icon}")
+                        flow_parts.append(f"预期 {predicted_rate_pct:.5f}% {pr_icon}")
                 elif funding_rate is not None:
                     fr = self._funding_display(funding_rate)
-                    flow_parts.append(f"费率 {fr:.4f}%")
+                    flow_parts.append(f"费率 {fr:.5f}%")
                 if oi_change_pct is not None:
                     flow_parts.append(f"OI {oi_change_pct:+.1f}%")
                 if cvd_trend:
@@ -652,7 +652,7 @@ class TelegramBot:
                     msg += f"  CVD   {c_icon} {cvd_trend}\n"
                 if funding_rate_pct is not None:
                     fr_icon = '🔴' if funding_rate_pct > 0.01 else '🟢' if funding_rate_pct < -0.01 else '⚪'
-                    fr_line = f"  已结算 {fr_icon} {funding_rate_pct:.4f}%"
+                    fr_line = f"  已结算 {fr_icon} {funding_rate_pct:.5f}%"
                     if funding_trend:
                         ft_icon = '📈' if funding_trend == 'RISING' else '📉' if funding_trend == 'FALLING' else '➖'
                         fr_line += f" {ft_icon}"
@@ -660,7 +660,7 @@ class TelegramBot:
                     # 预期费率 (from premiumIndex.lastFundingRate, 实时变化)
                     if predicted_rate_pct is not None:
                         pr_icon = '🔴' if predicted_rate_pct > 0.01 else '🟢' if predicted_rate_pct < -0.01 else '⚪'
-                        msg += f"  预期  {pr_icon} {predicted_rate_pct:.4f}%\n"
+                        msg += f"  预期  {pr_icon} {predicted_rate_pct:.5f}%\n"
                     if next_funding_min is not None:
                         hours = next_funding_min // 60
                         mins = next_funding_min % 60
@@ -826,6 +826,19 @@ class TelegramBot:
             w_cn = "多方" if winning_side.upper() == "BULL" else "空方" if winning_side.upper() == "BEAR" else winning_side
             msg += f" | {w_icon} {w_cn}胜出"
         msg += "\n"
+
+        # v5.7: Confluence analysis (Judge's multi-layer assessment)
+        confluence = execution_data.get('confluence', {})
+        if confluence and confluence.get('aligned_layers') is not None:
+            aligned = confluence.get('aligned_layers', 0)
+            layer_icons = {'BULLISH': '🟢', 'BEARISH': '🔴', 'NEUTRAL': '⚪'}
+            layers = []
+            for key, label in [('trend_1d', '1D'), ('momentum_4h', '4H'), ('levels_15m', '15M'), ('derivatives', '衍')]:
+                val = confluence.get(key, '')
+                direction = val.split(' — ')[0].split('—')[0].strip() if ' — ' in val or '—' in val else val.split()[0] if val else 'N/A'
+                icon = layer_icons.get(direction, '⚪')
+                layers.append(f"{icon}{label}")
+            msg += f"📊 {' '.join(layers)} ({aligned}层一致)\n"
 
         # v4.14: Risk Manager assessment
         if risk_level or position_size_pct is not None:

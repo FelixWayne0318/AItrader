@@ -640,10 +640,10 @@ cvd_trend = 'RISING' if cvd[-1] > cvd[0] else 'FALLING'
 │  │    → 最终: $180 / $45000 = 0.004 BTC                                  │ │
 │  │                                                                       │ │
 │  │  Step 4: 提交订单                                                     │ │
-│  │    - 类型: Bracket Order                                              │ │
-│  │    - Entry: MARKET @ ~45000                                           │ │
-│  │    - SL: 43500 (STOP_MARKET)                                          │ │
-│  │    - TP: 46500 (TAKE_PROFIT_MARKET)                                   │ │
+│  │    - 类型: 两阶段提交 (v4.17)                                         │ │
+│  │    - Entry: LIMIT @ 45000 (validated price)                           │ │
+│  │    - SL: 43500 (STOP_MARKET, after fill)                              │ │
+│  │    - TP: 46500 (LIMIT, after fill)                                    │ │
 │  │                                                                       │ │
 │  └───────────────────────────────────────────────────────────────────────┘ │
 │                                     │                                       │

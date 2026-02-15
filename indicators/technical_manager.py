@@ -90,7 +90,14 @@ class TechnicalIndicatorManager:
 
         # Store recent bars for calculations
         self.recent_bars: List[Bar] = []
-        self.max_bars = max(list(sma_periods) + [bb_period, volume_ma_period, support_resistance_lookback]) + 10
+        # v5.5: Increased max_bars to support historical context calculations
+        # ADX history needs 2*period + count + 1, SMA history needs max_sma + count
+        history_count = 35  # Default count for get_historical_context()
+        self.max_bars = max(
+            max(list(sma_periods) + [bb_period, volume_ma_period, support_resistance_lookback]) + 10,
+            max(sma_periods) + history_count + 10,  # SMA history (e.g. SMA50 + 35 + 10 = 95)
+            2 * 14 + history_count + 10,            # ADX history (2*14 + 35 + 10 = 73)
+        )
 
         # Configuration
         self.support_resistance_lookback = support_resistance_lookback
@@ -100,6 +107,12 @@ class TechnicalIndicatorManager:
         self.macd_slow_period = macd_slow
         self.macd_fast_period = macd_fast
         self.macd_signal_period = macd_signal
+
+        # v5.5: History buffers — store official NT indicator values on each update()
+        # Eliminates RSI/MACD series vs snapshot mismatch caused by simplified recalculation
+        self._rsi_history: List[float] = []
+        self._macd_history: List[float] = []
+        self._macd_signal_history: List[float] = []
 
     def update(self, bar: Bar):
         """
@@ -135,6 +148,23 @@ class TechnicalIndicatorManager:
 
         # Update Volume SMA
         self.volume_sma.update_raw(float(bar.volume))
+
+        # v5.5: Store official NT indicator values for history series
+        # These stored values are used by get_historical_context() to build
+        # time-series data for AI. This replaces the old simplified recalculation
+        # which used different algorithms and produced mismatched values.
+        if self.rsi.initialized:
+            self._rsi_history.append(round(self.rsi.value * 100, 2))
+            if len(self._rsi_history) > self.max_bars:
+                self._rsi_history.pop(0)
+        if self.macd.initialized:
+            self._macd_history.append(round(self.macd.value, 4))
+            if len(self._macd_history) > self.max_bars:
+                self._macd_history.pop(0)
+        if self.macd_signal.initialized:
+            self._macd_signal_history.append(round(self.macd_signal.value, 4))
+            if len(self._macd_signal_history) > self.max_bars:
+                self._macd_signal_history.pop(0)
 
     def get_technical_data(self, current_price: float) -> Dict[str, Any]:
         """
@@ -526,6 +556,9 @@ class TechnicalIndicatorManager:
         # Calculate MACD trend
         macd_trend = self._calculate_indicator_history('macd', count)
 
+        # v5.5: MACD signal line history (for histogram trajectory)
+        macd_signal_trend = list(self._macd_signal_history[-count:]) if self._macd_signal_history else []
+
         # Determine trend direction
         trend_direction = self._determine_trend_direction(price_trend)
 
@@ -536,6 +569,24 @@ class TechnicalIndicatorManager:
         price_change_pct = ((price_trend[-1] - price_trend[0]) / price_trend[0] * 100) if price_trend[0] > 0 else 0
         avg_volume = sum(volume_trend) / len(volume_trend) if volume_trend else 0
         current_volume_ratio = volume_trend[-1] / avg_volume if avg_volume > 0 else 1.0
+
+        # v5.5: Data consistency validation
+        # With stored official NT values, series[-1] should always match snapshot.
+        # Log warning if mismatch detected (should never happen).
+        if rsi_trend and self.rsi.initialized:
+            live_rsi = round(self.rsi.value * 100, 2)
+            if abs(rsi_trend[-1] - live_rsi) > 0.15:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"RSI consistency check: history[-1]={rsi_trend[-1]} vs live={live_rsi}"
+                )
+        if macd_trend and self.macd.initialized:
+            live_macd = round(self.macd.value, 4)
+            if abs(macd_trend[-1] - live_macd) > 0.01:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"MACD consistency check: history[-1]={macd_trend[-1]} vs live={live_macd}"
+                )
 
         # v3.24: Additional indicator history series
         adx_history = self._calculate_adx_history(count=count)
@@ -548,6 +599,7 @@ class TechnicalIndicatorManager:
             "volume_trend": volume_trend,
             "rsi_trend": rsi_trend,
             "macd_trend": macd_trend,
+            "macd_signal_trend": macd_signal_trend,  # v5.5
             # v3.24: ADX/DI trend strength history
             "adx_trend": adx_history.get("adx", []),
             "di_plus_trend": adx_history.get("di_plus", []),
@@ -571,58 +623,28 @@ class TechnicalIndicatorManager:
 
     def _calculate_indicator_history(self, indicator_name: str, count: int) -> List[float]:
         """
-        Calculate historical values for an indicator.
+        Return stored official NT indicator values for history.
 
-        Note: This is an approximation since we only store recent bars.
-        For accurate historical RSI/MACD, we would need to recalculate from scratch.
-        Here we use a simplified approach based on recent closes.
+        v5.5: Uses values stored in update() from NautilusTrader's official
+        indicators (Wilder's RSI, EMA-based MACD) instead of simplified
+        recalculation. This ensures the historical series' last value always
+        matches the current snapshot value from get_technical_data().
+
+        Previous implementation used simplified math (simple average gains/losses
+        for RSI, basic EMA for MACD) which produced different values than the
+        official NT indicators, causing data inconsistency in AI prompts.
         """
-        if len(self.recent_bars) < count:
+        if indicator_name == 'rsi':
+            history = self._rsi_history
+        elif indicator_name == 'macd':
+            history = self._macd_history
+        else:
             return []
 
-        recent = self.recent_bars[-count:]
-        closes = [float(bar.close) for bar in recent]
+        if not history:
+            return []
 
-        if indicator_name == 'rsi':
-            # Simplified RSI calculation for history
-            # For true historical RSI, we'd need to recalculate with full lookback
-            rsi_values = []
-            period = min(self.rsi_period, len(closes) - 1)
-
-            for i in range(period, len(closes)):
-                window = closes[i - period:i + 1]
-                changes = [window[j + 1] - window[j] for j in range(len(window) - 1)]
-                gains = [c for c in changes if c > 0]
-                losses = [-c for c in changes if c < 0]
-
-                avg_gain = sum(gains) / period if gains else 0
-                avg_loss = sum(losses) / period if losses else 0.0001
-
-                rs = avg_gain / avg_loss if avg_loss > 0 else 100
-                rsi = 100 - (100 / (1 + rs))
-                rsi_values.append(round(rsi, 2))
-
-            return rsi_values
-
-        elif indicator_name == 'macd':
-            # Simplified MACD calculation for history
-            macd_values = []
-            fast_period = self.macd_fast_period
-            slow_period = self.macd_slow_period
-
-            if len(closes) < slow_period:
-                return []
-
-            for i in range(slow_period, len(closes) + 1):
-                window = closes[:i]
-                fast_ema = self._simple_ema(window, fast_period)
-                slow_ema = self._simple_ema(window, slow_period)
-                macd = fast_ema - slow_ema
-                macd_values.append(round(macd, 4))
-
-            return macd_values
-
-        return []
+        return list(history[-count:])
 
     def _simple_ema(self, values: List[float], period: int) -> float:
         """Calculate a simple EMA for historical data."""

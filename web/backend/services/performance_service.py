@@ -13,6 +13,7 @@ See: docs/research/EVALUATION_FRAMEWORK.md
 """
 import os
 import sys
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import hmac
@@ -65,6 +66,7 @@ class PerformanceService:
         self.api_key = os.getenv("BINANCE_API_KEY", "")
         self.api_secret = os.getenv("BINANCE_API_SECRET", "")
         self.base_url = "https://fapi.binance.com"
+        self._client: Optional[httpx.AsyncClient] = None
 
         # Log credential status (without revealing actual keys)
         if self.api_key:
@@ -75,6 +77,16 @@ class PerformanceService:
             logger.info(f"API Secret loaded: {self.api_secret[:4]}...{self.api_secret[-4:]}")
         else:
             logger.warning("BINANCE_API_SECRET not found!")
+
+    @asynccontextmanager
+    async def _get_client(self):
+        """Shared httpx client with connection pooling"""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(10.0, connect=5.0),
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            )
+        yield self._client
 
     async def check_connection(self) -> dict:
         """Diagnostic: Check API connectivity and credentials"""
@@ -97,7 +109,7 @@ class PerformanceService:
             params = self._sign_request({})
             headers = {"X-MBX-APIKEY": self.api_key}
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 response = await client.get(
                     f"{self.base_url}/fapi/v2/balance",
                     params=params,
@@ -150,7 +162,7 @@ class PerformanceService:
             params = self._sign_request({})
             headers = {"X-MBX-APIKEY": self.api_key}
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 response = await client.get(
                     f"{self.base_url}/fapi/v2/balance",
                     params=params,
@@ -181,7 +193,7 @@ class PerformanceService:
             params = self._sign_request({})
             headers = {"X-MBX-APIKEY": self.api_key}
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 response = await client.get(
                     f"{self.base_url}/fapi/v2/positionRisk",
                     params=params,
@@ -217,7 +229,7 @@ class PerformanceService:
         try:
             headers = {"X-MBX-APIKEY": self.api_key}
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 for sym in symbols_to_query:
                     params = self._sign_request({"symbol": sym, "limit": limit})
                     response = await client.get(
@@ -262,7 +274,7 @@ class PerformanceService:
             params = self._sign_request(params)
             headers = {"X-MBX-APIKEY": self.api_key}
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 response = await client.get(
                     f"{self.base_url}/fapi/v1/income",
                     params=params,
@@ -330,7 +342,9 @@ class PerformanceService:
                 "today_pnl": 0,
                 "week_pnl": 0,
                 "month_pnl": 0,
-                "equity_curve": [],
+                "pnl_curve": [],
+                "period_days": 90,
+                "last_updated": datetime.now().isoformat(),
                 "initial_equity": 0,
                 "_debug": {
                     "api_key_loaded": bool(self.api_key),
@@ -485,8 +499,8 @@ class PerformanceService:
             cumulative_pnl += daily_pnl[date_str]
             equity_curve.append({
                 "date": date_str,
-                "pnl": round(daily_pnl[date_str], 2),
-                "cumulative": round(cumulative_pnl, 2)
+                "daily_pnl": round(daily_pnl[date_str], 2),
+                "cumulative_pnl": round(cumulative_pnl, 2)
             })
 
         # Calculate percentages using initial equity
@@ -518,7 +532,9 @@ class PerformanceService:
             "today_pnl": round(today_pnl, 2),
             "week_pnl": round(week_pnl, 2),
             "month_pnl": round(month_pnl, 2),
-            "equity_curve": equity_curve,
+            "pnl_curve": equity_curve,
+            "period_days": 90,
+            "last_updated": datetime.now().isoformat(),
             "initial_equity": round(initial_equity, 2),
             "_debug": {
                 "api_key_loaded": bool(self.api_key),

@@ -4,6 +4,7 @@ Trading Service - Fetch real-time trading data from Binance Futures
 import hmac
 import hashlib
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import httpx
@@ -22,6 +23,19 @@ class TradingService:
         load_aitrader_env()
         self.api_key = settings.BINANCE_API_KEY
         self.api_secret = settings.BINANCE_API_SECRET
+        self._client: Optional[httpx.AsyncClient] = None
+
+    @asynccontextmanager
+    async def _get_client(self):
+        """Get or create a shared httpx client with connection pooling.
+        Used as async context manager to match existing code pattern
+        without closing the client on each request."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(10.0, connect=5.0),
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            )
+        yield self._client
 
     def _sign(self, params: dict) -> dict:
         """Sign request with HMAC SHA256"""
@@ -49,7 +63,7 @@ class TradingService:
         """Get futures account information with all balances"""
         try:
             params = self._sign({})
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v2/account",
                     params=params,
@@ -89,7 +103,7 @@ class TradingService:
         """Get all open positions"""
         try:
             params = self._sign({})
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v2/positionRisk",
                     params=params,
@@ -145,7 +159,7 @@ class TradingService:
                 params["symbol"] = symbol
             params = self._sign(params)
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/openOrders",
                     params=params,
@@ -195,7 +209,7 @@ class TradingService:
                 "limit": limit,
             })
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/allOrders",
                     params=params,
@@ -248,7 +262,7 @@ class TradingService:
                 "limit": limit,
             })
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/userTrades",
                     params=params,
@@ -311,7 +325,7 @@ class TradingService:
                 params["incomeType"] = income_type
             params = self._sign(params)
 
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/income",
                     params=params,
@@ -345,7 +359,7 @@ class TradingService:
     async def get_ticker(self, symbol: str = "BTCUSDT") -> Optional[Dict]:
         """Get 24hr ticker for a symbol"""
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/ticker/24hr",
                     params={"symbol": symbol},
@@ -372,7 +386,7 @@ class TradingService:
     async def get_mark_price(self, symbol: str = "BTCUSDT") -> Optional[Dict]:
         """Get mark price and funding rate"""
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/premiumIndex",
                     params={"symbol": symbol},
@@ -400,7 +414,7 @@ class TradingService:
     ) -> List[Dict]:
         """Get kline/candlestick data"""
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/klines",
                     params={
@@ -439,7 +453,7 @@ class TradingService:
     ) -> Optional[Dict]:
         """Get order book depth"""
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/depth",
                     params={"symbol": symbol, "limit": limit},
@@ -460,7 +474,7 @@ class TradingService:
     async def get_open_interest(self, symbol: str = "BTCUSDT") -> Optional[Dict]:
         """Get open interest for a symbol"""
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 # Get current open interest
                 resp = await client.get(
                     f"{self.BASE_URL}/fapi/v1/openInterest",
@@ -516,7 +530,7 @@ class TradingService:
     ) -> List[Dict]:
         """Get long/short account ratio"""
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._get_client() as client:
                 resp = await client.get(
                     f"{self.BASE_URL}/futures/data/globalLongShortAccountRatio",
                     params={

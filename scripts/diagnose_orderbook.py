@@ -51,6 +51,9 @@ def test_orderbook_client(symbol="BTCUSDT", limit=100):
     print("📖 测试订单簿客户端")
     print("=" * 70)
 
+    # Dynamic base currency from symbol
+    base_currency = symbol.replace('USDT', '') if 'USDT' in symbol else symbol.split('-')[0] if '-' in symbol else 'BTC'
+
     logger = logging.getLogger("test_orderbook_client")
     client = BinanceOrderBookClient(timeout=10, max_retries=2, logger=logger)
 
@@ -80,11 +83,11 @@ def test_orderbook_client(symbol="BTCUSDT", limit=100):
         # 显示前 5 档
         print(f"\n前 5 档买单:")
         for i, (price, qty) in enumerate(orderbook.get('bids', [])[:5]):
-            print(f"  {i+1}. ${float(price):,.2f} @ {float(qty):.4f} BTC")
+            print(f"  {i+1}. ${float(price):,.2f} @ {float(qty):.4f} {base_currency}")
 
         print(f"\n前 5 档卖单:")
         for i, (price, qty) in enumerate(orderbook.get('asks', [])[:5]):
-            print(f"  {i+1}. ${float(price):,.2f} @ {float(qty):.4f} BTC")
+            print(f"  {i+1}. ${float(price):,.2f} @ {float(qty):.4f} {base_currency}")
 
         return orderbook
     else:
@@ -92,7 +95,7 @@ def test_orderbook_client(symbol="BTCUSDT", limit=100):
         return None
 
 
-def test_orderbook_processor(orderbook, current_price, volatility=0.02):
+def test_orderbook_processor(orderbook, current_price, volatility=0.02, symbol="BTCUSDT"):
     """
     测试订单簿处理器
 
@@ -104,10 +107,15 @@ def test_orderbook_processor(orderbook, current_price, volatility=0.02):
         当前价格
     volatility : float
         波动率
+    symbol : str
+        交易对 (用于显示基础货币)
     """
     print("\n" + "=" * 70)
     print("⚙️  测试订单簿处理器")
     print("=" * 70)
+
+    # Dynamic base currency from symbol
+    base_currency = symbol.replace('USDT', '') if 'USDT' in symbol else symbol.split('-')[0] if '-' in symbol else 'BTC'
 
     logger = logging.getLogger("test_orderbook_processor")
 
@@ -168,8 +176,8 @@ def test_orderbook_processor(orderbook, current_price, volatility=0.02):
         print(f"  - Weighted OBI: {obi.get('weighted', 0):+.4f}")
         print(f"  - Adaptive Weighted OBI: {obi.get('adaptive_weighted', 0):+.4f}")
         print(f"  - Decay Used: {obi.get('decay_used', 0):.2f}")
-        print(f"  - Bid Volume: ${obi.get('bid_volume_usd', 0):,.0f} ({obi.get('bid_volume_btc', 0):.2f} BTC)")
-        print(f"  - Ask Volume: ${obi.get('ask_volume_usd', 0):,.0f} ({obi.get('ask_volume_btc', 0):.2f} BTC)")
+        print(f"  - Bid Volume: ${obi.get('bid_volume_usd', 0):,.0f} ({obi.get('bid_volume_btc', 0):.2f} {base_currency})")
+        print(f"  - Ask Volume: ${obi.get('ask_volume_usd', 0):,.0f} ({obi.get('ask_volume_btc', 0):.2f} {base_currency})")
 
         # 显示 Pressure Gradient
         gradient = result.get("pressure_gradient", {})
@@ -191,7 +199,7 @@ def test_orderbook_processor(orderbook, current_price, volatility=0.02):
             slippage = liquidity.get("slippage", {})
             for key, value in slippage.items():
                 if "buy_1.0_btc" in key and value.get("estimated") is not None:
-                    print(f"  - Slippage (Buy 1 BTC): {value['estimated']:.4f}% "
+                    print(f"  - Slippage (Buy 1 {base_currency}): {value['estimated']:.4f}% "
                           f"[conf={value['confidence']:.0%}, "
                           f"range={value['range'][0]:.4f}%-{value['range'][1]:.4f}%]")
 
@@ -206,13 +214,13 @@ def test_orderbook_processor(orderbook, current_price, volatility=0.02):
             if bid_anomalies:
                 print(f"  - Bid Anomalies: {len(bid_anomalies)}")
                 for a in bid_anomalies[:3]:
-                    print(f"    @ ${a['price']:,.0f}: {a['volume_btc']:.0f} BTC ({a['multiplier']:.1f}x)")
+                    print(f"    @ ${a['price']:,.0f}: {a['volume_btc']:.0f} {base_currency} ({a['multiplier']:.1f}x)")
 
             ask_anomalies = anomalies.get("ask_anomalies", [])
             if ask_anomalies:
                 print(f"  - Ask Anomalies: {len(ask_anomalies)}")
                 for a in ask_anomalies[:3]:
-                    print(f"    @ ${a['price']:,.0f}: {a['volume_btc']:.0f} BTC ({a['multiplier']:.1f}x)")
+                    print(f"    @ ${a['price']:,.0f}: {a['volume_btc']:.0f} {base_currency} ({a['multiplier']:.1f}x)")
 
         # 显示 Dynamics (第二次运行时会有数据)
         dynamics = result.get("dynamics", {})
@@ -268,6 +276,7 @@ def main():
         orderbook=orderbook,
         current_price=current_price,
         volatility=args.volatility,
+        symbol=args.symbol,
     )
 
     if not result:

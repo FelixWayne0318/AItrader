@@ -75,7 +75,6 @@ try:
     from strategy.trading_logic import (
         calculate_position_size,
         validate_multiagent_sltp,
-        calculate_technical_sltp,
     )
     # Test that the functions actually work (they may fail at runtime due to config)
     try:
@@ -394,34 +393,11 @@ def mock_validate_multiagent_sltp(
 
     return True, multi_sl, multi_tp, "Valid"
 
-def mock_calculate_technical_sltp(
-    side: str,
-    entry_price: float,
-    support: float,
-    resistance: float,
-    confidence: str,
-    use_support_resistance: bool = True,
-    sl_buffer_pct: float = 0.001,
-) -> Tuple[float, float, str]:
-    """Mock technical SL/TP calculation."""
-    is_long = side.upper() in ('BUY', 'LONG')
-
-    if is_long:
-        sl = entry_price * 0.98  # 2% below
-        tp = entry_price * 1.03  # 3% above
-    else:
-        sl = entry_price * 1.02  # 2% above
-        tp = entry_price * 0.97  # 3% below
-
-    return sl, tp, "Mock calculation"
-
 # Use real or mock functions
 if MODULES_AVAILABLE['trading_logic']:
     _validate_sltp = validate_multiagent_sltp
-    _calc_tech_sltp = calculate_technical_sltp
 else:
     _validate_sltp = mock_validate_multiagent_sltp
-    _calc_tech_sltp = mock_calculate_technical_sltp
     print("  (Using mock functions - install dotenv for full tests)")
     print()
 
@@ -490,53 +466,12 @@ test("Missing SL rejected", not is_valid)
 
 
 # =============================================================================
-# 6. Test Technical SL/TP Calculation
+# 6. Technical SL/TP — removed in v5.1
 # =============================================================================
-section("6. Technical SL/TP Calculation")
-
-# Test LONG with support
-sl, tp, method = _calc_tech_sltp(
-    side="LONG",
-    entry_price=100000,
-    support=98000,
-    resistance=105000,
-    confidence="HIGH",
-    use_support_resistance=True,
-)
-test("LONG SL below entry", sl < 100000)
-test("LONG TP above entry", tp > 100000)
-
-# Test SHORT with resistance
-sl, tp, method = _calc_tech_sltp(
-    side="SHORT",
-    entry_price=100000,
-    support=95000,
-    resistance=102000,
-    confidence="HIGH",
-    use_support_resistance=True,
-)
-test("SHORT SL above entry", sl > 100000)
-test("SHORT TP below entry", tp < 100000)
-
-# Test legacy BUY
-sl, tp, method = _calc_tech_sltp(
-    side="BUY",  # Legacy
-    entry_price=100000,
-    support=98000,
-    resistance=105000,
-    confidence="HIGH",
-)
-test("Legacy BUY side works", sl < 100000 and tp > 100000)
-
-# Test legacy SELL
-sl, tp, method = _calc_tech_sltp(
-    side="SELL",  # Legacy
-    entry_price=100000,
-    support=95000,
-    resistance=102000,
-    confidence="HIGH",
-)
-test("Legacy SELL side works", sl > 100000 and tp < 100000)
+section("6. Technical SL/TP (removed in v5.1)")
+print("  ⏭️  calculate_technical_sltp removed in v5.1")
+print("  ⏭️  Production uses calculate_sr_based_sltp (S/R zone + ATR buffer)")
+print()
 
 
 # =============================================================================

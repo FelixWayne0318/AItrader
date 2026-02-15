@@ -20,8 +20,6 @@ import {
 import { Button } from "@/components/ui/button";
 import type { Locale } from "@/lib/i18n";
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 interface HeaderProps {
   locale: Locale;
   t: (key: string) => string;
@@ -48,13 +46,13 @@ export function Header({ locale, t }: HeaderProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const { data: status } = useSWR(mounted ? "/api/public/system-status" : null, fetcher, { refreshInterval: 30000 });
-  const { data: sentiment } = useSWR(mounted ? "/api/trading/long-short-ratio/BTCUSDT" : null, fetcher, { refreshInterval: 60000 });
-  const { data: markPrice } = useSWR(mounted ? "/api/trading/mark-price/BTCUSDT" : null, fetcher, { refreshInterval: 30000 });
-  const { data: openInterest } = useSWR(mounted ? "/api/trading/open-interest/BTCUSDT" : null, fetcher, { refreshInterval: 60000 });
-  const { data: ticker } = useSWR(mounted ? "/api/trading/ticker/BTCUSDT" : null, fetcher, { refreshInterval: 10000 });
-  const { data: latestSignal } = useSWR(mounted ? "/api/public/latest-signal" : null, fetcher, { refreshInterval: 30000 });
-  const { data: branding } = useSWR(mounted ? "/api/public/site-branding" : null, fetcher, { refreshInterval: 300000 });
+  const { data: status } = useSWR(mounted ? "/api/public/system-status" : null, { refreshInterval: 30000 });
+  const { data: sentiment } = useSWR(mounted ? "/api/trading/long-short-ratio/BTCUSDT" : null, { refreshInterval: 60000 });
+  const { data: markPrice } = useSWR(mounted ? "/api/trading/mark-price/BTCUSDT" : null, { refreshInterval: 30000 });
+  const { data: openInterest } = useSWR(mounted ? "/api/trading/open-interest/BTCUSDT" : null, { refreshInterval: 60000 });
+  const { data: ticker } = useSWR(mounted ? "/api/trading/ticker/BTCUSDT" : null, { refreshInterval: 10000 });
+  const { data: latestSignal } = useSWR(mounted ? "/api/public/latest-signal" : null, { refreshInterval: 30000 });
+  const { data: branding } = useSWR(mounted ? "/api/public/site-branding" : null, { refreshInterval: 300000 });
 
   const toggleLocale = () => {
     const newLocale = locale === "en" ? "zh" : "en";
@@ -89,9 +87,9 @@ export function Header({ locale, t }: HeaderProps) {
   };
 
   return (
-    <header className="fixed top-4 inset-x-0 z-50 px-4">
+    <header className="fixed top-4 inset-x-0 z-50 px-4 overflow-hidden">
       {/* DipSway Style: Transparent header, each group has its own background */}
-      <div className="max-w-7xl mx-auto flex h-14 items-center justify-between">
+      <div className="max-w-7xl mx-auto flex h-14 items-center justify-between min-w-0">
 
         {/* Group 1: Logo - No background */}
         <Link href="/" className="flex items-center gap-2.5 group shrink-0">
@@ -106,14 +104,14 @@ export function Header({ locale, t }: HeaderProps) {
         </Link>
 
         {/* Group 2: Navigation - Own rounded background (Desktop + Landscape) */}
-        <nav className="hidden lg:flex landscape:flex items-center gap-1 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl p-1 ml-8">
+        <nav className="hidden lg:flex landscape:flex items-center gap-1 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl p-1 ml-8 landscape:ml-3 shrink-0 landscape:shrink">
           {navItems.map((item) => {
             const isActive = router.pathname === item.href;
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                className={`px-4 landscape:px-2.5 py-1.5 rounded-lg text-sm landscape:text-xs font-medium transition-all whitespace-nowrap ${
                   isActive
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground hover:bg-background/50"
@@ -126,16 +124,16 @@ export function Header({ locale, t }: HeaderProps) {
         </nav>
 
         {/* Spacer to push metrics group closer together */}
-        <div className="hidden lg:block landscape:block flex-1" />
+        <div className="hidden lg:block landscape:block flex-1 landscape:min-w-0" />
 
         {/* Metrics Group Container - smaller gaps between Bot/Signal/Markets */}
-        <div className="hidden lg:flex landscape:flex items-center gap-1.5">
+        <div className="hidden lg:flex landscape:flex items-center gap-1.5 landscape:gap-1 shrink-0">
           {/* Group 3: Bot Status */}
           {mounted && (
-            <div className="flex items-center gap-1.5 px-3 py-2 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl">
+            <div className="flex items-center gap-1.5 landscape:gap-1 px-3 landscape:px-2 py-2 landscape:py-1.5 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl">
               <Bot className={`h-3.5 w-3.5 ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`} />
-              <span className="text-xs text-muted-foreground">Bot:</span>
-              <span className={`text-xs font-medium ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`}>
+              <span className="text-xs landscape:text-[10px] text-muted-foreground landscape:hidden">Bot:</span>
+              <span className={`text-xs landscape:text-[10px] font-medium ${status?.trading_active ? "text-green-500" : "text-muted-foreground"}`}>
                 {status?.trading_active ? "Running" : "Offline"}
               </span>
             </div>
@@ -143,14 +141,14 @@ export function Header({ locale, t }: HeaderProps) {
 
           {/* Group 4: AI Signal */}
           {mounted && (
-            <div className={`flex items-center gap-1.5 px-3 py-2 backdrop-blur-xl border border-border/30 rounded-xl ${
+            <div className={`flex items-center gap-1.5 landscape:gap-1 px-3 landscape:px-2 py-2 landscape:py-1.5 backdrop-blur-xl border border-border/30 rounded-xl ${
               signal === "BUY" || signal === "LONG" ? "bg-green-500/10" :
               signal === "SELL" || signal === "SHORT" ? "bg-red-500/10" :
               signal === "NO_DATA" ? "bg-yellow-500/10" : "bg-background/60"
             }`}>
               <Brain className={`h-3.5 w-3.5 ${getSignalColor(signal)}`} />
-              <span className="text-xs text-muted-foreground">Signal:</span>
-              <span className={`text-xs font-semibold ${getSignalColor(signal)}`}>{getSignalDisplay(signal)}</span>
+              <span className="text-xs landscape:text-[10px] text-muted-foreground landscape:hidden">Signal:</span>
+              <span className={`text-xs landscape:text-[10px] font-semibold ${getSignalColor(signal)}`}>{getSignalDisplay(signal)}</span>
             </div>
           )}
 
@@ -159,7 +157,7 @@ export function Header({ locale, t }: HeaderProps) {
             <div ref={metricsRef} className="relative">
               <button
                 onClick={() => setMetricsExpanded(!metricsExpanded)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center gap-1.5 landscape:gap-1 px-3 landscape:px-2 py-2 landscape:py-1.5 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl text-xs landscape:text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors"
               >
                 <TrendingUp className="h-3.5 w-3.5" />
                 <span>Markets</span>
@@ -204,17 +202,18 @@ export function Header({ locale, t }: HeaderProps) {
         </div>
 
         {/* Group 6: Language + CTA (Desktop + Landscape) */}
-        <div className="hidden lg:flex landscape:flex items-center gap-2 ml-3">
+        <div className="hidden lg:flex landscape:flex items-center gap-2 landscape:gap-1 ml-3 landscape:ml-1.5 shrink-0">
           <Button
             variant="ghost"
             size="sm"
             onClick={toggleLocale}
-            className="h-9 px-3 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl hover:bg-background/80"
+            className="h-9 landscape:h-8 px-3 landscape:px-2 bg-background/60 backdrop-blur-xl border border-border/30 rounded-xl hover:bg-background/80"
           >
-            <Globe className="h-4 w-4" />
-            <span className="ml-1.5 text-xs font-medium">{locale.toUpperCase()}</span>
+            <Globe className="h-4 w-4 landscape:h-3.5 landscape:w-3.5" />
+            <span className="ml-1.5 landscape:ml-1 text-xs landscape:text-[10px] font-medium">{locale.toUpperCase()}</span>
           </Button>
-          <Link href="/copy">
+          {/* CTA hidden in landscape - Copy Trading already in nav */}
+          <Link href="/copy" className="landscape:hidden">
             <Button size="sm" className="h-9 rounded-xl px-4 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-md shadow-primary/20">
               {t("hero.cta")}
             </Button>

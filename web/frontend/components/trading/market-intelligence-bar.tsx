@@ -12,8 +12,6 @@ import {
   TrendingDown,
 } from 'lucide-react';
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 interface MetricItemProps {
   icon: React.ReactNode;
   label: string;
@@ -66,37 +64,37 @@ function Divider() {
 
 export function MarketIntelligenceBar() {
   // Fetch bot status
-  const { data: status, error: statusError } = useSWR('/api/public/system-status', fetcher, {
+  const { data: status, error: statusError } = useSWR('/api/public/system-status', {
     refreshInterval: 30000,
   });
 
   // Fetch BTC ticker (for volume)
-  const { data: ticker } = useSWR('/api/trading/ticker/BTCUSDT', fetcher, {
+  const { data: ticker } = useSWR('/api/trading/ticker/BTCUSDT', {
     refreshInterval: 10000,
   });
 
   // Fetch long/short ratio
-  const { data: sentiment } = useSWR('/api/trading/long-short-ratio/BTCUSDT', fetcher, {
+  const { data: sentiment } = useSWR('/api/trading/long-short-ratio/BTCUSDT', {
     refreshInterval: 60000,
   });
 
   // Fetch mark price (includes funding rate)
-  const { data: markPrice } = useSWR('/api/trading/mark-price/BTCUSDT', fetcher, {
+  const { data: markPrice } = useSWR('/api/trading/mark-price/BTCUSDT', {
     refreshInterval: 30000,
   });
 
   // Fetch open interest
-  const { data: openInterest } = useSWR('/api/trading/open-interest/BTCUSDT', fetcher, {
+  const { data: openInterest } = useSWR('/api/trading/open-interest/BTCUSDT', {
     refreshInterval: 60000,
   });
 
   // Fetch performance stats
-  const { data: performance } = useSWR('/api/public/performance?days=7', fetcher, {
+  const { data: performance } = useSWR('/api/public/performance?days=7', {
     refreshInterval: 60000,
   });
 
   // Fetch latest AI signal
-  const { data: latestSignal } = useSWR('/api/public/latest-signal', fetcher, {
+  const { data: latestSignal } = useSWR('/api/public/latest-signal', {
     refreshInterval: 30000,
   });
 

@@ -30,7 +30,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from indicators.technical_manager import TechnicalIndicatorManager
-from utils.deepseek_client import DeepSeekAnalyzer
+
 from utils.sentiment_client import SentimentDataFetcher
 from utils.binance_account import BinanceAccountFetcher
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
@@ -45,6 +45,7 @@ from strategy.trading_logic import (
     calculate_position_size,
     validate_multiagent_sltp,
 )
+from utils.risk_controller import RiskController, TradingState
 
 
 class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
@@ -93,9 +94,6 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-chat"
     deepseek_temperature: float = 0.3  # Increased for debate diversity
-    deepseek_max_retries: int = 2
-    deepseek_retry_delay: float = 1.0  # Retry delay in seconds
-    deepseek_signal_history_count: int = 30  # Signal history size
     debate_rounds: int = 2  # Bull/Bear debate rounds (1-3)
     multi_agent_retry_delay: float = 1.0  # Multi-agent retry delay
     multi_agent_json_parse_max_retries: int = 2  # JSON parse max retries
@@ -127,6 +125,7 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     # v5.0: Unified SL/TP management (S/R dynamic + profit-lock)
     # Replaces separate trailing_stop + sltp_method branching
     atr_buffer_multiplier: float = 0.5  # ATR buffer for SL placement behind S/R zone
+    tp_buffer_multiplier: float = 0.25  # ATR buffer for TP placement in front of S/R zone (0=off)
     dynamic_sltp_update: bool = True  # Reevaluate SL/TP every on_timer cycle
     dynamic_update_threshold_pct: float = 0.002  # Min change to trigger SL/TP update (0.2%)
 
@@ -195,6 +194,9 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     multi_timeframe_enabled: bool = False  # Default disabled for backward compatibility
     mtf_trend_sma_period: int = 200        # SMA period for trend layer (1D)
     mtf_decision_debate_rounds: int = 2    # Debate rounds for decision layer (4H)
+
+    # v3.12: Risk Circuit Breakers configuration (passed as dict from ConfigManager)
+    risk_config: Dict = None  # type: ignore  # risk.circuit_breakers section from base.yaml
 
     # Order Book Configuration (v3.7)
     order_book_enabled: bool = False  # 启用订单簿深度数据 (默认关闭)
@@ -293,8 +295,9 @@ class DeepSeekAIStrategy(Strategy):
         # No need for manual OCO manager anymore
         self.enable_oco = config.enable_oco
 
-        # v5.0: S/R-based dynamic SL/TP management
+        # v5.1: S/R-based dynamic SL/TP management
         self.atr_buffer_multiplier = config.atr_buffer_multiplier
+        self.tp_buffer_multiplier = config.tp_buffer_multiplier
         self.dynamic_sltp_update_enabled = config.dynamic_sltp_update
         self.dynamic_update_threshold_pct = config.dynamic_update_threshold_pct
 
@@ -338,6 +341,11 @@ class DeepSeekAIStrategy(Strategy):
         # Required because NT 1.222.0 rejects bracket orders with linked_order_ids
         self._pending_sltp: Optional[Dict[str, Any]] = None
 
+        # v4.17: Track pending LIMIT entry order for lifecycle management
+        # When entry uses LIMIT (instead of MARKET), the order may not fill immediately.
+        # on_timer cancels unfilled entry orders before starting new analysis.
+        self._pending_entry_order_id: Optional[str] = None
+
         # v3.18: Pending reversal state for event-driven two-phase commit
         # This prevents race condition when reversing positions (close then open)
         # Format: {
@@ -354,6 +362,13 @@ class DeepSeekAIStrategy(Strategy):
 
         # v4.0: Cached ATR value for emergency SL calculation (updated in on_timer)
         self._cached_atr_value: float = 0.0
+
+        # v5.10: Emergency SL cooldown to prevent infinite loop
+        # When user manually cancels emergency SL, bot detects "SL canceled" and
+        # re-submits another emergency SL → user cancels → infinite loop.
+        # Cooldown ensures max 1 emergency SL per 120 seconds.
+        self._last_emergency_sl_time: float = 0.0
+        self._emergency_sl_count: int = 0  # consecutive count, reset on new position
 
         # Format: {
         #   "instrument_id": {
@@ -431,21 +446,12 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.error(f"❌ Failed to initialize MTF Manager: {e}")
                 self.mtf_enabled = False
 
-        # DeepSeek AI analyzer
+        # DeepSeek API key
         api_key = config.deepseek_api_key or os.getenv('DEEPSEEK_API_KEY')
         if not api_key:
             raise ValueError("DeepSeek API key not provided")
 
-        self.deepseek = DeepSeekAnalyzer(
-            api_key=api_key,
-            model=config.deepseek_model,
-            temperature=config.deepseek_temperature,
-            max_retries=config.deepseek_max_retries,
-            signal_history_count=config.deepseek_signal_history_count,
-            retry_delay=config.deepseek_retry_delay,
-        )
-
-        # Multi-Agent AI analyzer (Bull/Bear Debate) - for parallel comparison
+        # Multi-Agent AI analyzer (Bull/Bear Debate) - sole decision maker
         self.multi_agent = MultiAgentAnalyzer(
             api_key=api_key,
             model=config.deepseek_model,
@@ -650,6 +656,7 @@ class DeepSeekAIStrategy(Strategy):
             # ========== Order Book Depth (v3.7) ==========
             # 订单簿深度数据 (提供流动性、不平衡、滑点等指标)
             order_book_enabled = config.order_book_enabled if hasattr(config, 'order_book_enabled') else False
+            self.order_book_enabled = order_book_enabled  # Store for on_timer access
             if order_book_enabled:
                 # Binance 订单簿客户端
                 self.binance_orderbook_client = BinanceOrderBookClient(
@@ -695,12 +702,20 @@ class DeepSeekAIStrategy(Strategy):
             self.binance_orderbook_client = None
             self.orderbook_processor = None
             self.binance_derivatives_client = None
+            self.order_book_enabled = False
             self.log.info("Order Flow disabled by config")
 
         # State tracking
         self.instrument: Optional[Instrument] = None
         self.last_signal: Optional[Dict[str, Any]] = None
         self.bars_received = 0
+
+        # v3.12: Risk Controller with circuit breakers
+        risk_config = config.risk_config if hasattr(config, 'risk_config') and config.risk_config else {}
+        self.risk_controller = RiskController(
+            config=risk_config,
+            logger=self.log,
+        )
 
         self.log.info(f"DeepSeek AI Strategy initialized for {self.instrument_id}")
 
@@ -1512,6 +1527,11 @@ class DeepSeekAIStrategy(Strategy):
             # v3.13: 检查是否需要发送定时总结 (每日/每周)
             self._check_scheduled_summaries()
 
+            # v4.17: Cancel unfilled LIMIT entry orders from previous cycle
+            # LIMIT entries may not fill if price moved away. Cancel before new analysis
+            # to avoid stale orders conflicting with new signals.
+            self._cancel_pending_entry_order()
+
             # Check if indicators are ready
             if not self.indicator_manager.is_initialized():
                 self.log.warning("Indicators not yet initialized, skipping analysis")
@@ -1629,7 +1649,7 @@ class DeepSeekAIStrategy(Strategy):
                 funding_rate = current_position.get('funding_rate_current')
                 if funding_rate is not None:
                     daily_cost = current_position.get('daily_funding_cost_usd', 0)
-                    self.log.info(f"Settled FR: {funding_rate*100:.4f}%/8h (Daily Est: ${daily_cost:.2f})")
+                    self.log.info(f"Settled FR: {funding_rate*100:.5f}%/8h (Daily Est: ${daily_cost:.2f})")
 
             # ========== 层级决策架构 (TradingAgents v3.1) ==========
             # 设计理念: AI 负责所有交易决策，本地仅做支撑/阻力位边界检查
@@ -1669,7 +1689,11 @@ class DeepSeekAIStrategy(Strategy):
                         'bb_middle': decision_layer_data.get('bb_middle', 0),
                         'bb_lower': decision_layer_data.get('bb_lower', 0),
                         'bb_position': decision_layer_data.get('bb_position', 50),  # v3.5: 支撑/阻力距离
-                        # 'overall_trend' 已移除 - AI 使用 INDICATOR_DEFINITIONS 自己判断
+                        # v5.6: Add ADX/DI to 4H decision layer (was missing → AI blind to 4H trend strength)
+                        'adx': decision_layer_data.get('adx', 0),
+                        'di_plus': decision_layer_data.get('di_plus', 0),
+                        'di_minus': decision_layer_data.get('di_minus', 0),
+                        'adx_regime': decision_layer_data.get('adx_regime', 'UNKNOWN'),
                     }
                     self.log.info(f"[MTF] AI 分析使用 4H 决策层数据: RSI={ai_technical_data['mtf_decision_layer']['rsi']:.1f}")
 
@@ -1754,12 +1778,62 @@ class DeepSeekAIStrategy(Strategy):
                             funding = derivatives_data.get('funding_rate')
                             self.log.info(
                                 f"📊 Derivatives: OI={oi.get('value', 0):.2f} BTC, "
-                                f"Funding={funding.get('value', 0)*100:.4f}%" if oi and funding else "Derivatives: partial data"
+                                f"Funding={funding.get('value', 0)*100:.5f}%" if oi and funding else "Derivatives: partial data"
                             )
                         else:
                             self.log.debug("Coinalyze client disabled, no derivatives data")
                     except Exception as e:
                         self.log.warning(f"⚠️ Derivatives fetch failed: {e}")
+
+                # ========== v5.6: 合并 Binance Funding Rate 到 derivatives_data ==========
+                # Coinalyze fetch_all() 只返回 OI + Liquidations，不含 Funding Rate
+                # Binance FR 需要单独获取并注入，否则 AI 看到 "Funding Rate: N/A"
+                if self.binance_kline_client:
+                    try:
+                        binance_fr = self.binance_kline_client.get_funding_rate()
+                        if binance_fr:
+                            if derivatives_data is None:
+                                derivatives_data = {'enabled': True}
+                            # Build funding_rate dict in format expected by _format_derivatives_report
+                            fr_dict = {
+                                'current_pct': binance_fr.get('funding_rate_pct', 0),
+                                'settled_pct': binance_fr.get('funding_rate_pct', 0),
+                                'predicted_rate_pct': binance_fr.get('predicted_rate_pct'),
+                                'premium_index': binance_fr.get('premium_index'),
+                                'mark_price': binance_fr.get('mark_price', 0),
+                                'index_price': binance_fr.get('index_price', 0),
+                                'next_funding_countdown_min': binance_fr.get('next_funding_countdown_min'),
+                                'source': 'binance_direct',
+                            }
+                            # Also fetch history for trend analysis
+                            try:
+                                fr_history = self.binance_kline_client.get_funding_rate_history(limit=10)
+                                if fr_history and len(fr_history) >= 2:
+                                    history_list = []
+                                    for h in fr_history:
+                                        rate = float(h.get('fundingRate', 0))
+                                        history_list.append({
+                                            'rate_pct': round(rate * 100, 6),
+                                            'time': h.get('fundingTime'),
+                                        })
+                                    fr_dict['history'] = history_list
+                                    # Calculate trend
+                                    rates = [entry['rate_pct'] for entry in history_list]
+                                    if rates[-1] > rates[0] * 1.1:
+                                        fr_dict['trend'] = 'RISING'
+                                    elif rates[-1] < rates[0] * 0.9:
+                                        fr_dict['trend'] = 'FALLING'
+                                    else:
+                                        fr_dict['trend'] = 'STABLE'
+                            except Exception:
+                                pass  # History is best-effort
+                            derivatives_data['funding_rate'] = fr_dict
+                            self.log.info(
+                                f"📊 Funding Rate (Binance): settled={binance_fr.get('funding_rate_pct', 0):.5f}%, "
+                                f"predicted={binance_fr.get('predicted_rate_pct', 'N/A')}"
+                            )
+                    except Exception as e:
+                        self.log.warning(f"⚠️ Binance funding rate merge failed: {e}")
 
                 # ========== 获取订单簿深度数据 (v3.7) ==========
                 orderbook_data = None
@@ -1825,6 +1899,21 @@ class DeepSeekAIStrategy(Strategy):
                             self._cached_atr_value = atr_val
                     except Exception:
                         pass  # ATR cache is best-effort
+
+                # v3.12: Update risk controller with current equity and ATR
+                try:
+                    self.risk_controller.update_equity(
+                        current_equity=self.equity,
+                        current_atr=self._cached_atr_value if self._cached_atr_value > 0 else None,
+                    )
+                    risk_state = self.risk_controller.metrics.trading_state
+                    if risk_state != TradingState.ACTIVE:
+                        self.log.warning(
+                            f"⚠️ Risk Controller: {risk_state.value} - "
+                            f"{self.risk_controller.metrics.halt_reason}"
+                        )
+                except Exception as e:
+                    self.log.warning(f"Risk controller update failed: {e}")
 
                 # v4.0 (E1): Extract MTF bars from trend/decision managers (if available)
                 bars_data_4h = None
@@ -1915,6 +2004,14 @@ class DeepSeekAIStrategy(Strategy):
                     rationale = judge_decision.get('rationale', '')
                     strategic_actions = judge_decision.get('strategic_actions', [])
                     self.log.info(f"⚖️ Winning Side: {winning_side}")
+                    # v5.7: Log confluence analysis
+                    confluence = judge_decision.get('confluence', {})
+                    if confluence:
+                        aligned = confluence.get('aligned_layers', '?')
+                        self.log.info(f"📊 Confluence ({aligned} layers aligned):")
+                        for layer_key in ('trend_1d', 'momentum_4h', 'levels_15m', 'derivatives'):
+                            layer_val = confluence.get(layer_key, 'N/A')
+                            self.log.info(f"  {layer_key}: {layer_val}")
                     if rationale:
                         self.log.info(f"📌 Rationale: {rationale}")
                     if strategic_actions:
@@ -1955,6 +2052,39 @@ class DeepSeekAIStrategy(Strategy):
                 )
             except Exception as e:
                 self.log.debug(f"Failed to save decision snapshot: {e}")
+
+            # v3.12: Risk Controller gate - check circuit breakers before execution
+            signal = signal_data.get('signal', 'HOLD')
+            if signal in ('LONG', 'SHORT'):
+                can_trade, block_reason = self.risk_controller.can_open_trade()
+                if not can_trade:
+                    self.log.warning(f"🚫 Risk Controller blocked trade: {block_reason}")
+                    self._last_signal_status = {
+                        'executed': False,
+                        'reason': f'风控熔断: {block_reason}',
+                        'action_taken': '',
+                    }
+                    # Send Telegram alert for circuit breaker
+                    if self.telegram_bot and self.enable_telegram and self.telegram_notify_errors:
+                        try:
+                            alert_msg = self.telegram_bot.format_error_alert({
+                                'level': 'WARNING',
+                                'message': f"风控熔断阻止交易: {block_reason}",
+                                'context': f"信号: {signal} {signal_data.get('confidence', 'N/A')}",
+                            })
+                            self.telegram_bot.send_message_sync(alert_msg)
+                        except Exception:
+                            pass
+                    # Skip trade execution but continue with OCO cleanup and SL/TP updates
+                    signal_data = dict(signal_data)  # Make a copy
+                    signal_data['signal'] = 'HOLD'
+                    signal_data['reason'] = f"[风控熔断] {block_reason} | 原始: {signal}"
+
+                # Apply position size multiplier from risk state (REDUCED = 0.5x)
+                risk_mult = self.risk_controller.get_position_size_multiplier()
+                if risk_mult < 1.0 and risk_mult > 0:
+                    signal_data['_risk_position_multiplier'] = risk_mult
+                    self.log.info(f"⚠️ Risk Controller: position size ×{risk_mult:.1f}")
 
             # Execute trade
             self._execute_trade(signal_data, price_data, technical_data, current_position)
@@ -2085,10 +2215,16 @@ class DeepSeekAIStrategy(Strategy):
             # Get current price for entry
             current_price = price_data.get('price') if price_data else None
 
+            # v5.7: Include confluence analysis in latest_analysis
+            judge_confluence = {}
+            if isinstance(judge_decision, dict):
+                judge_confluence = judge_decision.get('confluence', {})
+
             latest_analysis = {
                 'signal': signal_data.get('signal', 'HOLD'),
                 'confidence': signal_data.get('confidence', 'MEDIUM'),
                 'confidence_score': confidence_score,
+                'confluence': judge_confluence,
                 'bull_analysis': bull_analysis or 'No bull analysis available',
                 'bear_analysis': bear_analysis or 'No bear analysis available',
                 'judge_reasoning': judge_reasoning or 'No judge reasoning available',
@@ -3283,6 +3419,8 @@ class DeepSeekAIStrategy(Strategy):
                 'reasoning': signal_data.get('reason', ''),
                 'risk_level': signal_data.get('risk_level', 'MEDIUM'),
                 'position_size_pct': signal_data.get('position_size_pct'),
+                # v5.7: Pass confluence for Telegram display
+                'confluence': judge_info.get('confluence', {}),
             }
 
         # Execute position management logic
@@ -3348,6 +3486,15 @@ class DeepSeekAIStrategy(Strategy):
         btc_quantity, details = calculate_position_size(
             signal_data, price_data, technical_data, config, logger
         )
+
+        # v3.12: Apply risk controller position size multiplier (REDUCED = 0.5x)
+        risk_mult = signal_data.get('_risk_position_multiplier', 1.0)
+        if risk_mult < 1.0 and btc_quantity > 0:
+            original_qty = btc_quantity
+            btc_quantity = round(btc_quantity * risk_mult, 3)
+            self.log.info(
+                f"⚠️ Risk multiplier applied: {original_qty:.4f} × {risk_mult:.1f} = {btc_quantity:.4f} BTC"
+            )
 
         # v4.8: 累加模式 - 计算的是"本次加仓量"而不是"目标仓位"
         if self.position_sizing_cumulative and current_position:
@@ -3778,6 +3925,10 @@ class DeepSeekAIStrategy(Strategy):
             if hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
                 try:
                     from utils.sr_sltp_calculator import calculate_sr_based_sltp
+                    from strategy.trading_logic import get_min_sl_distance_pct
+                    # v5.10: Level 2 uses half of Level 1's min SL distance
+                    # S/R-based SL has structural support, so softer threshold
+                    sr_min_sl = get_min_sl_distance_pct() * 0.5
                     sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
                         current_price=entry_price,
                         side=side.name,
@@ -3785,6 +3936,8 @@ class DeepSeekAIStrategy(Strategy):
                         atr_value=self._cached_atr_value,
                         min_rr_ratio=self.min_rr_ratio,
                         atr_buffer_multiplier=self.atr_buffer_multiplier,
+                        tp_buffer_multiplier=self.tp_buffer_multiplier,
+                        min_sl_distance_pct=sr_min_sl,
                     )
                     if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
                         stop_loss_price = sr_sl
@@ -4101,14 +4254,12 @@ class DeepSeekAIStrategy(Strategy):
 
     def _open_new_position(self, side: str, quantity: float):
         """
-        Open new position using bracket order (entry + SL + TP).
+        Open new position using two-phase order submission.
 
-        This method submits a bracket order which automatically includes:
-        - Entry order (MARKET)
-        - Stop Loss order (STOP_MARKET)
-        - Take Profit order(s) (LIMIT)
-
-        The SL and TP orders are linked with OCO, so when one fills, the others cancel.
+        v4.17: LIMIT entry at validated price, SL/TP submitted after fill.
+        - Entry order (LIMIT at validated entry_price)
+        - Stop Loss order (STOP_MARKET, submitted in on_position_opened)
+        - Take Profit order (LIMIT, submitted in on_position_opened)
         """
         order_side = OrderSide.BUY if side == 'long' else OrderSide.SELL
 
@@ -4128,6 +4279,69 @@ class DeepSeekAIStrategy(Strategy):
             'action_taken': f'开{side_cn}仓 {quantity:.4f} BTC',
         }
 
+    def _adjust_tp_for_fill_price(
+        self,
+        tp_price: float,
+        sl_price: float,
+        fill_price: float,
+        side: str,
+    ) -> tuple:
+        """
+        v4.16: Pre-adjust TP price using actual fill price before order submission.
+
+        Replaces the old cancel+resubmit approach in _validate_and_adjust_rr_post_fill
+        for new position entries, eliminating the async race condition that caused
+        -2022 ReduceOnly rejection on Binance.
+
+        Returns
+        -------
+        tuple of (adjusted_tp_price, was_adjusted: bool)
+        """
+        try:
+            from strategy.trading_logic import get_min_rr_ratio
+            min_rr = get_min_rr_ratio()
+
+            is_long = side.upper() in ('LONG', 'BUY')
+
+            if is_long:
+                risk = fill_price - sl_price
+                reward = tp_price - fill_price
+            else:
+                risk = sl_price - fill_price
+                reward = fill_price - tp_price
+
+            if risk <= 0:
+                self.log.warning(
+                    f"⚠️ TP fill-adjust: SL on wrong side "
+                    f"(fill=${fill_price:,.2f}, SL=${sl_price:,.2f}, side={side})"
+                )
+                return tp_price, False
+
+            actual_rr = reward / risk
+
+            if actual_rr >= min_rr:
+                self.log.info(
+                    f"✅ Pre-submit R/R check: {actual_rr:.2f}:1 >= {min_rr}:1 "
+                    f"(fill=${fill_price:,.2f}) — TP unchanged"
+                )
+                return tp_price, False
+
+            # R/R below minimum — adjust TP
+            if is_long:
+                new_tp = fill_price + (risk * min_rr)
+            else:
+                new_tp = fill_price - (risk * min_rr)
+
+            self.log.warning(
+                f"⚠️ Fill slippage degraded R/R: {actual_rr:.2f}:1 < {min_rr}:1 "
+                f"(fill=${fill_price:,.2f}). Adjusting TP: ${tp_price:,.2f} → ${new_tp:,.2f}"
+            )
+            return new_tp, True
+
+        except Exception as e:
+            self.log.error(f"❌ _adjust_tp_for_fill_price failed: {e}")
+            return tp_price, False
+
     def _validate_and_adjust_rr_post_fill(
         self,
         instrument_key: str,
@@ -4137,8 +4351,9 @@ class DeepSeekAIStrategy(Strategy):
         """
         v4.9: Post-fill R/R validation and TP adjustment.
 
-        Problem: SL/TP are calculated using estimated price (bar close), but MARKET order
-        fills at a different price (slippage). This can degrade R/R below the 1.5:1 minimum.
+        Problem: SL/TP are calculated using estimated price, but fill price may differ
+        (v4.17 LIMIT fills at entry_price or better; legacy add/reversal paths may vary).
+        This can degrade R/R below the 1.5:1 minimum.
 
         Solution: After fill, recalculate R/R with actual fill price. If below minimum,
         cancel existing TP and submit a new one that restores R/R >= min_rr_ratio.
@@ -4454,8 +4669,21 @@ class DeepSeekAIStrategy(Strategy):
         Checks if position still exists:
         - No position → clear all state (external close detected)
         - Position exists but no active SL → resubmit emergency SL
+
+        v5.10: Bypass Binance account cache to avoid stale position data.
+        When user manually closes position, the SL cancel event arrives before
+        the cached account data refreshes, causing phantom position detection.
         """
         try:
+            # v5.10: Invalidate Binance account cache BEFORE checking position.
+            # Without this, get_positions() returns stale cached data (5s TTL)
+            # that shows the old position even after it's been closed.
+            if self.binance_account:
+                try:
+                    self.binance_account.get_account_info(use_cache=False)
+                except Exception:
+                    pass  # Proceed with potentially stale data rather than crashing
+
             current_position = self._get_current_position_data()
 
             if not current_position:
@@ -4479,6 +4707,9 @@ class DeepSeekAIStrategy(Strategy):
         self._pending_reversal = None
         self._pending_reduce_sltp = None
         self.latest_signal_data = None
+        # v5.10: Reset emergency SL cooldown for next position
+        self._emergency_sl_count = 0
+        self._last_emergency_sl_time = 0.0
         self.log.info("🧹 Position state cleared (external close detected)")
 
     def _resubmit_sltp_if_needed(self, current_position: Dict[str, Any], reason: str = ""):
@@ -4487,11 +4718,47 @@ class DeepSeekAIStrategy(Strategy):
 
         Called when a SL/TP order expires/rejected/canceled but position still exists.
         Uses emergency SL (2% fixed) since current S/R data may be stale.
+
+        v5.10: Added cooldown (120s) and max retry (3) to prevent infinite loop.
+        Scenario: user manually closes position → Binance cancels SL → bot detects
+        orphan → submits emergency SL → user cancels it → bot re-detects → loop.
         """
         try:
             position_side = current_position.get('side', '').lower()
             quantity = abs(float(current_position.get('quantity', 0)))
             if quantity <= 0 or position_side not in ('long', 'short'):
+                return
+
+            # v5.10: Cooldown check — prevent infinite emergency SL loop
+            import time
+            now = time.time()
+            cooldown_sec = 120  # 2 minutes between emergency SL attempts
+            max_consecutive = 3  # after 3 attempts, stop and warn user
+
+            if self._emergency_sl_count >= max_consecutive:
+                self.log.warning(
+                    f"⚠️ Emergency SL max retries ({max_consecutive}) reached. "
+                    f"Stopping auto-resubmit. Manual intervention required."
+                )
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        self.telegram_bot.send_message_sync(
+                            f"⚠️ 紧急止损已尝试 {max_consecutive} 次，停止自动重试。\n\n"
+                            f"仓位: {quantity:.4f} BTC {position_side.upper()}\n"
+                            f"请手动检查 Binance 仓位状态并设置止损。\n"
+                            f"如仓位已平，请忽略此消息。"
+                        )
+                    except Exception:
+                        pass
+                return
+
+            elapsed = now - self._last_emergency_sl_time
+            if elapsed < cooldown_sec:
+                remaining = cooldown_sec - elapsed
+                self.log.info(
+                    f"🔄 Emergency SL cooldown active ({remaining:.0f}s remaining), "
+                    f"skipping resubmit (attempt {self._emergency_sl_count}/{max_consecutive})"
+                )
                 return
 
             # Check if active SL order still exists
@@ -4513,6 +4780,10 @@ class DeepSeekAIStrategy(Strategy):
             self.log.warning(f"⚠️ No active SL detected after {reason}, submitting emergency SL")
             self._submit_emergency_sl(quantity, position_side,
                                       reason=f"SL/TP orphan ({reason}), position still exists")
+
+            # v5.10: Track cooldown state
+            self._last_emergency_sl_time = now
+            self._emergency_sl_count += 1
 
             # Send Telegram alert
             if self.telegram_bot and self.enable_telegram:
@@ -4818,7 +5089,9 @@ class DeepSeekAIStrategy(Strategy):
                 return  # No S/R data — keep existing SL/TP
 
             from utils.sr_sltp_calculator import calculate_sr_based_sltp
+            from strategy.trading_logic import get_min_sl_distance_pct
             side_name = "BUY" if position_side == 'long' else "SELL"
+            sr_min_sl = get_min_sl_distance_pct() * 0.5
             new_sl, new_tp, sr_method = calculate_sr_based_sltp(
                 current_price=current_price,
                 side=side_name,
@@ -4826,6 +5099,8 @@ class DeepSeekAIStrategy(Strategy):
                 atr_value=self._cached_atr_value,
                 min_rr_ratio=self.min_rr_ratio,
                 atr_buffer_multiplier=self.atr_buffer_multiplier,
+                tp_buffer_multiplier=self.tp_buffer_multiplier,
+                min_sl_distance_pct=sr_min_sl,
             )
 
             if not new_sl or not new_tp or new_sl <= 0 or new_tp <= 0:
@@ -5178,7 +5453,57 @@ class DeepSeekAIStrategy(Strategy):
             f"📤 Submitted {side.name} market order: {quantity:.3f} BTC "
             f"(reduce_only={reduce_only})"
         )
-    
+
+    def _cancel_pending_entry_order(self):
+        """
+        v4.17: Cancel unfilled LIMIT entry order from previous cycle.
+
+        Called at the start of on_timer to clean up stale entry orders before
+        new analysis. If the LIMIT entry didn't fill since last cycle, the market
+        has moved away — cancel and let new analysis decide fresh.
+        """
+        pending_id = self._pending_entry_order_id
+        if not pending_id:
+            return
+
+        try:
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            for order in open_orders:
+                if str(order.client_order_id) == pending_id:
+                    self.cancel_order(order)
+                    self.log.info(
+                        f"🗑️ Cancelled unfilled LIMIT entry order: {pending_id[:8]}... "
+                        f"(market moved away, will re-analyze)"
+                    )
+                    # Clear pending SL/TP state since entry won't fill
+                    self._pending_sltp = None
+                    # Clear pre-initialized sltp_state
+                    instrument_key = str(self.instrument_id)
+                    if instrument_key in self.sltp_state:
+                        state = self.sltp_state[instrument_key]
+                        # Only clear if this was from the pending entry (no SL order yet)
+                        if state.get("sl_order_id") is None:
+                            del self.sltp_state[instrument_key]
+
+                    if self.telegram_bot and self.enable_telegram:
+                        try:
+                            self.telegram_bot.send_message_sync(
+                                "ℹ️ 入场限价单未成交，已取消\n"
+                                "价格已偏离，等待下次分析重新评估"
+                            )
+                        except Exception:
+                            pass
+                    break
+            else:
+                # Order not in open orders — already filled or rejected
+                self.log.debug(
+                    f"Pending entry {pending_id[:8]}... no longer open (filled or already cancelled)"
+                )
+        except Exception as e:
+            self.log.warning(f"⚠️ Error cancelling pending entry order: {e}")
+        finally:
+            self._pending_entry_order_id = None
+
     def _submit_bracket_order(
         self,
         side: OrderSide,
@@ -5194,10 +5519,11 @@ class DeepSeekAIStrategy(Strategy):
         (order_factory.bracket → submit_order_list) is no longer viable.
 
         New approach:
-        1. Submit MARKET entry order only
+        1. Submit LIMIT entry order at validated entry_price (v4.17: was MARKET)
         2. Store pending SL/TP prices in self._pending_sltp
         3. on_position_opened() submits SL + TP as individual orders
         4. OCO managed manually in on_order_filled() (already implemented)
+        5. Unfilled LIMIT entries cancelled by on_timer next cycle (v4.17)
 
         Parameters
         ----------
@@ -5248,7 +5574,7 @@ class DeepSeekAIStrategy(Strategy):
         # Log SL/TP summary
         self.log.info(
             f"🎯 Opening position for {side.name}:\n"
-            f"   Entry: ~${entry_price:,.2f} (MARKET)\n"
+            f"   Entry: ${entry_price:,.2f} (LIMIT)\n"
             f"   Stop Loss: ${stop_loss_price:,.2f} ({((stop_loss_price/entry_price - 1) * 100):.2f}%)\n"
             f"   Take Profit: ${tp_price:,.2f} ({((tp_price/entry_price - 1) * 100):.2f}%)\n"
             f"   Quantity: {quantity:.3f}\n"
@@ -5281,23 +5607,35 @@ class DeepSeekAIStrategy(Strategy):
                 "quantity": quantity,
             }
 
-            # Submit MARKET entry order only
-            entry_order = self.order_factory.market(
+            # v4.17: Submit LIMIT entry order at validated entry_price
+            # Instead of MARKET, use LIMIT at the exact price used for SL/TP calculation.
+            # This guarantees fill_price == entry_price (or better), so R/R never degrades.
+            # - If market is at or better than entry_price → fills immediately (taker)
+            # - If market has moved unfavorably → sits on book (maker, lower fee)
+            # - If unfilled by next on_timer → auto-cancelled, re-analyzed
+            entry_order = self.order_factory.limit(
                 instrument_id=self.instrument_id,
                 order_side=side,
                 quantity=self.instrument.make_qty(quantity),
+                price=self.instrument.make_price(entry_price),
                 time_in_force=TimeInForce.GTC,
+                post_only=False,  # Allow immediate taker fill
             )
             self.submit_order(entry_order)
 
+            # Track pending entry for on_timer cancellation
+            self._pending_entry_order_id = str(entry_order.client_order_id)
+
             self.log.info(
-                f"✅ Submitted entry order: {side.name} {quantity:.3f} BTC\n"
+                f"✅ Submitted LIMIT entry order: {side.name} {quantity:.3f} BTC @ ${entry_price:,.2f}\n"
+                f"   Order ID: {str(entry_order.client_order_id)[:8]}...\n"
                 f"   SL/TP will be submitted after fill (pending in _pending_sltp)"
             )
 
         except Exception as e:
             # Clear pending state on failure
             self._pending_sltp = None
+            self._pending_entry_order_id = None
             self.log.error(f"❌ Failed to submit entry order: {e}")
             self.log.error(
                 "🚫 NOT opening position without SL/TP protection - "
@@ -5385,6 +5723,18 @@ class DeepSeekAIStrategy(Strategy):
 
         self.log.error(f"❌ Order rejected: {reason}")
 
+        # v4.17: If the rejected order is our pending LIMIT entry, clean up state
+        if self._pending_entry_order_id and client_order_id == self._pending_entry_order_id:
+            self.log.warning(f"⚠️ LIMIT entry order rejected: {reason}")
+            self._pending_entry_order_id = None
+            self._pending_sltp = None
+            # Clear pre-initialized sltp_state
+            instrument_key = str(self.instrument_id)
+            if instrument_key in self.sltp_state:
+                state = self.sltp_state[instrument_key]
+                if state.get("sl_order_id") is None:
+                    del self.sltp_state[instrument_key]
+
         # 🚨 Fix G34: Force Telegram alert for order rejections
         if self.telegram_bot and self.enable_telegram:
             try:
@@ -5413,6 +5763,9 @@ class DeepSeekAIStrategy(Strategy):
             f"🟢 Position opened: {event.side.name} "
             f"{event.quantity} @ {event.avg_px_open}"
         )
+
+        # v4.17: Clear pending entry tracking — order has filled
+        self._pending_entry_order_id = None
 
         # v3.12: Store entry conditions for memory system
         self._last_entry_conditions = self._format_entry_conditions()
@@ -5458,13 +5811,25 @@ class DeepSeekAIStrategy(Strategy):
             side_name = event.side.name  # "LONG" or "SHORT"
             sl_price = self._validate_sl_against_current_price(sl_price, side_name, entry_price)
 
+            # v4.16: Pre-adjust TP using actual fill price BEFORE submitting
+            # Previously, TP was submitted with estimated price then cancelled+resubmitted
+            # via _validate_and_adjust_rr_post_fill(). This caused -2022 ReduceOnly rejection
+            # due to async cancel race condition (old TP not yet cancelled when new TP arrives).
+            # Fix: compute correct TP upfront using fill price, submit once.
+            tp_price, tp_adjusted = self._adjust_tp_for_fill_price(
+                tp_price=tp_price,
+                sl_price=sl_price,
+                fill_price=entry_price,
+                side=side_name,
+            )
+
             # Determine exit side (opposite of position)
             exit_side = OrderSide.SELL if event.side == PositionSide.LONG else OrderSide.BUY
 
             self.log.info(
                 f"📋 Submitting SL/TP for {event.side.name} position:\n"
                 f"   SL: ${sl_price:,.2f} (STOP_MARKET)\n"
-                f"   TP: ${tp_price:,.2f} (LIMIT)"
+                f"   TP: ${tp_price:,.2f} (LIMIT){' [adjusted for fill]' if tp_adjusted else ''}"
             )
 
             sl_submitted = False
@@ -5527,12 +5892,33 @@ class DeepSeekAIStrategy(Strategy):
                     "Will rely on trailing stop or next signal for exit."
                 )
 
-            # v4.9: Post-fill R/R validation (always run)
-            self._validate_and_adjust_rr_post_fill(
-                instrument_key=instrument_key,
-                fill_price=entry_price,
-                side=event.side.name,
-            )
+            # v4.16: Send Telegram alert if TP was adjusted for fill price
+            if tp_adjusted and tp_submitted:
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        original_tp = pending['tp_price']
+                        is_long = side_name.upper() == 'LONG'
+                        risk = (entry_price - sl_price) if is_long else (sl_price - entry_price)
+                        reward = (tp_price - entry_price) if is_long else (entry_price - tp_price)
+                        original_reward = (original_tp - entry_price) if is_long else (entry_price - original_tp)
+                        original_rr = original_reward / risk if risk > 0 else 0
+                        from strategy.trading_logic import get_min_rr_ratio
+                        min_rr = get_min_rr_ratio()
+                        alert_msg = (
+                            f"🔄 *TP 自动调整 (成交后)*\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"原因: 实际成交价 ${entry_price:,.2f} 导致 R/R 降至 {original_rr:.2f}:1\n"
+                            f"旧 TP: ${original_tp:,.2f}\n"
+                            f"新 TP: ${tp_price:,.2f}\n"
+                            f"R/R: {original_rr:.2f}:1 → {min_rr}:1\n"
+                            f"SL: ${sl_price:,.2f} (不变)"
+                        )
+                        self.telegram_bot.send_message_sync(alert_msg)
+                    except Exception:
+                        pass
+
+            # v4.16: Post-fill R/R validation no longer needed for new positions
+            # since TP is pre-adjusted above. Keep it for reversal/add-to-position path only.
         else:
             # No pending SL/TP (e.g. reversal Phase 2 or add-to-position)
             # Still do post-fill R/R validation
@@ -5633,6 +6019,8 @@ class DeepSeekAIStrategy(Strategy):
                         'reasoning': self._pending_execution_data.get('reasoning', ''),
                         'risk_level': self._pending_execution_data.get('risk_level', 'MEDIUM'),
                         'position_size_pct': self._pending_execution_data.get('position_size_pct'),
+                        # v5.7: Pass confluence for Telegram display
+                        'confluence': self._pending_execution_data.get('confluence', {}),
                     })
                     # Clear pending data after use
                     self._pending_execution_data = None
@@ -5838,6 +6226,25 @@ class DeepSeekAIStrategy(Strategy):
             f"entry={entry_price:.2f}, exit={exit_price:.2f}, pnl_pct={pnl_pct:.2f}% (from {pnl_source})"
         )
 
+        # v3.12: Record trade in RiskController for circuit breaker tracking
+        try:
+            side_str = event.side.name if hasattr(event, 'side') else 'UNKNOWN'
+            if entry_price > 0 and quantity > 0:
+                self.risk_controller.record_trade_simple(
+                    side=side_str,
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    quantity=quantity,
+                )
+                risk_state = self.risk_controller.metrics.trading_state
+                if risk_state != TradingState.ACTIVE:
+                    self.log.warning(
+                        f"🚨 Risk state after trade: {risk_state.value} - "
+                        f"{self.risk_controller.metrics.halt_reason}"
+                    )
+        except Exception as e:
+            self.log.warning(f"Failed to record trade in RiskController: {e}")
+
         # Send Telegram position closed notification
         if self.telegram_bot and self.enable_telegram and self.telegram_notify_positions:
             try:
@@ -5997,6 +6404,20 @@ class DeepSeekAIStrategy(Strategy):
             f"🗑️ Order canceled: {short_id}... "
             f"(instrument: {getattr(event, 'instrument_id', self.instrument_id)})"
         )
+
+        # v4.17: If this was our pending LIMIT entry, clean up state
+        if self._pending_entry_order_id and client_order_id == self._pending_entry_order_id:
+            self.log.info(f"📋 Pending LIMIT entry order cancelled: {short_id}...")
+            self._pending_entry_order_id = None
+            # _pending_sltp and sltp_state already cleaned by _cancel_pending_entry_order
+            # but handle external cancellation (e.g., Binance auto-cancel) as well
+            if self._pending_sltp:
+                self._pending_sltp = None
+                instrument_key = str(self.instrument_id)
+                if instrument_key in self.sltp_state:
+                    state = self.sltp_state[instrument_key]
+                    if state.get("sl_order_id") is None:
+                        del self.sltp_state[instrument_key]
 
         # Track in metrics if available
         if hasattr(self, '_order_cancel_count'):
@@ -6837,6 +7258,22 @@ class DeepSeekAIStrategy(Strategy):
             else:
                 msg += "*当前持仓*: 无\n"
                 msg += "*风险敞口*: 0%\n"
+
+            # v3.12: Risk Controller status
+            risk_status = self.risk_controller.get_status()
+            state_emoji = {
+                'ACTIVE': '🟢', 'REDUCED': '🟡', 'HALTED': '🔴', 'COOLDOWN': '⏸️',
+            }.get(risk_status['trading_state'], '⚪')
+
+            msg += f"\n*风控状态*:\n"
+            msg += f"• 状态: {state_emoji} {risk_status['trading_state']}\n"
+            if risk_status['halt_reason']:
+                msg += f"• 原因: {risk_status['halt_reason']}\n"
+            msg += f"• 回撤: {risk_status['drawdown_pct']:.1f}%\n"
+            msg += f"• 今日盈亏: {risk_status['daily_pnl_pct']:+.1f}%\n"
+            msg += f"• 今日交易: {risk_status['trades_today']}笔\n"
+            msg += f"• 连续亏损: {risk_status['consecutive_losses']}次\n"
+            msg += f"• 仓位系数: {risk_status['position_multiplier']:.1f}x\n"
 
             # Strategy settings
             msg += f"\n*策略设置*:\n"

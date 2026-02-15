@@ -22,8 +22,6 @@ interface AnimatedCandlestickProps {
   interval?: string;
 }
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 function parseKlineData(klines: any[]): Candle[] {
   if (!klines || !Array.isArray(klines)) return [];
 
@@ -51,7 +49,6 @@ export function AnimatedCandlestick({
 
   const { data: klineData, error } = useSWR(
     isClient ? `/api/trading/klines/${symbol}?interval=${interval}&limit=${candleCount}` : null,
-    fetcher,
     { refreshInterval: 10000 }
   );
 

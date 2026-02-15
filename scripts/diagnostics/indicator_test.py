@@ -168,9 +168,16 @@ class TechnicalDataFetcher(DiagnosticStep):
                     'bb_middle': decision_layer_data.get('bb_middle', 0),
                     'bb_lower': decision_layer_data.get('bb_lower', 0),
                     'bb_position': decision_layer_data.get('bb_position', 50),
+                    # v5.6: Add ADX/DI to 4H decision layer (match production deepseek_strategy.py)
+                    'adx': decision_layer_data.get('adx', 0),
+                    'di_plus': decision_layer_data.get('di_plus', 0),
+                    'di_minus': decision_layer_data.get('di_minus', 0),
+                    'adx_regime': decision_layer_data.get('adx_regime', 'UNKNOWN'),
                 }
-                rsi_4h = self.ctx.technical_data['mtf_decision_layer']['rsi']
-                print(f"  ✅ 4H 决策层数据加载: RSI={rsi_4h:.1f}")
+                mtf_4h = self.ctx.technical_data['mtf_decision_layer']
+                rsi_4h = mtf_4h['rsi']
+                adx_4h = mtf_4h['adx']
+                print(f"  ✅ 4H 决策层数据加载: RSI={rsi_4h:.1f}, ADX={adx_4h:.1f} ({mtf_4h['adx_regime']})")
 
                 # v4.0: Store raw 4H bars for S/R swing detection + volume profile
                 self.ctx.bars_data_4h = [

@@ -47,10 +47,10 @@ echo "  ✓ Dependencies installed"
 echo ""
 
 echo -e "${YELLOW}5. Verification...${NC}"
-PYTHON_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
+PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
 echo "  Python version: $PYTHON_VERSION"
 
-EMPYRICAL_VERSION=$(python -c "import empyrical; print(empyrical.__version__)" 2>/dev/null || echo "FAILED")
+EMPYRICAL_VERSION=$(python3 -c "import empyrical; print(empyrical.__version__)" 2>/dev/null || echo "FAILED")
 if [ "$EMPYRICAL_VERSION" = "FAILED" ]; then
     echo -e "${RED}  ✗ empyrical import failed!${NC}"
     exit 1
@@ -58,7 +58,7 @@ else
     echo -e "${GREEN}  ✓ empyrical version: $EMPYRICAL_VERSION${NC}"
 fi
 
-PANDAS_VERSION=$(python -c "import pandas; print(pandas.__version__)" 2>/dev/null || echo "FAILED")
+PANDAS_VERSION=$(python3 -c "import pandas; print(pandas.__version__)" 2>/dev/null || echo "FAILED")
 if [ "$PANDAS_VERSION" = "FAILED" ]; then
     echo -e "${RED}  ✗ pandas import failed!${NC}"
     exit 1
@@ -68,7 +68,7 @@ fi
 
 # Test import of performance_service
 echo "  Testing performance_service import..."
-python -c "
+python3 -c "
 import sys
 sys.path.insert(0, '.')
 from services.performance_service import PerformanceService
@@ -100,6 +100,6 @@ echo "========================================${NC}"
 echo ""
 echo "Next steps:"
 echo "  1. Monitor logs: pm2 logs algvex-backend --lines 50"
-echo "  2. Check health: curl http://localhost:8001/api/health"
+echo "  2. Check health: curl http://localhost:8000/api/health"
 echo "  3. If issues persist, check: web/backend/DEPENDENCY_ROOT_CAUSE.md"
 echo ""

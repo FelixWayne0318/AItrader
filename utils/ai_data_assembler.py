@@ -20,7 +20,7 @@ class AIDataAssembler:
 
     v3.0 更新:
     - 整合 BinanceDerivativesClient (大户数据、Taker 比等)
-    - 整合 Coinalyze 历史数据 (OI/Funding/多空比趋势)
+    - 整合 Coinalyze 历史数据 (OI/多空比趋势)
     - 添加 format_complete_report() 供 AI 使用
 
     v3.0.1 更新 (IMPLEMENTATION_PLAN Section 4.2.1):
@@ -128,7 +128,6 @@ class AIDataAssembler:
         derivatives = self._convert_derivatives(
             oi_raw=coinalyze_data.get('open_interest'),
             liq_raw=coinalyze_data.get('liquidations'),
-            funding_raw=coinalyze_data.get('funding_rate'),
             current_price=current_price,
         )
 
@@ -218,11 +217,10 @@ class AIDataAssembler:
         self,
         oi_raw: Optional[Dict],
         liq_raw: Optional[Dict],
-        funding_raw: Optional[Dict],
         current_price: float,
     ) -> Dict[str, Any]:
         """
-        Coinalyze API → 统一格式转换
+        Coinalyze API (OI + Liquidations) + Binance API (Funding Rate) → 统一格式转换
         """
         result = {
             "open_interest": None,
@@ -283,7 +281,7 @@ class AIDataAssembler:
                         history_rates.append({
                             "time": record.get('fundingTime'),
                             "rate": rate,
-                            "rate_pct": round(rate * 100, 4),
+                            "rate_pct": round(rate * 100, 6),
                             "mark_price": record.get('markPrice'),
                         })
                     except (ValueError, TypeError):
@@ -302,7 +300,7 @@ class AIDataAssembler:
 
             result["funding_rate"] = {
                 "value": funding_rate,              # 已结算费率 (向后兼容)
-                "current": funding_rate,             # 消费者兼容 (与 Coinalyze 降级路径一致)
+                "current": funding_rate,
                 "current_pct": funding_pct,          # 消费者兼容 (format_complete_report + multi_agent_analyzer 读此字段)
                 "settled": funding_rate,             # 已结算费率 (明确语义)
                 "settled_pct": funding_pct,          # 已结算费率 (%)
@@ -322,44 +320,8 @@ class AIDataAssembler:
                 "premium_index": binance_funding.get('premium_index'),
                 "mark_price": binance_funding.get('mark_price'),
                 "index_price": binance_funding.get('index_price'),
-                # 保留 Coinalyze 对比 (仅参考)
-                "coinalyze_pct": None,
-                "binance_pct": funding_pct,
-            }
-
-            # 记录 Coinalyze 对比值 (如果可用)
-            if funding_raw:
-                try:
-                    coinalyze_pct = round(float(funding_raw.get('value', 0)) * 100, 4)
-                    result["funding_rate"]["coinalyze_pct"] = coinalyze_pct
-                except (ValueError, TypeError):
-                    pass
-        elif funding_raw:
-            # Binance 不可用时降级到 Coinalyze
-            try:
-                coinalyze_value = float(funding_raw.get('value', 0))
-                coinalyze_pct = round(coinalyze_value * 100, 4)
-                result["funding_rate"] = {
-                    "value": coinalyze_value,
-                    "current": coinalyze_value,
-                    "current_pct": coinalyze_pct,
-                    "interpretation": self._interpret_funding(coinalyze_value),
-                    "source": "coinalyze_fallback",
-                    "period": "aggregated",
-                    "predicted_rate": None,
-                    "predicted_rate_pct": None,
-                    "next_funding_time": None,
-                    "next_funding_countdown_min": None,
-                    "history": [],
-                    "trend": "N/A",
-                    "premium_index": None,
-                    "mark_price": None,
-                    "index_price": None,
-                    "coinalyze_pct": coinalyze_pct,
-                    "binance_pct": None,
                 }
-            except Exception as e:
-                self.logger.warning(f"⚠️ Funding parse error: {e}")
+        # If Binance is unavailable, funding_rate stays None (neutral for AI).
 
         # Liquidation 转换 (嵌套结构)
         # v2.1: 即使 history 为空也返回结构 (区分"无爆仓"和"数据缺失")
@@ -480,9 +442,9 @@ class AIDataAssembler:
             # Funding Rate (v3.22: 增强版 — 当前 + 预期 + 历史趋势)
             fr = derivatives.get("funding_rate")
             if fr:
-                fr_trend = fr.get("trend") or trends.get("funding_trend", "N/A")
+                fr_trend = fr.get("trend", "N/A")
                 parts.append(
-                    f"  - Funding Rate (last settled): {fr.get('current_pct', 0):.4f}% "
+                    f"  - Funding Rate (last settled): {fr.get('current_pct', 0):.5f}% "
                     f"({fr.get('interpretation', 'N/A')}) [Trend: {fr_trend}]"
                 )
                 # 溢价指数 + 预期费率
@@ -498,7 +460,7 @@ class AIDataAssembler:
                 predicted_pct = fr.get('predicted_rate_pct')
                 if predicted_pct is not None:
                     parts.append(
-                        f"  - Predicted Next Funding Rate: {predicted_pct:.4f}%"
+                        f"  - Predicted Next Funding Rate: {predicted_pct:.5f}%"
                     )
                 # 下次结算倒计时
                 countdown = fr.get('next_funding_countdown_min')
@@ -512,7 +474,7 @@ class AIDataAssembler:
                 history = fr.get('history', [])
                 if history and len(history) >= 2:
                     rates_str = " → ".join(
-                        [f"{r['rate_pct']:.4f}%" for r in history]
+                        [f"{r['rate_pct']:.5f}%" for r in history]
                     )
                     parts.append(f"  - Settlement History (last {len(history)}): {rates_str}")
 

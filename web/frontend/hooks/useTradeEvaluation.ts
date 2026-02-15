@@ -1,7 +1,5 @@
 import useSWR from 'swr';
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
-
 interface GradeDistribution {
   "A+": number;
   A: number;
@@ -66,19 +64,32 @@ export interface TradeEvaluation {
 }
 
 /**
+ * Auth-aware fetcher for admin endpoints.
+ * Reads Bearer token from localStorage.
+ */
+const adminFetcher = async (url: string) => {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null;
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    const error = new Error('API request failed') as Error & { status: number };
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
+};
+
+/**
  * Hook to fetch trade evaluation summary statistics
  * @param days Number of days to look back (0 = all time, default 30)
  */
 export function useTradeEvaluationSummary(days: number = 30) {
   const { data, error, mutate } = useSWR<TradeEvaluationSummary>(
     `/api/public/trade-evaluation/summary?days=${days}`,
-    fetcher,
-    {
-      refreshInterval: 60000, // Refresh every minute
-      revalidateOnFocus: false,
-      keepPreviousData: true, // Prevent flash to loading state on refresh
-      dedupingInterval: 5000, // Dedupe requests within 5 seconds
-    }
+    { refreshInterval: 60000 }
   );
 
   return {
@@ -96,13 +107,7 @@ export function useTradeEvaluationSummary(days: number = 30) {
 export function useRecentTrades(limit: number = 20) {
   const { data, error, mutate } = useSWR<TradeEvaluation[]>(
     `/api/public/trade-evaluation/recent?limit=${limit}`,
-    fetcher,
-    {
-      refreshInterval: 60000, // Refresh every minute (reduced from 30s to reduce flashing)
-      revalidateOnFocus: false,
-      keepPreviousData: true, // Prevent flash to loading state on refresh
-      dedupingInterval: 5000, // Dedupe requests within 5 seconds
-    }
+    { refreshInterval: 60000 }
   );
 
   return {
@@ -120,13 +125,8 @@ export function useRecentTrades(limit: number = 20) {
 export function useFullTrades(limit: number = 50) {
   const { data, error, mutate } = useSWR<TradeEvaluation[]>(
     `/api/admin/trade-evaluation/full?limit=${limit}`,
-    fetcher,
-    {
-      refreshInterval: 60000, // Refresh every minute
-      revalidateOnFocus: false,
-      keepPreviousData: true, // Prevent flash to loading state on refresh
-      dedupingInterval: 5000, // Dedupe requests within 5 seconds
-    }
+    adminFetcher,
+    { refreshInterval: 60000 }
   );
 
   return {
@@ -144,13 +144,8 @@ export function useFullTrades(limit: number = 50) {
 export function useAdminSummary(days: number = 0) {
   const { data, error, mutate } = useSWR<TradeEvaluationSummary>(
     `/api/admin/trade-evaluation/summary-admin?days=${days}`,
-    fetcher,
-    {
-      refreshInterval: 60000,
-      revalidateOnFocus: false,
-      keepPreviousData: true, // Prevent flash to loading state on refresh
-      dedupingInterval: 5000, // Dedupe requests within 5 seconds
-    }
+    adminFetcher,
+    { refreshInterval: 60000 }
   );
 
   return {

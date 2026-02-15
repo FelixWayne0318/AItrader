@@ -213,7 +213,8 @@ class PositionChecker(DiagnosticStep):
 
         print(f"  ⚠️ 检测到现有持仓!")
         print(f"     方向: {side.upper()}")
-        print(f"     数量: {quantity:.4f} BTC")
+        bc = self.ctx.base_currency
+        print(f"     数量: ${position_value:,.0f} ({quantity:.4f} {bc})")
         print(f"     持仓价值: ${position_value:,.2f}")
         print(f"     入场价: ${avg_px:,.2f}")
         print(f"     未实现盈亏: ${unrealized_pnl:,.2f}")

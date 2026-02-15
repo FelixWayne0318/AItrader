@@ -1,5 +1,5 @@
 """
-Code Integrity Checker Module (v5.0)
+Code Integrity Checker Module (v5.8)
 
 Static source code analysis without executing the strategy.
 Validates critical code patterns using regex/AST inspection.
@@ -15,8 +15,10 @@ Checks:
   P1.8:  Dynamic SL/TP safety rules (SL favorable + threshold)
   P1.9:  on_order_filled OCO management
   P1.10: Emergency SL method exists
+  P1.11: v5.8 ADX-aware dynamic layer weights in prompts
 
-v5.0 update: Trailing Stop removed, P1.4/P1.8 updated for S/R reevaluation.
+v5.1 update: Trailing Stop removed, P1.4/P1.8 updated for S/R reevaluation.
+v5.8 update: P1.11 added for ADX-aware dynamic weight prompt verification.
 """
 
 import re
@@ -66,13 +68,13 @@ def _extract_method(source_lines: List[str], method_name: str) -> Optional[str]:
 
 class CodeIntegrityChecker(DiagnosticStep):
     """
-    v5.0 静态代码完整性检查
+    v5.1 静态代码完整性检查
 
     Uses regex/AST to inspect deepseek_strategy.py source code
-    without executing it. Validates all v5.0 order flow safety patterns.
+    without executing it. Validates all v5.1 order flow safety patterns.
     """
 
-    name = "v5.0 代码完整性检查 (静态分析)"
+    name = "v5.8 代码完整性检查 (静态分析)"
 
     def __init__(self, ctx: DiagnosticContext):
         super().__init__(ctx)
@@ -80,7 +82,7 @@ class CodeIntegrityChecker(DiagnosticStep):
 
     def run(self) -> bool:
         print()
-        print_box("v5.0 Code Integrity (静态代码检查)", 65)
+        print_box("v5.8 Code Integrity (静态代码检查)", 65)
         print()
 
         strategy_path = self.ctx.project_root / "strategy" / "deepseek_strategy.py"
@@ -102,6 +104,12 @@ class CodeIntegrityChecker(DiagnosticStep):
         self._check_dynamic_sltp_safety(lines)
         self._check_on_order_filled_oco(lines)
         self._check_emergency_sl(source)
+
+        # P1.11: v5.8 ADX-aware dynamic weights in prompts
+        ma_path = self.ctx.project_root / "agents" / "multi_agent_analyzer.py"
+        if ma_path.exists():
+            ma_source = ma_path.read_text()
+            self._check_adx_aware_prompts(ma_source)
 
         # Summary
         passed = sum(1 for r in self._results if r["pass"])
@@ -277,12 +285,15 @@ class CodeIntegrityChecker(DiagnosticStep):
         # v4.2: Level 3 (percentage fallback) removed — only S/R-based fallback remains
         has_no_pct_fallback = "calculate_technical_sltp" not in method
         has_price_chain = "binance_account" in method or "latest_price_data" in method
+        # v5.1: TP buffer support (quality-aware TP sorting + buffer before zone)
+        has_tp_buffer = "tp_buffer_multiplier" in method
         ok = has_rr and has_sr_fallback and has_no_pct_fallback
         self._record("P1.7", "Unified SL/TP validation (_validate_sltp_for_entry)", ok,
                      expected="validate_multiagent_sltp + calculate_sr_based_sltp fallback "
-                              "+ no percentage fallback (v4.2)",
+                              "+ no percentage fallback + tp_buffer (v5.1)",
                      actual=f"AI R/R={has_rr}, S/R fallback={has_sr_fallback}, "
-                            f"no_pct_fallback={has_no_pct_fallback}, price_chain={has_price_chain}")
+                            f"no_pct_fallback={has_no_pct_fallback}, tp_buffer={has_tp_buffer}, "
+                            f"price_chain={has_price_chain}")
 
     # ── P1.8: Dynamic SL/TP safety ──
 
@@ -297,13 +308,15 @@ class CodeIntegrityChecker(DiagnosticStep):
         has_sr_call = "calculate_sr_based_sltp" in method
         has_trigger_guard = ">= current_price" in method or "<= current_price" in method
         has_atomic_replace = "_replace_sltp_orders" in method
+        # v5.1: Quality-aware TP with buffer
+        has_tp_buffer = "tp_buffer_multiplier" in method
         ok = has_favorable and has_sr_call and has_threshold
-        self._record("P1.8", "Dynamic SL/TP: safety rules (v5.0)", ok,
-                     expected="SL favorable direction + S/R recalculation + dynamic threshold "
-                              "+ trigger guard (Trailing removed in v5.0)",
+        self._record("P1.8", "Dynamic SL/TP: safety rules (v5.1)", ok,
+                     expected="SL favorable direction + S/R recalculation (v5.1: quality-aware TP) "
+                              "+ dynamic threshold + trigger guard",
                      actual=f"favorable_sl={has_favorable}, sr_recalc={has_sr_call}, "
-                            f"threshold={has_threshold}, trigger_guard={has_trigger_guard}, "
-                            f"atomic_replace={has_atomic_replace}")
+                            f"threshold={has_threshold}, tp_buffer={has_tp_buffer}, "
+                            f"trigger_guard={has_trigger_guard}, atomic_replace={has_atomic_replace}")
 
     # ── P1.9: on_order_filled OCO ──
 
@@ -325,3 +338,42 @@ class CodeIntegrityChecker(DiagnosticStep):
         self._record("P1.10", "Emergency SL method exists", has_emergency,
                      expected="_submit_emergency_sl defined",
                      actual=f"Present={has_emergency}")
+
+    # ── P1.11: v5.8 ADX-aware dynamic weights in prompts ──
+
+    def _check_adx_aware_prompts(self, ma_source: str):
+        """Check multi_agent_analyzer.py for v5.8 ADX-aware prompt patterns."""
+        # Judge prompt must have ADX-dependent weight rules
+        has_adx_dynamic = "强趋势 (ADX > 40)" in ma_source and "震荡市 (ADX < 20)" in ma_source
+        has_old_static = "趋势层 (1D) 权重最高" in ma_source
+        # Key metrics comment should not say "highest weight"
+        has_old_comment = "highest weight per confluence matrix" in ma_source
+        # Bear analyst should not have absolute "最高权重"
+        has_bear_static = "1D 宏观趋势" in ma_source and "最高权重" in ma_source
+        # _compute_trend_verdict header should not say "HIGHEST WEIGHT"
+        has_verdict_static = "HIGHEST WEIGHT" in ma_source
+        # _compute_trend_verdict footer should not say "macro trend above has priority"
+        has_footer_static = "macro trend above has priority" in ma_source
+
+        ok = (has_adx_dynamic and not has_old_static and not has_old_comment
+              and not has_bear_static and not has_verdict_static and not has_footer_static)
+        issues = []
+        if has_old_static:
+            issues.append("旧版静态规则 '趋势层权重最高' 仍存在")
+        if has_old_comment:
+            issues.append("key_metrics 仍有 'highest weight' 注释")
+        if has_bear_static:
+            issues.append("Bear prompt 仍有 '最高权重'")
+        if has_verdict_static:
+            issues.append("_compute_trend_verdict 仍有 'HIGHEST WEIGHT'")
+        if has_footer_static:
+            issues.append("trend verdict footer 仍有 'macro trend has priority'")
+        if not has_adx_dynamic:
+            issues.append("缺少 ADX-aware 动态权重规则")
+
+        self._record("P1.11", "v5.8 ADX-aware dynamic layer weights in prompts", ok,
+                     expected="ADX-aware rules present, no static weight statements anywhere",
+                     actual=f"adx_dynamic={has_adx_dynamic}, no_old_static={not has_old_static}, "
+                            f"no_old_comment={not has_old_comment}, no_bear_static={not has_bear_static}, "
+                            f"no_verdict_static={not has_verdict_static}, no_footer_static={not has_footer_static}"
+                            + (f" | Issues: {'; '.join(issues)}" if issues else ""))

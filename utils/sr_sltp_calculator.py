@@ -1,11 +1,17 @@
 """
-v4.3: S/R-Based SL/TP Calculator
+v5.1: S/R-Based SL/TP Calculator
 
 核心逻辑:
 1. SL = 关键支撑/阻力位 + ATR缓冲 (缓冲保护，防止假突破触发)
-2. TP = 关键阻力/支撑位 (直接锚定，不减缓冲)
+2. TP = 关键阻力/支撑位 - ATR缓冲 (zone 前方止盈，提高触达率)
 3. R/R >= 1.5 才接受，否则尝试次级 zone → Measured Move → 拒绝
 4. 无百分比兜底 — 没有 S/R zone 时拒绝交易 (S/R veto is final)
+
+v5.1 改进 (vs v4.3):
+- TP buffer: 在 zone 前方放置 TP (ATR × 0.25)，因价格在 zone 附近减速 (Osler 2003)
+- 质量感知 TP 排序: 距离为主维度，质量提供"距离折扣" (每点 = 0.1 ATR)
+- Measured Move 也加 buffer (半 size)，投影目标不确定性更高
+- tp_buffer_multiplier = 0 时完全等同于 v4.3 行为 (可回退)
 
 v4.3 改进 (vs v4.2):
 - 移除 SL 百分比兜底: 无 S/R zone 时直接拒绝 (不用任意 2% SL)
@@ -21,8 +27,9 @@ v4.2 改进 (vs v4.1):
 学术参考:
 - Bulkowski (2021): Measured Move 85% hit rate
 - Tsinaslanidis (2022): Fibonacci 回撤证伪 → 不实现
-- Osler (2003): Round number 聚集效应
+- Osler (2003): Round number 聚集效应, zone 前方价格减速
 - Chung & Bellotti (2021): touch_count 越多的 S/R 越可靠，S/R 随时间衰减
+- Lopez de Prado (2018): Triple Barrier Method, pt_sl=[1,2]
 """
 
 import logging
@@ -173,13 +180,19 @@ def _collect_tp_candidates(
     zones: List,
     current_price: float,
     is_long: bool,
+    atr_value: float = 0.0,
 ) -> List[float]:
     """
-    Collect valid TP target prices, sorted by quality-adjusted distance.
+    v5.1: Quality-aware TP candidate collection.
 
-    v4.2: Within similar distances (1% band), prefer higher quality zones.
-    Primary sort: distance (nearest first) — closer targets are more achievable.
-    Tiebreak: structural quality (STRUCTURAL > PROJECTED > PSYCHOLOGICAL).
+    Sorting: distance is primary, quality provides a "distance discount".
+    A HIGH STRUCTURAL zone 0.3 ATR further away is treated as equivalent
+    to a LOW PSYCHOLOGICAL zone at the current distance.
+
+    This avoids the v4.3 problem of choosing weak zones just because
+    they're nearest, while not over-rotating to pick distant strong zones.
+
+    Returns List[float] (unchanged signature for compatibility).
 
     For LONG: resistance zones above current price.
     For SHORT: support zones below current price.
@@ -191,18 +204,31 @@ def _collect_tp_candidates(
             continue
 
         if is_long and price > current_price:
-            quality = _SOURCE_QUALITY.get(_get_source_type(zone), 0)
-            candidates.append((price, quality))
+            pass
         elif not is_long and price < current_price:
-            quality = _SOURCE_QUALITY.get(_get_source_type(zone), 0)
-            candidates.append((price, quality))
+            pass
+        else:
+            continue
+
+        # Quality score (0-7 range, intentionally lower than SL scoring)
+        source_quality = _SOURCE_QUALITY.get(_get_source_type(zone), 0)
+        strength_bonus = _STRENGTH_SCORE.get(_get_strength(zone), 1) - 1  # 0-2 (LOW=0)
+        touch_count = _get_touch_count(zone)
+        touch_bonus = 1 if touch_count >= 2 else 0  # Binary: meaningful touches or not
+        swing_bonus = 1 if _has_swing(zone) else 0
+
+        quality = source_quality + strength_bonus + touch_bonus + swing_bonus
+        distance = abs(price - current_price)
+        candidates.append((price, quality, distance))
 
     if not candidates:
         return []
 
-    # Sort: primary by distance (nearest first), tiebreak by quality (highest first)
-    candidates.sort(key=lambda pq: (abs(pq[0] - current_price), -pq[1]))
-    return [p for p, q in candidates]
+    # Quality discount: each quality point = 0.1 ATR closer (max 0.7 ATR discount)
+    discount_per_point = atr_value * 0.1 if atr_value > 0 else current_price * 0.001
+    candidates.sort(key=lambda pqd: pqd[2] - pqd[1] * discount_per_point)
+
+    return [p for p, q, d in candidates]
 
 
 def _measured_move_target(
@@ -252,10 +278,12 @@ def calculate_sr_based_sltp(
     atr_value: float = 0.0,
     min_rr_ratio: float = 1.5,
     atr_buffer_multiplier: float = 0.5,
+    tp_buffer_multiplier: float = 0.25,
+    min_sl_distance_pct: float = 0.005,
     **kwargs,
 ) -> Tuple[Optional[float], Optional[float], str]:
     """
-    v4.3: Calculate SL/TP anchored to S/R zones with ATR buffer.
+    v5.1: Calculate SL/TP anchored to S/R zones with ATR buffer.
 
     No percentage fallback — S/R veto is final. If no valid S/R zone
     exists for SL or TP, returns (None, None) to reject the trade.
@@ -265,8 +293,15 @@ def calculate_sr_based_sltp(
        → No zone found → REJECT (no arbitrary percentage SL)
     2. SL = anchor ± ATR buffer (behind zone, absorb false breakouts)
     3. Select TP target: iterate S/R zones until R/R >= min_rr_ratio
-       → No zone passes → try Measured Move (Bulkowski 2021)
+       → TP placed in front of zone (ATR × tp_buffer_multiplier)
+       → No zone passes → try Measured Move (Bulkowski 2021, half buffer)
        → Still no valid TP → REJECT (no arbitrary percentage TP)
+
+    v5.1 improvements (vs v4.3):
+    - TP buffer: place TP in front of zone to improve hit probability
+      (Osler 2003: price decelerates near S/R zones)
+    - Quality-aware TP sorting: quality provides distance discount
+    - Measured Move also gets buffer (half size, projection uncertainty)
 
     Parameters
     ----------
@@ -283,6 +318,13 @@ def calculate_sr_based_sltp(
         Minimum Risk/Reward ratio required. Default 1.5.
     atr_buffer_multiplier : float
         ATR multiplier for SL buffer. Default 0.5.
+    tp_buffer_multiplier : float
+        ATR multiplier for TP buffer (placed in front of zone). Default 0.25.
+        Set to 0 to disable TP buffer (equivalent to pre-v5.1 behavior).
+    min_sl_distance_pct : float
+        Minimum SL distance as fraction of entry price. Default 0.005 (0.5%).
+        Softer than Level 1's 1.0% because S/R-based SL has structural support,
+        but prevents extremely tight SLs that get swept by normal wicks.
 
     Returns
     -------
@@ -349,44 +391,87 @@ def calculate_sr_based_sltp(
     if risk <= 0:
         return None, None, "zero risk distance"
 
+    # v5.10: Minimum SL distance check (softer than Level 1's 1.0%)
+    # S/R-based SL has structural support, but extremely tight SLs
+    # (e.g., 0.3%) get swept by normal price wicks regardless of structure.
+    sl_distance_pct = risk / current_price
+    if sl_distance_pct < min_sl_distance_pct:
+        return None, None, (
+            f"S/R SL too close to entry ({sl_distance_pct*100:.2f}% < "
+            f"{min_sl_distance_pct*100:.1f}% minimum)"
+        )
+
     # ====================================================================
     # Step 2: Select TP target — iterate zones until R/R satisfied
-    # v4.3: Only S/R zones + Measured Move, no percentage fallback
+    # v5.1: Quality-aware sorting + TP buffer (in front of zone)
     # ====================================================================
-    tp_candidates = _collect_tp_candidates(tp_zones, current_price, is_long)
+    tp_candidates = _collect_tp_candidates(tp_zones, current_price, is_long,
+                                           atr_value=atr_value)
+
+    # TP buffer: place TP in front of zone to improve hit probability
+    # (Osler 2003: price decelerates near S/R zones)
+    tp_buffer = atr_value * tp_buffer_multiplier if atr_value > 0 else current_price * 0.0025
 
     tp_price = None
     tp_method = None
 
-    # Try each TP candidate (nearest first, quality tiebreak)
+    # Try each TP candidate (quality-weighted distance, nearest first)
     for i, candidate_tp in enumerate(tp_candidates):
-        reward = abs(candidate_tp - current_price)
+        # Apply TP buffer: move TP in front of zone
+        if is_long:
+            buffered_tp = candidate_tp - tp_buffer
+        else:
+            buffered_tp = candidate_tp + tp_buffer
+
+        # Sanity: buffered TP must still be on correct side of entry
+        if is_long and buffered_tp <= current_price:
+            continue
+        if not is_long and buffered_tp >= current_price:
+            continue
+
+        # R/R uses buffered (actual) TP price
+        reward = abs(buffered_tp - current_price)
         rr = reward / risk if risk > 0 else 0
 
         if rr >= min_rr_ratio:
-            tp_price = candidate_tp
-            tp_method = f"tp:sr_zone[{i}]" if i == 0 else f"tp:sr_zone_secondary[{i}]"
+            tp_price = buffered_tp
+            zone_label = "primary" if i == 0 else f"secondary[{i}]"
+            tp_method = f"tp:sr_zone_{zone_label}|buf:{tp_buffer:.0f}"
             break
 
     # If no zone gave good R/R → try Measured Move (Bulkowski 2021: 85% hit rate)
+    # Measured Move uses half buffer (projection target, not historical zone)
     if tp_price is None and tp_candidates and sl_anchor:
         nearest_tp_zone = tp_candidates[0]
         mm_target = _measured_move_target(
             current_price, sl_anchor, nearest_tp_zone, is_long
         )
         if mm_target:
-            reward = abs(mm_target - current_price)
+            mm_buffer = tp_buffer * 0.5
+            if is_long:
+                buffered_mm = mm_target - mm_buffer
+            else:
+                buffered_mm = mm_target + mm_buffer
+
+            reward = abs(buffered_mm - current_price)
             rr = reward / risk if risk > 0 else 0
             if rr >= min_rr_ratio:
-                tp_price = mm_target
-                tp_method = "tp:measured_move"
+                tp_price = buffered_mm
+                tp_method = f"tp:measured_move|buf:{mm_buffer:.0f}"
 
-    # v4.3: No percentage fallback — if all S/R paths failed, reject
+    # v5.1: No percentage fallback — if all S/R paths failed, reject
     if tp_price is None:
         best_rr = 0
         if tp_candidates:
-            best_rr = abs(tp_candidates[0] - current_price) / risk if risk > 0 else 0
-        return None, None, f"R/R {best_rr:.2f}:1 < {min_rr_ratio}:1, all S/R targets insufficient"
+            # Show best possible R/R (with buffer) for diagnostic
+            best_candidate = tp_candidates[0]
+            if is_long:
+                best_buffered = best_candidate - tp_buffer
+            else:
+                best_buffered = best_candidate + tp_buffer
+            best_reward = abs(best_buffered - current_price)
+            best_rr = best_reward / risk if risk > 0 and best_reward > 0 else 0
+        return None, None, f"R/R {best_rr:.2f}:1 < {min_rr_ratio}:1 (after TP buffer)"
 
     # Build method description
     method = f"sl:sr_zone|{tp_method}"

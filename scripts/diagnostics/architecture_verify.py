@@ -136,7 +136,8 @@ class TradingAgentsArchitectureVerifier(DiagnosticStep):
             user_prompt = prompts.get("user", "")
 
             has_indicator_ref = "INDICATOR REFERENCE" in sys_prompt
-            has_memories = "PAST REFLECTIONS" in user_prompt
+            # v5.9: All agents should receive memory (PAST REFLECTIONS for Judge, PAST TRADE PATTERNS for others)
+            has_memories = "PAST REFLECTIONS" in user_prompt or "PAST TRADE PATTERNS" in user_prompt
             has_invalidation = "invalidation" in user_prompt.lower() if agent_name == "risk" else None
 
             # Check for directive language (should be zero)
@@ -145,7 +146,7 @@ class TradingAgentsArchitectureVerifier(DiagnosticStep):
 
             status = "✅" if has_indicator_ref else "⚠️"
             extras = []
-            if agent_name == "judge" and has_memories:
+            if has_memories:
                 extras.append("memories")
             if has_invalidation:
                 extras.append("invalidation")
@@ -156,7 +157,36 @@ class TradingAgentsArchitectureVerifier(DiagnosticStep):
             print(f"     {status} {agent_name.upper()}: sys={len(sys_prompt)}ch, user={len(user_prompt)}ch, "
                   f"INDICATOR_REF={'yes' if has_indicator_ref else 'NO'}{extra_str}")
 
+        # v5.8: Verify ADX-aware dynamic weight rules in Judge prompt
+        self._verify_adx_aware_weights(last_prompts)
+
         print()
+
+    def _verify_adx_aware_weights(self, last_prompts: dict) -> None:
+        """v5.8: Verify ADX-aware dynamic layer weights are in Judge prompt."""
+        judge_prompts = last_prompts.get("judge", {})
+        judge_user = judge_prompts.get("user", "")
+
+        # Check that ADX-aware rules exist (not the old static rule)
+        has_adx_dynamic = "ADX" in judge_user and ("震荡市" in judge_user or "关键水平层" in judge_user)
+        has_old_static = "趋势层 (1D) 权重最高" in judge_user
+
+        if has_adx_dynamic and not has_old_static:
+            print("     ✅ JUDGE: ADX-aware 动态层级权重 (v5.8)")
+        elif has_old_static:
+            print("     ❌ JUDGE: 仍使用旧版静态 '趋势层权重最高' 规则 (需升级到 v5.8)")
+            self.ctx.add_error("Judge prompt 使用旧版静态权重规则，需升级到 v5.8 ADX-aware 动态权重")
+        else:
+            print("     ⚠️ JUDGE: 未检测到层级权重规则")
+
+        # Check Bear analyst doesn't have old static "最高权重" for 1D
+        bear_prompts = last_prompts.get("bear", {})
+        bear_sys = bear_prompts.get("system", "")
+        if "1D 宏观趋势" in bear_sys and "最高权重" in bear_sys:
+            print("     ❌ BEAR: 仍使用旧版 '1D 最高权重' (需升级到 v5.8)")
+            self.ctx.add_error("Bear prompt 使用旧版静态权重规则")
+        elif "ADX" in bear_sys and "震荡市" in bear_sys:
+            print("     ✅ BEAR: ADX-aware 分析优先级 (v5.8)")
 
     def _verify_ai_decision(self) -> None:
         """Verify AI decision output format."""
@@ -234,7 +264,9 @@ class DiagnosticSummaryBox(DiagnosticStep):
             pos = self.ctx.current_position
             side = pos.get('side', 'N/A').upper()
             qty = pos.get('quantity', 0)
-            print(f"  📊 Current Position: {side} {qty:.4f} BTC")
+            bc = self.ctx.base_currency
+            notional = float(qty) * float(pos.get('avg_px', 0))
+            print(f"  📊 Current Position: {side} ${notional:,.0f} ({float(qty):.4f} {bc})")
         else:
             print("  📊 Current Position: FLAT (无持仓)")
         print()
@@ -291,8 +323,8 @@ class DiagnosticSummaryBox(DiagnosticStep):
         action = "BUY" if signal in ['BUY', 'LONG'] else "SELL"
         emoji = "🟢" if signal in ['BUY', 'LONG'] else "🔴"
 
-        print(f"  {emoji} WOULD EXECUTE: {action} {quantity:.4f} BTC @ ${self.ctx.current_price:,.2f}")
-        print(f"     Notional: ${notional:,.2f}")
+        bc = self.ctx.base_currency
+        print(f"  {emoji} WOULD EXECUTE: {action} ${notional:,.0f} ({quantity:.4f} {bc}) @ ${self.ctx.current_price:,.2f}")
 
         if sl:
             try:

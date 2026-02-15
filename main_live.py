@@ -195,9 +195,6 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         deepseek_api_key=deepseek_api_key,
         deepseek_model=config_manager.get('ai', 'deepseek', 'model', default='deepseek-chat'),
         deepseek_temperature=config_manager.get('ai', 'deepseek', 'temperature', default=0.3),
-        deepseek_max_retries=config_manager.get('ai', 'deepseek', 'max_retries', default=2),
-        deepseek_retry_delay=config_manager.get('ai', 'deepseek', 'retry_delay', default=1.0),
-        deepseek_signal_history_count=config_manager.get('ai', 'signal', 'history_count', default=30),
         debate_rounds=config_manager.get('ai', 'multi_agent', 'debate_rounds', default=2),
         multi_agent_retry_delay=config_manager.get('ai', 'multi_agent', 'retry_delay', default=1.0),
         multi_agent_json_parse_max_retries=config_manager.get('ai', 'multi_agent', 'json_parse_max_retries', default=2),
@@ -227,8 +224,9 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
         # OCO (from ConfigManager)
         enable_oco=config_manager.get('risk', 'oco', 'enabled', default=True),
 
-        # v5.0: S/R-based dynamic SL/TP management
+        # v5.1: S/R-based dynamic SL/TP management
         atr_buffer_multiplier=config_manager.get('trading_logic', 'atr_buffer_multiplier', default=0.5),
+        tp_buffer_multiplier=config_manager.get('trading_logic', 'tp_buffer_multiplier', default=0.25),
         dynamic_sltp_update=config_manager.get('trading_logic', 'dynamic_sltp_update', default=True),
         dynamic_update_threshold_pct=config_manager.get('trading_logic', 'dynamic_update_threshold_pct', default=0.002),
 
@@ -296,6 +294,9 @@ def get_strategy_config(config_manager: ConfigManager) -> DeepSeekAIStrategyConf
 
         # Network: Telegram message timeout
         network_telegram_message_timeout=config_manager.get('network', 'telegram', 'message_timeout', default=30.0),
+
+        # v3.12: Risk Controller / Circuit Breakers configuration
+        risk_config=config_manager.get('risk', default={}),
 
         # Order Book Configuration (v3.7)
         order_book_enabled=config_manager.get('order_book', 'enabled', default=False),

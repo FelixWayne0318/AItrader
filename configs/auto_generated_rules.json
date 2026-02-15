@@ -4389,12 +4389,1132 @@
       "pattern_type": "function_exists",
       "created": "2026-02-13T15:10:51.808705",
       "auto_generated": true
+    },
+    {
+      "id": "fa14a1d3c426",
+      "commit": "8541c5e",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix: --push restores current-branch behavior, show stderr on failure",
+      "pattern": "# Use --push-branch if explicitly set, otherwise current branch",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.229067",
+      "auto_generated": true
+    },
+    {
+      "id": "ede9bda114cd",
+      "commit": "0c01711",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix: --push defaults to current branch, auto-fallback for claude/* only",
+      "pattern": "if self.ctx.push_branch != \"main\":",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.269909",
+      "auto_generated": true
+    },
+    {
+      "id": "4dab49d34b16",
+      "commit": "8f3ef15",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: diagnose --push defaults to main branch, not HEAD",
+      "pattern": "help='导出并推送到 GitHub (默认推到 main 分支)'",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.304487",
+      "auto_generated": true
+    },
+    {
+      "id": "4a870ec68c85",
+      "commit": "8f3ef15",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix: diagnose --push defaults to main branch, not HEAD",
+      "pattern": "capture_output=True, text=True, check=True",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.323689",
+      "auto_generated": true
+    },
+    {
+      "id": "42d3c00f650c",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "runner.add_step(MachineReadableSummary)      # v5.1 机器可读 JSON 输出",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.357285",
+      "auto_generated": true
+    },
+    {
+      "id": "95ca4d2beb30",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/__init__.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "- order_flow_simulation.py: v5.1 order flow simulation (10 scenarios)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.376082",
+      "auto_generated": true
+    },
+    {
+      "id": "62af5367a223",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/code_integrity.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "expected=\"SL favorable direction + S/R recalculation (v5.1: quality-aware TP) \"",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.394080",
+      "auto_generated": true
+    },
+    {
+      "id": "b0e92d725ccf",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/lifecycle_test.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "v5.1: Quality-aware TP sorting + TP buffer (Osler 2003) for hit probability asymmetry fix.",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.415062",
+      "auto_generated": true
+    },
+    {
+      "id": "2f53b223ad3f",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/math_verification.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "print_box(\"v5.1 Math Verification (数学验证)\", 65)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.435268",
+      "auto_generated": true
+    },
+    {
+      "id": "5a1e766f84a2",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/order_flow_simulation.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "CUMULATIVE_POSITION_LIMIT = \"cumulative_position_limit\"  # v5.1: 30% max position cap",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.454294",
+      "auto_generated": true
+    },
+    {
+      "id": "aab092c56a9f",
+      "commit": "61b2cd4",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "chore: bump diagnostic scripts to v5.1, add quality-aware TP checks",
+      "pattern": "Includes v5.1 machine-readable JSON output.",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.475315",
+      "auto_generated": true
+    },
+    {
+      "id": "e9397741ffaf",
+      "commit": "610809b",
+      "file": "scripts/diagnose_position_management.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "print(\"  ⏭️  Production uses calculate_sr_based_sltp (S/R zone + ATR buffer)\")",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.520203",
+      "auto_generated": true
+    },
+    {
+      "id": "1c47179bebe3",
+      "commit": "610809b",
+      "file": "scripts/diagnose_v412.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "from strategy.trading_logic import validate_multiagent_sltp",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.542634",
+      "auto_generated": true
+    },
+    {
+      "id": "10c02e2940f9",
+      "commit": "610809b",
+      "file": "scripts/diagnostics/math_verification.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "from strategy.trading_logic import validate_multiagent_sltp",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.561940",
+      "auto_generated": true
+    },
+    {
+      "id": "c158f2cda140",
+      "commit": "610809b",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "print(\"     ✅ validate_multiagent_sltp 失败 → 回退到 calculate_sr_based_sltp\")",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.581955",
+      "auto_generated": true
+    },
+    {
+      "id": "3968f5a1d183",
+      "commit": "610809b",
+      "file": "scripts/diagnostics/order_flow_simulation.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "print(\"  │    └─ 回退: calculate_sr_based_sltp() (S/R Zones+ATR)      │\")",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.602875",
+      "auto_generated": true
+    },
+    {
+      "id": "91654dad51e6",
+      "commit": "610809b",
+      "file": "strategy/trading_logic.py",
+      "message": "refactor: remove deprecated calculate_technical_sltp() and all references",
+      "pattern": "- validate_multiagent_sltp() — AI SL/TP 验证 (Level 1)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.623817",
+      "auto_generated": true
+    },
+    {
+      "id": "ecef2c760740",
+      "commit": "4614bdc",
+      "file": "main_live.py",
+      "message": "feat(sltp): v5.1 TP asymmetry fix — quality-aware sorting + TP buffer",
+      "pattern": "tp_buffer_multiplier=config_manager.get('trading_logic', 'tp_buffer_multiplier', default=0.25),",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.661025",
+      "auto_generated": true
+    },
+    {
+      "id": "2e7983666178",
+      "commit": "4614bdc",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "feat(sltp): v5.1 TP asymmetry fix — quality-aware sorting + TP buffer",
+      "pattern": "self.tp_buffer_multiplier = config.tp_buffer_multiplier",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.687536",
+      "auto_generated": true
+    },
+    {
+      "id": "4d52c3c4574f",
+      "commit": "4614bdc",
+      "file": "utils/sr_sltp_calculator.py",
+      "message": "feat(sltp): v5.1 TP asymmetry fix — quality-aware sorting + TP buffer",
+      "pattern": "source_quality = _SOURCE_QUALITY.get(_get_source_type(zone), 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.705911",
+      "auto_generated": true
+    },
+    {
+      "id": "44ab9a40cea6",
+      "commit": "6bebc44",
+      "file": "main_live.py",
+      "message": "feat: integrate RiskController circuit breakers, fix order book attr, remove dead BB block config",
+      "pattern": "# v3.12: Risk Controller / Circuit Breakers configuration",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.760581",
+      "auto_generated": true
+    },
+    {
+      "id": "0c775768c8c4",
+      "commit": "6bebc44",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "feat: integrate RiskController circuit breakers, fix order book attr, remove dead BB block config",
+      "pattern": "from utils.risk_controller import RiskController, TradingState",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.789710",
+      "auto_generated": true
+    },
+    {
+      "id": "551fcd363581",
+      "commit": "731d2de",
+      "file": "web/backend/api/routes/performance.py",
+      "message": "fix(web): fix PnL curve and performance data not loading on frontend",
+      "pattern": "return {\"success\": True, \"data\": stats.get(\"pnl_curve\", [])}",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.846364",
+      "auto_generated": true
+    },
+    {
+      "id": "f74dbe5d0719",
+      "commit": "731d2de",
+      "file": "web/backend/api/routes/public.py",
+      "message": "fix(web): fix PnL curve and performance data not loading on frontend",
+      "pattern": "stats[\"period_days\"] = days",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.869229",
+      "auto_generated": true
+    },
+    {
+      "id": "422389d95d23",
+      "commit": "731d2de",
+      "file": "web/backend/services/performance_service.py",
+      "message": "fix(web): fix PnL curve and performance data not loading on frontend",
+      "pattern": "\"last_updated\": datetime.now().isoformat(),",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:19.891166",
+      "auto_generated": true
+    },
+    {
+      "id": "0ad577939753",
+      "commit": "b766db6",
+      "file": "web/backend/services/binance_service.py",
+      "message": "fix(web): fix script permissions, python3, connection pooling in remaining services",
+      "pattern": "from contextlib import asynccontextmanager",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.931996",
+      "auto_generated": true
+    },
+    {
+      "id": "7a82e7be7beb",
+      "commit": "b766db6",
+      "file": "web/backend/services/performance_service.py",
+      "message": "fix(web): fix script permissions, python3, connection pooling in remaining services",
+      "pattern": "from contextlib import asynccontextmanager",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.953332",
+      "auto_generated": true
+    },
+    {
+      "id": "bcf9979e9647",
+      "commit": "40c85c0",
+      "file": "web/backend/api/routes/admin.py",
+      "message": "fix(web): fix critical backend bugs - path TypeError, WebSocket auth, connection pooling",
+      "pattern": "from pathlib import Path",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:19.992103",
+      "auto_generated": true
+    },
+    {
+      "id": "1033c7a20251",
+      "commit": "40c85c0",
+      "file": "web/backend/api/routes/public.py",
+      "message": "fix(web): fix critical backend bugs - path TypeError, WebSocket auth, connection pooling",
+      "pattern": "from pathlib import Path",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.014633",
+      "auto_generated": true
+    },
+    {
+      "id": "2e566d57bb41",
+      "commit": "40c85c0",
+      "file": "web/backend/api/routes/websocket.py",
+      "message": "fix(web): fix critical backend bugs - path TypeError, WebSocket auth, connection pooling",
+      "pattern": "import logging",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.035782",
+      "auto_generated": true
+    },
+    {
+      "id": "b1725ddd41dd",
+      "commit": "40c85c0",
+      "file": "web/backend/services/trading_service.py",
+      "message": "fix(web): fix critical backend bugs - path TypeError, WebSocket auth, connection pooling",
+      "pattern": "from contextlib import asynccontextmanager",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.056585",
+      "auto_generated": true
+    },
+    {
+      "id": "1871e4a580f9",
+      "commit": "22608ad",
+      "file": "web/backend/services/performance_service.py",
+      "message": "fix(web): replace empyrical with empyrical-reloaded for Python 3.12 compatibility",
+      "pattern": "logging.warning(\"empyrical-reloaded not installed. Run: pip install empyrical-reloaded>=0.5.12\")",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.186636",
+      "auto_generated": true
+    },
+    {
+      "id": "4dc1d8e80fd5",
+      "commit": "491735e",
+      "file": "web/backend/services/config_service.py",
+      "message": "fix(web): convert AITRADER_PATH string to Path object in ConfigService",
+      "pattern": "self.aitrader_path = Path(settings.AITRADER_PATH)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.218822",
+      "auto_generated": true
+    },
+    {
+      "id": "1f46a942e64d",
+      "commit": "d46153e",
+      "file": "web/backend/api/routes/admin.py",
+      "message": "refactor(web): unify performance data source and split system service",
+      "pattern": "from services.performance_service import get_performance_service",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.281058",
+      "auto_generated": true
+    },
+    {
+      "id": "83fa554269df",
+      "commit": "d46153e",
+      "file": "web/backend/api/routes/public.py",
+      "message": "refactor(web): unify performance data source and split system service",
+      "pattern": "from services.performance_service import get_performance_service",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.297141",
+      "auto_generated": true
+    },
+    {
+      "id": "8b7603385f7a",
+      "commit": "d46153e",
+      "file": "web/backend/services/system_service.py",
+      "message": "refactor(web): unify performance data source and split system service",
+      "pattern": "import subprocess",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.313833",
+      "auto_generated": true
+    },
+    {
+      "id": "441fb8a760fe",
+      "commit": "b0d64cb",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(strategy): replace all remaining datetime.utcnow() with timezone-aware datetime.now(timezone.utc",
+      "pattern": "from datetime import datetime, timedelta, timezone",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.353373",
+      "auto_generated": true
+    },
+    {
+      "id": "8442c310ab40",
+      "commit": "3c5f093",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(web+strategy): comprehensive fix for backend crash and trade evaluation issues",
+      "pattern": "captured_sltp = self.sltp_state[instrument_key].copy()",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.393136",
+      "auto_generated": true
+    },
+    {
+      "id": "47b145324052",
+      "commit": "3c5f093",
+      "file": "web/backend/core/config.py",
+      "message": "fix(web+strategy): comprehensive fix for backend crash and trade evaluation issues",
+      "pattern": "from pydantic import field_validator",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.409935",
+      "auto_generated": true
+    },
+    {
+      "id": "ba6075ccc3a7",
+      "commit": "418db32",
+      "file": "web/backend/core/config.py",
+      "message": "fix(web): resolve backend crash and deployment path issues",
+      "pattern": "import warnings",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.441665",
+      "auto_generated": true
+    },
+    {
+      "id": "5020150a9e9d",
+      "commit": "418db32",
+      "file": "web/backend/services/performance_service.py",
+      "message": "fix(web): resolve backend crash and deployment path issues",
+      "pattern": "os.path.join(os.path.dirname(__file__), \"../.env\"),",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.458410",
+      "auto_generated": true
+    },
+    {
+      "id": "a2afa035d7a0",
+      "commit": "bfe502d",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix(ai): align Risk Manager prompt with validation rules to reduce false rejections",
+      "pattern": "# v4.16: Reask mechanism — validate R/R before accepting SL/TP",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.493268",
+      "auto_generated": true
+    },
+    {
+      "id": "217c2ebf5877",
+      "commit": "b185cbe",
+      "file": "scripts/diagnose_order_rejection.py",
+      "message": "fix(scripts): remove dotenv dependency from order rejection diagnostic",
+      "pattern": "_load_env_file",
+      "pattern_type": "function_exists",
+      "created": "2026-02-14T14:14:20.525546",
+      "auto_generated": true
+    },
+    {
+      "id": "fc10b75c2d0a",
+      "commit": "2e66225",
+      "file": "scripts/diagnose_order_rejection.py",
+      "message": "fix(scripts): fix BinanceAccountClient → BinanceAccountFetcher in order rejection diagnostic",
+      "pattern": "from utils.binance_account import BinanceAccountFetcher",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.558328",
+      "auto_generated": true
+    },
+    {
+      "id": "79b01f0a4fc1",
+      "commit": "3fc6e88",
+      "file": "scripts/diagnose_order_rejection.py",
+      "message": "fix(telegram): clear stale signal status when position closed + add order rejection diagnostic",
+      "pattern": "import os",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.589135",
+      "auto_generated": true
+    },
+    {
+      "id": "79f723aae44f",
+      "commit": "3fc6e88",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix(telegram): clear stale signal status when position closed + add order rejection diagnostic",
+      "pattern": "cached_executed = signal_status_heartbeat.get('executed', False)",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.613124",
+      "auto_generated": true
+    },
+    {
+      "id": "ee1c2f2db142",
+      "commit": "3fc6e88",
+      "file": "utils/telegram_bot.py",
+      "message": "fix(telegram): clear stale signal status when position closed + add order rejection diagnostic",
+      "pattern": "# Only show \"✅ 开仓\" if we actually have a position",
+      "pattern_type": "contains",
+      "created": "2026-02-14T14:14:20.630826",
+      "auto_generated": true
+    },
+    {
+      "id": "506a51f407b3",
+      "commit": "e6e8cd2",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "feat(agents): add R/R reask mechanism for Risk Manager SL/TP quality (v4.15)",
+      "pattern": "_compute_rr_ratio",
+      "pattern_type": "function_exists",
+      "created": "2026-02-14T14:14:20.696443",
+      "auto_generated": true
+    },
+    {
+      "id": "5b7cce635469",
+      "commit": "9e705f5",
+      "file": "web/backend/api/routes/admin.py",
+      "message": "fix(web): remove fake data generators, add real empty states, fix hardcoded paths",
+      "pattern": "from core.config import settings",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.730700",
+      "auto_generated": true
+    },
+    {
+      "id": "b99d252b66ed",
+      "commit": "9e705f5",
+      "file": "web/backend/api/routes/public.py",
+      "message": "fix(web): remove fake data generators, add real empty states, fix hardcoded paths",
+      "pattern": "from core.config import settings",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.746441",
+      "auto_generated": true
+    },
+    {
+      "id": "e67592269ee1",
+      "commit": "9e705f5",
+      "file": "web/backend/services/binance_service.py",
+      "message": "fix(web): remove fake data generators, add real empty states, fix hardcoded paths",
+      "pattern": "import statistics",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.763007",
+      "auto_generated": true
+    },
+    {
+      "id": "5aadc4be4c7c",
+      "commit": "5dfb8d0",
+      "file": "web/backend/api/routes/performance.py",
+      "message": "fix(web): remove fake demo data, update outdated content to match real system",
+      "pattern": "from services.signal_log_service import get_signal_log_service",
+      "pattern_type": "import",
+      "created": "2026-02-14T14:14:20.816992",
+      "auto_generated": true
+    },
+    {
+      "id": "75c31b5b5f60",
+      "commit": "2a1a2d2",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: handle null SL/TP in Risk Manager reask logging to preserve AI reason",
+      "pattern": "# .get('stop_loss', 0) returns None when key exists with null value;",
+      "pattern_type": "contains",
+      "created": "2026-02-14T23:12:32.580807",
+      "auto_generated": true
+    },
+    {
+      "id": "b1891e979ed0",
+      "commit": "4ef8245",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: remove Coinalyze funding rate fallback, use Binance exclusively",
+      "pattern": "raw_pct = funding.get('current_pct') or funding.get('settled_pct')",
+      "pattern_type": "contains",
+      "created": "2026-02-14T23:17:54.256737",
+      "auto_generated": true
+    },
+    {
+      "id": "ffb94e086386",
+      "commit": "4ef8245",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: remove Coinalyze funding rate fallback, use Binance exclusively",
+      "pattern": "fr_pct = fr.get('current_pct', 0) if fr else 0",
+      "pattern_type": "contains",
+      "created": "2026-02-14T23:17:54.280526",
+      "auto_generated": true
+    },
+    {
+      "id": "69e469a5880e",
+      "commit": "4ef8245",
+      "file": "utils/ai_data_assembler.py",
+      "message": "fix: remove Coinalyze funding rate fallback, use Binance exclusively",
+      "pattern": "funding_raw: Optional[Dict],  # v5.2: Kept for signature compat, no longer used for FR",
+      "pattern_type": "contains",
+      "created": "2026-02-14T23:17:54.303218",
+      "auto_generated": true
+    },
+    {
+      "id": "89a25f858c45",
+      "commit": "482b3b2",
+      "file": "scripts/diagnose_coinalyze.py",
+      "message": "fix: remove hardcoded BTC from diagnose_coinalyze.py",
+      "pattern": "_sym_clean = symbol.split('_')[0] if '_' in symbol else symbol",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:46.839200",
+      "auto_generated": true
+    },
+    {
+      "id": "268e87716852",
+      "commit": "812e1de",
+      "file": "scripts/analyze_recent_losses.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "print_position_report",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T01:12:46.878785",
+      "auto_generated": true
+    },
+    {
+      "id": "784bd59f4cf7",
+      "commit": "812e1de",
+      "file": "scripts/diagnose_no_signal.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:46.898939",
+      "auto_generated": true
+    },
+    {
+      "id": "2b77eb053b24",
+      "commit": "812e1de",
+      "file": "scripts/diagnose_order_rejection.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:46.921058",
+      "auto_generated": true
+    },
+    {
+      "id": "2f785f76983f",
+      "commit": "812e1de",
+      "file": "scripts/diagnose_orderbook.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "test_orderbook_processor",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T01:12:46.941073",
+      "auto_generated": true
+    },
+    {
+      "id": "14f3f4a52a64",
+      "commit": "812e1de",
+      "file": "scripts/diagnose_sr_zones.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:46.962612",
+      "auto_generated": true
+    },
+    {
+      "id": "94706c3435a3",
+      "commit": "812e1de",
+      "file": "scripts/diagnose_v412.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:46.983793",
+      "auto_generated": true
+    },
+    {
+      "id": "31a14e3b1c72",
+      "commit": "812e1de",
+      "file": "scripts/simulate_position_sequence.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.001751",
+      "auto_generated": true
+    },
+    {
+      "id": "c1a7ca092f68",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "oi_val = oi.get('value', 0) if oi else 0",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.061723",
+      "auto_generated": true
+    },
+    {
+      "id": "282b535f54b4",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/architecture_verify.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "notional = float(qty) * float(pos.get('avg_px', 0))",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.087222",
+      "auto_generated": true
+    },
+    {
+      "id": "f71e6649e7cd",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "base_currency",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T01:12:47.108837",
+      "auto_generated": true
+    },
+    {
+      "id": "265320037197",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "oi_val = oi_data.get('value', 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.137717",
+      "auto_generated": true
+    },
+    {
+      "id": "0a408c0ba7da",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/order_flow_simulation.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "qty = current_position.get('quantity', 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.157053",
+      "auto_generated": true
+    },
+    {
+      "id": "6562c37ecb17",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/position_check.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "print(f\"     数量: ${position_value:,.0f} ({quantity:.4f} {bc})\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.176161",
+      "auto_generated": true
+    },
+    {
+      "id": "95f37e27249b",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "oi_val = oi_data.get('value', 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.194719",
+      "auto_generated": true
+    },
+    {
+      "id": "046117a5549f",
+      "commit": "b46c867",
+      "file": "utils/coinalyze_client.py",
+      "message": "fix: stop fetching funding rate from Coinalyze, saves 2 API calls per cycle",
+      "pattern": "data_quality = \"COMPLETE\" if missing_count == 0 else \"PARTIAL\" if missing_count < 2 else \"MISSING\"",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.270080",
+      "auto_generated": true
+    },
+    {
+      "id": "0db1bc48b0c1",
+      "commit": "89403a3",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: RSI/MACD series vs snapshot mismatch + Judge 1D data gap + R2 debate depth",
+      "pattern": "if history and bear_argument:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:46:14.620280",
+      "auto_generated": true
+    },
+    {
+      "id": "07e4f6c19eac",
+      "commit": "89403a3",
+      "file": "indicators/technical_manager.py",
+      "message": "fix: RSI/MACD series vs snapshot mismatch + Judge 1D data gap + R2 debate depth",
+      "pattern": "import logging",
+      "pattern_type": "import",
+      "created": "2026-02-15T01:46:14.647072",
+      "auto_generated": true
+    },
+    {
+      "id": "178352a3e6af",
+      "commit": "ea336c2",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "feat: v5.9 memory system — all 4 AI agents receive past trade patterns",
+      "pattern": "{past_memories if past_memories else \"No historical data yet.\"}",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:57.944355",
+      "auto_generated": true
+    },
+    {
+      "id": "274f9c03bc09",
+      "commit": "ea336c2",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "feat: v5.9 memory system — all 4 AI agents receive past trade patterns",
+      "pattern": "memory_label = \"PAST REFLECTIONS\" if agent_name == \"judge\" else \"PAST TRADE PATTERNS\"",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:57.965059",
+      "auto_generated": true
+    },
+    {
+      "id": "d3802f3d0448",
+      "commit": "ea336c2",
+      "file": "scripts/diagnostics/architecture_verify.py",
+      "message": "feat: v5.9 memory system — all 4 AI agents receive past trade patterns",
+      "pattern": "if has_memories:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:57.984610",
+      "auto_generated": true
+    },
+    {
+      "id": "e7f848a70bad",
+      "commit": "ea336c2",
+      "file": "web/backend/services/trade_evaluation_service.py",
+      "message": "feat: v5.9 memory system — all 4 AI agents receive past trade patterns",
+      "pattern": "self.memory_file = Path(settings.AITRADER_PATH) / \"data\" / \"trading_memory.json\"",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.004494",
+      "auto_generated": true
+    },
+    {
+      "id": "5b88ec6e8585",
+      "commit": "1fed148",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: FR history display precision :.4f → :.5f (3 remaining locations)",
+      "pattern": "[f\"{r['rate_pct']:.5f}%\" for r in history]",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.041973",
+      "auto_generated": true
+    },
+    {
+      "id": "13d963c8cf13",
+      "commit": "1fed148",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "fix: FR history display precision :.4f → :.5f (3 remaining locations)",
+      "pattern": "print(f\"    Predicted:   {predicted_pct:.5f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.061085",
+      "auto_generated": true
+    },
+    {
+      "id": "96494b7f1b81",
+      "commit": "1fed148",
+      "file": "utils/ai_data_assembler.py",
+      "message": "fix: FR history display precision :.4f → :.5f (3 remaining locations)",
+      "pattern": "[f\"{r['rate_pct']:.5f}%\" for r in history]",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.079101",
+      "auto_generated": true
+    },
+    {
+      "id": "d40d3eb3ff71",
+      "commit": "a6251c7",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "parts.append(f\"- Funding Delta (Predicted - Settled): {delta_pct:+.5f}% ({direction})\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.123136",
+      "auto_generated": true
+    },
+    {
+      "id": "a575ec8f375b",
+      "commit": "a6251c7",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "print(f\"      [Binance FR] Settled: {bfr.get('funding_rate_pct', 0):.5f}% | Predicted: {bfr.get('predicted_rate_pct', 0):.5f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.142544",
+      "auto_generated": true
+    },
+    {
+      "id": "4664bea9ac0c",
+      "commit": "a6251c7",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "print(f\"        ✅ Settled FR: {binance_fr.get('funding_rate_pct', 0):.5f}% | Predicted FR: {binance_fr.get('predicted_rate_pct', 0):.5f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.168299",
+      "auto_generated": true
+    },
+    {
+      "id": "b5cd0fb93df9",
+      "commit": "a6251c7",
+      "file": "scripts/test_funding_rate.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "print(f\"  predicted ({result['predicted_rate_pct']:.5f}%) = premiumIndex.lastFundingRate\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.184923",
+      "auto_generated": true
+    },
+    {
+      "id": "4eef21242aa2",
+      "commit": "a6251c7",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "results.ok(\"Settled Funding Rate\", f\"{rate:.6f} (decimal) = {rate_pct:.5f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.207778",
+      "auto_generated": true
+    },
+    {
+      "id": "fbf4ae76e65b",
+      "commit": "a6251c7",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "f\"Funding={funding.get('value', 0)*100:.5f}%\" if oi and funding else \"Derivatives: partial data\"",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.232586",
+      "auto_generated": true
+    },
+    {
+      "id": "76d877550b74",
+      "commit": "a6251c7",
+      "file": "utils/ai_data_assembler.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "f\"  - Funding Rate (last settled): {fr.get('current_pct', 0):.5f}% \"",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.250384",
+      "auto_generated": true
+    },
+    {
+      "id": "cd020b288e01",
+      "commit": "a6251c7",
+      "file": "utils/binance_kline_client.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "\"funding_rate_pct\": round(settled_rate * 100, 6),      # 已结算费率 (%, 6位匹配币安精度)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.275369",
+      "auto_generated": true
+    },
+    {
+      "id": "15efa3ee28dc",
+      "commit": "a6251c7",
+      "file": "utils/telegram_bot.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "flow_parts.append(f\"预期 {predicted_rate_pct:.5f}% {pr_icon}\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.295251",
+      "auto_generated": true
+    },
+    {
+      "id": "31a8987302b2",
+      "commit": "e1c653f",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: FR injection must fetch directly (ctx.binance_funding_rate set too late)",
+      "pattern": "if self.ctx.derivatives_report is not None:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.330433",
+      "auto_generated": true
+    },
+    {
+      "id": "b3cd881d3006",
+      "commit": "e1c653f",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "fix: FR injection must fetch directly (ctx.binance_funding_rate set too late)",
+      "pattern": "oi_val = float(oi_data.get('value', 0) or 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.349670",
+      "auto_generated": true
+    },
+    {
+      "id": "c1a380e71cfe",
+      "commit": "d2aebec",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: diagnosis vs live consistency — FR N/A, OI $0, static weight remnants",
+      "pattern": "if self.ctx.binance_funding_rate and self.ctx.derivatives_report is not None:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.386008",
+      "auto_generated": true
+    },
+    {
+      "id": "c6771108801a",
+      "commit": "d63cd83",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: remove last 3 static weight references found by deep audit",
+      "pattern": "⚠️ Layer weights depend on ADX: Strong trend (ADX>40) → 1D dominant | Ranging (ADX<20) → 15M levels dominant",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.425253",
+      "auto_generated": true
+    },
+    {
+      "id": "d8b840059302",
+      "commit": "d63cd83",
+      "file": "scripts/diagnostics/code_integrity.py",
+      "message": "fix: remove last 3 static weight references found by deep audit",
+      "pattern": "if has_verdict_static:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.443489",
+      "auto_generated": true
+    },
+    {
+      "id": "e30b396e61b5",
+      "commit": "c8e05cf",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: align all prompts + diagnostics with v5.8 ADX-aware dynamic weights",
+      "pattern": "lines.append(\"--- 1D MACRO TREND (weight depends on ADX regime) ---\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.479582",
+      "auto_generated": true
+    },
+    {
+      "id": "6c36a36346c4",
+      "commit": "c8e05cf",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: align all prompts + diagnostics with v5.8 ADX-aware dynamic weights",
+      "pattern": "runner.add_step(CodeIntegrityChecker)       # v5.8 代码完整性检查 (含 ADX-aware prompt)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.496988",
+      "auto_generated": true
+    },
+    {
+      "id": "e7f2aa09ea2d",
+      "commit": "c8e05cf",
+      "file": "scripts/diagnostics/architecture_verify.py",
+      "message": "fix: align all prompts + diagnostics with v5.8 ADX-aware dynamic weights",
+      "pattern": "_verify_adx_aware_weights",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T06:50:58.515123",
+      "auto_generated": true
+    },
+    {
+      "id": "09ea0936d5e5",
+      "commit": "c8e05cf",
+      "file": "scripts/diagnostics/code_integrity.py",
+      "message": "fix: align all prompts + diagnostics with v5.8 ADX-aware dynamic weights",
+      "pattern": "_check_adx_aware_prompts",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T06:50:58.533593",
+      "auto_generated": true
+    },
+    {
+      "id": "a907abb6c827",
+      "commit": "f2bae73",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: Judge confluence evaluation — force structured multi-layer analysis (v5.7)",
+      "pattern": "结果: {{\"confluence\":{{\"trend_1d\":\"BEARISH — ADX=45 DI->DI+, 强下跌趋势\",\"momentum_4h\":\"BULLISH — MACD 金叉, RSI 回升至 55\",\"levels_15m\":\"NEUTRAL — 价格在 range 中间\",",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.572202",
+      "auto_generated": true
+    },
+    {
+      "id": "c1b1103ad4c8",
+      "commit": "f2bae73",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: Judge confluence evaluation — force structured multi-layer analysis (v5.7)",
+      "pattern": "confluence = judge_decision.get('confluence', {})",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.596497",
+      "auto_generated": true
+    },
+    {
+      "id": "6a6ac57aa54b",
+      "commit": "f2bae73",
+      "file": "utils/telegram_bot.py",
+      "message": "fix: Judge confluence evaluation — force structured multi-layer analysis (v5.7)",
+      "pattern": "confluence = execution_data.get('confluence', {})",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.614784",
+      "auto_generated": true
+    },
+    {
+      "id": "bb3dac61b50e",
+      "commit": "5f99592",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: sync diagnostic scripts with v5.6 MTF fixes (4H ADX/DI + 1D ADX + CVD cold start)",
+      "pattern": "adx_4h = mtf_decision.get('adx', 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.650757",
+      "auto_generated": true
+    },
+    {
+      "id": "c7a67638f592",
+      "commit": "5f99592",
+      "file": "scripts/diagnostics/indicator_test.py",
+      "message": "fix: sync diagnostic scripts with v5.6 MTF fixes (4H ADX/DI + 1D ADX + CVD cold start)",
+      "pattern": "'adx': decision_layer_data.get('adx', 0),",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.670578",
+      "auto_generated": true
+    },
+    {
+      "id": "15097a6e415c",
+      "commit": "5f99592",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "fix: sync diagnostic scripts with v5.6 MTF fixes (4H ADX/DI + 1D ADX + CVD cold start)",
+      "pattern": "cvd_trend = result.get('cvd_trend', 'N/A')",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.689138",
+      "auto_generated": true
+    },
+    {
+      "id": "74218eb1e8cd",
+      "commit": "8423f9a",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: MTF data pipeline — Bear opposition, 1D verdict, 4H ADX, Funding Rate, CVD bootstrap",
+      "pattern": "_compute_trend_verdict",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T06:50:58.727892",
+      "auto_generated": true
+    },
+    {
+      "id": "976081faee54",
+      "commit": "8423f9a",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: MTF data pipeline — Bear opposition, 1D verdict, 4H ADX, Funding Rate, CVD bootstrap",
+      "pattern": "'adx': decision_layer_data.get('adx', 0),",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.752774",
+      "auto_generated": true
+    },
+    {
+      "id": "5ffd9fd8e9e5",
+      "commit": "8423f9a",
+      "file": "utils/order_flow_processor.py",
+      "message": "fix: MTF data pipeline — Bear opposition, 1D verdict, 4H ADX, Funding Rate, CVD bootstrap",
+      "pattern": "if len(self._cvd_history) == 0 and len(klines) > 1:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.769899",
+      "auto_generated": true
+    },
+    {
+      "id": "990dfb169675",
+      "commit": "da07483",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: eliminate -2022 ReduceOnly rejection from TP cancel+resubmit race (v4.16)",
+      "pattern": "from strategy.trading_logic import get_min_rr_ratio",
+      "pattern_type": "import",
+      "created": "2026-02-15T07:59:00.905507",
+      "auto_generated": true
+    },
+    {
+      "id": "f2d11ce45dc6",
+      "commit": "b5f82b4",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: add 120s timeout to OpenAI clients, remove dead DeepSeekAnalyzer code",
+      "pattern": "self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=120.0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T10:09:05.755555",
+      "auto_generated": true
+    },
+    {
+      "id": "146fbd542419",
+      "commit": "b5f82b4",
+      "file": "utils/__init__.py",
+      "message": "fix: add 120s timeout to OpenAI clients, remove dead DeepSeekAnalyzer code",
+      "pattern": "from agents.multi_agent_analyzer import MultiAgentAnalyzer",
+      "pattern_type": "import",
+      "created": "2026-02-15T10:09:05.832482",
+      "auto_generated": true
+    },
+    {
+      "id": "3cea1db3c37e",
+      "commit": "b5f82b4",
+      "file": "utils/deepseek_client.py",
+      "message": "fix: add 120s timeout to OpenAI clients, remove dead DeepSeekAnalyzer code",
+      "pattern": "self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=120.0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T10:09:05.850804",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-13T15:10:52.701373",
-    "count": 439,
+    "updated": "2026-02-15T10:09:09.835919",
+    "count": 551,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }

@@ -289,11 +289,11 @@ def phase1_code_integrity():
                actual="Method not found")
     else:
         has_rr = "validate_multiagent_sltp" in validate_method
-        has_fallback = "calculate_technical_sltp" in validate_method
+        has_fallback = "calculate_sr_based_sltp" in validate_method
         has_price_chain = "binance_account" in validate_method and "latest_price_data" in validate_method
         record("P1.7", "Unified SL/TP validation (_validate_sltp_for_entry)", "pass" if all([has_rr, has_fallback]) else "warn",
-               expected="validate_multiagent_sltp + calculate_technical_sltp fallback + price chain",
-               actual=f"AI R/R check={has_rr}, tech fallback={has_fallback}, price_chain={has_price_chain}")
+               expected="validate_multiagent_sltp + calculate_sr_based_sltp fallback + price chain",
+               actual=f"AI R/R check={has_rr}, S/R fallback={has_fallback}, price_chain={has_price_chain}")
 
     # --- P1.8: _dynamic_sltp_update safety rules ---
     dynamic_method = extract_method(lines, "_dynamic_sltp_update")
@@ -464,6 +464,10 @@ class BinanceAPI:
 def phase3_binance():
     banner("Phase 3: Binance Real-time State (币安实时状态)")
 
+    # Dynamic base currency from symbol
+    _symbol = "BTCUSDT"
+    base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'
+
     api_key = os.environ.get("BINANCE_API_KEY", "")
     if not api_key:
         record("P3.0", "Binance API connectivity", "skip",
@@ -508,7 +512,7 @@ def phase3_binance():
         if abs(pos_amt) > 0:
             side = "LONG" if pos_amt > 0 else "SHORT"
             record("P3.3", "Current position", "pass",
-                   actual=f"{side} {abs(pos_amt)} BTC @ ${entry_price:,.2f}, "
+                   actual=f"{side} {abs(pos_amt)} {base_currency} @ ${entry_price:,.2f}, "
                           f"PnL=${unrealized_pnl:,.2f}, Leverage={leverage}x")
         else:
             record("P3.3", "Current position", "pass",
@@ -682,117 +686,37 @@ def phase4_order_flow(price, klines):
 
     # Try importing trading_logic
     try:
-        from strategy.trading_logic import validate_multiagent_sltp, calculate_technical_sltp
+        from strategy.trading_logic import validate_multiagent_sltp
         has_trading_logic = True
     except ImportError as e:
         record("P4.0", "Import trading_logic", "fail", actual=str(e))
         has_trading_logic = False
 
+    # v5.1: calculate_technical_sltp removed, replaced by calculate_sr_based_sltp
+    calculate_technical_sltp = None
+
     # === S1: New Position (开仓) ===
+    # v5.1: calculate_technical_sltp removed, production uses calculate_sr_based_sltp
     if has_trading_logic:
         print(f"\n  {Colors.BOLD}--- Scenario 1: New LONG Position (新开多仓) ---{Colors.RESET}")
-        try:
-            sl, tp, method = calculate_technical_sltp(
-                side="BUY",
-                entry_price=price,
-                support=support,
-                resistance=resistance,
-                confidence="MEDIUM",
-                use_support_resistance=True,
-                sl_buffer_pct=0.005,
-            )
-            if price > sl > 0 and tp > price:
-                rr = (tp - price) / (price - sl) if price > sl else 0
-                record("S1", "New LONG: technical SL/TP calculation", "pass",
-                       actual=f"SL=${sl:,.2f} TP=${tp:,.2f} R/R={rr:.2f}:1",
-                       detail=f"Method: {method}\n"
-                              f"Bracket order → Binance (no emulation)\n"
-                              f"SL: STOP_MARKET reduce_only=True trigger=LAST_PRICE\n"
-                              f"TP: LIMIT reduce_only=True GTC")
-            else:
-                record("S1", "New LONG: technical SL/TP calculation", "warn",
-                       actual=f"SL=${sl:,.2f} TP=${tp:,.2f} — positions may not be optimal",
-                       detail=f"Method: {method}")
-        except Exception as e:
-            record("S1", "New LONG: technical SL/TP calculation", "fail",
-                   actual=str(e), detail=traceback.format_exc()[-300:])
+        record("S1", "New LONG: SL/TP calculation", "skip",
+               actual="calculate_technical_sltp removed in v5.1, production uses calculate_sr_based_sltp")
 
-        # New SHORT
         print(f"\n  {Colors.BOLD}--- Scenario 1b: New SHORT Position (新开空仓) ---{Colors.RESET}")
-        try:
-            sl, tp, method = calculate_technical_sltp(
-                side="SELL",
-                entry_price=price,
-                support=support,
-                resistance=resistance,
-                confidence="MEDIUM",
-                use_support_resistance=True,
-                sl_buffer_pct=0.005,
-            )
-            if sl > price and 0 < tp < price:
-                rr = (price - tp) / (sl - price) if sl > price else 0
-                record("S1b", "New SHORT: technical SL/TP calculation", "pass",
-                       actual=f"SL=${sl:,.2f} TP=${tp:,.2f} R/R={rr:.2f}:1",
-                       detail=f"Method: {method}")
-            else:
-                record("S1b", "New SHORT: technical SL/TP calculation", "warn",
-                       actual=f"SL=${sl:,.2f} TP=${tp:,.2f}", detail=f"Method: {method}")
-        except Exception as e:
-            record("S1b", "New SHORT: technical SL/TP calculation", "fail",
-                   actual=str(e))
+        record("S1b", "New SHORT: SL/TP calculation", "skip",
+               actual="calculate_technical_sltp removed in v5.1, production uses calculate_sr_based_sltp")
 
     # === S2: Add to Position (加仓) ===
     if has_trading_logic:
         print(f"\n  {Colors.BOLD}--- Scenario 2: Add to LONG (加仓) ---{Colors.RESET}")
-        try:
-            # Simulate: existing LONG @ price-200, adding at current price
-            old_entry = price - 200
-            old_sl = support - (support * 0.005)  # old SL below support
-            # New calculation at current price
-            new_sl, new_tp, method = calculate_technical_sltp(
-                side="BUY", entry_price=price, support=support,
-                resistance=resistance, confidence="MEDIUM",
-                use_support_resistance=True, sl_buffer_pct=0.005,
-            )
-            # Safety: SL can only move UP for LONG
-            final_sl = max(new_sl, old_sl)
-            rr = (new_tp - price) / (price - final_sl) if price > final_sl else 0
-            passed = rr >= 1.5
-            record("S2", "Add to LONG: R/R validation + SL favorable", "pass" if passed else "warn",
-                   expected="R/R >= 1.5:1, SL = max(old, new)",
-                   actual=f"old_SL=${old_sl:,.2f} → new_SL=${final_sl:,.2f} (moved {'UP ✓' if final_sl >= old_sl else 'DOWN ✗'})\n"
-                          f"    TP=${new_tp:,.2f} R/R={rr:.2f}:1 {'✓' if passed else '< 1.5 — ADD BLOCKED'}",
-                   detail=f"After add: _replace_sltp_orders cancels old + creates new\n"
-                          f"SL: STOP_MARKET at ${final_sl:,.2f}\n"
-                          f"TP: LIMIT at ${new_tp:,.2f}")
-        except Exception as e:
-            record("S2", "Add to LONG: R/R validation + SL favorable", "fail",
-                   actual=str(e))
+        record("S2", "Add to LONG: R/R validation + SL favorable", "skip",
+               actual="calculate_technical_sltp removed in v5.1, production uses calculate_sr_based_sltp")
 
     # === S3: Partial Close / Reduce (减仓) ===
     if has_trading_logic:
         print(f"\n  {Colors.BOLD}--- Scenario 3: Reduce LONG 50% (减仓) ---{Colors.RESET}")
-        try:
-            old_qty = 0.010
-            reduce_pct = 50
-            remaining_qty = old_qty * (1 - reduce_pct / 100)
-            # Recalculate SL/TP using current S/R (v4.12)
-            new_sl, new_tp, method = calculate_technical_sltp(
-                side="BUY", entry_price=price, support=support,
-                resistance=resistance, confidence="MEDIUM",
-                use_support_resistance=True, sl_buffer_pct=0.005,
-            )
-            old_sl_sim = support * 0.99  # simulated old SL
-            final_sl = max(new_sl, old_sl_sim)  # favorable direction
-            record("S3", "Reduce: recalculate SL/TP with current S/R", "pass",
-                   actual=f"Remaining qty: {remaining_qty:.4f} BTC\n"
-                          f"    Old SL=${old_sl_sim:,.2f} → New SL=${final_sl:,.2f} (favorable ✓)\n"
-                          f"    TP=${new_tp:,.2f}",
-                   detail=f"v4.12: _recreate_sltp_after_reduce uses _validate_sltp_for_entry\n"
-                          f"Fallback: if recalc fails, uses old prices from trailing_stop_state")
-        except Exception as e:
-            record("S3", "Reduce: recalculate SL/TP with current S/R", "fail",
-                   actual=str(e))
+        record("S3", "Reduce: recalculate SL/TP with current S/R", "skip",
+               actual="calculate_technical_sltp removed in v5.1, production uses calculate_sr_based_sltp")
 
     # === S4: Full Close (平仓) ===
     print(f"\n  {Colors.BOLD}--- Scenario 4: Full Close (完全平仓) ---{Colors.RESET}")
@@ -828,33 +752,8 @@ def phase4_order_flow(price, klines):
     # === S7: Dynamic SL/TP Update (动态止盈止损调整) ===
     if has_trading_logic:
         print(f"\n  {Colors.BOLD}--- Scenario 7: Dynamic SL/TP Update Cycle ---{Colors.RESET}")
-        try:
-            # Simulate: LONG position, S/R shifted
-            old_sl = support * 0.995
-            old_tp = resistance * 0.998
-            # New S/R (imagine support moved up slightly)
-            new_support = support * 1.003
-            new_sl_calc, new_tp_calc, method = calculate_technical_sltp(
-                side="BUY", entry_price=price, support=new_support,
-                resistance=resistance, confidence="MEDIUM",
-                use_support_resistance=True, sl_buffer_pct=0.005,
-            )
-            # SL favorable direction
-            final_sl = max(new_sl_calc, old_sl)
-            # Check threshold (0.1%)
-            sl_change_pct = abs(final_sl - old_sl) / old_sl * 100
-            tp_change_pct = abs(new_tp_calc - old_tp) / old_tp * 100 if old_tp > 0 else 0
-            should_update = sl_change_pct > 0.1 or tp_change_pct > 0.1
-
-            record("S7", "Dynamic SL/TP: recalculate + threshold check", "pass",
-                   actual=f"SL: ${old_sl:,.2f} → ${final_sl:,.2f} (Δ={sl_change_pct:.3f}%)\n"
-                          f"    TP: ${old_tp:,.2f} → ${new_tp_calc:,.2f} (Δ={tp_change_pct:.3f}%)\n"
-                          f"    Update needed: {'YES' if should_update else 'NO (< 0.1% threshold)'}",
-                   detail=f"SL moves {'UP ✓' if final_sl >= old_sl else 'DOWN ✗'} (favorable for LONG)\n"
-                          f"Uses _replace_sltp_orders for atomic cancel+recreate")
-        except Exception as e:
-            record("S7", "Dynamic SL/TP: recalculate + threshold check", "fail",
-                   actual=str(e))
+        record("S7", "Dynamic SL/TP: recalculate + threshold check", "skip",
+               actual="calculate_technical_sltp removed in v5.1, production uses calculate_sr_based_sltp")
 
     # === S8: Crash Recovery (崩溃恢复) ===
     print(f"\n  {Colors.BOLD}--- Scenario 8: Crash Recovery on Startup ---{Colors.RESET}")
@@ -877,27 +776,8 @@ def phase4_order_flow(price, klines):
     # === S10: Trailing Stop + Dynamic SL Coexistence ===
     if has_trading_logic:
         print(f"\n  {Colors.BOLD}--- Scenario 10: Trailing Stop + Dynamic SL Coexistence ---{Colors.RESET}")
-        try:
-            # Simulate: LONG, trailing stop activated at higher price
-            trailing_sl = price * 0.99  # trailing stop close to current price
-            dynamic_sl_calc, _, _ = calculate_technical_sltp(
-                side="BUY", entry_price=price, support=support,
-                resistance=resistance, confidence="MEDIUM",
-                use_support_resistance=True, sl_buffer_pct=0.005,
-            )
-            # Dynamic SL (from S/R)
-            dynamic_sl = max(dynamic_sl_calc, support * 0.995)  # favorable vs initial
-            # Final: max of trailing and dynamic
-            final_sl = max(trailing_sl, dynamic_sl)
-            winner = "trailing" if trailing_sl >= dynamic_sl else "dynamic (S/R)"
-            record("S10", "Trailing + Dynamic SL coexistence", "pass",
-                   actual=f"Trailing SL: ${trailing_sl:,.2f}\n"
-                          f"    Dynamic SL:  ${dynamic_sl:,.2f}\n"
-                          f"    Final SL:    ${final_sl:,.2f} (winner: {winner})",
-                   detail="max(trailing_sl, dynamic_sl) — 使用更保守的止损价")
-        except Exception as e:
-            record("S10", "Trailing + Dynamic SL coexistence", "fail",
-                   actual=str(e))
+        record("S10", "Trailing + Dynamic SL coexistence", "skip",
+               actual="calculate_technical_sltp removed in v5.1, production uses calculate_sr_based_sltp")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -912,10 +792,13 @@ def phase5_math(price, klines):
         return
 
     try:
-        from strategy.trading_logic import validate_multiagent_sltp, calculate_technical_sltp
+        from strategy.trading_logic import validate_multiagent_sltp
     except ImportError as e:
         record("M0", "Import trading_logic for math", "fail", actual=str(e))
         return
+
+    # v5.1: calculate_technical_sltp removed, replaced by calculate_sr_based_sltp
+    calculate_technical_sltp = None
 
     support, resistance = compute_sr_from_klines(klines, price) if klines else (price * 0.98, price * 1.02)
 
@@ -986,29 +869,12 @@ def phase5_math(price, klines):
            expected="Reject: SHORT SL must be > entry",
            actual=f"valid={is_valid}, reason={reason}")
 
-    # --- M3: Technical fallback produces valid SL/TP ---
-    print(f"\n  {Colors.BOLD}--- M3: Technical SL/TP Fallback ---{Colors.RESET}")
-    for side, label in [("BUY", "LONG"), ("SELL", "SHORT")]:
-        try:
-            sl, tp, method = calculate_technical_sltp(
-                side=side, entry_price=price, support=support,
-                resistance=resistance, confidence="MEDIUM",
-                use_support_resistance=True, sl_buffer_pct=0.005,
-            )
-            if side == "BUY":
-                rr = (tp - price) / (price - sl) if price > sl else 0
-                side_ok = sl < price < tp
-            else:
-                rr = (price - tp) / (sl - price) if sl > price else 0
-                side_ok = tp < price < sl
-            passed = rr >= 1.5 and side_ok
-            record(f"M3{'a' if side == 'BUY' else 'b'}",
-                   f"Technical fallback: {label}", "pass" if passed else "warn",
-                   actual=f"SL=${sl:,.2f} TP=${tp:,.2f} R/R={rr:.2f}:1 side_ok={side_ok}",
-                   detail=f"Method: {method}")
-        except Exception as e:
-            record(f"M3{'a' if side == 'BUY' else 'b'}",
-                   f"Technical fallback: {label}", "fail", actual=str(e))
+    # --- M3: Technical fallback (removed in v5.1) ---
+    print(f"\n  {Colors.BOLD}--- M3: S/R-Based SL/TP (v5.1) ---{Colors.RESET}")
+    record("M3a", "S/R-based fallback: LONG", "skip",
+           actual="calculate_technical_sltp removed in v5.1, production uses calculate_sr_based_sltp")
+    record("M3b", "S/R-based fallback: SHORT", "skip",
+           actual="calculate_technical_sltp removed in v5.1, production uses calculate_sr_based_sltp")
 
     # --- M4: SL favorable direction math ---
     print(f"\n  {Colors.BOLD}--- M4: SL Favorable Direction Rule ---{Colors.RESET}")

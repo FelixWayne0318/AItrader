@@ -274,6 +274,7 @@ class DiagnosticContext:
     summary_mode: bool = False
     export_mode: bool = False
     push_to_github: bool = False
+    push_branch: str = "main"  # Default push target (server should push to main)
 
     # Project paths
     project_root: Path = field(default_factory=lambda: Path(__file__).parent.parent.parent)
@@ -350,6 +351,13 @@ class DiagnosticContext:
     total_steps: int = 34  # 28 data steps + 3 order flow + code_integrity + math_verify + json_output
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+
+    @property
+    def base_currency(self) -> str:
+        """Extract base currency from symbol (e.g., BTCUSDT → BTC, ETHUSDT → ETH)."""
+        if 'USDT' in self.symbol:
+            return self.symbol.replace('USDT', '')
+        return self.symbol.split('-')[0] if '-' in self.symbol else 'BTC'
 
     def add_error(self, message: str) -> None:
         """Add an error message."""
@@ -437,13 +445,15 @@ class DiagnosticRunner:
         env: str = "production",
         summary_mode: bool = False,
         export_mode: bool = False,
-        push_to_github: bool = False
+        push_to_github: bool = False,
+        push_branch: str = "main",
     ):
         self.ctx = DiagnosticContext(
             env=env,
             summary_mode=summary_mode,
             export_mode=export_mode,
-            push_to_github=push_to_github
+            push_to_github=push_to_github,
+            push_branch=push_branch,
         )
         self.steps: List[DiagnosticStep] = []
 
@@ -654,13 +664,30 @@ class DiagnosticRunner:
             f.write("=" * 80 + "\n")
 
     def _push_to_github_multi(self, filepaths: list) -> None:
-        """Push multiple export files to GitHub in a single commit."""
+        """Push multiple export files to GitHub in a single commit.
+
+        Default: push to current branch (HEAD).
+        --push-branch overrides target branch.
+        """
         import subprocess
 
         filenames = [fp.name for fp in filepaths if fp.exists()]
         commit_msg = f"chore: Add diagnosis report + AI call trace ({', '.join(filenames)})"
+
         try:
             os.chdir(self.ctx.project_root)
+
+            current_branch = subprocess.run(
+                ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                capture_output=True, text=True, check=True
+            ).stdout.strip()
+
+            # Use --push-branch if explicitly set, otherwise current branch
+            branch = self.ctx.push_branch if self.ctx.push_branch != "main" else current_branch
+
+            if current_branch != branch:
+                print(f"  ℹ️  当前 {current_branch}，切换到 {branch}...")
+                subprocess.run(['git', 'checkout', branch], check=True, capture_output=True)
 
             for fp in filepaths:
                 if fp.exists():
@@ -668,19 +695,31 @@ class DiagnosticRunner:
 
             subprocess.run(['git', 'commit', '-m', commit_msg], check=True, capture_output=True)
 
-            result = subprocess.run(
-                ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                capture_output=True, text=True, check=True
+            push_result = subprocess.run(
+                ['git', 'push', '-u', 'origin', branch],
+                capture_output=True, text=True
             )
-            branch = result.stdout.strip()
-
-            subprocess.run(['git', 'push', '-u', 'origin', branch], check=True, capture_output=True)
+            if push_result.returncode != 0:
+                stderr = push_result.stderr.strip()
+                print(f"  ⚠️ Git push 失败 (exit {push_result.returncode}):")
+                print(f"     {stderr}")
+                paths_str = ' '.join(str(fp) for fp in filepaths)
+                print(f"     已提交到本地，请手动: git push origin {branch}")
+                return
 
             print(f"  ✅ 已推送到 GitHub (分支: {branch})")
             for fn in filenames:
                 print(f"  📎 logs/{fn}")
 
+            # Switch back if we changed branches
+            if current_branch != branch:
+                subprocess.run(['git', 'checkout', current_branch], check=True, capture_output=True)
+                print(f"  ℹ️  已切回 {current_branch}")
+
         except subprocess.CalledProcessError as e:
-            print(f"  ⚠️ Git 推送失败: {e}")
+            stderr = e.stderr.decode() if isinstance(e.stderr, bytes) else (e.stderr or "")
+            print(f"  ⚠️ Git 操作失败: {e}")
+            if stderr:
+                print(f"     详情: {stderr.strip()}")
             paths_str = ' '.join(str(fp) for fp in filepaths)
             print(f"     请手动提交: git add -f {paths_str} && git commit && git push")

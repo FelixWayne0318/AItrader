@@ -5,6 +5,7 @@ Comprehensive configuration and system management
 import os
 import uuid
 import shutil
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -585,9 +586,10 @@ async def get_recent_signals(
     """Get recent AI signals for admin dashboard"""
     import json
 
+    aitrader_path = Path(settings.AITRADER_PATH) if settings.AITRADER_PATH else Path(".")
     signal_file_paths = [
-        str(settings.AITRADER_PATH / "logs" / "signal_history.json"),
-        str(settings.AITRADER_PATH / "state" / "signal_history.json"),
+        str(aitrader_path / "logs" / "signal_history.json"),
+        str(aitrader_path / "state" / "signal_history.json"),
     ]
 
     for path in signal_file_paths:

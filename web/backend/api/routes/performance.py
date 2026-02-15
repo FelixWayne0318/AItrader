@@ -58,7 +58,7 @@ async def get_equity_curve():
     try:
         service = get_performance_service()
         stats = await service.get_performance_stats()
-        return {"success": True, "data": stats.get("equity_curve", [])}
+        return {"success": True, "data": stats.get("pnl_curve", [])}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -2,7 +2,7 @@
 Summary Module
 
 Generates comprehensive diagnostic summaries and analysis.
-Includes v5.0 machine-readable JSON output.
+Includes v5.1 machine-readable JSON output.
 """
 
 import json
@@ -130,8 +130,12 @@ class DataFlowSummary(DiagnosticStep):
 
         print(f"  Open Interest (Coinalyze):")
         if oi_data:
-            print(f"    OI (BTC):    {oi_data.get('value', 0):,.2f}")
-            print(f"    OI (USD):    ${oi_data.get('total_usd', 0):,.0f}")
+            bc = self.ctx.base_currency
+            oi_val = float(oi_data.get('value', 0) or 0)
+            oi_usd = oi_data.get('total_usd', 0)
+            if not oi_usd and oi_val > 0:
+                oi_usd = oi_val * (self.ctx.current_price or 0)
+            print(f"    OI:          ${oi_usd:,.0f} ({oi_val:,.2f} {bc})")
             print(f"    OI Change:   {oi_data.get('change_pct', 'N/A')}")
         else:
             print(f"    (数据不可用)")
@@ -143,8 +147,8 @@ class DataFlowSummary(DiagnosticStep):
             fr = self.ctx.binance_funding_rate
             settled_pct = fr.get('funding_rate_pct', 0)
             predicted_pct = fr.get('predicted_rate_pct', 0)
-            print(f"    Settled:     {settled_pct:.4f}%")
-            print(f"    Predicted:   {predicted_pct:.4f}%")
+            print(f"    Settled:     {settled_pct:.5f}%")
+            print(f"    Predicted:   {predicted_pct:.5f}%")
             print(f"    Source:      binance_direct")
         else:
             print(f"    (数据不可用)")
@@ -159,8 +163,9 @@ class DataFlowSummary(DiagnosticStep):
                 short_btc = float(latest.get('s', 0))
                 long_usd = long_btc * self.ctx.current_price
                 short_usd = short_btc * self.ctx.current_price
-                print(f"    Long:   {long_btc:.4f} BTC (${long_usd:,.0f})")
-                print(f"    Short:  {short_btc:.4f} BTC (${short_usd:,.0f})")
+                bc = self.ctx.base_currency
+                print(f"    Long:   ${long_usd:,.0f} ({long_btc:.4f} {bc})")
+                print(f"    Short:  ${short_usd:,.0f} ({short_btc:.4f} {bc})")
             else:
                 print(f"    (无爆仓记录)")
         else:
@@ -196,7 +201,10 @@ class DataFlowSummary(DiagnosticStep):
             print(f"  持仓状态: 有持仓")
             # === Basic (4 fields) ===
             print(f"    方向:     {pos.get('side', 'N/A').upper()}")
-            print(f"    数量:     {pos.get('quantity', 0):.6f} BTC")
+            bc = self.ctx.base_currency
+            qty = pos.get('quantity', 0)
+            notional = float(qty) * float(pos.get('avg_px', 0))
+            print(f"    数量:     ${notional:,.0f} ({float(qty):.6f} {bc})")
             print(f"    持仓价值: ${position_value:,.2f}")
             print(f"    入场价:   ${pos.get('avg_px', 0):,.2f}")
             print(f"    未实现PnL: ${pos.get('unrealized_pnl', 0):,.2f}")
@@ -637,13 +645,13 @@ class DeepAnalysis(DiagnosticStep):
 
 class MachineReadableSummary(DiagnosticStep):
     """
-    v5.0 机器可读 JSON 输出
+    v5.1 机器可读 JSON 输出
 
     Generates a structured JSON summary of all diagnostic results,
     matching the format used by diagnose_v412.py.
     """
 
-    name = "v5.0 机器可读 JSON 输出"
+    name = "v5.1 机器可读 JSON 输出"
 
     def run(self) -> bool:
         print()
@@ -691,7 +699,7 @@ class MachineReadableSummary(DiagnosticStep):
         warnings_count = len(self.ctx.warnings)
 
         summary = {
-            "version": "v5.0",
+            "version": "v5.1",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "total": total,
             "passed": passed,

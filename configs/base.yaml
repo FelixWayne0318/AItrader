@@ -30,8 +30,9 @@ trading_logic:
   default_tp_pct: 0.03            # 默认止盈 3%
   min_rr_ratio: 1.5               # 最小风险收益比 (R/R < 1.5:1 拒绝 AI SL/TP，回退到技术分析)
 
-  # v5.0: S/R zone 驱动 SL/TP (唯一方式，不再有 legacy 百分比路径)
-  atr_buffer_multiplier: 0.5      # ATR 缓冲倍数 (SL = S/R zone ± ATR * multiplier)
+  # v5.1: S/R zone 驱动 SL/TP (唯一方式，不再有 legacy 百分比路径)
+  atr_buffer_multiplier: 0.5      # SL: ATR 缓冲倍数 (SL = S/R zone ± ATR * multiplier)
+  tp_buffer_multiplier: 0.25      # TP: zone 前方偏移 (TP = zone ∓ ATR * multiplier; 0=关闭)
   dynamic_sltp_update: true       # 每 15 分钟动态更新 SL/TP
   dynamic_update_threshold_pct: 0.002  # 变化超过 0.2% 才更新 (避免频繁修改)
   sl_only_favorable: true         # SL 只能向有利方向移动
@@ -162,11 +163,6 @@ risk:
   rsi_extreme_threshold_upper: 70.0  # RSI 超买阈值
   rsi_extreme_threshold_lower: 30.0  # RSI 超卖阈值
   rsi_extreme_multiplier: 0.7
-
-  # ===== v3.7: BB 位置硬性检查 (Support/Resistance Risk Control) =====
-  bb_block_enabled: true                # 启用 BB 位置硬性检查
-  bb_block_threshold_pct: 2.0           # 距离 BB 边界 < 2% 时阻止交易
-  bb_high_confidence_override: false    # 高信心时允许突破 (默认 false，保守)
 
   # 止损止盈
   stop_loss:

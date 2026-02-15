@@ -181,6 +181,316 @@ Example — weak setup: Trend layer (ADX/SMA) conflicts with momentum/levels
   → trend is statistically the stronger predictor in this conflict.
 """
 
+# =============================================================================
+# SIGNAL CONFIDENCE MATRIX (v1.2)
+# =============================================================================
+# - Quantified per-signal, per-regime confidence multipliers
+# - Only injected into Judge + Risk Manager prompts (NOT Bull/Bear)
+# - See docs/INDICATOR_CONFIDENCE_MATRIX.md for full design rationale
+# =============================================================================
+SIGNAL_CONFIDENCE_MATRIX = """
+====================================================================
+SIGNAL CONFIDENCE MATRIX (v1.2)
+====================================================================
+When evaluating each confluence layer in STEP 2, apply these confidence
+multipliers to weight each signal's reliability in the current regime
+(determined in STEP 1).
+
+MULTIPLIER SCALE:
+  HIGH (1.2+) = Signal is especially reliable in this regime
+  STD  (1.0)  = Standard confidence
+  LOW  (0.7)  = Needs other signals to confirm before trusting
+  SKIP (≤0.4) = Unreliable in this regime — ignore as primary basis
+
+REGIME COLUMNS: Match your STEP 1 regime to the correct column.
+  ADX>40     = Strong trend (趋势层主导)
+  ADX 25-40  = Weak trend (趋势重要但非绝对)
+  ADX<20     = Ranging / 震荡 (关键水平层权重最高)
+  SQUEEZE    = ADX<20 + BB Width at lows (等待突破)
+  VOLATILE   = ADX>25 + BB Width expanding fast (趋势跟随 + 宽止损)
+
+REGIME TRANSITION: When ADX is near a boundary (18-22 or 35-45),
+blend the multipliers of adjacent regimes (take the average).
+
+====================================================================
+SECTION A: SNAPSHOT SIGNALS (per confluence layer)
+====================================================================
+
+--- LAYER 1: TREND (1D) → fill confluence.trend_1d ---
+
+| Signal              | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature  |
+|---------------------|:---:|:---:|:---:|:---:|:---:|---------|
+| 1D SMA200 direction | 1.3 | 1.0 | 0.4 | 0.3 | 1.1 | Lagging |
+| 1D ADX/DI direction | 1.2 | 1.0 | 0.3 | 0.3 | 1.1 | Lagging |
+| 1D MACD zero-line   | 1.1 | 1.0 | 0.3 | 0.5 | 1.0 | Lagging |
+| 1D RSI level        | 0.9 | 1.0 | 0.7 | 0.6 | 0.8 | Sync    |
+
+Notes:
+- ADX>40: This layer is DOMINANT — all signals reliable.
+- ADX<20: This layer is nearly irrelevant (trend data is noise).
+- SQUEEZE: Historical trend direction has low predictive value (about to change).
+- VOLATILE: Trend is real but noisy — slightly less reliable than calm strong trend.
+- ⚠️ 1D TREND VERDICT (STRONG_BULLISH etc.) is pre-computed from these 4 signals.
+  It is a SUMMARY — do NOT count it as a 5th independent signal. (See RULE 2)
+
+--- LAYER 2: MOMENTUM (4H) → fill confluence.momentum_4h ---
+
+| Signal               | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature   |
+|----------------------|:---:|:---:|:---:|:---:|:---:|----------|
+| 4H RSI level         | 0.8 | 1.0 | 1.2 | 0.9 | 0.7 | Sync     |
+| 4H RSI divergence*   | 0.6 | 0.8 | 1.3 | 1.1 | 0.5 | Leading  |
+| 4H MACD cross        | 1.2 | 1.0 | 0.3 | 0.5 | 1.1 | Lagging  |
+| 4H MACD histogram    | 1.0 | 1.0 | 0.5 | 0.7 | 0.9 | Sync-lag |
+| 4H ADX/DI direction  | 1.1 | 1.0 | 0.4 | 0.5 | 1.0 | Lagging  |
+| 4H BB position       | 0.6 | 0.9 | 1.2 | 0.8 | 0.5 | Sync     |
+| 4H SMA 20/50 cross   | 1.1 | 1.0 | 0.4 | 0.6 | 1.0 | Lagging  |
+| CVD single-bar delta | 0.9 | 1.0 | 1.2 | 1.3 | 1.0 | Leading  |
+| CVD trend (cumul.)   | 1.1 | 1.0 | 0.8 | 0.7 | 1.0 | Sync-lag |
+| CVD divergence*      | 0.7 | 0.9 | 1.3 | 1.2 | 0.5 | Leading  |
+| Buy Ratio (taker %)  | 0.8 | 1.0 | 1.1 | 1.2 | 0.9 | Realtime |
+| Avg Trade Size chg   | 0.7 | 0.9 | 1.0 | 1.2 | 0.8 | Leading  |
+
+Notes:
+- *Divergence = inferred from series data (RSI or CVD vs price opposite directions).
+- RSI in ADX>40: Cardwell range shifts apply (40-80 uptrend, 20-60 downtrend),
+  traditional 30/70 FAIL. Divergence at 0.6 because it still signals deceleration.
+- MACD cross in ADX<20: 74-97% false positive rate — nearly useless.
+- VOLATILE: Divergence signals (RSI/CVD) are very unreliable (0.5) due to noise-induced
+  false divergences. Trend-confirming signals (MACD cross, ADX/DI) remain useful.
+  BB position also unreliable — price swings overshoot bands frequently.
+- Buy Ratio: Taker buy % from Order Flow data. >55% = buy pressure, <45% = sell.
+- Avg Trade Size: Sudden increase = institutional activity (leading).
+
+--- LAYER 3: KEY LEVELS (15M) → fill confluence.levels_15m ---
+
+| Signal               | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature   |
+|----------------------|:---:|:---:|:---:|:---:|:---:|----------|
+| S/R zone test (bnce) | 0.5 | 0.8 | 1.3 | 1.0 | 0.4 | Static   |
+| S/R zone breakout    | 1.3 | 1.0 | 0.6 | 1.2 | 1.3 | Event    |
+| 15M BB position      | 0.6 | 0.9 | 1.2 | 0.8 | 0.5 | Sync     |
+| 15M BB Width level   | 0.7 | 0.8 | 0.9 | 1.3 | 0.8 | Sync     |
+| OBI (book imbalance) | 0.6 | 0.8 | 1.1 | 1.2 | 0.5 | Realtime |
+| OBI change rate      | 0.7 | 0.9 | 1.2 | 1.3 | 0.6 | Leading  |
+| Bid/Ask depth change | 0.7 | 0.9 | 1.1 | 1.2 | 0.6 | Leading  |
+| Pressure gradient    | 0.6 | 0.8 | 1.1 | 1.2 | 0.5 | Leading  |
+| Order walls (>3x)    | 0.4 | 0.6 | 0.9 | 1.0 | 0.3 | Realtime |
+| 15M SMA cross (5/20) | 0.9 | 1.0 | 0.6 | 0.7 | 0.8 | Lagging  |
+| 15M Volume ratio     | 0.9 | 1.0 | 1.1 | 1.3 | 1.2 | Sync     |
+| Price vs period H/L  | 0.8 | 1.0 | 1.1 | 1.0 | 0.9 | Sync     |
+| Spread (liquidity)   | 0.9 | 1.0 | 1.0 | 1.1 | 1.1 | Quality  |
+| Slippage (execution) | 0.9 | 1.0 | 1.0 | 1.1 | 1.1 | Quality  |
+
+Notes:
+- S/R bounce rate: ADX>40 → ~25%, ADX<20 → ~70%.
+- VOLATILE: S/R breaks violently (0.4 bounce, 1.3 breakout). Order book is unstable
+  (walls eaten or pulled quickly). Volume ratio is meaningful (confirms volatile move).
+- Order walls in crypto: Spoofing probability HIGH (>70% of large walls are pulled
+  before touch in trending markets). SKIP in ADX>40 and VOLATILE.
+- Spread & Slippage: Not directional — indicate execution quality. High spread (>0.05%)
+  or high slippage (>0.1% for 1 BTC) → reduce Layer 3 confidence by one tier
+  AND reduce position size.
+
+--- LAYER 4: DERIVATIVES → fill confluence.derivatives ---
+⚠️ This layer has the most signals. To prevent it from dominating,
+group related signals and evaluate the GROUP as one input:
+  Group A: Funding Rate (current + extreme + predicted + history + countdown) → 1 input
+  Group B: Open Interest (OI 4-quadrant + OI trend + Premium Index) → 1 input
+  Group C: Positioning (Top Traders + Global L/S + Coinalyze L/S) → 1 input
+  Group D: Real-time flow (Taker Ratio + Liquidations + 24h context) → 1 input
+Then synthesize the 4 group conclusions into ONE overall BULLISH/BEARISH/NEUTRAL
+for confluence.derivatives.
+
+| Signal                       | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature   |
+|------------------------------|:---:|:---:|:---:|:---:|:---:|----------|
+| — GROUP A: FUNDING RATE —    |     |     |     |     |     |          |
+| FR current value             | 0.8 | 0.9 | 1.0 | 1.0 | 0.8 | Sentiment|
+| FR extreme (>±0.05%)        | 0.8 | 1.1 | 1.3 | 1.2 | 0.9 | Leading  |
+| FR predicted vs settled diff | 0.9 | 1.0 | 1.1 | 1.2 | 0.9 | Leading  |
+| FR settlement history trend  | 0.8 | 1.0 | 1.1 | 1.0 | 0.8 | Sync     |
+| FR settlement countdown      | 0.7 | 0.8 | 0.9 | 1.0 | 0.7 | Temporal |
+| — GROUP B: OPEN INTEREST —   |     |     |     |     |     |          |
+| Premium Index                | 0.8 | 1.0 | 1.1 | 1.2 | 0.9 | Leading  |
+| OI↑+Price↑ (new longs)      | 1.2 | 1.0 | 0.8 | 0.9 | 1.1 | Confirm  |
+| OI↑+Price↓ (new shorts)     | 1.2 | 1.0 | 0.8 | 0.9 | 1.1 | Confirm  |
+| OI↓ (unwinding/liquidation)  | 0.9 | 1.0 | 1.0 | 0.8 | 1.0 | Event    |
+| — GROUP C: POSITIONING —     |     |     |     |     |     |          |
+| Top Traders L/S position     | 1.0 | 1.0 | 1.2 | 1.1 | 1.0 | Leading  |
+| Global L/S extreme (>60%)   | 0.6 | 0.9 | 1.2 | 1.1 | 0.7 | Sentiment|
+| Coinalyze L/S Ratio + trend | 0.7 | 0.9 | 1.1 | 1.0 | 0.7 | Sentiment|
+| — GROUP D: REAL-TIME FLOW —  |     |     |     |     |     |          |
+| Taker Buy/Sell Ratio         | 0.9 | 1.0 | 1.1 | 1.2 | 1.0 | Realtime |
+| Liquidation (large event)    | 1.0 | 1.1 | 1.2 | 1.3 | 1.2 | Leading  |
+| 24h Volume level             | 0.8 | 1.0 | 1.0 | 1.1 | 1.1 | Context  |
+| 24h Price Change %           | 0.7 | 0.9 | 0.9 | 1.0 | 0.8 | Context  |
+
+Notes:
+- ⚠️ GROUP RULE: Pick the strongest signal within each group to represent it.
+  Do NOT stack all FR signals into one massive FR-driven conclusion.
+- FR current in ADX>40: 0.01-0.03% in bull market is NORMAL — don't over-interpret.
+- FR predicted vs settled: Sign reversal (+→-) = significant positioning change.
+- OI 4-quadrant in ADX>40: New positioning confirms trend — high reliability.
+- OI 4-quadrant in ADX<20: May be hedging — moderate value (0.8).
+- Top Traders in ADX>40: Smart money WITH trend = confirmation (1.0).
+  Top Traders AGAINST trend = early warning, needs 2+ confirmations.
+- VOLATILE: FR signals slightly less predictive (volatile markets amplify FR).
+  OI confirmation still useful (1.1). Liquidation events are significant (1.2)
+  — cascade liquidations in volatile markets can be extreme.
+
+====================================================================
+SECTION B: TIME-SERIES PATTERN SIGNALS
+====================================================================
+AI receives 20-bar (15M) time-series data. Detect patterns from
+series, then apply multipliers.
+
+--- PRICE SERIES PATTERNS ---
+
+| Pattern                | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature  |
+|------------------------|:---:|:---:|:---:|:---:|:---:|---------|
+| Higher highs/lows      | 1.3 | 1.0 | 0.5 | 0.6 | 1.2 | Confirm |
+| Lower highs/lows       | 1.3 | 1.0 | 0.5 | 0.6 | 1.2 | Confirm |
+| Range-bound oscillation| 0.4 | 0.7 | 1.3 | 1.0 | 0.3 | Confirm |
+| Tightening range       | 0.5 | 0.8 | 1.0 | 1.3 | 0.5 | Leading |
+| Volume climax (spike)  | 1.0 | 1.1 | 1.2 | 1.3 | 1.2 | Event   |
+
+--- INDICATOR SERIES PATTERNS ---
+
+| Pattern                | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature  |
+|------------------------|:---:|:---:|:---:|:---:|:---:|---------|
+| ADX series rising      | 1.2 | 1.1 | 1.3 | 1.2 | 1.1 | Leading — trend strengthening |
+| ADX series falling     | 0.8 | 1.0 | 0.7 | 0.7 | 0.9 | Leading — trend weakening    |
+| BB Width narrowing     | 0.6 | 0.8 | 1.0 | 1.3 | 0.5 | Leading — squeeze forming    |
+| BB Width expanding     | 1.1 | 1.0 | 0.8 | 1.3 | 1.2 | Confirm — breakout active    |
+| SMA convergence (5→20) | 0.7 | 0.9 | 1.1 | 1.2 | 0.7 | Leading — regime change      |
+| SMA divergence (spread)| 1.2 | 1.0 | 0.5 | 0.8 | 1.1 | Confirm — trend established  |
+| RSI trend (accel/decel)| 0.9 | 1.0 | 1.1 | 1.0 | 0.8 | Sync                         |
+| MACD histogram momentum| 1.0 | 1.0 | 0.5 | 0.8 | 0.9 | Sync-lag                     |
+| Volume trend (expand)  | 1.1 | 1.0 | 1.0 | 1.3 | 1.2 | Sync-leading                 |
+| Volume trend (shrink)  | 0.8 | 0.9 | 0.9 | 0.7 | 0.8 | Warning                      |
+
+--- K-LINE OHLCV PATTERNS ---
+
+| Pattern                | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature  |
+|------------------------|:---:|:---:|:---:|:---:|:---:|---------|
+| Engulfing candle       | 0.7 | 1.0 | 1.2 | 1.3 | 0.6 | Leading — reversal     |
+| Doji at S/R            | 0.5 | 0.8 | 1.3 | 1.1 | 0.4 | Leading — indecision   |
+| Long wicks (rejection) | 0.6 | 0.9 | 1.2 | 1.1 | 0.5 | Leading — rejection    |
+| Consecutive same-dir   | 1.2 | 1.0 | 0.6 | 0.8 | 1.1 | Confirm — continuation |
+
+Notes:
+- ADX rising in ADX<20 (1.3) = CRITICAL leading signal. ADX climbing 12→18 means
+  regime is about to shift to TRENDING. One of the most valuable signals.
+- BB Width narrowing in SQUEEZE at 1.3 (not 1.5): narrowing DEFINES squeeze,
+  so highest multiplier would be circular. 1.3 for the process is appropriate.
+- VOLATILE: Reversal patterns (engulfing, doji, wicks) are very unreliable
+  (0.4-0.6) — volatility creates many false reversal signals. Trend continuation
+  patterns remain useful (1.1-1.2). Volume and BB Width expansion confirm the move.
+
+====================================================================
+SECTION C: MULTI-SOURCE SIGNAL DIFFERENTIATION
+====================================================================
+The system receives similar data from multiple sources. These are NOT
+redundant — each has different predictive characteristics.
+
+--- LONG/SHORT POSITIONING (3 sources) ---
+
+| Source                | Represents              | Edge                    | Relative |
+|-----------------------|-------------------------|-------------------------|:---:|
+| Top Traders Position  | Institutional/whale     | Best predictor          | Highest  |
+| Taker Buy/Sell Ratio  | Real-time aggressive flow| Real-time direction    | High     |
+| Binance Global L/S    | Retail sentiment        | Contrarian at extremes  | Base     |
+| Coinalyze L/S Ratio   | Exchange-specific       | Cross-validates Binance | Below    |
+
+RULE: Top Traders vs Global L/S diverge → weight Top Traders.
+      All 3+ agree at extremes → very HIGH confidence.
+
+--- OPEN INTEREST (2 sources) ---
+
+| Source        | Characteristic            | Best for             |
+|---------------|---------------------------|----------------------|
+| Coinalyze OI  | Aggregated multi-exchange | Macro trend (4H)     |
+| Binance OI    | Single exchange, real-time| Short-term moves(15M)|
+
+RULE: Same trend → add one confidence tier to OI assessment.
+      Disagree → use Binance for execution, Coinalyze for context.
+
+--- FUND FLOW (2 sources) ---
+
+| Source        | Calculation              | Best for              |
+|---------------|--------------------------|----------------------|
+| CVD (K-line)  | Cumulative taker delta   | Trend over bars      |
+| Taker Ratio   | Buy/Sell vol snapshot    | Real-time pressure   |
+
+RULE: Same direction → cross-validated, add one confidence tier.
+      Diverge → transitioning, reduce one tier.
+
+====================================================================
+SECTION D: GLOBAL SIGNAL QUALITY MODIFIERS
+====================================================================
+These modify RELIABILITY of all signals. Apply BEFORE final decision.
+Use TIER shifts (not math): each condition shifts confidence DOWN/UP
+by one tier (HIGH→STD, STD→LOW, LOW→SKIP).
+
+| Condition                                    | Effect        | Applies to              |
+|----------------------------------------------|:---:|--------------------------|
+| Volume Ratio < 0.5x (from 15M data)         | DOWN one tier | ALL signals              |
+| Volume Ratio > 2.0x                          | UP one tier   | ALL signals              |
+| Spread > 0.05% OR Slippage > 0.1%           | DOWN one tier | Layer 3 + position size  |
+| 2+ data sources unavailable                  | DOWN one tier | Affected layers          |
+| FR settlement < 30 min away                  | DOWN one tier | Short-term (15M) signals |
+| Low volume + thin orderbook across bars      | DOWN one tier | ALL signals (weekend/off-hours) |
+
+Notes:
+- Tier shifts stack: 2 conditions = DOWN two tiers.
+- Volume Ratio comes from 15M data ("Volume Ratio: X.XXx average").
+- Weekend/off-hours: No date data available. Infer from persistently low
+  volume ratio + reduced orderbook depth across multiple snapshots.
+
+====================================================================
+SECTION E: APPLICATION RULES
+====================================================================
+
+RULE 1 — Layer evaluation:
+  For each confluence layer, assess each signal weighted by its
+  confidence tier in the current regime:
+    HIGH (1.2+) = Primary evidence for layer judgment
+    STD  (1.0)  = Supporting evidence
+    LOW  (0.7)  = Note but don't base judgment on it alone
+    SKIP (≤0.4) = Ignore for this regime
+
+RULE 2 — TREND VERDICT is not a 5th signal:
+  The pre-computed 1D TREND VERDICT is a summary of the 4 Layer 1
+  signals. Use for quick reference ONLY. Do NOT count as independent.
+
+RULE 3 — Conflict resolution:
+  If leading and lagging signals within one layer conflict, prioritize
+  the one with HIGHER confidence tier in current regime.
+
+RULE 4 — Neutral threshold:
+  If only SKIP or LOW signals support a direction in a layer,
+  that layer should be judged NEUTRAL.
+
+RULE 5 — SQUEEZE special case:
+  Wait for breakout confirmation (volume + price) before applying
+  directional multipliers. Pre-breakout: focus on BB Width, Volume,
+  OBI change rate, ADX rising.
+
+RULE 6 — Counter-trend in ADX>40:
+  Even HIGH counter-trend signals require at least 2 independent
+  confirming signals before consideration.
+
+RULE 7 — Multi-source agreement:
+  3+ independent sources agree on direction → upgrade that layer
+  by one confidence tier.
+
+RULE 8 — Layer 4 grouping → confluence.derivatives:
+  Evaluate Layer 4 in 4 groups (A/B/C/D). Each group = 1 input.
+  Then synthesize the 4 group conclusions into ONE overall
+  BULLISH/BEARISH/NEUTRAL judgment for the confluence.derivatives field.
+
+RULE 9 — Global quality check:
+  Before final decision, check Section D. Apply tier shifts.
+"""
+
 
 class MultiAgentAnalyzer:
     """
@@ -222,7 +532,7 @@ class MultiAgentAnalyzer:
         json_parse_max_retries : int
             Maximum retries for JSON parsing failures (default: 2)
         """
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=120.0)
         self.model = model
         self.temperature = temperature
         self.debate_rounds = debate_rounds
@@ -522,6 +832,10 @@ class MultiAgentAnalyzer:
             # Clear call trace for this analysis cycle
             self.call_trace = []
 
+            # v5.4: Extract base currency from symbol for dynamic unit display
+            # e.g., "BTCUSDT" → "BTC", "ETHUSDT" → "ETH", "SOLUSDT" → "SOL"
+            self._base_currency = symbol.replace('USDT', '') if 'USDT' in symbol else symbol
+
             # Format reports for prompts
             tech_summary = self._format_technical_report(technical_report)
             sent_summary = self._format_sentiment_report(sentiment_report)
@@ -567,6 +881,7 @@ class MultiAgentAnalyzer:
             debate_history = ""
             bull_argument = ""
             bear_argument = ""
+            past_memories = self._get_past_memories()  # v5.9: Load once for all agents
 
             for round_num in range(self.debate_rounds):
                 self.logger.info(f"Debate Round {round_num + 1}/{self.debate_rounds}")
@@ -583,6 +898,7 @@ class MultiAgentAnalyzer:
                     history=debate_history,
                     bear_argument=bear_argument,
                     trace_label=f"Bull R{round_num + 1}",
+                    past_memories=past_memories,                # v5.9
                 )
                 debate_history += f"\n\n=== ROUND {round_num + 1} ===\n\nBULL ANALYST:\n{bull_argument}"
 
@@ -598,6 +914,7 @@ class MultiAgentAnalyzer:
                     history=debate_history,
                     bull_argument=bull_argument,
                     trace_label=f"Bear R{round_num + 1}",
+                    past_memories=past_memories,                # v5.9
                 )
                 debate_history += f"\n\nBEAR ANALYST:\n{bear_argument}"
 
@@ -615,7 +932,7 @@ class MultiAgentAnalyzer:
             )
             judge_decision = self._get_judge_decision(
                 debate_history=debate_history,
-                past_memories=self._get_past_memories(),
+                past_memories=past_memories,  # v5.9: Reuse same instance
                 key_metrics=key_metrics,
             )
 
@@ -637,6 +954,7 @@ class MultiAgentAnalyzer:
                 derivatives_report=derivatives_summary,  # v3.22: Funding rate for cost analysis
                 order_flow_report=order_flow_summary,  # v3.23: Liquidity for position sizing
                 orderbook_report=orderbook_summary,  # v3.23: Slippage for position sizing
+                past_memories=past_memories,  # v5.9: Past trade patterns for risk assessment
             )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
@@ -660,6 +978,7 @@ class MultiAgentAnalyzer:
         history: str,
         bear_argument: str,
         trace_label: str = "Bull",
+        past_memories: str = "",     # v5.9: Past trade patterns
     ) -> str:
         """
         Generate bull analyst's argument.
@@ -667,6 +986,7 @@ class MultiAgentAnalyzer:
         Borrowed from: TradingAgents/agents/researchers/bull_researcher.py
         TradingAgents v3.3: Indicator definitions in system prompt (like TradingAgents)
         v3.8: Added S/R zones report
+        v5.9: Added past_memories for pattern learning
         """
         # User prompt: Segmented data with clear markers + Chinese task instructions
         prompt = f"""## 📊 MARKET DATA (Technical Indicators)
@@ -694,6 +1014,9 @@ Previous Debate:
 Last Bear Argument:
 {bear_argument if bear_argument else "No bear argument yet - make your opening case."}
 
+## 📚 PAST TRADE PATTERNS
+{past_memories if past_memories else "No historical data yet."}
+
 ## 🎯 【分析任务 — 请严格按步骤执行】
 
 **第一步：判断 MARKET REGIME**
@@ -703,6 +1026,7 @@ Last Bear Argument:
 **第二步：识别看多信号**
 从上方数据中找出具体的 BULLISH 信号，附带数值。
 必须使用当前 regime 对应的解读规则 (例如 RSI 30 在趋势市场 vs 震荡市场含义不同)。
+如果历史数据中有类似条件的成功做多案例，可以引用。
 
 **第三步：构建论点**
 提出 2-3 个有说服力的做多理由。
@@ -713,8 +1037,19 @@ Last Bear Argument:
 
 **第五步：陈述失效条件**
 什么情况下你的看多论点会被推翻？
+"""
+        # v5.5: R2+ enhancement — force new arguments and direct rebuttals
+        if history and bear_argument:
+            prompt += """
+⚠️ 【第二轮辩论规则 — 必须遵守】
+这是后续辩论轮次，不是 R1 的重复。你必须：
+1. **直接引用并反驳** Bear 最新论点中的具体数据（如 "Bear 声称 RSI 从 X 下降到 Y，但实际原始数据显示..."）
+2. **提出至少 1 个 R1 中未使用的新证据或数据点**
+3. **承认** Bear 论点中有道理的部分，然后解释为什么整体仍然看多
+❌ 简单重复 R1 论点将被裁判忽略。
+"""
 
-请用 2-3 段落交付你的论点："""
+        prompt += "\n请用 2-3 段落交付你的论点："
 
         # System prompt: Role + Indicator manual (v3.25: regime-aware)
         # v3.28: Chinese instructions for better DeepSeek instruction-following
@@ -751,6 +1086,7 @@ Last Bear Argument:
         history: str,
         bull_argument: str,
         trace_label: str = "Bear",
+        past_memories: str = "",     # v5.9: Past trade patterns
     ) -> str:
         """
         Generate bear analyst's argument.
@@ -758,6 +1094,7 @@ Last Bear Argument:
         Borrowed from: TradingAgents/agents/researchers/bear_researcher.py
         TradingAgents v3.3: AI interprets raw data using indicator definitions
         v3.8: Added S/R zones report
+        v5.9: Added past_memories for pattern learning
         """
         # User prompt: Segmented data with clear markers + Chinese task instructions
         prompt = f"""## 📊 MARKET DATA (Technical Indicators)
@@ -785,6 +1122,9 @@ Previous Debate:
 Last Bull Argument:
 {bull_argument}
 
+## 📚 PAST TRADE PATTERNS
+{past_memories if past_memories else "No historical data yet."}
+
 ## 🎯 【分析任务 — 请严格按步骤执行】
 
 **第一步：判断 MARKET REGIME**
@@ -794,6 +1134,7 @@ Last Bull Argument:
 **第二步：识别看空信号和风险**
 从上方数据中找出具体的 BEARISH 信号或风险，附带数值。
 必须使用当前 regime 对应的解读规则 (例如 "support" 在趋势市场 vs 震荡市场含义不同)。
+如果历史数据中有类似条件的失败做多案例，可以引用作为风险警告。
 
 **第三步：构建论点**
 提出 2-3 个反对做多 (或支持做空) 的有力理由。
@@ -804,20 +1145,49 @@ Last Bull Argument:
 
 **第五步：陈述失效条件**
 什么情况下你的看空论点会被推翻？
+"""
+        # v5.5: R2+ enhancement — force new arguments and direct rebuttals
+        if history and bull_argument and "ROUND" in history:
+            prompt += """
+⚠️ 【第二轮辩论规则 — 必须遵守】
+这是后续辩论轮次，不是 R1 的重复。你必须：
+1. **直接引用并反驳** Bull 最新论点中的具体数据（如 "Bull 声称 RSI 反弹至 X，但实际 RSI 序列显示..."）
+2. **提出至少 1 个 R1 中未使用的新证据或数据点**
+3. **承认** Bull 论点中有道理的部分，然后解释为什么风险仍然大于收益
+❌ 简单重复 R1 论点将被裁判忽略。
+"""
 
-请用 2-3 段落交付你的论点："""
+        prompt += "\n请用 2-3 段落交付你的论点："
 
         # System prompt: Role + Indicator manual (v3.25: regime-aware)
         # v3.28: Chinese instructions for better DeepSeek instruction-following
-        system_prompt = f"""你是 {symbol} 的专业空头分析师 (Bear Analyst)。
-你的职责是分析原始市场数据，构建最强有力的反对做多 (或支持做空) 的论据。
+        # v5.6: Adversarial mandate — structurally enforce opposition to Bull
+        system_prompt = f"""你是 {symbol} 的专业空头分析师 (Bear Analyst) — 你的角色是辩论中的 **反方**。
+
+🚨 【核心使命 — 你必须与 Bull 对立】
+你的存在价值就是找出 Bull 看不到或故意忽视的风险。
+- 如果 Bull 说 "做多"，你必须解释为什么做多是危险的
+- 如果 Bull 引用某个指标支持多头，你必须找到该指标的弱点或相反解读
+- 你**禁止**得出与 Bull 相同的方向结论
+- 如果你真的找不到反对 Bull 的理由，你必须解释为什么当前不是好的入场时机 (timing risk)
+
+🔍 【分析优先级 — 从宏观到微观】
+你必须按此顺序分析数据，而不是从 15M 开始：
+1. **1D 宏观趋势** — SMA_200 方向、ADX 趋势强度、MACD 趋势
+2. **4H 中期动量** — RSI 位置、MACD 交叉、BB 位置
+3. **15M 微观执行** — 仅用于入场时机判断
+
+⚠️ 层级权重取决于 ADX 判定的市场环境:
+- ADX > 40 (强趋势): 1D 趋势层主导，逆势信号需极强确认
+- 25 < ADX < 40: 1D 趋势层重要但非绝对
+- ADX < 20 (震荡市): 15M 关键水平层权重最高，均值回归信号有效
 
 {INDICATOR_DEFINITIONS}
 
 【关键规则 — 必须遵守】
 ⚠️ 你必须先判断 market regime (指标手册第一步)，然后用对应 regime 的规则解读所有指标。
 ⚠️ 在趋势市场使用震荡市场逻辑 (或反之) 是致命错误。
-⚠️ 聚焦于数据中的风险和看空信号。"""
+⚠️ 聚焦于 Bull 论点中最薄弱的环节 — 用数据拆解它。"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["bear"] = {
@@ -866,21 +1236,28 @@ Last Bull Argument:
 然后评估：双方分析师是否都使用了正确的 regime 解读逻辑？
 ⚠️ 在趋势市场使用震荡逻辑 (或反之) = 结论不可信。
 
-### STEP 2: Confluence 多层对齐度评估
-请用以下框架评估信号一致性：
+### STEP 2: Confluence 多层对齐度评估 (必须填入 JSON 的 confluence 字段)
+逐层评估每一层的方向倾向，填入 JSON 输出的 confluence 对象中：
 
-| 层级 | 评估内容 | Bull 证据 | Bear 证据 | 哪方更强？ |
-|------|---------|----------|----------|-----------|
-| 趋势层 (1D) | SMA200, ADX/DI 方向 | ? | ? | ? |
-| 动量层 (4H) | RSI, MACD, CVD | ? | ? | ? |
-| 关键水平 (15M) | S/R zone, BB, Order Book | ? | ? | ? |
-| 衍生品数据 | Funding, OI, Liquidations | ? | ? | ? |
+| 层级 | 评估内容 | 填入字段 |
+|------|---------|---------|
+| 趋势层 (1D) | SMA200 位置, ADX/DI 方向, MACD | confluence.trend_1d |
+| 动量层 (4H) | RSI, MACD, ADX, CVD | confluence.momentum_4h |
+| 关键水平 (15M) | S/R zone, BB, Order Book | confluence.levels_15m |
+| 衍生品数据 | Funding, OI, Liquidations | confluence.derivatives |
 
-对齐度评估：
+每层判定为 BULLISH / BEARISH / NEUTRAL，附简要理由。
+
+⚠️ 层级权重取决于 1D ADX 判定的市场环境 (先完成 STEP 1 再评估):
+- 强趋势 (ADX > 40): 趋势层主导，逆势信号需其他 3 层全部确认
+- 弱趋势 (25 < ADX < 40): 趋势层重要但非绝对，2 层逆势确认即可考虑
+- 震荡市 (ADX < 20): 关键水平层权重最高，均值回归信号有效，趋势层降权
+- 挤压 (ADX < 20 + BB Width 收窄): 等待突破方向，不预判
+
+对齐度规则 (基于 aligned_layers 计数):
 - 3-4 层一致 → HIGH confidence 交易
 - 2 层一致 → MEDIUM confidence 交易
 - 0-1 层一致 → 应该 HOLD
-- ‼️ 趋势层 (1D) 权重最高 — 与 1D 趋势矛盾的信号需要其他 3 层全部确认才可采纳
 
 ### STEP 3: 总结双方核心论据
 聚焦最有说服力的证据，不要罗列所有观点。
@@ -889,13 +1266,21 @@ Last Bull Argument:
 - 你的建议 — LONG、SHORT 或 HOLD — 必须清晰可执行
 - ‼️ 不要因为双方都有道理就默认 HOLD — 选择证据更强的一方
 - 参考过去的失误教训，避免重复犯错
+- confidence 必须与 aligned_layers 一致
 
 ## 📤 OUTPUT FORMAT (只输出 JSON，不要其他文字):
 {{
+    "confluence": {{
+        "trend_1d": "BULLISH|BEARISH|NEUTRAL — 简要理由 (如: ADX=55 DI->DI+, 强下跌趋势)",
+        "momentum_4h": "BULLISH|BEARISH|NEUTRAL — 简要理由 (如: RSI=60 偏多, MACD 金叉)",
+        "levels_15m": "BULLISH|BEARISH|NEUTRAL — 简要理由 (如: 价格在 S1 支撑上方, BB 下轨触及)",
+        "derivatives": "BULLISH|BEARISH|NEUTRAL — 简要理由 (如: FR 偏多, OI 下降)",
+        "aligned_layers": 0
+    }},
     "decision": "LONG|SHORT|HOLD",
     "winning_side": "BULL|BEAR|TIE",
     "confidence": "HIGH|MEDIUM|LOW",
-    "rationale": "Why these arguments lead to your conclusion (1-2 sentences)",
+    "rationale": "基于 confluence 分析的决策理由 (可以 2-4 句话充分说明)",
     "strategic_actions": ["Concrete step 1", "Concrete step 2"],
     "acknowledged_risks": ["risk1", "risk2"]
 }}"""
@@ -906,8 +1291,11 @@ Last Bull Argument:
 
 {INDICATOR_DEFINITIONS}
 
+{SIGNAL_CONFIDENCE_MATRIX}
+
 【关键规则 — 必须遵守】
 ⚠️ 用指标手册独立验证分析师是否使用了正确的 regime 解读。
+⚠️ 参考信号置信度矩阵 (SIGNAL CONFIDENCE MATRIX) 量化评估每个信号在当前 regime 下的可靠性。
 ⚠️ 用中文进行内部推理分析，最终以 JSON 格式输出结果。
 ⚠️ 不要因为双方都有道理就默认 HOLD — 这是最常见的错误。
 
@@ -916,19 +1304,43 @@ Last Bull Argument:
 示例 1: 趋势一致 → 选择顺势方
 情况: 1D ADX=33 上涨趋势, Bull 引用趋势+动量, Bear 引用 RSI 超买
 分析: ADX>25 = TRENDING。Bear 用震荡市场逻辑 (RSI 70 = 超买) 在趋势市场中是错误的。
-      Cardwell 规则: 上涨趋势中 RSI 40-80 为正常范围，80 = 强动量。
-结果: {{"decision":"LONG","winning_side":"BULL","confidence":"HIGH"}}
+结果: {{"confluence":{{"trend_1d":"BULLISH — ADX=33 DI+>DI-, 明确上涨趋势","momentum_4h":"BULLISH — RSI=65 趋势范围内, MACD 正值","levels_15m":"BULLISH — 价格在 SMA20 上方, BB 上半部","derivatives":"NEUTRAL — FR 正常, OI 稳定","aligned_layers":3}},"decision":"LONG","winning_side":"BULL","confidence":"HIGH","rationale":"3 层一致看多，趋势层确认上涨。Bear 用震荡逻辑解读 RSI，在趋势市场中无效。","strategic_actions":["顺势做多，目标下一阻力位"],"acknowledged_risks":["ADX 可能见顶回落"]}}
 
-示例 2: 数据矛盾但趋势层主导
-情况: 1D 强下跌趋势, 4H 出现 MACD 金叉, Bull 认为反转
-分析: MACD 在震荡市场有 74-97% 假信号率。1D 强趋势未改变。
-      4H MACD 金叉在强下跌趋势中更可能是反弹而非反转。
-结果: {{"decision":"SHORT","winning_side":"BEAR","confidence":"MEDIUM"}}
+示例 2: 强趋势中逆势信号 (ADX>40 → 趋势层主导)
+情况: 1D 强下跌趋势 (ADX=45), 4H 出现 MACD 金叉, Bull 认为反转
+分析: ADX=45 > 40 = 强趋势，趋势层主导。4H MACD 金叉在强下跌中可能是反弹而非反转。
+结果: {{"confluence":{{"trend_1d":"BEARISH — ADX=45 DI->DI+, 强下跌趋势","momentum_4h":"BULLISH — MACD 金叉, RSI 回升至 55","levels_15m":"NEUTRAL — 价格在 range 中间","derivatives":"BEARISH — FR 负值, OI 下降","aligned_layers":2}},"decision":"SHORT","winning_side":"BEAR","confidence":"MEDIUM","rationale":"趋势层(1D)看空 + 衍生品看空 = 2 层一致。4H MACD 金叉在强下跌趋势中有 74-97% 假信号率，不足以推翻 1D。","strategic_actions":["等待反弹至阻力位后做空"],"acknowledged_risks":["4H 动量转多可能形成更大反弹"]}}
 
 示例 3: 真正需要 HOLD 的情况
 情况: ADX=12 (RANGING), 价格在 range 中间, 两方都没有强证据
 分析: 震荡市场 + 无明确方向 + 无关键水平触及。等待价格到达 range 边缘。
-结果: {{"decision":"HOLD","winning_side":"TIE","confidence":"LOW"}}"""
+结果: {{"confluence":{{"trend_1d":"NEUTRAL — ADX=12 无趋势","momentum_4h":"NEUTRAL — RSI=50 中性","levels_15m":"NEUTRAL — 价格在 range 中间，远离 S/R","derivatives":"NEUTRAL — FR 接近零, OI 无变化","aligned_layers":0}},"decision":"HOLD","winning_side":"TIE","confidence":"LOW","rationale":"0 层有明确方向，所有层级均为中性。等待价格触及 range 边缘再决策。","strategic_actions":["等待价格到达 range 边缘"],"acknowledged_risks":["可能错过突破"]}}
+
+示例 4: 震荡市 → 关键水平层主导 (均值回归)
+情况: 1D ADX=15 (RANGING), 价格触及 BB 下轨 + S1 支撑, RSI=28 超卖, 订单簿买墙
+分析: ADX<20 = 震荡市，关键水平层权重最高。价格在强支撑 + BB 下轨 + RSI 超卖 = 均值回归信号。
+      虽然 1D 趋势不明确，但震荡市中这正是关键水平层发挥作用的时候。
+结果: {{"confluence":{{"trend_1d":"NEUTRAL — ADX=15 无趋势，SMA200 持平","momentum_4h":"BULLISH — RSI=32 超卖反弹, MACD 柱状图收敛","levels_15m":"BULLISH — 价格触及 S1 支撑 + BB 下轨, OBI=+0.8 买墙","derivatives":"NEUTRAL — FR 接近零, OI 稳定","aligned_layers":2}},"decision":"LONG","winning_side":"BULL","confidence":"MEDIUM","rationale":"ADX=15 震荡市中，关键水平层权重最高。价格触及强支撑 + BB 下轨 + RSI 超卖，均值回归概率高。趋势层中性不构成阻碍。","strategic_actions":["在 S1 支撑做多，目标 BB 中轨"],"acknowledged_risks":["若支撑被跌破，震荡区间可能转为下跌趋势"]}}
+
+示例 5: 信号置信度矩阵 — 震荡市忽略 MACD，信任 S/R + RSI
+情况: 1D ADX=16 (ADX<20 = 震荡), 4H MACD 金叉, 4H RSI=33 超卖, 价格触及 S1 (HIGH 强度), OBI change +0.25
+分析: ADX<20 = 震荡市。查信号矩阵:
+  Layer 1 (趋势): ADX<20 列全部 ≤0.7 → 趋势层 NEUTRAL (忽略)
+  Layer 2 (动量): MACD 交叉在 ADX<20 = 0.3 (SKIP，几乎无效)。RSI 值在 ADX<20 = 1.2 (HIGH)。RSI=33 超卖 = 看多信号。
+  Layer 3 (水平): S/R 测试在 ADX<20 = 1.3 (HIGH)。OBI change 在 ADX<20 = 1.2 (HIGH)。两个 HIGH 信号确认。
+  Layer 4: FR 正常，OI 稳定 → NEUTRAL
+  → 动量+水平 2 层看多，MACD 金叉被矩阵标为 SKIP 正确忽略。
+结果: {{"confluence":{{"trend_1d":"NEUTRAL — ADX=16 无趋势，矩阵标记趋势层 SKIP","momentum_4h":"BULLISH — RSI=33 超卖 (矩阵 1.2=HIGH)，MACD 交叉忽略 (矩阵 0.3=SKIP)","levels_15m":"BULLISH — S1 支撑触及 (矩阵 1.3=HIGH) + OBI 变化+0.25 (矩阵 1.2=HIGH)","derivatives":"NEUTRAL — FR 正常, OI 稳定","aligned_layers":2}},"decision":"LONG","winning_side":"BULL","confidence":"MEDIUM","rationale":"ADX=16 震荡市。矩阵指导: MACD 在震荡中 SKIP (0.3)，RSI+S/R 在震荡中 HIGH (1.2-1.3)。2 层以 HIGH 信号看多。","strategic_actions":["在 S1 支撑做多，目标 BB 中轨"],"acknowledged_risks":["若 S1 被跌破，考虑出场"]}}
+
+示例 6: 信号置信度矩阵 — 强趋势中反转信号被降级
+情况: 1D ADX=48 DI->DI+ (强下跌), 4H RSI 出现看多背离, 4H MACD 仍为负值, S/R zone 被跌破, FR=+0.06%
+分析: ADX=48 > 40 = 强趋势 (ADX>40 列)。查信号矩阵:
+  Layer 1 (趋势): SMA200=1.3 + ADX/DI=1.2 + MACD=1.1 → 全部 HIGH，强看空
+  Layer 2 (动量): RSI 背离在 ADX>40 = 0.6 (LOW)。RULE 6: 逆势信号需 2 个独立确认。RSI 背离只有 1 个 → 不足。MACD 仍为负=顺势。
+  Layer 3 (水平): S/R breakout 在 ADX>40 = 1.3 (HIGH) → 确认下跌延续
+  Layer 4: FR=+0.06% extreme (ADX>40 = 0.8)，适度看空。Group A: BEARISH (LOW)。
+  → 趋势+水平+衍生品 3 层看空，RSI 背离被矩阵降为 LOW + RULE 6 否决。
+结果: {{"confluence":{{"trend_1d":"BEARISH — ADX=48 DI->DI+, 趋势层全 HIGH (矩阵 1.1-1.3)","momentum_4h":"BEARISH — MACD 负值顺势 (矩阵 1.2)，RSI 背离被降级 (矩阵 0.6=LOW + RULE 6 需 2 确认)","levels_15m":"BEARISH — S/R 被跌破 (矩阵 1.3=HIGH，趋势延续确认)","derivatives":"BEARISH — FR +0.06% 拥挤多头 (矩阵 0.8=LOW)","aligned_layers":4}},"decision":"SHORT","winning_side":"BEAR","confidence":"HIGH","rationale":"ADX=48 强下跌。矩阵将 RSI 背离从 HIGH 降为 LOW (0.6)，加上 RULE 6 要求 2 个逆势确认但只有 1 个。4 层一致看空。","strategic_actions":["顺势做空，SL 设在上方阻力位"],"acknowledged_risks":["RSI 背离可能预示反弹，但单一 LOW 信号不构成改变决策的理由"]}}"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["judge"] = {
@@ -954,6 +1366,13 @@ Last Bull Argument:
         # Fallback decision if all retries failed
         self.logger.warning("Judge decision parsing failed after retries, using fallback")
         return {
+            "confluence": {
+                "trend_1d": "N/A — parse failure",
+                "momentum_4h": "N/A — parse failure",
+                "levels_15m": "N/A — parse failure",
+                "derivatives": "N/A — parse failure",
+                "aligned_layers": 0,
+            },
             "decision": "HOLD",
             "winning_side": "TIE",
             "confidence": "LOW",
@@ -1019,15 +1438,53 @@ Last Bull Argument:
                 if vol_ratio is not None:
                     lines.append(f"Volume Ratio: {vol_ratio:.2f}x")
 
+                # v5.5: Add 1D trend layer data for Judge's independent verification
+                # Previously 1D data was only in tech_summary (Bull/Bear debate text),
+                # but Judge's key_metrics lacked it, preventing independent verification
+                mtf_trend = technical_data.get('mtf_trend_layer')
+                if mtf_trend and isinstance(mtf_trend, dict):
+                    lines.append("")
+                    lines.append("--- 1D MACRO TREND (weight depends on ADX regime) ---")
+                    trend_sma200 = mtf_trend.get('sma_200')
+                    if trend_sma200 is not None and trend_sma200 > 0 and current_price > 0:
+                        pct_vs_sma200 = (current_price - trend_sma200) / trend_sma200 * 100
+                        lines.append(f"1D SMA200: ${trend_sma200:,.2f} (Price vs SMA200: {pct_vs_sma200:+.2f}%)")
+                    trend_adx = mtf_trend.get('adx')
+                    trend_di_plus = mtf_trend.get('di_plus')
+                    trend_di_minus = mtf_trend.get('di_minus')
+                    trend_adx_regime = mtf_trend.get('adx_regime', '')
+                    if trend_adx is not None:
+                        adx_str = f"1D ADX: {trend_adx:.1f} ({trend_adx_regime})"
+                        if trend_di_plus is not None and trend_di_minus is not None:
+                            adx_str += f" | DI+: {trend_di_plus:.1f}, DI-: {trend_di_minus:.1f}"
+                        lines.append(adx_str)
+                    trend_rsi = mtf_trend.get('rsi')
+                    if trend_rsi is not None:
+                        lines.append(f"1D RSI: {trend_rsi:.1f}")
+                    trend_macd = mtf_trend.get('macd')
+                    if trend_macd is not None:
+                        lines.append(f"1D MACD: {trend_macd:.4f}")
+                    # v5.5: Explicit macro trend assessment for Judge
+                    if trend_adx is not None and trend_di_plus is not None and trend_di_minus is not None:
+                        if trend_adx > 25 and trend_di_minus > trend_di_plus:
+                            if trend_sma200 and current_price > 0 and current_price < trend_sma200 * 0.85:
+                                lines.append("⚠️ MACRO ASSESSMENT: RISK_OFF (strong 1D downtrend + price far below SMA200)")
+                            else:
+                                lines.append("⚠️ MACRO ASSESSMENT: BEARISH (1D ADX strong, DI- > DI+)")
+                        elif trend_adx > 25 and trend_di_plus > trend_di_minus:
+                            lines.append("MACRO ASSESSMENT: RISK_ON (strong 1D uptrend, DI+ > DI-)")
+                        else:
+                            lines.append("MACRO ASSESSMENT: NEUTRAL (1D trend not decisively strong)")
+
             if derivatives_data and isinstance(derivatives_data, dict):
                 fr = derivatives_data.get('funding_rate', {})
                 if isinstance(fr, dict):
                     fr_pct = fr.get('current_pct')
                     if fr_pct is not None:
                         predicted = fr.get('predicted_rate_pct')
-                        fr_str = f"Funding Rate: {fr_pct:.4f}%"
+                        fr_str = f"Funding Rate: {fr_pct:.5f}%"
                         if predicted is not None:
-                            fr_str += f" (predicted: {predicted:.4f}%)"
+                            fr_str += f" (predicted: {predicted:.5f}%)"
                         lines.append(fr_str)
                 liq = derivatives_data.get('liquidations', {})
                 if isinstance(liq, dict) and liq.get('total_usd', 0) > 0:
@@ -1081,6 +1538,7 @@ Last Bull Argument:
         derivatives_report: str = "",
         order_flow_report: str = "",
         orderbook_report: str = "",
+        past_memories: str = "",  # v5.9: Past trade patterns
     ) -> Dict[str, Any]:
         """
         Final risk evaluation and position sizing.
@@ -1204,6 +1662,9 @@ Last Bull Argument:
 ## 🏦 ACCOUNT CONTEXT
 {self._format_account(account_context)}
 
+## 📚 PAST TRADE PATTERNS (SL/TP 执行质量参考)
+{past_memories if past_memories else "No historical data yet."}
+
 **当前价格: ${current_price:,.2f}** (入场将以此价格执行，不是 S/R 价位)
 
 ---
@@ -1223,10 +1684,15 @@ Judge 建议 {action} → 你的任务:
 - LONG: SL 在最近 SUPPORT 下方, TP 在最近 RESISTANCE
 - SHORT: SL 在最近 RESISTANCE 上方, TP 在最近 SUPPORT
 - 优先选择 HIGH 强度或有 ORDER_FLOW 确认的 zone
-- ‼️ 最小 SL 距离 ≥ 1.0% (硬性门槛，低于此值会被系统拒绝)
+- ‼️ 最小 SL 距离 ≥ 1.0% (硬性门槛，低于此值会被系统拒绝并回退到 S/R 重算)
+- ⚠️ 如果最近的 S/R zone 距入场价 < 1.0%，应选择更远的 zone 或改为 HOLD
 - 参考 S/R Zone Proximity Alert（如有）作为 SL/TP 选择参考
 - ‼️ **必须在 sl_zone 和 tp_zone 中标注你选择的 S/R zone** (如 "S1 $68,386 (HIGH)")
-- ‼️ **必须在 rr_calculation 中展示计算过程** (如 "Risk=$500, Reward=$1,200, R/R=2.4:1")
+- ‼️ **必须在 rr_calculation 中展示完整计算过程**:
+  1. Risk = |当前价格 - stop_loss| (精确到美元)
+  2. Reward = |take_profit - 当前价格| (精确到美元)
+  3. R/R = Reward ÷ Risk (保留两位小数)
+  ⚠️ 请逐步验算，避免算术错误。系统会用代码独立校验你的 R/R
 
 ⚠️ **S/R ZONE 宽度预检**:
 - 计算最近 Support 和 Resistance 之间的价差百分比
@@ -1319,9 +1785,12 @@ R/R 与价格位置的关系：
 
 {INDICATOR_DEFINITIONS}
 
+{SIGNAL_CONFIDENCE_MATRIX}
+
 【核心原则 — 必须遵守】
 ✅ **信任 Judge 的方向判断** — Judge 已听完 Bull/Bear 4 轮辩论后做出决策，你不需要重新判断方向。
 ✅ 你的工作: 设定 SL/TP + 根据风险条件调整仓位大小。
+✅ 参考信号置信度矩阵评估信号可靠性，用于调整仓位大小和 SL/TP 设定。
 ✅ 用风险因素（FR、流动性、OBI）来调整仓位大小，而不是否决方向。
 ⚠️ 只有 3 种极端情况才允许否决方向: R/R < 1.5:1 | |FR| > 0.10% | 流动性枯竭
 ⚠️ 用中文进行内部推理分析，最终以 JSON 格式输出结果。
@@ -1572,10 +2041,16 @@ R/R 与价格位置的关系：
 
         if reask_decision:
             new_rr = self._compute_rr_ratio(reask_decision, current_price)
+            # v5.2: Use `or 0` to handle null SL/TP when RM returns HOLD
+            # .get('stop_loss', 0) returns None when key exists with null value;
+            # float(None) raises TypeError which propagated to analyze()'s
+            # except block, replacing the real AI reason with fallback message.
+            reask_sl = reask_decision.get('stop_loss') or 0
+            reask_tp = reask_decision.get('take_profit') or 0
             self.logger.info(
                 f"🔄 Reask result: R/R {new_rr:.2f}:1, "
-                f"SL=${float(reask_decision.get('stop_loss', 0)):,.2f}, "
-                f"TP=${float(reask_decision.get('take_profit', 0)):,.2f}, "
+                f"SL=${float(reask_sl):,.2f}, "
+                f"TP=${float(reask_tp):,.2f}, "
                 f"signal={reask_decision.get('signal', '?')}"
             )
             reask_decision["reask_applied"] = True
@@ -1721,6 +2196,105 @@ R/R 与价格位置的关系：
 
         return decision
 
+    def _compute_trend_verdict(self, data: Dict[str, Any]) -> str:
+        """
+        v5.6: Pre-compute 1D macro trend verdict and place it at TOP of technical report.
+
+        This ensures AI reads the highest-weight timeframe FIRST, preventing
+        the weight inversion bug where 15M data (presented first) dominates analysis.
+
+        Returns
+        -------
+        str
+            Formatted 1D TREND VERDICT block, or empty string if no 1D data.
+        """
+        mtf_trend = data.get('mtf_trend_layer')
+        if not mtf_trend:
+            return ""
+
+        def tget(key, default=0):
+            val = mtf_trend.get(key)
+            return float(val) if val is not None else default
+
+        sma_200 = tget('sma_200')
+        macd_1d = tget('macd')
+        macd_signal_1d = tget('macd_signal')
+        rsi_1d = tget('rsi')
+        adx_1d = tget('adx')
+        di_plus_1d = tget('di_plus')
+        di_minus_1d = tget('di_minus')
+        adx_regime = mtf_trend.get('adx_regime', 'UNKNOWN')
+        price = data.get('price', 0)
+
+        # Determine macro assessment
+        above_sma200 = price > sma_200 if sma_200 > 0 else None
+        macd_bullish = macd_1d > macd_signal_1d
+        di_bullish = di_plus_1d > di_minus_1d
+
+        # Count bullish/bearish signals
+        bull_count = sum([
+            above_sma200 is True,
+            macd_bullish,
+            di_bullish,
+            rsi_1d > 50,
+        ])
+        bear_count = 4 - bull_count
+
+        if adx_1d < 20:
+            regime = "RANGING (weak trend)"
+            if bull_count >= 3:
+                verdict = "NEUTRAL_BULLISH — No strong trend, slight bullish lean"
+            elif bear_count >= 3:
+                verdict = "NEUTRAL_BEARISH — No strong trend, slight bearish lean"
+            else:
+                verdict = "NEUTRAL — No clear macro direction"
+        elif bull_count >= 3:
+            if adx_1d >= 30:
+                verdict = "STRONG_BULLISH — Clear uptrend with momentum"
+            else:
+                verdict = "BULLISH — Uptrend developing"
+            regime = f"TRENDING ({adx_regime})"
+        elif bear_count >= 3:
+            if adx_1d >= 30:
+                verdict = "STRONG_BEARISH — Clear downtrend with momentum"
+            else:
+                verdict = "BEARISH — Downtrend developing"
+            regime = f"TRENDING ({adx_regime})"
+        else:
+            verdict = "MIXED — Conflicting macro signals"
+            regime = f"TRANSITIONAL ({adx_regime})"
+
+        pct_vs_sma = ((price / sma_200 - 1) * 100) if sma_200 > 0 else 0
+
+        # Also include 4H mini-summary if available
+        mtf_decision = data.get('mtf_decision_layer')
+        decision_line = ""
+        if mtf_decision:
+            def dget(key, default=0):
+                val = mtf_decision.get(key)
+                return float(val) if val is not None else default
+            rsi_4h = dget('rsi')
+            macd_4h = dget('macd')
+            macd_sig_4h = dget('macd_signal')
+            adx_4h = dget('adx')
+            adx_regime_4h = mtf_decision.get('adx_regime', 'N/A')
+            decision_line = f"""
+4H SNAPSHOT: RSI={rsi_4h:.1f} | MACD={macd_4h:.4f} vs Signal={macd_sig_4h:.4f} | ADX={adx_4h:.1f} ({adx_regime_4h})"""
+
+        return f"""
+╔══════════════════════════════════════════════════════════╗
+║  1D MACRO TREND VERDICT (weight depends on ADX regime)   ║
+╚══════════════════════════════════════════════════════════╝
+VERDICT: {verdict}
+REGIME: {regime}
+- Price vs SMA_200: {pct_vs_sma:+.2f}% ({'ABOVE' if above_sma200 else 'BELOW' if above_sma200 is False else 'N/A'})
+- 1D MACD: {macd_1d:.4f} vs Signal {macd_signal_1d:.4f} ({'BULLISH' if macd_bullish else 'BEARISH'})
+- 1D RSI: {rsi_1d:.1f} ({'Above 50' if rsi_1d > 50 else 'Below 50'})
+- 1D ADX: {adx_1d:.1f} | DI+ {di_plus_1d:.1f} / DI- {di_minus_1d:.1f} ({'Bulls lead' if di_bullish else 'Bears lead'})
+{decision_line}
+⚠️ Layer weights depend on ADX: Strong trend (ADX>40) → 1D dominant | Ranging (ADX<20) → 15M levels dominant
+"""
+
     def _format_technical_report(self, data: Dict[str, Any]) -> str:
         """Format technical data for prompts."""
         if not data:
@@ -1730,10 +2304,13 @@ R/R 与价格位置的关系：
             val = data.get(key)
             return float(val) if val is not None else default
 
+        # v5.6: Prepend 1D TREND VERDICT at TOP of report so AI reads it first
+        report = self._compute_trend_verdict(data)
+
         # Base report (15M execution layer data)
         # TradingAgents v3.6: Added period statistics for trend assessment
         period_hours = safe_get('period_hours')
-        report = f"""
+        report += f"""
 === MARKET DATA (15M Timeframe) ===
 
 PRICE:
@@ -1780,6 +2357,11 @@ VOLUME:
             mtf_macd = mtf_safe_get('macd')
 
             # TradingAgents v3.3: Raw 4H data without interpretation guidance
+            # v5.6: Added ADX/DI to 4H section (was missing → AI blind to 4H trend strength)
+            mtf_adx = mtf_safe_get('adx')
+            mtf_di_plus = mtf_safe_get('di_plus')
+            mtf_di_minus = mtf_safe_get('di_minus')
+            mtf_adx_regime = mtf_decision.get('adx_regime', 'N/A')
             report += f"""
 === MARKET DATA (4H Timeframe) ===
 
@@ -1787,6 +2369,10 @@ MOMENTUM (4H):
 - RSI: {mtf_rsi:.1f}
 - MACD: {mtf_macd:.4f}
 - MACD Signal: {mtf_safe_get('macd_signal'):.4f}
+
+TREND STRENGTH (4H ADX):
+- ADX(14): {mtf_adx:.1f} ({mtf_adx_regime})
+- DI+: {mtf_di_plus:.1f}, DI-: {mtf_di_minus:.1f} → {'BULLISH' if mtf_di_plus > mtf_di_minus else 'BEARISH'} direction
 
 MOVING AVERAGES (4H):
 - SMA 20: ${mtf_safe_get('sma_20'):,.2f}
@@ -1865,8 +2451,11 @@ RSI SERIES ({len(rsi_trend)} values):
 MACD SERIES ({len(macd_trend)} values):
 {format_all_values(macd_trend, ".4f")}
 
-VOLUME SERIES ({len(volume_trend)} values, BTC):
-{format_all_values(volume_trend, ",.1f")}
+MACD SIGNAL SERIES ({len(historical.get('macd_signal_trend', []))} values):
+{format_all_values(historical.get('macd_signal_trend', []), ".4f")}
+
+VOLUME SERIES ({len(volume_trend)} values, USDT, converted from {getattr(self, '_base_currency', 'BTC')}):
+{format_all_values([v * p for v, p in zip(volume_trend, price_trend)] if price_trend and len(price_trend) == len(volume_trend) else volume_trend, ",.0f")}
 """
             # v3.24: ADX/DI history (trend strength trajectory)
             adx_trend = historical.get('adx_trend', [])
@@ -2029,8 +2618,10 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         # === Build formatted output ===
         lines = []
 
-        # Header
-        lines.append(f"Side: {side} | Size: {qty:.4f} BTC | Entry: ${avg_px:,.2f}")
+        # Header (v5.4: show notional USDT value + dynamic base currency for cross-check)
+        bc = getattr(self, '_base_currency', 'BTC')
+        notional_usd = qty * avg_px if avg_px > 0 else 0
+        lines.append(f"Side: {side} | Size: ${notional_usd:,.0f} ({qty:.4f} {bc}) | Entry: ${avg_px:,.2f}")
         lines.append("")
 
         # Performance section
@@ -2518,9 +3109,9 @@ ORDER FLOW (Binance Taker Data):
         Parameters
         ----------
         data : Dict, optional
-            Coinalyze derivatives data (OI, funding rate, liquidations)
+            Coinalyze derivatives data (OI, liquidations) + Binance funding rate
         current_price : float
-            Current BTC price for converting liquidations from BTC to USD
+            Current BTC price for converting BTC-denominated data to USDT
         binance_derivatives : Dict, optional
             Binance-specific derivatives (top traders, taker ratio) - v3.0
 
@@ -2532,10 +3123,10 @@ ORDER FLOW (Binance Taker Data):
         parts = []
 
         # =========================================================================
-        # Section 1: Coinalyze Data
+        # Section 1: Derivatives Data (OI/Liq from Coinalyze, FR from Binance)
         # =========================================================================
         if data and data.get('enabled', True):
-            parts.append("COINALYZE DERIVATIVES:")
+            parts.append("DERIVATIVES DATA:")
 
             # Open Interest (v5.2: add hourly history series for OI×Price analysis)
             trends = data.get('trends', {})
@@ -2545,41 +3136,55 @@ ORDER FLOW (Binance Taker Data):
                     oi_btc = float(oi.get('value', 0) or 0)
                 except (ValueError, TypeError):
                     oi_btc = 0.0
+                oi_usd = oi_btc * current_price if current_price > 0 else 0
                 oi_trend = trends.get('oi_trend', 'N/A')
-                parts.append(f"- Open Interest: {oi_btc:,.2f} BTC (Trend: {oi_trend})")
+                bc = getattr(self, '_base_currency', 'BTC')
+                # v5.4: USDT primary + base currency for cross-check
+                if oi_usd >= 1e9:
+                    parts.append(f"- Open Interest: ${oi_usd/1e9:.2f}B ({oi_btc:,.0f} {bc}) [Trend: {oi_trend}]")
+                else:
+                    parts.append(f"- Open Interest: ${oi_usd/1e6:.1f}M ({oi_btc:,.0f} {bc}) [Trend: {oi_trend}]")
 
                 # v5.2: OI hourly history (price divergence analysis)
+                # v5.4: Convert BTC series to USDT + base currency for cross-check
                 oi_hist = data.get('open_interest_history')
                 if oi_hist and oi_hist.get('history'):
-                    oi_closes = [float(h.get('c', 0)) for h in oi_hist['history']]
-                    if len(oi_closes) >= 2:
-                        oi_series_str = " → ".join([f"{v:,.0f}" for v in oi_closes])
-                        oi_change = oi_closes[-1] - oi_closes[0]
-                        oi_change_pct = (oi_change / oi_closes[0] * 100) if oi_closes[0] != 0 else 0
-                        parts.append(f"  OI History ({len(oi_closes)}h): {oi_series_str}")
-                        parts.append(f"  OI Change: {oi_change:+,.0f} BTC ({oi_change_pct:+.2f}%)")
+                    oi_closes_btc = [float(h.get('c', 0)) for h in oi_hist['history']]
+                    if len(oi_closes_btc) >= 2 and current_price > 0:
+                        oi_closes_usd = [v * current_price for v in oi_closes_btc]
+                        oi_series_str = " → ".join([f"${v/1e9:.2f}B" for v in oi_closes_usd])
+                        oi_change_btc = oi_closes_btc[-1] - oi_closes_btc[0]
+                        oi_change_usd = oi_closes_usd[-1] - oi_closes_usd[0]
+                        oi_change_pct = (oi_change_usd / oi_closes_usd[0] * 100) if oi_closes_usd[0] != 0 else 0
+                        parts.append(f"  OI History ({len(oi_closes_btc)}h): {oi_series_str}")
+                        parts.append(f"  OI Change: ${oi_change_usd/1e6:+,.0f}M ({oi_change_btc:+,.0f} {bc}, {oi_change_pct:+.2f}%)")
             else:
                 parts.append("- Open Interest: N/A")
 
-            # Funding Rate (v5.1: 已结算 + 预期，语义修正)
+            # Funding Rate (v5.2: use current_pct directly from Binance, no manual *100)
             funding = data.get('funding_rate')
             if funding:
-                # 已结算费率 (from /fapi/v1/fundingRate)
+                # 已结算费率 (from Binance /fapi/v1/fundingRate, already in % form)
+                settled_pct = 0.0
                 try:
-                    settled_rate = float(funding.get('value', 0) or 0)
+                    # Prefer current_pct (already in percentage), fall back to value * 100
+                    raw_pct = funding.get('current_pct') or funding.get('settled_pct')
+                    if raw_pct is not None:
+                        settled_pct = float(raw_pct)
+                    else:
+                        settled_pct = float(funding.get('value', 0) or 0) * 100
                 except (ValueError, TypeError):
-                    settled_rate = 0.0
-                settled_pct = settled_rate * 100
-                parts.append(f"- Last Settled Funding Rate: {settled_pct:.4f}%")
+                    settled_pct = 0.0
+                parts.append(f"- Last Settled Funding Rate: {settled_pct:.5f}%")
 
                 # 预期费率 (from premiumIndex.lastFundingRate, 实时变化)
                 predicted_pct = funding.get('predicted_rate_pct')
                 if predicted_pct is not None:
-                    parts.append(f"- Predicted Next Funding Rate: {predicted_pct:.4f}%")
+                    parts.append(f"- Predicted Next Funding Rate: {predicted_pct:.5f}%")
                     # v5.2: Settled vs Predicted delta (key sentiment shift signal)
                     delta_pct = predicted_pct - settled_pct
                     direction = "↑ more bullish pressure" if delta_pct > 0 else "↓ more bearish pressure" if delta_pct < 0 else "→ stable"
-                    parts.append(f"- Funding Delta (Predicted - Settled): {delta_pct:+.4f}% ({direction})")
+                    parts.append(f"- Funding Delta (Predicted - Settled): {delta_pct:+.5f}% ({direction})")
 
                 # 溢价指数 (瞬时值)
                 premium_index = funding.get('premium_index')
@@ -2603,7 +3208,7 @@ ORDER FLOW (Binance Taker Data):
                 history = funding.get('history', [])
                 if history and len(history) >= 2:
                     rates_str = " → ".join(
-                        [f"{r['rate_pct']:.4f}%" for r in history]
+                        [f"{r['rate_pct']:.5f}%" for r in history]
                     )
                     parts.append(f"- Funding History (last {len(history)}): {rates_str}")
 
@@ -2615,23 +3220,27 @@ ORDER FLOW (Binance Taker Data):
                 parts.append("- Funding Rate: N/A")
 
             # Liquidations (v3.24: expanded to 24h with history trend)
+            # v5.4: USDT-primary display for consistent denomination
             liq = data.get('liquidations')
             if liq:
                 history = liq.get('history', [])
                 if history:
                     price_for_conversion = current_price if current_price > 0 else 88000
 
-                    # Calculate 24h totals
+                    # Calculate 24h totals in USDT
                     total_long_btc = sum(float(h.get('l', 0)) for h in history)
                     total_short_btc = sum(float(h.get('s', 0)) for h in history)
+                    total_long_usd = total_long_btc * price_for_conversion
+                    total_short_usd = total_short_btc * price_for_conversion
                     total_btc = total_long_btc + total_short_btc
-                    total_usd = total_btc * price_for_conversion
+                    total_usd = total_long_usd + total_short_usd
+                    bc = getattr(self, '_base_currency', 'BTC')
 
-                    parts.append(f"- Liquidations (24h): {total_btc:.4f} BTC (${total_usd:,.0f})")
-                    if total_btc > 0:
-                        long_ratio = total_long_btc / total_btc
-                        parts.append(f"  - Long Liq: {total_long_btc:.4f} BTC ({long_ratio:.0%})")
-                        parts.append(f"  - Short Liq: {total_short_btc:.4f} BTC ({1-long_ratio:.0%})")
+                    parts.append(f"- Liquidations (24h): ${total_usd:,.0f} ({total_btc:.4f} {bc})")
+                    if total_usd > 0:
+                        long_ratio = total_long_usd / total_usd
+                        parts.append(f"  - Long Liq: ${total_long_usd:,.0f} ({total_long_btc:.4f} {bc}, {long_ratio:.0%})")
+                        parts.append(f"  - Short Liq: ${total_short_usd:,.0f} ({total_short_btc:.4f} {bc}, {1-long_ratio:.0%})")
 
                     # v3.24: Show hourly history (oldest → newest) for trend
                     if len(history) >= 3:
@@ -2941,12 +3550,14 @@ Reason: {status.get('message', 'Unknown')}
         ask_vol_usd = _safe_float(obi.get('ask_volume_usd', 0))
         bid_vol_btc = _safe_float(obi.get('bid_volume_btc', 0))
         ask_vol_btc = _safe_float(obi.get('ask_volume_btc', 0))
+        bc = getattr(self, '_base_currency', 'BTC')
 
         parts.append("IMBALANCE:")
         parts.append(f"  Simple OBI: {simple_obi:+.2f}")
         parts.append(f"  Weighted OBI: {weighted_obi:+.2f} (decay={decay_used:.2f}, adaptive)")
-        parts.append(f"  Bid Volume: ${bid_vol_usd/1e6:.1f}M ({bid_vol_btc:.1f} BTC)")
-        parts.append(f"  Ask Volume: ${ask_vol_usd/1e6:.1f}M ({ask_vol_btc:.1f} BTC)")
+        # v5.4: USDT-primary + base currency cross-check
+        parts.append(f"  Bid Volume: ${bid_vol_usd/1e6:.1f}M ({bid_vol_btc:.1f} {bc})")
+        parts.append(f"  Ask Volume: ${ask_vol_usd/1e6:.1f}M ({ask_vol_btc:.1f} {bc})")
         parts.append("")
 
         # ========== DYNAMICS Section (v2.0 Critical) ==========
@@ -2973,6 +3584,12 @@ Reason: {status.get('message', 'Unknown')}
             if spread_change is not None:
                 parts.append(f"  Spread Change: {_safe_float(spread_change):+.1f}%")
             parts.append(f"  Trend: {trend}")
+
+            # v5.10: OBI trend array (oldest → newest) for multi-cycle analysis
+            obi_trend = dynamics.get('obi_trend', [])
+            if len(obi_trend) >= 2:
+                trend_str = " → ".join(f"{v:+.2f}" for v in obi_trend[-5:])
+                parts.append(f"  OBI Trend ({len(obi_trend)} samples): {trend_str}")
         else:
             parts.append("  [First snapshot - no historical data yet] ⚠️ COLD_START (dynamics available after 2nd cycle)")
         parts.append("")
@@ -3017,17 +3634,23 @@ Reason: {status.get('message', 'Unknown')}
         threshold_reason = anomalies.get('threshold_reason', 'default')
 
         if bid_anomalies or ask_anomalies:
+            bc = getattr(self, '_base_currency', 'BTC')
             parts.append(f"ANOMALIES (threshold={threshold:.1f}x, {threshold_reason}):")
             for anom in bid_anomalies[:3]:  # Show up to 3 per side
                 price = _safe_float(anom.get('price', 0))
-                amount = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
+                amount_btc = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
+                amount_usd = amount_btc * price if price > 0 else 0
                 multiple = _safe_float(anom.get('multiplier', anom.get('multiple', 0)))
-                parts.append(f"  Bid: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
+                # v5.4: USDT-primary + base currency cross-check
+                vol_str = f"${amount_usd/1e6:.1f}M" if amount_usd >= 1e6 else f"${amount_usd/1e3:.0f}K"
+                parts.append(f"  Bid: ${price:,.0f} @ {vol_str} ({amount_btc:.1f} {bc}, {multiple:.1f}x)")
             for anom in ask_anomalies[:3]:
                 price = _safe_float(anom.get('price', 0))
-                amount = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
+                amount_btc = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
+                amount_usd = amount_btc * price if price > 0 else 0
                 multiple = _safe_float(anom.get('multiplier', anom.get('multiple', 0)))
-                parts.append(f"  Ask: ${price:,.0f} @ {amount:.1f} BTC ({multiple:.1f}x)")
+                vol_str = f"${amount_usd/1e6:.1f}M" if amount_usd >= 1e6 else f"${amount_usd/1e3:.0f}K"
+                parts.append(f"  Ask: ${price:,.0f} @ {vol_str} ({amount_btc:.1f} {bc}, {multiple:.1f}x)")
             parts.append("")
 
         # ========== LIQUIDITY Section ==========
@@ -3042,9 +3665,10 @@ Reason: {status.get('message', 'Unknown')}
             # Slippage estimates with confidence and range (v2.0)
             slippage = liquidity.get('slippage', {})
             if slippage:
-                # Show 1 BTC slippage as the main indicator
+                bc = getattr(self, '_base_currency', 'BTC')
+                # Show 1 unit slippage as the main indicator
                 for side in ['buy', 'sell']:
-                    key = f"{side}_1.0_btc"
+                    key = f"{side}_1.0_btc"  # data key from order book processor
                     est = slippage.get(key, {})
                     if isinstance(est, dict) and est.get('estimated') is not None:
                         pct = _safe_float(est.get('estimated', 0))
@@ -3054,7 +3678,7 @@ Reason: {status.get('message', 'Unknown')}
                         range_high = _safe_float(range_vals[1] if range_vals[1] is not None else 0)
                         side_label = "Buy" if side == "buy" else "Sell"
                         parts.append(
-                            f"  Slippage ({side_label} 1 BTC): {pct:.2f}% "
+                            f"  Slippage ({side_label} 1 {bc}): {pct:.2f}% "
                             f"[confidence={conf:.0%}, range={range_low:.2f}%-{range_high:.2f}%]"
                         )
 

@@ -36,7 +36,7 @@
 
 ### 1.3 已有可复用的好设计
 
-- **两阶段订单提交** (v4.13): MARKET entry → `_pending_sltp` → SL/TP 分别提交
+- **两阶段订单提交** (v4.13→v4.17): LIMIT entry @ validated price → `_pending_sltp` → SL/TP 分别提交
 - **R/R >= 1.5 硬门槛**: `validate_multiagent_sltp()` + `calculate_sr_based_sltp()` 一致执行 (v4.3: 无百分比兜底)
 - **Binance API 优先**: `_get_current_position_data()` 优先 API 而非缓存
 - **OCO 手动取消**: `on_order_filled()` 取消对方订单

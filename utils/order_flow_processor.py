@@ -76,6 +76,17 @@ class OrderFlowProcessor:
         avg_trade_usdt = quote_volume / trades_count if trades_count > 0 else 0
 
         # 计算 CVD (累积成交量差)
+        # v5.6: Bootstrap CVD history from ALL klines on first call
+        # Previously only processed latest kline → needed 5+ cycles (75min) for CVD trend
+        # Now: first call processes all klines → immediate CVD trend from cycle 1
+        if len(self._cvd_history) == 0 and len(klines) > 1:
+            # Bootstrap: process all historical klines (skip latest, added below)
+            for bar in klines[:-1]:
+                bar_vol = float(bar[5])
+                bar_buy = float(bar[9])
+                bar_sell = bar_vol - bar_buy
+                self._cvd_history.append(bar_buy - bar_sell)
+
         sell_volume = volume - taker_buy_volume
         cvd_delta = taker_buy_volume - sell_volume
         self._cvd_history.append(cvd_delta)

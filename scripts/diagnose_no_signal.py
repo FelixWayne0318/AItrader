@@ -1299,6 +1299,10 @@ def simulate_execution() -> Dict[str, Any]:
     """模拟完整的信号生成到执行流程"""
     print_section("8. 模拟执行流程")
 
+    # Dynamic base currency from symbol
+    _symbol = "BTCUSDT"
+    base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'
+
     result = {
         "steps": [],
         "would_execute": False,
@@ -1380,7 +1384,7 @@ def simulate_execution() -> Dict[str, Any]:
             quantity = position_usdt / current_price
 
             if quantity > 0.001:  # min_trade_amount
-                result['steps'].append(("position_size", f"${position_usdt:.2f} = {quantity:.4f} BTC", "✅"))
+                result['steps'].append(("position_size", f"${position_usdt:.2f} = {quantity:.4f} {base_currency}", "✅"))
             else:
                 result['steps'].append(("position_size", f"量太小: {quantity:.6f}", "❌"))
                 result['blocking_reason'] = "计算的仓位量太小"
@@ -1388,7 +1392,7 @@ def simulate_execution() -> Dict[str, Any]:
             # 结论
             if sig in ['BUY', 'SELL'] and conf_levels.get(conf, 0) >= 1 and quantity > 0.001:
                 result['would_execute'] = True
-                print_ok(f"✅ 会执行交易: {sig} {quantity:.4f} BTC")
+                print_ok(f"✅ 会执行交易: {sig} {quantity:.4f} {base_currency}")
             else:
                 print_warn(f"⚠️ 不会执行交易: {result['blocking_reason']}")
 

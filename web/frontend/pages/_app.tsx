@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { AppProps } from "next/app";
 import Head from "next/head";
-import useSWR from "swr";
+import useSWR, { SWRConfig } from "swr";
 import "@/styles/globals.css";
 
 // NOTE: We use <link> tags in _document.tsx for Google Fonts instead of next/font/google.
@@ -10,12 +10,23 @@ import "@/styles/globals.css";
 //   Error [NextFontError]: Failed to fetch font `Inter`.
 // <link> tags load fonts at RUNTIME in the browser, with graceful fallback.
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
+const fetcher = async (url: string) => {
+  const res = await fetch(url);
+  if (!res.ok) {
+    const error = new Error("API request failed") as Error & { status: number };
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
+};
 
 export default function App({ Component, pageProps }: AppProps) {
   // Fetch branding settings for dynamic favicon
+  // Note: This hook runs outside SWRConfig, so it needs explicit options
   const { data: branding } = useSWR("/api/public/site-branding", fetcher, {
     refreshInterval: 300000, // 5 minutes
+    revalidateOnFocus: false,
+    keepPreviousData: true,
   });
 
   // Update favicon dynamically
@@ -32,7 +43,14 @@ export default function App({ Component, pageProps }: AppProps) {
   }, [branding?.favicon_url]);
 
   return (
-    <>
+    <SWRConfig
+      value={{
+        fetcher,
+        revalidateOnFocus: false,
+        keepPreviousData: true,
+        dedupingInterval: 5000,
+      }}
+    >
       <Head>
         <title>{branding?.site_name || "AlgVex"} - AI Trading</title>
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -40,6 +58,6 @@ export default function App({ Component, pageProps }: AppProps) {
       <main className="font-sans antialiased min-h-screen bg-background text-foreground">
         <Component {...pageProps} />
       </main>
-    </>
+    </SWRConfig>
   );
 }
