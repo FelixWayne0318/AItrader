@@ -147,8 +147,8 @@ class DataFlowSummary(DiagnosticStep):
             fr = self.ctx.binance_funding_rate
             settled_pct = fr.get('funding_rate_pct', 0)
             predicted_pct = fr.get('predicted_rate_pct', 0)
-            print(f"    Settled:     {settled_pct:.4f}%")
-            print(f"    Predicted:   {predicted_pct:.4f}%")
+            print(f"    Settled:     {settled_pct:.5f}%")
+            print(f"    Predicted:   {predicted_pct:.5f}%")
             print(f"    Source:      binance_direct")
         else:
             print(f"    (数据不可用)")

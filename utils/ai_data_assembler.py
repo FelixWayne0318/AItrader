@@ -474,7 +474,7 @@ class AIDataAssembler:
                 history = fr.get('history', [])
                 if history and len(history) >= 2:
                     rates_str = " → ".join(
-                        [f"{r['rate_pct']:.4f}%" for r in history]
+                        [f"{r['rate_pct']:.5f}%" for r in history]
                     )
                     parts.append(f"  - Settlement History (last {len(history)}): {rates_str}")
 
