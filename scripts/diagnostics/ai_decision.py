@@ -1304,6 +1304,7 @@ class OrderSimulator(DiagnosticStep):
         from strategy.trading_logic import (
             calculate_position_size,
             validate_multiagent_sltp,
+            get_min_sl_distance_pct,
         )
         from utils.sr_sltp_calculator import calculate_sr_based_sltp
 
@@ -1414,6 +1415,9 @@ class OrderSimulator(DiagnosticStep):
                 if self.ctx.sr_zones_data:
                     atr_val = self.ctx.atr_value or 0.0
                     atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5)
+                    tp_buf_mult = getattr(cfg, 'tp_buffer_multiplier', 0.25)
+                    # v5.10: Match production — Level 2 uses half of Level 1's min SL distance
+                    sr_min_sl = get_min_sl_distance_pct() * 0.5
                     sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
                         current_price=self.ctx.current_price,
                         side=signal,
@@ -1421,6 +1425,8 @@ class OrderSimulator(DiagnosticStep):
                         atr_value=atr_val,
                         min_rr_ratio=min_rr,
                         atr_buffer_multiplier=atr_buf_mult,
+                        tp_buffer_multiplier=tp_buf_mult,
+                        min_sl_distance_pct=sr_min_sl,
                     )
                     if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
                         final_sl, final_tp = sr_sl, sr_tp
@@ -1450,6 +1456,9 @@ class OrderSimulator(DiagnosticStep):
             if self.ctx.sr_zones_data:
                 atr_val = self.ctx.atr_value or 0.0
                 atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5)
+                tp_buf_mult = getattr(cfg, 'tp_buffer_multiplier', 0.25)
+                # v5.10: Match production — Level 2 uses half of Level 1's min SL distance
+                sr_min_sl = get_min_sl_distance_pct() * 0.5
                 sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
                     current_price=self.ctx.current_price,
                     side=signal,
@@ -1457,6 +1466,8 @@ class OrderSimulator(DiagnosticStep):
                     atr_value=atr_val,
                     min_rr_ratio=min_rr,
                     atr_buffer_multiplier=atr_buf_mult,
+                    tp_buffer_multiplier=tp_buf_mult,
+                    min_sl_distance_pct=sr_min_sl,
                 )
                 if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
                     final_sl, final_tp = sr_sl, sr_tp

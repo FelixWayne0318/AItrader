@@ -687,12 +687,15 @@ class OrderFlowSimulator(DiagnosticStep):
         if self.ctx.sr_zones_data:
             try:
                 from utils.sr_sltp_calculator import calculate_sr_based_sltp
-                from strategy.trading_logic import get_min_rr_ratio
+                from strategy.trading_logic import get_min_rr_ratio, get_min_sl_distance_pct
 
                 atr_val = getattr(self.ctx, 'atr_value', None) or 0.0
                 cfg = self.ctx.strategy_config
                 min_rr = get_min_rr_ratio()
                 atr_buf_mult = getattr(cfg, 'atr_buffer_multiplier', 0.5) if cfg else 0.5
+                tp_buf_mult = getattr(cfg, 'tp_buffer_multiplier', 0.25) if cfg else 0.25
+                # v5.10: Match production — Level 2 uses half of Level 1's min SL distance
+                sr_min_sl = get_min_sl_distance_pct() * 0.5
 
                 new_sl, new_tp, sr_method = calculate_sr_based_sltp(
                     current_price=entry_price,
@@ -701,6 +704,8 @@ class OrderFlowSimulator(DiagnosticStep):
                     atr_value=atr_val,
                     min_rr_ratio=min_rr,
                     atr_buffer_multiplier=atr_buf_mult,
+                    tp_buffer_multiplier=tp_buf_mult,
+                    min_sl_distance_pct=sr_min_sl,
                 )
                 real_calc_used = True
                 events.append(f"  2. calculate_sr_based_sltp() → {sr_method}")
