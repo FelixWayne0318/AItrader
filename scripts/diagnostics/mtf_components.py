@@ -98,8 +98,19 @@ class MTFComponentTester(DiagnosticStep):
                 result = processor.process_klines(klines)
                 if result:
                     print(f"     ✅ process_klines: buy_ratio={result.get('buy_ratio', 0):.4f}")
-                    print(f"        cvd_trend: {result.get('cvd_trend', 'N/A')}")
+                    cvd_trend = result.get('cvd_trend', 'N/A')
+                    print(f"        cvd_trend: {cvd_trend}")
                     print(f"        volume_usdt: ${result.get('volume_usdt', 0):,.0f}")
+                    # v5.6: Validate CVD cold start bootstrap
+                    cvd_history_len = len(processor._cvd_history) if hasattr(processor, '_cvd_history') else 0
+                    if cvd_history_len >= 5:
+                        print(f"        cvd_history: {cvd_history_len} bars (✅ 已初始化)")
+                    elif cvd_history_len > 0:
+                        print(f"        cvd_history: {cvd_history_len} bars (⚠️ COLD_START, 需 ≥5 bars)")
+                    else:
+                        print(f"        cvd_history: 0 bars (❌ 未初始化)")
+                    if cvd_trend == 'COLD_START':
+                        print(f"        ⚠️ CVD 仍处于冷启动状态，需更多数据")
 
         except ImportError as e:
             print(f"     ❌ 无法导入 OrderFlowProcessor: {e}")
