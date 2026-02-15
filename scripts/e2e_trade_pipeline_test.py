@@ -7,7 +7,8 @@ E2E Trade Evaluation Pipeline Test
   cd /home/linuxuser/nautilus_AItrader
   source venv/bin/activate
   sudo systemctl stop nautilus-trader
-  python3 scripts/e2e_trade_pipeline_test.py
+  python3 scripts/e2e_trade_pipeline_test.py          # 手动确认
+  python3 scripts/e2e_trade_pipeline_test.py --auto    # 自动确认
   sudo systemctl start nautilus-trader
 
 流程:
@@ -114,9 +115,9 @@ def phase1_binance_trade():
     current_price = float(ticker['price'])
     info("当前 BTC 价格", f"${current_price:,.2f}")
 
-    # 最小下单量: BTCUSDT 最小 0.001 BTC
-    qty = "0.001"
-    info("下单数量", f"{qty} BTC (最小单, 约 ${current_price * 0.001:,.2f})")
+    # 最小下单量: BTCUSDT 最小 0.002 BTC
+    qty = "0.002"
+    info("下单数量", f"{qty} BTC (最小单, 约 ${current_price * 0.002:,.2f})")
 
     # Step 1: 开多 (LONG)
     entry_time = datetime.now(timezone.utc)
@@ -156,6 +157,7 @@ def phase1_binance_trade():
             side="SELL",
             type="MARKET",
             quantity=qty,
+            reduceOnly="true",
         )
         close_order_id = close_order.get('orderId')
         check("平仓成功", True, f"orderId={close_order_id}")
@@ -496,15 +498,20 @@ def main():
 
     # 安全确认
     print(f"\n{YELLOW}{BOLD}注意:{RESET}")
-    print(f"  1. 此脚本将在 Binance Futures 开一个 {BOLD}0.001 BTC{RESET} 的 LONG 并立即平仓")
+    print(f"  1. 此脚本将在 Binance Futures 开一个 {BOLD}0.002 BTC{RESET} 的 LONG 并立即平仓")
     print(f"  2. 预计损失: 仅点差+手续费 (约 $0.05-0.20)")
     print(f"  3. 请确保 Bot 已停止: sudo systemctl stop nautilus-trader")
     print(f"  4. 确保 ~/.env.aitrader 中有正确的 API 密钥\n")
 
-    confirm = input(f"{BOLD}输入 'yes' 开始测试: {RESET}").strip().lower()
-    if confirm != 'yes':
-        print("已取消。")
-        sys.exit(0)
+    # 支持 --auto 参数或 AUTO_CONFIRM 环境变量
+    auto_confirm = '--auto' in sys.argv or os.getenv('AUTO_CONFIRM', '').lower() == 'true'
+    if auto_confirm:
+        info("自动确认模式 (--auto / AUTO_CONFIRM=true)")
+    else:
+        confirm = input(f"{BOLD}输入 'yes' 开始测试: {RESET}").strip().lower()
+        if confirm != 'yes':
+            print("已取消。")
+            sys.exit(0)
 
     # 加载环境变量
     load_env()
