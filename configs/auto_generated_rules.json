@@ -5469,12 +5469,22 @@
       "pattern_type": "contains",
       "created": "2026-02-15T06:50:58.769899",
       "auto_generated": true
+    },
+    {
+      "id": "990dfb169675",
+      "commit": "da07483",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: eliminate -2022 ReduceOnly rejection from TP cancel+resubmit race (v4.16)",
+      "pattern": "from strategy.trading_logic import get_min_rr_ratio",
+      "pattern_type": "import",
+      "created": "2026-02-15T07:59:00.905507",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-15T06:51:01.747028",
-    "count": 547,
+    "updated": "2026-02-15T07:59:05.176607",
+    "count": 548,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }

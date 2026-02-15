@@ -344,6 +344,11 @@ class DeepSeekAIStrategy(Strategy):
         # Required because NT 1.222.0 rejects bracket orders with linked_order_ids
         self._pending_sltp: Optional[Dict[str, Any]] = None
 
+        # v4.17: Track pending LIMIT entry order for lifecycle management
+        # When entry uses LIMIT (instead of MARKET), the order may not fill immediately.
+        # on_timer cancels unfilled entry orders before starting new analysis.
+        self._pending_entry_order_id: Optional[str] = None
+
         # v3.18: Pending reversal state for event-driven two-phase commit
         # This prevents race condition when reversing positions (close then open)
         # Format: {
@@ -1526,6 +1531,11 @@ class DeepSeekAIStrategy(Strategy):
 
             # v3.13: 检查是否需要发送定时总结 (每日/每周)
             self._check_scheduled_summaries()
+
+            # v4.17: Cancel unfilled LIMIT entry orders from previous cycle
+            # LIMIT entries may not fill if price moved away. Cancel before new analysis
+            # to avoid stale orders conflicting with new signals.
+            self._cancel_pending_entry_order()
 
             # Check if indicators are ready
             if not self.indicator_manager.is_initialized():
@@ -5385,7 +5395,57 @@ class DeepSeekAIStrategy(Strategy):
             f"📤 Submitted {side.name} market order: {quantity:.3f} BTC "
             f"(reduce_only={reduce_only})"
         )
-    
+
+    def _cancel_pending_entry_order(self):
+        """
+        v4.17: Cancel unfilled LIMIT entry order from previous cycle.
+
+        Called at the start of on_timer to clean up stale entry orders before
+        new analysis. If the LIMIT entry didn't fill since last cycle, the market
+        has moved away — cancel and let new analysis decide fresh.
+        """
+        pending_id = self._pending_entry_order_id
+        if not pending_id:
+            return
+
+        try:
+            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+            for order in open_orders:
+                if str(order.client_order_id) == pending_id:
+                    self.cancel_order(order)
+                    self.log.info(
+                        f"🗑️ Cancelled unfilled LIMIT entry order: {pending_id[:8]}... "
+                        f"(market moved away, will re-analyze)"
+                    )
+                    # Clear pending SL/TP state since entry won't fill
+                    self._pending_sltp = None
+                    # Clear pre-initialized sltp_state
+                    instrument_key = str(self.instrument_id)
+                    if instrument_key in self.sltp_state:
+                        state = self.sltp_state[instrument_key]
+                        # Only clear if this was from the pending entry (no SL order yet)
+                        if state.get("sl_order_id") is None:
+                            del self.sltp_state[instrument_key]
+
+                    if self.telegram_bot and self.enable_telegram:
+                        try:
+                            self.telegram_bot.send_message_sync(
+                                "ℹ️ 入场限价单未成交，已取消\n"
+                                "价格已偏离，等待下次分析重新评估"
+                            )
+                        except Exception:
+                            pass
+                    break
+            else:
+                # Order not in open orders — already filled or rejected
+                self.log.debug(
+                    f"Pending entry {pending_id[:8]}... no longer open (filled or already cancelled)"
+                )
+        except Exception as e:
+            self.log.warning(f"⚠️ Error cancelling pending entry order: {e}")
+        finally:
+            self._pending_entry_order_id = None
+
     def _submit_bracket_order(
         self,
         side: OrderSide,
@@ -5401,10 +5461,11 @@ class DeepSeekAIStrategy(Strategy):
         (order_factory.bracket → submit_order_list) is no longer viable.
 
         New approach:
-        1. Submit MARKET entry order only
+        1. Submit LIMIT entry order at validated entry_price (v4.17: was MARKET)
         2. Store pending SL/TP prices in self._pending_sltp
         3. on_position_opened() submits SL + TP as individual orders
         4. OCO managed manually in on_order_filled() (already implemented)
+        5. Unfilled LIMIT entries cancelled by on_timer next cycle (v4.17)
 
         Parameters
         ----------
@@ -5455,7 +5516,7 @@ class DeepSeekAIStrategy(Strategy):
         # Log SL/TP summary
         self.log.info(
             f"🎯 Opening position for {side.name}:\n"
-            f"   Entry: ~${entry_price:,.2f} (MARKET)\n"
+            f"   Entry: ${entry_price:,.2f} (LIMIT)\n"
             f"   Stop Loss: ${stop_loss_price:,.2f} ({((stop_loss_price/entry_price - 1) * 100):.2f}%)\n"
             f"   Take Profit: ${tp_price:,.2f} ({((tp_price/entry_price - 1) * 100):.2f}%)\n"
             f"   Quantity: {quantity:.3f}\n"
@@ -5488,23 +5549,35 @@ class DeepSeekAIStrategy(Strategy):
                 "quantity": quantity,
             }
 
-            # Submit MARKET entry order only
-            entry_order = self.order_factory.market(
+            # v4.17: Submit LIMIT entry order at validated entry_price
+            # Instead of MARKET, use LIMIT at the exact price used for SL/TP calculation.
+            # This guarantees fill_price == entry_price (or better), so R/R never degrades.
+            # - If market is at or better than entry_price → fills immediately (taker)
+            # - If market has moved unfavorably → sits on book (maker, lower fee)
+            # - If unfilled by next on_timer → auto-cancelled, re-analyzed
+            entry_order = self.order_factory.limit(
                 instrument_id=self.instrument_id,
                 order_side=side,
                 quantity=self.instrument.make_qty(quantity),
+                price=self.instrument.make_price(entry_price),
                 time_in_force=TimeInForce.GTC,
+                post_only=False,  # Allow immediate taker fill
             )
             self.submit_order(entry_order)
 
+            # Track pending entry for on_timer cancellation
+            self._pending_entry_order_id = str(entry_order.client_order_id)
+
             self.log.info(
-                f"✅ Submitted entry order: {side.name} {quantity:.3f} BTC\n"
+                f"✅ Submitted LIMIT entry order: {side.name} {quantity:.3f} BTC @ ${entry_price:,.2f}\n"
+                f"   Order ID: {str(entry_order.client_order_id)[:8]}...\n"
                 f"   SL/TP will be submitted after fill (pending in _pending_sltp)"
             )
 
         except Exception as e:
             # Clear pending state on failure
             self._pending_sltp = None
+            self._pending_entry_order_id = None
             self.log.error(f"❌ Failed to submit entry order: {e}")
             self.log.error(
                 "🚫 NOT opening position without SL/TP protection - "
@@ -5592,6 +5665,18 @@ class DeepSeekAIStrategy(Strategy):
 
         self.log.error(f"❌ Order rejected: {reason}")
 
+        # v4.17: If the rejected order is our pending LIMIT entry, clean up state
+        if self._pending_entry_order_id and client_order_id == self._pending_entry_order_id:
+            self.log.warning(f"⚠️ LIMIT entry order rejected: {reason}")
+            self._pending_entry_order_id = None
+            self._pending_sltp = None
+            # Clear pre-initialized sltp_state
+            instrument_key = str(self.instrument_id)
+            if instrument_key in self.sltp_state:
+                state = self.sltp_state[instrument_key]
+                if state.get("sl_order_id") is None:
+                    del self.sltp_state[instrument_key]
+
         # 🚨 Fix G34: Force Telegram alert for order rejections
         if self.telegram_bot and self.enable_telegram:
             try:
@@ -5620,6 +5705,9 @@ class DeepSeekAIStrategy(Strategy):
             f"🟢 Position opened: {event.side.name} "
             f"{event.quantity} @ {event.avg_px_open}"
         )
+
+        # v4.17: Clear pending entry tracking — order has filled
+        self._pending_entry_order_id = None
 
         # v3.12: Store entry conditions for memory system
         self._last_entry_conditions = self._format_entry_conditions()
@@ -6258,6 +6346,20 @@ class DeepSeekAIStrategy(Strategy):
             f"🗑️ Order canceled: {short_id}... "
             f"(instrument: {getattr(event, 'instrument_id', self.instrument_id)})"
         )
+
+        # v4.17: If this was our pending LIMIT entry, clean up state
+        if self._pending_entry_order_id and client_order_id == self._pending_entry_order_id:
+            self.log.info(f"📋 Pending LIMIT entry order cancelled: {short_id}...")
+            self._pending_entry_order_id = None
+            # _pending_sltp and sltp_state already cleaned by _cancel_pending_entry_order
+            # but handle external cancellation (e.g., Binance auto-cancel) as well
+            if self._pending_sltp:
+                self._pending_sltp = None
+                instrument_key = str(self.instrument_id)
+                if instrument_key in self.sltp_state:
+                    state = self.sltp_state[instrument_key]
+                    if state.get("sl_order_id") is None:
+                        del self.sltp_state[instrument_key]
 
         # Track in metrics if available
         if hasattr(self, '_order_cancel_count'):
