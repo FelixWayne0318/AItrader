@@ -522,6 +522,10 @@ class MultiAgentAnalyzer:
             # Clear call trace for this analysis cycle
             self.call_trace = []
 
+            # v5.4: Extract base currency from symbol for dynamic unit display
+            # e.g., "BTCUSDT" → "BTC", "ETHUSDT" → "ETH", "SOLUSDT" → "SOL"
+            self._base_currency = symbol.replace('USDT', '') if 'USDT' in symbol else symbol
+
             # Format reports for prompts
             tech_summary = self._format_technical_report(technical_report)
             sent_summary = self._format_sentiment_report(sentiment_report)
@@ -1871,7 +1875,7 @@ RSI SERIES ({len(rsi_trend)} values):
 MACD SERIES ({len(macd_trend)} values):
 {format_all_values(macd_trend, ".4f")}
 
-VOLUME SERIES ({len(volume_trend)} values, USDT):
+VOLUME SERIES ({len(volume_trend)} values, USDT, converted from {getattr(self, '_base_currency', 'BTC')}):
 {format_all_values([v * p for v, p in zip(volume_trend, price_trend)] if price_trend and len(price_trend) == len(volume_trend) else volume_trend, ",.0f")}
 """
             # v3.24: ADX/DI history (trend strength trajectory)
@@ -2035,9 +2039,10 @@ BB WIDTH SERIES ({len(bb_width_trend)} values, % of middle band):
         # === Build formatted output ===
         lines = []
 
-        # Header (v5.4: show notional USDT value for consistent denomination)
+        # Header (v5.4: show notional USDT value + dynamic base currency for cross-check)
+        bc = getattr(self, '_base_currency', 'BTC')
         notional_usd = qty * avg_px if avg_px > 0 else 0
-        lines.append(f"Side: {side} | Size: ${notional_usd:,.0f} ({qty:.4f} BTC) | Entry: ${avg_px:,.2f}")
+        lines.append(f"Side: {side} | Size: ${notional_usd:,.0f} ({qty:.4f} {bc}) | Entry: ${avg_px:,.2f}")
         lines.append("")
 
         # Performance section
@@ -2554,24 +2559,26 @@ ORDER FLOW (Binance Taker Data):
                     oi_btc = 0.0
                 oi_usd = oi_btc * current_price if current_price > 0 else 0
                 oi_trend = trends.get('oi_trend', 'N/A')
-                # v5.4: Display in USDT for consistent denomination
+                bc = getattr(self, '_base_currency', 'BTC')
+                # v5.4: USDT primary + base currency for cross-check
                 if oi_usd >= 1e9:
-                    parts.append(f"- Open Interest: ${oi_usd/1e9:.2f}B (Trend: {oi_trend})")
+                    parts.append(f"- Open Interest: ${oi_usd/1e9:.2f}B ({oi_btc:,.0f} {bc}) [Trend: {oi_trend}]")
                 else:
-                    parts.append(f"- Open Interest: ${oi_usd/1e6:.1f}M (Trend: {oi_trend})")
+                    parts.append(f"- Open Interest: ${oi_usd/1e6:.1f}M ({oi_btc:,.0f} {bc}) [Trend: {oi_trend}]")
 
                 # v5.2: OI hourly history (price divergence analysis)
-                # v5.4: Convert BTC series to USDT for consistent denomination
+                # v5.4: Convert BTC series to USDT + base currency for cross-check
                 oi_hist = data.get('open_interest_history')
                 if oi_hist and oi_hist.get('history'):
                     oi_closes_btc = [float(h.get('c', 0)) for h in oi_hist['history']]
                     if len(oi_closes_btc) >= 2 and current_price > 0:
                         oi_closes_usd = [v * current_price for v in oi_closes_btc]
                         oi_series_str = " → ".join([f"${v/1e9:.2f}B" for v in oi_closes_usd])
+                        oi_change_btc = oi_closes_btc[-1] - oi_closes_btc[0]
                         oi_change_usd = oi_closes_usd[-1] - oi_closes_usd[0]
                         oi_change_pct = (oi_change_usd / oi_closes_usd[0] * 100) if oi_closes_usd[0] != 0 else 0
                         parts.append(f"  OI History ({len(oi_closes_btc)}h): {oi_series_str}")
-                        parts.append(f"  OI Change: ${oi_change_usd/1e6:+,.0f}M ({oi_change_pct:+.2f}%)")
+                        parts.append(f"  OI Change: ${oi_change_usd/1e6:+,.0f}M ({oi_change_btc:+,.0f} {bc}, {oi_change_pct:+.2f}%)")
             else:
                 parts.append("- Open Interest: N/A")
 
@@ -2646,13 +2653,15 @@ ORDER FLOW (Binance Taker Data):
                     total_short_btc = sum(float(h.get('s', 0)) for h in history)
                     total_long_usd = total_long_btc * price_for_conversion
                     total_short_usd = total_short_btc * price_for_conversion
+                    total_btc = total_long_btc + total_short_btc
                     total_usd = total_long_usd + total_short_usd
+                    bc = getattr(self, '_base_currency', 'BTC')
 
-                    parts.append(f"- Liquidations (24h): ${total_usd:,.0f}")
+                    parts.append(f"- Liquidations (24h): ${total_usd:,.0f} ({total_btc:.4f} {bc})")
                     if total_usd > 0:
                         long_ratio = total_long_usd / total_usd
-                        parts.append(f"  - Long Liq: ${total_long_usd:,.0f} ({long_ratio:.0%})")
-                        parts.append(f"  - Short Liq: ${total_short_usd:,.0f} ({1-long_ratio:.0%})")
+                        parts.append(f"  - Long Liq: ${total_long_usd:,.0f} ({total_long_btc:.4f} {bc}, {long_ratio:.0%})")
+                        parts.append(f"  - Short Liq: ${total_short_usd:,.0f} ({total_short_btc:.4f} {bc}, {1-long_ratio:.0%})")
 
                     # v3.24: Show hourly history (oldest → newest) for trend
                     if len(history) >= 3:
@@ -2960,13 +2969,16 @@ Reason: {status.get('message', 'Unknown')}
 
         bid_vol_usd = _safe_float(obi.get('bid_volume_usd', 0))
         ask_vol_usd = _safe_float(obi.get('ask_volume_usd', 0))
+        bid_vol_btc = _safe_float(obi.get('bid_volume_btc', 0))
+        ask_vol_btc = _safe_float(obi.get('ask_volume_btc', 0))
+        bc = getattr(self, '_base_currency', 'BTC')
 
         parts.append("IMBALANCE:")
         parts.append(f"  Simple OBI: {simple_obi:+.2f}")
         parts.append(f"  Weighted OBI: {weighted_obi:+.2f} (decay={decay_used:.2f}, adaptive)")
-        # v5.4: USDT-only display for consistent denomination
-        parts.append(f"  Bid Volume: ${bid_vol_usd/1e6:.1f}M")
-        parts.append(f"  Ask Volume: ${ask_vol_usd/1e6:.1f}M")
+        # v5.4: USDT-primary + base currency cross-check
+        parts.append(f"  Bid Volume: ${bid_vol_usd/1e6:.1f}M ({bid_vol_btc:.1f} {bc})")
+        parts.append(f"  Ask Volume: ${ask_vol_usd/1e6:.1f}M ({ask_vol_btc:.1f} {bc})")
         parts.append("")
 
         # ========== DYNAMICS Section (v2.0 Critical) ==========
@@ -3037,22 +3049,23 @@ Reason: {status.get('message', 'Unknown')}
         threshold_reason = anomalies.get('threshold_reason', 'default')
 
         if bid_anomalies or ask_anomalies:
+            bc = getattr(self, '_base_currency', 'BTC')
             parts.append(f"ANOMALIES (threshold={threshold:.1f}x, {threshold_reason}):")
             for anom in bid_anomalies[:3]:  # Show up to 3 per side
                 price = _safe_float(anom.get('price', 0))
                 amount_btc = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
                 amount_usd = amount_btc * price if price > 0 else 0
                 multiple = _safe_float(anom.get('multiplier', anom.get('multiple', 0)))
-                # v5.4: USDT-primary display
+                # v5.4: USDT-primary + base currency cross-check
                 vol_str = f"${amount_usd/1e6:.1f}M" if amount_usd >= 1e6 else f"${amount_usd/1e3:.0f}K"
-                parts.append(f"  Bid: ${price:,.0f} @ {vol_str} ({multiple:.1f}x)")
+                parts.append(f"  Bid: ${price:,.0f} @ {vol_str} ({amount_btc:.1f} {bc}, {multiple:.1f}x)")
             for anom in ask_anomalies[:3]:
                 price = _safe_float(anom.get('price', 0))
                 amount_btc = _safe_float(anom.get('volume_btc', anom.get('amount', 0)))
                 amount_usd = amount_btc * price if price > 0 else 0
                 multiple = _safe_float(anom.get('multiplier', anom.get('multiple', 0)))
                 vol_str = f"${amount_usd/1e6:.1f}M" if amount_usd >= 1e6 else f"${amount_usd/1e3:.0f}K"
-                parts.append(f"  Ask: ${price:,.0f} @ {vol_str} ({multiple:.1f}x)")
+                parts.append(f"  Ask: ${price:,.0f} @ {vol_str} ({amount_btc:.1f} {bc}, {multiple:.1f}x)")
             parts.append("")
 
         # ========== LIQUIDITY Section ==========
@@ -3067,9 +3080,10 @@ Reason: {status.get('message', 'Unknown')}
             # Slippage estimates with confidence and range (v2.0)
             slippage = liquidity.get('slippage', {})
             if slippage:
-                # Show 1 BTC slippage as the main indicator
+                bc = getattr(self, '_base_currency', 'BTC')
+                # Show 1 unit slippage as the main indicator
                 for side in ['buy', 'sell']:
-                    key = f"{side}_1.0_btc"
+                    key = f"{side}_1.0_btc"  # data key from order book processor
                     est = slippage.get(key, {})
                     if isinstance(est, dict) and est.get('estimated') is not None:
                         pct = _safe_float(est.get('estimated', 0))
@@ -3079,7 +3093,7 @@ Reason: {status.get('message', 'Unknown')}
                         range_high = _safe_float(range_vals[1] if range_vals[1] is not None else 0)
                         side_label = "Buy" if side == "buy" else "Sell"
                         parts.append(
-                            f"  Slippage ({side_label} 1 BTC): {pct:.2f}% "
+                            f"  Slippage ({side_label} 1 {bc}): {pct:.2f}% "
                             f"[confidence={conf:.0%}, range={range_low:.2f}%-{range_high:.2f}%]"
                         )
 
