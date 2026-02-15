@@ -847,10 +847,14 @@ Last Bull Argument:
 
 🔍 【分析优先级 — 从宏观到微观】
 你必须按此顺序分析数据，而不是从 15M 开始：
-1. **1D 宏观趋势** — 最高权重：SMA_200 方向、ADX 趋势强度、MACD 趋势
-2. **4H 中期动量** — 次高权重：RSI 位置、MACD 交叉、BB 位置
-3. **15M 微观执行** — 最低权重：仅用于入场时机判断
-⚠️ 如果 1D 和 15M 信号矛盾，1D 优先。
+1. **1D 宏观趋势** — SMA_200 方向、ADX 趋势强度、MACD 趋势
+2. **4H 中期动量** — RSI 位置、MACD 交叉、BB 位置
+3. **15M 微观执行** — 仅用于入场时机判断
+
+⚠️ 层级权重取决于 ADX 判定的市场环境:
+- ADX > 40 (强趋势): 1D 趋势层主导，逆势信号需极强确认
+- 25 < ADX < 40: 1D 趋势层重要但非绝对
+- ADX < 20 (震荡市): 15M 关键水平层权重最高，均值回归信号有效
 
 {INDICATOR_DEFINITIONS}
 
@@ -973,9 +977,9 @@ Last Bull Argument:
 分析: ADX>25 = TRENDING。Bear 用震荡市场逻辑 (RSI 70 = 超买) 在趋势市场中是错误的。
 结果: {{"confluence":{{"trend_1d":"BULLISH — ADX=33 DI+>DI-, 明确上涨趋势","momentum_4h":"BULLISH — RSI=65 趋势范围内, MACD 正值","levels_15m":"BULLISH — 价格在 SMA20 上方, BB 上半部","derivatives":"NEUTRAL — FR 正常, OI 稳定","aligned_layers":3}},"decision":"LONG","winning_side":"BULL","confidence":"HIGH","rationale":"3 层一致看多，趋势层确认上涨。Bear 用震荡逻辑解读 RSI，在趋势市场中无效。","strategic_actions":["顺势做多，目标下一阻力位"],"acknowledged_risks":["ADX 可能见顶回落"]}}
 
-示例 2: 数据矛盾但趋势层主导
-情况: 1D 强下跌趋势, 4H 出现 MACD 金叉, Bull 认为反转
-分析: 1D 趋势权重最高，4H MACD 金叉在强下跌中可能是反弹而非反转。
+示例 2: 强趋势中逆势信号 (ADX>40 → 趋势层主导)
+情况: 1D 强下跌趋势 (ADX=45), 4H 出现 MACD 金叉, Bull 认为反转
+分析: ADX=45 > 40 = 强趋势，趋势层主导。4H MACD 金叉在强下跌中可能是反弹而非反转。
 结果: {{"confluence":{{"trend_1d":"BEARISH — ADX=45 DI->DI+, 强下跌趋势","momentum_4h":"BULLISH — MACD 金叉, RSI 回升至 55","levels_15m":"NEUTRAL — 价格在 range 中间","derivatives":"BEARISH — FR 负值, OI 下降","aligned_layers":2}},"decision":"SHORT","winning_side":"BEAR","confidence":"MEDIUM","rationale":"趋势层(1D)看空 + 衍生品看空 = 2 层一致。4H MACD 金叉在强下跌趋势中有 74-97% 假信号率，不足以推翻 1D。","strategic_actions":["等待反弹至阻力位后做空"],"acknowledged_risks":["4H 动量转多可能形成更大反弹"]}}
 
 示例 3: 真正需要 HOLD 的情况
@@ -1091,7 +1095,7 @@ Last Bull Argument:
                 mtf_trend = technical_data.get('mtf_trend_layer')
                 if mtf_trend and isinstance(mtf_trend, dict):
                     lines.append("")
-                    lines.append("--- 1D MACRO TREND (highest weight per confluence matrix) ---")
+                    lines.append("--- 1D MACRO TREND (weight depends on ADX regime) ---")
                     trend_sma200 = mtf_trend.get('sma_200')
                     if trend_sma200 is not None and trend_sma200 > 0 and current_price > 0:
                         pct_vs_sma200 = (current_price - trend_sma200) / trend_sma200 * 100

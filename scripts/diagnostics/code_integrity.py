@@ -1,5 +1,5 @@
 """
-Code Integrity Checker Module (v5.1)
+Code Integrity Checker Module (v5.8)
 
 Static source code analysis without executing the strategy.
 Validates critical code patterns using regex/AST inspection.
@@ -15,8 +15,10 @@ Checks:
   P1.8:  Dynamic SL/TP safety rules (SL favorable + threshold)
   P1.9:  on_order_filled OCO management
   P1.10: Emergency SL method exists
+  P1.11: v5.8 ADX-aware dynamic layer weights in prompts
 
 v5.1 update: Trailing Stop removed, P1.4/P1.8 updated for S/R reevaluation.
+v5.8 update: P1.11 added for ADX-aware dynamic weight prompt verification.
 """
 
 import re
@@ -72,7 +74,7 @@ class CodeIntegrityChecker(DiagnosticStep):
     without executing it. Validates all v5.1 order flow safety patterns.
     """
 
-    name = "v5.1 代码完整性检查 (静态分析)"
+    name = "v5.8 代码完整性检查 (静态分析)"
 
     def __init__(self, ctx: DiagnosticContext):
         super().__init__(ctx)
@@ -80,7 +82,7 @@ class CodeIntegrityChecker(DiagnosticStep):
 
     def run(self) -> bool:
         print()
-        print_box("v5.1 Code Integrity (静态代码检查)", 65)
+        print_box("v5.8 Code Integrity (静态代码检查)", 65)
         print()
 
         strategy_path = self.ctx.project_root / "strategy" / "deepseek_strategy.py"
@@ -102,6 +104,12 @@ class CodeIntegrityChecker(DiagnosticStep):
         self._check_dynamic_sltp_safety(lines)
         self._check_on_order_filled_oco(lines)
         self._check_emergency_sl(source)
+
+        # P1.11: v5.8 ADX-aware dynamic weights in prompts
+        ma_path = self.ctx.project_root / "agents" / "multi_agent_analyzer.py"
+        if ma_path.exists():
+            ma_source = ma_path.read_text()
+            self._check_adx_aware_prompts(ma_source)
 
         # Summary
         passed = sum(1 for r in self._results if r["pass"])
@@ -330,3 +338,32 @@ class CodeIntegrityChecker(DiagnosticStep):
         self._record("P1.10", "Emergency SL method exists", has_emergency,
                      expected="_submit_emergency_sl defined",
                      actual=f"Present={has_emergency}")
+
+    # ── P1.11: v5.8 ADX-aware dynamic weights in prompts ──
+
+    def _check_adx_aware_prompts(self, ma_source: str):
+        """Check multi_agent_analyzer.py for v5.8 ADX-aware prompt patterns."""
+        # Judge prompt must have ADX-dependent weight rules
+        has_adx_dynamic = "强趋势 (ADX > 40)" in ma_source and "震荡市 (ADX < 20)" in ma_source
+        has_old_static = "趋势层 (1D) 权重最高" in ma_source
+        # Key metrics comment should not say "highest weight"
+        has_old_comment = "highest weight per confluence matrix" in ma_source
+        # Bear analyst should not have absolute "最高权重"
+        has_bear_static = "1D 宏观趋势" in ma_source and "最高权重" in ma_source
+
+        ok = has_adx_dynamic and not has_old_static and not has_old_comment and not has_bear_static
+        issues = []
+        if has_old_static:
+            issues.append("旧版静态规则 '趋势层权重最高' 仍存在")
+        if has_old_comment:
+            issues.append("key_metrics 仍有 'highest weight' 注释")
+        if has_bear_static:
+            issues.append("Bear prompt 仍有 '最高权重'")
+        if not has_adx_dynamic:
+            issues.append("缺少 ADX-aware 动态权重规则")
+
+        self._record("P1.11", "v5.8 ADX-aware dynamic layer weights in prompts", ok,
+                     expected="ADX-aware rules present, no static '趋势层权重最高'",
+                     actual=f"adx_dynamic={has_adx_dynamic}, no_old_static={not has_old_static}, "
+                            f"no_old_comment={not has_old_comment}, no_bear_static={not has_bear_static}"
+                            + (f" | Issues: {'; '.join(issues)}" if issues else ""))

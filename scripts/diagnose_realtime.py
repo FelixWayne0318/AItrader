@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-实盘信号诊断工具 (v5.1)
+实盘信号诊断工具 (v5.8)
 
 100% 还原实盘 on_timer() → AIDataAssembler → MultiAgentAnalyzer.analyze() 全流程。
-融合 v5.1 完整订单流诊断 (代码完整性 + 数学验证 + 10 场景模拟)。
+融合 v5.8 完整订单流诊断 (代码完整性 + 数学验证 + 10 场景模拟)。
+
+v5.8 新增:
+  - P1.11: ADX-aware 动态层级权重 prompt 完整性检查
+  - 架构验证: Judge/Bear prompt ADX-aware 规则检测
+  - Judge 使用 ADX 判定市场环境后动态调整层级权重
+    (强趋势→趋势层主导, 震荡市→关键水平层主导)
 
 AI 决策流程 (顺序执行，每次分析周期):
   Round 1: Bull Analyst → Bear Analyst  (2 API calls)
@@ -15,14 +21,14 @@ AI 决策流程 (顺序执行，每次分析周期):
 
 诊断阶段:
   Phase 0:  服务健康检查 + API 响应
-  Phase 1:  v5.1 代码完整性检查 (静态分析, P1.1-P1.10)
+  Phase 1:  v5.8 代码完整性检查 (静态分析, P1.1-P1.11)
   Phase 2:  配置验证
   Phase 3:  市场数据采集 (K线 + 情绪)
   Phase 4:  技术指标计算
   Phase 5:  持仓 + 账户检查
   Phase 6:  AI 输入数据验证 (13 类)
   Phase 7:  AI 决策 (6 次顺序 API 调用)
-  Phase 8:  架构完整性验证
+  Phase 8:  架构完整性验证 (含 ADX-aware prompt 检查)
   Phase 9:  MTF + Telegram + 错误恢复
   Phase 10: 订单流程模拟 (10 场景)
   Phase 11: v5.1 数学验证 (R/R, SL方向, 动态调整)
@@ -113,7 +119,7 @@ def main():
     """Main entry point for the diagnostic tool."""
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='实盘信号诊断工具 v5.1 (TradingAgents + 完整订单流诊断)',
+        description='实盘信号诊断工具 v5.8 (TradingAgents + ADX-aware 动态权重)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -167,8 +173,8 @@ Examples:
     runner.add_step(ServiceHealthCheck)         # systemd/memory/logs
     runner.add_step(APIHealthCheck)             # API 响应时间
 
-    # ── Phase 1: v5.1 Code Integrity (静态分析, P1.1-P1.10) ──
-    runner.add_step(CodeIntegrityChecker)       # v5.1 代码完整性检查
+    # ── Phase 1: v5.8 Code Integrity (静态分析, P1.1-P1.11) ──
+    runner.add_step(CodeIntegrityChecker)       # v5.8 代码完整性检查 (含 ADX-aware prompt)
 
     # ── Phase 2: Configuration ──
     runner.add_step(CriticalConfigChecker)      # 关键配置
