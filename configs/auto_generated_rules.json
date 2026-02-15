@@ -4949,12 +4949,172 @@
       "pattern_type": "contains",
       "created": "2026-02-14T23:17:54.303218",
       "auto_generated": true
+    },
+    {
+      "id": "89a25f858c45",
+      "commit": "482b3b2",
+      "file": "scripts/diagnose_coinalyze.py",
+      "message": "fix: remove hardcoded BTC from diagnose_coinalyze.py",
+      "pattern": "_sym_clean = symbol.split('_')[0] if '_' in symbol else symbol",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:46.839200",
+      "auto_generated": true
+    },
+    {
+      "id": "268e87716852",
+      "commit": "812e1de",
+      "file": "scripts/analyze_recent_losses.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "print_position_report",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T01:12:46.878785",
+      "auto_generated": true
+    },
+    {
+      "id": "784bd59f4cf7",
+      "commit": "812e1de",
+      "file": "scripts/diagnose_no_signal.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:46.898939",
+      "auto_generated": true
+    },
+    {
+      "id": "2b77eb053b24",
+      "commit": "812e1de",
+      "file": "scripts/diagnose_order_rejection.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:46.921058",
+      "auto_generated": true
+    },
+    {
+      "id": "2f785f76983f",
+      "commit": "812e1de",
+      "file": "scripts/diagnose_orderbook.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "test_orderbook_processor",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T01:12:46.941073",
+      "auto_generated": true
+    },
+    {
+      "id": "14f3f4a52a64",
+      "commit": "812e1de",
+      "file": "scripts/diagnose_sr_zones.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:46.962612",
+      "auto_generated": true
+    },
+    {
+      "id": "94706c3435a3",
+      "commit": "812e1de",
+      "file": "scripts/diagnose_v412.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:46.983793",
+      "auto_generated": true
+    },
+    {
+      "id": "31a14e3b1c72",
+      "commit": "812e1de",
+      "file": "scripts/simulate_position_sequence.py",
+      "message": "fix: remove hardcoded BTC from all standalone diagnostic scripts",
+      "pattern": "base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.001751",
+      "auto_generated": true
+    },
+    {
+      "id": "c1a7ca092f68",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "oi_val = oi.get('value', 0) if oi else 0",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.061723",
+      "auto_generated": true
+    },
+    {
+      "id": "282b535f54b4",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/architecture_verify.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "notional = float(qty) * float(pos.get('avg_px', 0))",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.087222",
+      "auto_generated": true
+    },
+    {
+      "id": "f71e6649e7cd",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/base.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "base_currency",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T01:12:47.108837",
+      "auto_generated": true
+    },
+    {
+      "id": "265320037197",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "oi_val = oi_data.get('value', 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.137717",
+      "auto_generated": true
+    },
+    {
+      "id": "0a408c0ba7da",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/order_flow_simulation.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "qty = current_position.get('quantity', 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.157053",
+      "auto_generated": true
+    },
+    {
+      "id": "6562c37ecb17",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/position_check.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "print(f\"     数量: ${position_value:,.0f} ({quantity:.4f} {bc})\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.176161",
+      "auto_generated": true
+    },
+    {
+      "id": "95f37e27249b",
+      "commit": "89abc40",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "fix: sync diagnose_realtime diagnostic modules with v5.4 USDT format",
+      "pattern": "oi_val = oi_data.get('value', 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.194719",
+      "auto_generated": true
+    },
+    {
+      "id": "046117a5549f",
+      "commit": "b46c867",
+      "file": "utils/coinalyze_client.py",
+      "message": "fix: stop fetching funding rate from Coinalyze, saves 2 API calls per cycle",
+      "pattern": "data_quality = \"COMPLETE\" if missing_count == 0 else \"PARTIAL\" if missing_count < 2 else \"MISSING\"",
+      "pattern_type": "contains",
+      "created": "2026-02-15T01:12:47.270080",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-14T23:17:57.489568",
-    "count": 495,
+    "updated": "2026-02-15T01:12:49.943283",
+    "count": 511,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
