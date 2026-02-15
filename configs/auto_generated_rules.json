@@ -5129,12 +5129,352 @@
       "pattern_type": "import",
       "created": "2026-02-15T01:46:14.647072",
       "auto_generated": true
+    },
+    {
+      "id": "178352a3e6af",
+      "commit": "ea336c2",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "feat: v5.9 memory system — all 4 AI agents receive past trade patterns",
+      "pattern": "{past_memories if past_memories else \"No historical data yet.\"}",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:57.944355",
+      "auto_generated": true
+    },
+    {
+      "id": "274f9c03bc09",
+      "commit": "ea336c2",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "feat: v5.9 memory system — all 4 AI agents receive past trade patterns",
+      "pattern": "memory_label = \"PAST REFLECTIONS\" if agent_name == \"judge\" else \"PAST TRADE PATTERNS\"",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:57.965059",
+      "auto_generated": true
+    },
+    {
+      "id": "d3802f3d0448",
+      "commit": "ea336c2",
+      "file": "scripts/diagnostics/architecture_verify.py",
+      "message": "feat: v5.9 memory system — all 4 AI agents receive past trade patterns",
+      "pattern": "if has_memories:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:57.984610",
+      "auto_generated": true
+    },
+    {
+      "id": "e7f848a70bad",
+      "commit": "ea336c2",
+      "file": "web/backend/services/trade_evaluation_service.py",
+      "message": "feat: v5.9 memory system — all 4 AI agents receive past trade patterns",
+      "pattern": "self.memory_file = Path(settings.AITRADER_PATH) / \"data\" / \"trading_memory.json\"",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.004494",
+      "auto_generated": true
+    },
+    {
+      "id": "5b88ec6e8585",
+      "commit": "1fed148",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: FR history display precision :.4f → :.5f (3 remaining locations)",
+      "pattern": "[f\"{r['rate_pct']:.5f}%\" for r in history]",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.041973",
+      "auto_generated": true
+    },
+    {
+      "id": "13d963c8cf13",
+      "commit": "1fed148",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "fix: FR history display precision :.4f → :.5f (3 remaining locations)",
+      "pattern": "print(f\"    Predicted:   {predicted_pct:.5f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.061085",
+      "auto_generated": true
+    },
+    {
+      "id": "96494b7f1b81",
+      "commit": "1fed148",
+      "file": "utils/ai_data_assembler.py",
+      "message": "fix: FR history display precision :.4f → :.5f (3 remaining locations)",
+      "pattern": "[f\"{r['rate_pct']:.5f}%\" for r in history]",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.079101",
+      "auto_generated": true
+    },
+    {
+      "id": "d40d3eb3ff71",
+      "commit": "a6251c7",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "parts.append(f\"- Funding Delta (Predicted - Settled): {delta_pct:+.5f}% ({direction})\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.123136",
+      "auto_generated": true
+    },
+    {
+      "id": "a575ec8f375b",
+      "commit": "a6251c7",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "print(f\"      [Binance FR] Settled: {bfr.get('funding_rate_pct', 0):.5f}% | Predicted: {bfr.get('predicted_rate_pct', 0):.5f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.142544",
+      "auto_generated": true
+    },
+    {
+      "id": "4664bea9ac0c",
+      "commit": "a6251c7",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "print(f\"        ✅ Settled FR: {binance_fr.get('funding_rate_pct', 0):.5f}% | Predicted FR: {binance_fr.get('predicted_rate_pct', 0):.5f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.168299",
+      "auto_generated": true
+    },
+    {
+      "id": "b5cd0fb93df9",
+      "commit": "a6251c7",
+      "file": "scripts/test_funding_rate.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "print(f\"  predicted ({result['predicted_rate_pct']:.5f}%) = premiumIndex.lastFundingRate\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.184923",
+      "auto_generated": true
+    },
+    {
+      "id": "4eef21242aa2",
+      "commit": "a6251c7",
+      "file": "scripts/validate_data_pipeline.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "results.ok(\"Settled Funding Rate\", f\"{rate:.6f} (decimal) = {rate_pct:.5f}%\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.207778",
+      "auto_generated": true
+    },
+    {
+      "id": "fbf4ae76e65b",
+      "commit": "a6251c7",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "f\"Funding={funding.get('value', 0)*100:.5f}%\" if oi and funding else \"Derivatives: partial data\"",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.232586",
+      "auto_generated": true
+    },
+    {
+      "id": "76d877550b74",
+      "commit": "a6251c7",
+      "file": "utils/ai_data_assembler.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "f\"  - Funding Rate (last settled): {fr.get('current_pct', 0):.5f}% \"",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.250384",
+      "auto_generated": true
+    },
+    {
+      "id": "cd020b288e01",
+      "commit": "a6251c7",
+      "file": "utils/binance_kline_client.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "\"funding_rate_pct\": round(settled_rate * 100, 6),      # 已结算费率 (%, 6位匹配币安精度)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.275369",
+      "auto_generated": true
+    },
+    {
+      "id": "15efa3ee28dc",
+      "commit": "a6251c7",
+      "file": "utils/telegram_bot.py",
+      "message": "fix: funding rate precision — match Binance 5-decimal format (e.g. 0.00079%)",
+      "pattern": "flow_parts.append(f\"预期 {predicted_rate_pct:.5f}% {pr_icon}\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.295251",
+      "auto_generated": true
+    },
+    {
+      "id": "31a8987302b2",
+      "commit": "e1c653f",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: FR injection must fetch directly (ctx.binance_funding_rate set too late)",
+      "pattern": "if self.ctx.derivatives_report is not None:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.330433",
+      "auto_generated": true
+    },
+    {
+      "id": "b3cd881d3006",
+      "commit": "e1c653f",
+      "file": "scripts/diagnostics/summary.py",
+      "message": "fix: FR injection must fetch directly (ctx.binance_funding_rate set too late)",
+      "pattern": "oi_val = float(oi_data.get('value', 0) or 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.349670",
+      "auto_generated": true
+    },
+    {
+      "id": "c1a380e71cfe",
+      "commit": "d2aebec",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: diagnosis vs live consistency — FR N/A, OI $0, static weight remnants",
+      "pattern": "if self.ctx.binance_funding_rate and self.ctx.derivatives_report is not None:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.386008",
+      "auto_generated": true
+    },
+    {
+      "id": "c6771108801a",
+      "commit": "d63cd83",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: remove last 3 static weight references found by deep audit",
+      "pattern": "⚠️ Layer weights depend on ADX: Strong trend (ADX>40) → 1D dominant | Ranging (ADX<20) → 15M levels dominant",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.425253",
+      "auto_generated": true
+    },
+    {
+      "id": "d8b840059302",
+      "commit": "d63cd83",
+      "file": "scripts/diagnostics/code_integrity.py",
+      "message": "fix: remove last 3 static weight references found by deep audit",
+      "pattern": "if has_verdict_static:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.443489",
+      "auto_generated": true
+    },
+    {
+      "id": "e30b396e61b5",
+      "commit": "c8e05cf",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: align all prompts + diagnostics with v5.8 ADX-aware dynamic weights",
+      "pattern": "lines.append(\"--- 1D MACRO TREND (weight depends on ADX regime) ---\")",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.479582",
+      "auto_generated": true
+    },
+    {
+      "id": "6c36a36346c4",
+      "commit": "c8e05cf",
+      "file": "scripts/diagnose_realtime.py",
+      "message": "fix: align all prompts + diagnostics with v5.8 ADX-aware dynamic weights",
+      "pattern": "runner.add_step(CodeIntegrityChecker)       # v5.8 代码完整性检查 (含 ADX-aware prompt)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.496988",
+      "auto_generated": true
+    },
+    {
+      "id": "e7f2aa09ea2d",
+      "commit": "c8e05cf",
+      "file": "scripts/diagnostics/architecture_verify.py",
+      "message": "fix: align all prompts + diagnostics with v5.8 ADX-aware dynamic weights",
+      "pattern": "_verify_adx_aware_weights",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T06:50:58.515123",
+      "auto_generated": true
+    },
+    {
+      "id": "09ea0936d5e5",
+      "commit": "c8e05cf",
+      "file": "scripts/diagnostics/code_integrity.py",
+      "message": "fix: align all prompts + diagnostics with v5.8 ADX-aware dynamic weights",
+      "pattern": "_check_adx_aware_prompts",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T06:50:58.533593",
+      "auto_generated": true
+    },
+    {
+      "id": "a907abb6c827",
+      "commit": "f2bae73",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: Judge confluence evaluation — force structured multi-layer analysis (v5.7)",
+      "pattern": "结果: {{\"confluence\":{{\"trend_1d\":\"BEARISH — ADX=45 DI->DI+, 强下跌趋势\",\"momentum_4h\":\"BULLISH — MACD 金叉, RSI 回升至 55\",\"levels_15m\":\"NEUTRAL — 价格在 range 中间\",",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.572202",
+      "auto_generated": true
+    },
+    {
+      "id": "c1b1103ad4c8",
+      "commit": "f2bae73",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: Judge confluence evaluation — force structured multi-layer analysis (v5.7)",
+      "pattern": "confluence = judge_decision.get('confluence', {})",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.596497",
+      "auto_generated": true
+    },
+    {
+      "id": "6a6ac57aa54b",
+      "commit": "f2bae73",
+      "file": "utils/telegram_bot.py",
+      "message": "fix: Judge confluence evaluation — force structured multi-layer analysis (v5.7)",
+      "pattern": "confluence = execution_data.get('confluence', {})",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.614784",
+      "auto_generated": true
+    },
+    {
+      "id": "bb3dac61b50e",
+      "commit": "5f99592",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: sync diagnostic scripts with v5.6 MTF fixes (4H ADX/DI + 1D ADX + CVD cold start)",
+      "pattern": "adx_4h = mtf_decision.get('adx', 0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.650757",
+      "auto_generated": true
+    },
+    {
+      "id": "c7a67638f592",
+      "commit": "5f99592",
+      "file": "scripts/diagnostics/indicator_test.py",
+      "message": "fix: sync diagnostic scripts with v5.6 MTF fixes (4H ADX/DI + 1D ADX + CVD cold start)",
+      "pattern": "'adx': decision_layer_data.get('adx', 0),",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.670578",
+      "auto_generated": true
+    },
+    {
+      "id": "15097a6e415c",
+      "commit": "5f99592",
+      "file": "scripts/diagnostics/mtf_components.py",
+      "message": "fix: sync diagnostic scripts with v5.6 MTF fixes (4H ADX/DI + 1D ADX + CVD cold start)",
+      "pattern": "cvd_trend = result.get('cvd_trend', 'N/A')",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.689138",
+      "auto_generated": true
+    },
+    {
+      "id": "74218eb1e8cd",
+      "commit": "8423f9a",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: MTF data pipeline — Bear opposition, 1D verdict, 4H ADX, Funding Rate, CVD bootstrap",
+      "pattern": "_compute_trend_verdict",
+      "pattern_type": "function_exists",
+      "created": "2026-02-15T06:50:58.727892",
+      "auto_generated": true
+    },
+    {
+      "id": "976081faee54",
+      "commit": "8423f9a",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: MTF data pipeline — Bear opposition, 1D verdict, 4H ADX, Funding Rate, CVD bootstrap",
+      "pattern": "'adx': decision_layer_data.get('adx', 0),",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.752774",
+      "auto_generated": true
+    },
+    {
+      "id": "5ffd9fd8e9e5",
+      "commit": "8423f9a",
+      "file": "utils/order_flow_processor.py",
+      "message": "fix: MTF data pipeline — Bear opposition, 1D verdict, 4H ADX, Funding Rate, CVD bootstrap",
+      "pattern": "if len(self._cvd_history) == 0 and len(klines) > 1:",
+      "pattern_type": "contains",
+      "created": "2026-02-15T06:50:58.769899",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-15T01:46:18.731049",
-    "count": 513,
+    "updated": "2026-02-15T06:51:01.747028",
+    "count": 547,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
