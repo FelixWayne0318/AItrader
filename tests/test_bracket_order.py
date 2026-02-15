@@ -174,8 +174,9 @@ class DummyInstrument:
 
 
 class DummyOrderFactory:
-    """v4.13: Stub supports both market() and bracket() for two-phase approach."""
+    """v4.17: Stub supports limit() (entry), market() (close/reduce), and bracket() (legacy)."""
     def __init__(self) -> None:
+        self.limit_kwargs: Dict[str, Any] | None = None
         self.market_kwargs: Dict[str, Any] | None = None
         self.kwargs: Dict[str, Any] | None = None
 
@@ -183,6 +184,10 @@ class DummyOrderFactory:
         self.kwargs = kwargs
         orders = [SimpleNamespace(order_type=OrderType.STOP_MARKET, client_order_id="SL-order")]
         return SimpleNamespace(orders=orders, id="order-list-001")
+
+    def limit(self, **kwargs: Any) -> Any:
+        self.limit_kwargs = kwargs
+        return SimpleNamespace(client_order_id="entry-limit-001")
 
     def market(self, **kwargs: Any) -> Any:
         self.market_kwargs = kwargs
@@ -250,18 +255,25 @@ def _make_strategy_stub() -> DeepSeekAIStrategy:
     strategy.atr_buffer_multiplier = 0.5
     # v4.13: Two-phase pending SL/TP storage
     strategy._pending_sltp = None
+    # v4.17: Pending LIMIT entry order tracking
+    strategy._pending_entry_order_id = None
     return strategy
 
 
 def test_submit_bracket_order_stores_pending_sltp() -> None:
-    """v4.13: Two-phase approach — entry order submitted, SL/TP stored as pending."""
+    """v4.17: Two-phase approach — LIMIT entry order submitted, SL/TP stored as pending."""
     strategy = _make_strategy_stub()
 
     strategy._submit_bracket_order(OrderSide.BUY, 0.01)
 
-    # v4.13: Entry order submitted via order_factory.market()
-    assert strategy.order_factory.market_kwargs is not None, "Market entry should be submitted"
-    assert strategy.order_factory.market_kwargs["order_side"] == OrderSide.BUY
+    # v4.17: Entry order submitted via order_factory.limit() (was market() in v4.13)
+    assert strategy.order_factory.limit_kwargs is not None, "LIMIT entry should be submitted"
+    assert strategy.order_factory.limit_kwargs["order_side"] == OrderSide.BUY
+    assert "price" in strategy.order_factory.limit_kwargs, "LIMIT order must have price"
+    assert strategy.order_factory.market_kwargs is None, "MARKET should NOT be used for entry"
+
+    # v4.17: Pending entry order ID tracked for on_timer cancellation
+    assert strategy._pending_entry_order_id == "entry-limit-001"
 
     # v4.13: SL/TP stored in _pending_sltp for on_position_opened()
     assert strategy._pending_sltp is not None, "Pending SL/TP should be stored"
@@ -275,7 +287,7 @@ def test_submit_bracket_order_stores_pending_sltp() -> None:
     assert instrument_key in strategy.sltp_state
     assert strategy.sltp_state[instrument_key]["side"] == "LONG"
 
-    # submit_order_list NOT called (v4.13 doesn't use bracket anymore)
+    # submit_order_list NOT called (v4.13+ doesn't use bracket anymore)
     strategy.submit_order_list.assert_not_called()
 
 
@@ -291,8 +303,9 @@ def test_submit_bracket_order_blocks_when_price_missing() -> None:
 
     # v3.18: Should NOT submit any order (no unprotected market orders)
     strategy._submit_order.assert_not_called()
-    assert strategy.order_factory.market_kwargs is None
+    assert strategy.order_factory.limit_kwargs is None, "No LIMIT entry when price missing"
     assert strategy._pending_sltp is None
+    assert strategy._pending_entry_order_id is None
 
 
 if __name__ == "__main__":

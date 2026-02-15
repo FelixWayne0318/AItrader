@@ -201,16 +201,16 @@ class OrderFlowSimulator(DiagnosticStep):
         sl_price = entry_price * 0.98  # 2% SL
         tp_price = entry_price * 1.03  # 3% TP
 
-        # Entry order
+        # Entry order (v4.17: LIMIT at validated entry_price)
         entry_order = MockOrder(
             client_order_id="O-ENTRY-001",
-            order_type="MARKET",
+            order_type="LIMIT",
             side="BUY",
             quantity=quantity,
             status="FILLED",
         )
         orders.append(entry_order)
-        events.append("submit_order(MARKET BUY)")
+        events.append("submit_order(LIMIT BUY @ validated entry_price)")
 
         # SL order (OTO linked)
         sl_order = MockOrder(
@@ -278,16 +278,16 @@ class OrderFlowSimulator(DiagnosticStep):
         add_qty = 0.005
         new_total_qty = existing_qty + add_qty
 
-        # Add position order
+        # Add position order (v4.17: LIMIT at validated entry_price)
         add_order = MockOrder(
             client_order_id="O-ADD-001",
-            order_type="MARKET",
+            order_type="LIMIT",
             side="BUY",
             quantity=add_qty,
             status="FILLED",
         )
         orders.append(add_order)
-        events.append("submit_order(MARKET BUY - add position)")
+        events.append("submit_order(LIMIT BUY - add position)")
         events.append("on_order_filled(ADD)")
 
         # v3.18: Update SL/TP quantities
@@ -1135,10 +1135,10 @@ class BracketOrderFlowSimulator(DiagnosticStep):
         print("  └─────────────────────────────────────────────────────────────┘")
         print("                          ↓")
         print("  ┌─────────────────────────────────────────────────────────────┐")
-        print("  │ 3. Bracket 订单创建 (order_factory.bracket)                 │")
-        print("  │    ├─ entry_order: MARKET (trigger OTO)                     │")
-        print("  │    ├─ sl_order: STOP_MARKET (OTO linked, reduce_only)       │")
-        print("  │    └─ tp_order: LIMIT (OTO linked, OCO with SL)             │")
+        print("  │ 3. 两阶段订单提交 (v4.17)                                    │")
+        print("  │    ├─ entry_order: LIMIT @ validated entry_price (GTC)      │")
+        print("  │    ├─ sl_order: STOP_MARKET (on_position_opened, reduce)    │")
+        print("  │    └─ tp_order: LIMIT (on_position_opened, reduce)          │")
         print("  └─────────────────────────────────────────────────────────────┘")
         print("                          ↓")
         print("  ┌─────────────────────────────────────────────────────────────┐")

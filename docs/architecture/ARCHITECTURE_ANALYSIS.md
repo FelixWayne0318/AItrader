@@ -447,7 +447,7 @@ class DeepSeekAIStrategy(Strategy):
 ### 🎯 关键发现
 
 1. **订单执行 ✅ 100% NautilusTrader**
-   - 所有订单通过 `order_factory.market()` 创建
+   - 入场订单通过 `order_factory.limit()` 创建 (v4.17)，平仓/减仓通过 `order_factory.market()`
    - 使用 `submit_order()` 提交到交易所
    - 事件回调（filled, rejected）完全由 NautilusTrader 管理
 

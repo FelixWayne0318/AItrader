@@ -4254,14 +4254,12 @@ class DeepSeekAIStrategy(Strategy):
 
     def _open_new_position(self, side: str, quantity: float):
         """
-        Open new position using bracket order (entry + SL + TP).
+        Open new position using two-phase order submission.
 
-        This method submits a bracket order which automatically includes:
-        - Entry order (MARKET)
-        - Stop Loss order (STOP_MARKET)
-        - Take Profit order(s) (LIMIT)
-
-        The SL and TP orders are linked with OCO, so when one fills, the others cancel.
+        v4.17: LIMIT entry at validated price, SL/TP submitted after fill.
+        - Entry order (LIMIT at validated entry_price)
+        - Stop Loss order (STOP_MARKET, submitted in on_position_opened)
+        - Take Profit order (LIMIT, submitted in on_position_opened)
         """
         order_side = OrderSide.BUY if side == 'long' else OrderSide.SELL
 
@@ -4353,8 +4351,9 @@ class DeepSeekAIStrategy(Strategy):
         """
         v4.9: Post-fill R/R validation and TP adjustment.
 
-        Problem: SL/TP are calculated using estimated price (bar close), but MARKET order
-        fills at a different price (slippage). This can degrade R/R below the 1.5:1 minimum.
+        Problem: SL/TP are calculated using estimated price, but fill price may differ
+        (v4.17 LIMIT fills at entry_price or better; legacy add/reversal paths may vary).
+        This can degrade R/R below the 1.5:1 minimum.
 
         Solution: After fill, recalculate R/R with actual fill price. If below minimum,
         cancel existing TP and submit a new one that restores R/R >= min_rr_ratio.

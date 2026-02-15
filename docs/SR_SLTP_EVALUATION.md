@@ -281,7 +281,7 @@
 | # | 现状 | 评分 | 说明 |
 |---|------|------|------|
 | D1 | ✅ SL/TP 先验证 | 5/5 | `_validate_sltp_for_entry()` 在 `_submit_bracket_order()` 之前。验证失败 → 不开仓 |
-| D2 | ✅ 两阶段 | 5/5 | v4.13: MARKET entry → `_pending_sltp` → `on_position_opened()` → 分别提交 SL + TP |
+| D2 | ✅ 两阶段 | 5/5 | v4.17: LIMIT entry @ validated price → `_pending_sltp` → `on_position_opened()` → 分别提交 SL + TP |
 | D3 | ✅ R/R 硬门槛 | 5/5 | `validate_multiagent_sltp()` + `calculate_sr_based_sltp()` 双重 R/R ≥ 1.5 |
 | D4 | ✅ 趋势过滤 | 4/5 | MTF 三层架构: 1D → 4H → 15M。**问题**: `require_above_sma` 是配置项，可被关闭 |
 | D5 | ✅ AI 控制仓位 | 4/5 | v4.8: AI 提供 `position_size_pct` + R/R 关联表 (≥2.5:1→80%, ≥2.0→50%, ≥1.5→30%)。**问题**: AI 可能忽略 prompt 指导给出不合理 pct |

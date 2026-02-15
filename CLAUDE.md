@@ -134,8 +134,9 @@ on_position_closed → evaluate_trade() → record_outcome() → trading_memory.
 | v3.16 | S/R 硬风控移至 AI | Risk Manager prompt 包含 block_long/block_short，AI 自主判断 |
 | v3.17 | R/R 驱动入场 | R/R ≥ 1.5:1 是唯一入场标准，由 `validate_multiagent_sltp()` 硬性执行 |
 | v3.18 | 订单流程安全 | 反转两阶段提交、Bracket 失败不回退、加仓更新 SL/TP 数量 |
-| v4.13 | 分步订单提交 | MARKET entry → on_position_opened → SL + TP 单独提交 (NT 1.222.0) |
+| v4.13 | 分步订单提交 | entry → on_position_opened → SL + TP 单独提交 (NT 1.222.0) |
 | v4.14 | Risk Manager 只管风险 | 不重判方向，只设 SL/TP + 仓位，仅 R/R<1.5/FR>0.1%/流动性枯竭否决 |
+| v4.17 | LIMIT 入场 | LIMIT @ validated entry_price 取代 MARKET，R/R 永不低于验证值 |
 | v5.9 | 全 Agent 记忆 | 所有 4 个 Agent 接收 past_memories，不仅仅是 Judge |
 
 ## 📋 配置管理
