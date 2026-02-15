@@ -906,17 +906,19 @@ Last Bull Argument:
 然后评估：双方分析师是否都使用了正确的 regime 解读逻辑？
 ⚠️ 在趋势市场使用震荡逻辑 (或反之) = 结论不可信。
 
-### STEP 2: Confluence 多层对齐度评估
-请用以下框架评估信号一致性：
+### STEP 2: Confluence 多层对齐度评估 (必须填入 JSON 的 confluence 字段)
+逐层评估每一层的方向倾向，填入 JSON 输出的 confluence 对象中：
 
-| 层级 | 评估内容 | Bull 证据 | Bear 证据 | 哪方更强？ |
-|------|---------|----------|----------|-----------|
-| 趋势层 (1D) | SMA200, ADX/DI 方向 | ? | ? | ? |
-| 动量层 (4H) | RSI, MACD, CVD | ? | ? | ? |
-| 关键水平 (15M) | S/R zone, BB, Order Book | ? | ? | ? |
-| 衍生品数据 | Funding, OI, Liquidations | ? | ? | ? |
+| 层级 | 评估内容 | 填入字段 |
+|------|---------|---------|
+| 趋势层 (1D) | SMA200 位置, ADX/DI 方向, MACD | confluence.trend_1d |
+| 动量层 (4H) | RSI, MACD, ADX, CVD | confluence.momentum_4h |
+| 关键水平 (15M) | S/R zone, BB, Order Book | confluence.levels_15m |
+| 衍生品数据 | Funding, OI, Liquidations | confluence.derivatives |
 
-对齐度评估：
+每层判定为 BULLISH / BEARISH / NEUTRAL，附简要理由。
+
+对齐度规则 (基于 aligned_layers 计数):
 - 3-4 层一致 → HIGH confidence 交易
 - 2 层一致 → MEDIUM confidence 交易
 - 0-1 层一致 → 应该 HOLD
@@ -929,13 +931,21 @@ Last Bull Argument:
 - 你的建议 — LONG、SHORT 或 HOLD — 必须清晰可执行
 - ‼️ 不要因为双方都有道理就默认 HOLD — 选择证据更强的一方
 - 参考过去的失误教训，避免重复犯错
+- confidence 必须与 aligned_layers 一致
 
 ## 📤 OUTPUT FORMAT (只输出 JSON，不要其他文字):
 {{
+    "confluence": {{
+        "trend_1d": "BULLISH|BEARISH|NEUTRAL — 简要理由 (如: ADX=55 DI->DI+, 强下跌趋势)",
+        "momentum_4h": "BULLISH|BEARISH|NEUTRAL — 简要理由 (如: RSI=60 偏多, MACD 金叉)",
+        "levels_15m": "BULLISH|BEARISH|NEUTRAL — 简要理由 (如: 价格在 S1 支撑上方, BB 下轨触及)",
+        "derivatives": "BULLISH|BEARISH|NEUTRAL — 简要理由 (如: FR 偏多, OI 下降)",
+        "aligned_layers": 0
+    }},
     "decision": "LONG|SHORT|HOLD",
     "winning_side": "BULL|BEAR|TIE",
     "confidence": "HIGH|MEDIUM|LOW",
-    "rationale": "Why these arguments lead to your conclusion (1-2 sentences)",
+    "rationale": "基于 confluence 分析的决策理由 (可以 2-4 句话充分说明)",
     "strategic_actions": ["Concrete step 1", "Concrete step 2"],
     "acknowledged_risks": ["risk1", "risk2"]
 }}"""
@@ -956,19 +966,17 @@ Last Bull Argument:
 示例 1: 趋势一致 → 选择顺势方
 情况: 1D ADX=33 上涨趋势, Bull 引用趋势+动量, Bear 引用 RSI 超买
 分析: ADX>25 = TRENDING。Bear 用震荡市场逻辑 (RSI 70 = 超买) 在趋势市场中是错误的。
-      Cardwell 规则: 上涨趋势中 RSI 40-80 为正常范围，80 = 强动量。
-结果: {{"decision":"LONG","winning_side":"BULL","confidence":"HIGH"}}
+结果: {{"confluence":{{"trend_1d":"BULLISH — ADX=33 DI+>DI-, 明确上涨趋势","momentum_4h":"BULLISH — RSI=65 趋势范围内, MACD 正值","levels_15m":"BULLISH — 价格在 SMA20 上方, BB 上半部","derivatives":"NEUTRAL — FR 正常, OI 稳定","aligned_layers":3}},"decision":"LONG","winning_side":"BULL","confidence":"HIGH","rationale":"3 层一致看多，趋势层确认上涨。Bear 用震荡逻辑解读 RSI，在趋势市场中无效。","strategic_actions":["顺势做多，目标下一阻力位"],"acknowledged_risks":["ADX 可能见顶回落"]}}
 
 示例 2: 数据矛盾但趋势层主导
 情况: 1D 强下跌趋势, 4H 出现 MACD 金叉, Bull 认为反转
-分析: MACD 在震荡市场有 74-97% 假信号率。1D 强趋势未改变。
-      4H MACD 金叉在强下跌趋势中更可能是反弹而非反转。
-结果: {{"decision":"SHORT","winning_side":"BEAR","confidence":"MEDIUM"}}
+分析: 1D 趋势权重最高，4H MACD 金叉在强下跌中可能是反弹而非反转。
+结果: {{"confluence":{{"trend_1d":"BEARISH — ADX=45 DI->DI+, 强下跌趋势","momentum_4h":"BULLISH — MACD 金叉, RSI 回升至 55","levels_15m":"NEUTRAL — 价格在 range 中间","derivatives":"BEARISH — FR 负值, OI 下降","aligned_layers":2}},"decision":"SHORT","winning_side":"BEAR","confidence":"MEDIUM","rationale":"趋势层(1D)看空 + 衍生品看空 = 2 层一致。4H MACD 金叉在强下跌趋势中有 74-97% 假信号率，不足以推翻 1D。","strategic_actions":["等待反弹至阻力位后做空"],"acknowledged_risks":["4H 动量转多可能形成更大反弹"]}}
 
 示例 3: 真正需要 HOLD 的情况
 情况: ADX=12 (RANGING), 价格在 range 中间, 两方都没有强证据
 分析: 震荡市场 + 无明确方向 + 无关键水平触及。等待价格到达 range 边缘。
-结果: {{"decision":"HOLD","winning_side":"TIE","confidence":"LOW"}}"""
+结果: {{"confluence":{{"trend_1d":"NEUTRAL — ADX=12 无趋势","momentum_4h":"NEUTRAL — RSI=50 中性","levels_15m":"NEUTRAL — 价格在 range 中间，远离 S/R","derivatives":"NEUTRAL — FR 接近零, OI 无变化","aligned_layers":0}},"decision":"HOLD","winning_side":"TIE","confidence":"LOW","rationale":"0 层有明确方向，所有层级均为中性。等待价格触及 range 边缘再决策。","strategic_actions":["等待价格到达 range 边缘"],"acknowledged_risks":["可能错过突破"]}}"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["judge"] = {
@@ -994,6 +1002,13 @@ Last Bull Argument:
         # Fallback decision if all retries failed
         self.logger.warning("Judge decision parsing failed after retries, using fallback")
         return {
+            "confluence": {
+                "trend_1d": "N/A — parse failure",
+                "momentum_4h": "N/A — parse failure",
+                "levels_15m": "N/A — parse failure",
+                "derivatives": "N/A — parse failure",
+                "aligned_layers": 0,
+            },
             "decision": "HOLD",
             "winning_side": "TIE",
             "confidence": "LOW",

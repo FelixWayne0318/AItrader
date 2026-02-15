@@ -1999,6 +1999,14 @@ class DeepSeekAIStrategy(Strategy):
                     rationale = judge_decision.get('rationale', '')
                     strategic_actions = judge_decision.get('strategic_actions', [])
                     self.log.info(f"⚖️ Winning Side: {winning_side}")
+                    # v5.7: Log confluence analysis
+                    confluence = judge_decision.get('confluence', {})
+                    if confluence:
+                        aligned = confluence.get('aligned_layers', '?')
+                        self.log.info(f"📊 Confluence ({aligned} layers aligned):")
+                        for layer_key in ('trend_1d', 'momentum_4h', 'levels_15m', 'derivatives'):
+                            layer_val = confluence.get(layer_key, 'N/A')
+                            self.log.info(f"  {layer_key}: {layer_val}")
                     if rationale:
                         self.log.info(f"📌 Rationale: {rationale}")
                     if strategic_actions:
@@ -2202,10 +2210,16 @@ class DeepSeekAIStrategy(Strategy):
             # Get current price for entry
             current_price = price_data.get('price') if price_data else None
 
+            # v5.7: Include confluence analysis in latest_analysis
+            judge_confluence = {}
+            if isinstance(judge_decision, dict):
+                judge_confluence = judge_decision.get('confluence', {})
+
             latest_analysis = {
                 'signal': signal_data.get('signal', 'HOLD'),
                 'confidence': signal_data.get('confidence', 'MEDIUM'),
                 'confidence_score': confidence_score,
+                'confluence': judge_confluence,
                 'bull_analysis': bull_analysis or 'No bull analysis available',
                 'bear_analysis': bear_analysis or 'No bear analysis available',
                 'judge_reasoning': judge_reasoning or 'No judge reasoning available',
@@ -3400,6 +3414,8 @@ class DeepSeekAIStrategy(Strategy):
                 'reasoning': signal_data.get('reason', ''),
                 'risk_level': signal_data.get('risk_level', 'MEDIUM'),
                 'position_size_pct': signal_data.get('position_size_pct'),
+                # v5.7: Pass confluence for Telegram display
+                'confluence': judge_info.get('confluence', {}),
             }
 
         # Execute position management logic
@@ -5761,6 +5777,8 @@ class DeepSeekAIStrategy(Strategy):
                         'reasoning': self._pending_execution_data.get('reasoning', ''),
                         'risk_level': self._pending_execution_data.get('risk_level', 'MEDIUM'),
                         'position_size_pct': self._pending_execution_data.get('position_size_pct'),
+                        # v5.7: Pass confluence for Telegram display
+                        'confluence': self._pending_execution_data.get('confluence', {}),
                     })
                     # Clear pending data after use
                     self._pending_execution_data = None

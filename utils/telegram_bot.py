@@ -827,6 +827,19 @@ class TelegramBot:
             msg += f" | {w_icon} {w_cn}胜出"
         msg += "\n"
 
+        # v5.7: Confluence analysis (Judge's multi-layer assessment)
+        confluence = execution_data.get('confluence', {})
+        if confluence and confluence.get('aligned_layers') is not None:
+            aligned = confluence.get('aligned_layers', 0)
+            layer_icons = {'BULLISH': '🟢', 'BEARISH': '🔴', 'NEUTRAL': '⚪'}
+            layers = []
+            for key, label in [('trend_1d', '1D'), ('momentum_4h', '4H'), ('levels_15m', '15M'), ('derivatives', '衍')]:
+                val = confluence.get(key, '')
+                direction = val.split(' — ')[0].split('—')[0].strip() if ' — ' in val or '—' in val else val.split()[0] if val else 'N/A'
+                icon = layer_icons.get(direction, '⚪')
+                layers.append(f"{icon}{label}")
+            msg += f"📊 {' '.join(layers)} ({aligned}层一致)\n"
+
         # v4.14: Risk Manager assessment
         if risk_level or position_size_pct is not None:
             rm_parts = []
