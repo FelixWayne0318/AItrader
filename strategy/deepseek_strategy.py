@@ -363,6 +363,13 @@ class DeepSeekAIStrategy(Strategy):
         # v4.0: Cached ATR value for emergency SL calculation (updated in on_timer)
         self._cached_atr_value: float = 0.0
 
+        # v5.10: Emergency SL cooldown to prevent infinite loop
+        # When user manually cancels emergency SL, bot detects "SL canceled" and
+        # re-submits another emergency SL → user cancels → infinite loop.
+        # Cooldown ensures max 1 emergency SL per 120 seconds.
+        self._last_emergency_sl_time: float = 0.0
+        self._emergency_sl_count: int = 0  # consecutive count, reset on new position
+
         # Format: {
         #   "instrument_id": {
         #       "entry_price": float,
@@ -4662,8 +4669,21 @@ class DeepSeekAIStrategy(Strategy):
         Checks if position still exists:
         - No position → clear all state (external close detected)
         - Position exists but no active SL → resubmit emergency SL
+
+        v5.10: Bypass Binance account cache to avoid stale position data.
+        When user manually closes position, the SL cancel event arrives before
+        the cached account data refreshes, causing phantom position detection.
         """
         try:
+            # v5.10: Invalidate Binance account cache BEFORE checking position.
+            # Without this, get_positions() returns stale cached data (5s TTL)
+            # that shows the old position even after it's been closed.
+            if self.binance_account:
+                try:
+                    self.binance_account.get_account_info(use_cache=False)
+                except Exception:
+                    pass  # Proceed with potentially stale data rather than crashing
+
             current_position = self._get_current_position_data()
 
             if not current_position:
@@ -4687,6 +4707,9 @@ class DeepSeekAIStrategy(Strategy):
         self._pending_reversal = None
         self._pending_reduce_sltp = None
         self.latest_signal_data = None
+        # v5.10: Reset emergency SL cooldown for next position
+        self._emergency_sl_count = 0
+        self._last_emergency_sl_time = 0.0
         self.log.info("🧹 Position state cleared (external close detected)")
 
     def _resubmit_sltp_if_needed(self, current_position: Dict[str, Any], reason: str = ""):
@@ -4695,11 +4718,47 @@ class DeepSeekAIStrategy(Strategy):
 
         Called when a SL/TP order expires/rejected/canceled but position still exists.
         Uses emergency SL (2% fixed) since current S/R data may be stale.
+
+        v5.10: Added cooldown (120s) and max retry (3) to prevent infinite loop.
+        Scenario: user manually closes position → Binance cancels SL → bot detects
+        orphan → submits emergency SL → user cancels it → bot re-detects → loop.
         """
         try:
             position_side = current_position.get('side', '').lower()
             quantity = abs(float(current_position.get('quantity', 0)))
             if quantity <= 0 or position_side not in ('long', 'short'):
+                return
+
+            # v5.10: Cooldown check — prevent infinite emergency SL loop
+            import time
+            now = time.time()
+            cooldown_sec = 120  # 2 minutes between emergency SL attempts
+            max_consecutive = 3  # after 3 attempts, stop and warn user
+
+            if self._emergency_sl_count >= max_consecutive:
+                self.log.warning(
+                    f"⚠️ Emergency SL max retries ({max_consecutive}) reached. "
+                    f"Stopping auto-resubmit. Manual intervention required."
+                )
+                if self.telegram_bot and self.enable_telegram:
+                    try:
+                        self.telegram_bot.send_message_sync(
+                            f"⚠️ 紧急止损已尝试 {max_consecutive} 次，停止自动重试。\n\n"
+                            f"仓位: {quantity:.4f} BTC {position_side.upper()}\n"
+                            f"请手动检查 Binance 仓位状态并设置止损。\n"
+                            f"如仓位已平，请忽略此消息。"
+                        )
+                    except Exception:
+                        pass
+                return
+
+            elapsed = now - self._last_emergency_sl_time
+            if elapsed < cooldown_sec:
+                remaining = cooldown_sec - elapsed
+                self.log.info(
+                    f"🔄 Emergency SL cooldown active ({remaining:.0f}s remaining), "
+                    f"skipping resubmit (attempt {self._emergency_sl_count}/{max_consecutive})"
+                )
                 return
 
             # Check if active SL order still exists
@@ -4721,6 +4780,10 @@ class DeepSeekAIStrategy(Strategy):
             self.log.warning(f"⚠️ No active SL detected after {reason}, submitting emergency SL")
             self._submit_emergency_sl(quantity, position_side,
                                       reason=f"SL/TP orphan ({reason}), position still exists")
+
+            # v5.10: Track cooldown state
+            self._last_emergency_sl_time = now
+            self._emergency_sl_count += 1
 
             # Send Telegram alert
             if self.telegram_bot and self.enable_telegram:
