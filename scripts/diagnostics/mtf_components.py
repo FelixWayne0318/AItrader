@@ -160,7 +160,7 @@ class MTFComponentTester(DiagnosticStep):
                 kline_client = BinanceKlineClient(timeout=10)
                 binance_fr = kline_client.get_funding_rate(symbol=self.ctx.symbol)
                 if binance_fr:
-                    print(f"        ✅ Settled FR: {binance_fr.get('funding_rate_pct', 0):.4f}% | Predicted FR: {binance_fr.get('predicted_rate_pct', 0):.4f}%")
+                    print(f"        ✅ Settled FR: {binance_fr.get('funding_rate_pct', 0):.5f}% | Predicted FR: {binance_fr.get('predicted_rate_pct', 0):.5f}%")
                     # v4.8: 保存 Binance funding rate 到 context (主要数据源)
                     self.ctx.binance_funding_rate = binance_fr
 

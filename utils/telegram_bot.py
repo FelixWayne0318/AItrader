@@ -616,7 +616,7 @@ class TelegramBot:
                     flow_parts.append(f"买入 {buy_ratio*100:.0f}% {br_icon}")
                 if funding_rate_pct is not None:
                     fr_icon = '🔴' if funding_rate_pct > 0.01 else '🟢' if funding_rate_pct < -0.01 else '⚪'
-                    fr_str = f"已结算 {funding_rate_pct:.4f}% {fr_icon}"
+                    fr_str = f"已结算 {funding_rate_pct:.5f}% {fr_icon}"
                     if funding_trend:
                         ft_icon = '📈' if funding_trend == 'RISING' else '📉' if funding_trend == 'FALLING' else '➖'
                         fr_str += f" {ft_icon}"
@@ -624,10 +624,10 @@ class TelegramBot:
                     # 预期费率 (from premiumIndex.lastFundingRate)
                     if predicted_rate_pct is not None:
                         pr_icon = '🔴' if predicted_rate_pct > 0.01 else '🟢' if predicted_rate_pct < -0.01 else '⚪'
-                        flow_parts.append(f"预期 {predicted_rate_pct:.4f}% {pr_icon}")
+                        flow_parts.append(f"预期 {predicted_rate_pct:.5f}% {pr_icon}")
                 elif funding_rate is not None:
                     fr = self._funding_display(funding_rate)
-                    flow_parts.append(f"费率 {fr:.4f}%")
+                    flow_parts.append(f"费率 {fr:.5f}%")
                 if oi_change_pct is not None:
                     flow_parts.append(f"OI {oi_change_pct:+.1f}%")
                 if cvd_trend:
@@ -652,7 +652,7 @@ class TelegramBot:
                     msg += f"  CVD   {c_icon} {cvd_trend}\n"
                 if funding_rate_pct is not None:
                     fr_icon = '🔴' if funding_rate_pct > 0.01 else '🟢' if funding_rate_pct < -0.01 else '⚪'
-                    fr_line = f"  已结算 {fr_icon} {funding_rate_pct:.4f}%"
+                    fr_line = f"  已结算 {fr_icon} {funding_rate_pct:.5f}%"
                     if funding_trend:
                         ft_icon = '📈' if funding_trend == 'RISING' else '📉' if funding_trend == 'FALLING' else '➖'
                         fr_line += f" {ft_icon}"
@@ -660,7 +660,7 @@ class TelegramBot:
                     # 预期费率 (from premiumIndex.lastFundingRate, 实时变化)
                     if predicted_rate_pct is not None:
                         pr_icon = '🔴' if predicted_rate_pct > 0.01 else '🟢' if predicted_rate_pct < -0.01 else '⚪'
-                        msg += f"  预期  {pr_icon} {predicted_rate_pct:.4f}%\n"
+                        msg += f"  预期  {pr_icon} {predicted_rate_pct:.5f}%\n"
                     if next_funding_min is not None:
                         hours = next_funding_min // 60
                         mins = next_funding_min % 60

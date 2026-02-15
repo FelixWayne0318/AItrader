@@ -537,13 +537,13 @@ def test_funding_rate_pipeline(results: TestResults):
             most_recent = max(data, key=lambda x: int(x.get('fundingTime', 0)))
             rate = float(most_recent.get('fundingRate', 0))
             rate_pct = rate * 100
-            results.ok("Settled Funding Rate", f"{rate:.6f} (decimal) = {rate_pct:.4f}%")
+            results.ok("Settled Funding Rate", f"{rate:.6f} (decimal) = {rate_pct:.5f}%")
 
             # 合理范围: -0.5% ~ +0.5%
             if abs(rate_pct) < 0.5:
                 results.ok("Settled FR 范围", "正常 (<0.5%)")
             else:
-                results.warn("Settled FR 极端值", f"{rate_pct:.4f}%")
+                results.warn("Settled FR 极端值", f"{rate_pct:.5f}%")
 
             # 历史排序验证 (limit=3, 最近3次结算)
             if len(data) >= 2:
@@ -563,7 +563,7 @@ def test_funding_rate_pipeline(results: TestResults):
         if isinstance(data2, dict):
             predicted = float(data2.get('lastFundingRate', 0))
             pred_pct = predicted * 100
-            results.ok("Predicted Funding Rate", f"{predicted:.6f} = {pred_pct:.4f}%")
+            results.ok("Predicted Funding Rate", f"{predicted:.6f} = {pred_pct:.5f}%")
 
             # Mark price / Index price
             mark = float(data2.get('markPrice', 0))
@@ -1926,7 +1926,7 @@ def test_production_calculations(results: TestResults):
             def get_funding_rate(self):
                 return {
                     'funding_rate': MOCK_FUNDING_RATE,
-                    'funding_rate_pct': round(MOCK_FUNDING_RATE * 100, 4),
+                    'funding_rate_pct': round(MOCK_FUNDING_RATE * 100, 6),
                     'predicted_rate': 0.00001,
                     'predicted_rate_pct': 0.001,
                     'next_funding_time': int(time.time() * 1000) + 3600000,

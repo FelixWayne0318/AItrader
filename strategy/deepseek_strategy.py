@@ -1644,7 +1644,7 @@ class DeepSeekAIStrategy(Strategy):
                 funding_rate = current_position.get('funding_rate_current')
                 if funding_rate is not None:
                     daily_cost = current_position.get('daily_funding_cost_usd', 0)
-                    self.log.info(f"Settled FR: {funding_rate*100:.4f}%/8h (Daily Est: ${daily_cost:.2f})")
+                    self.log.info(f"Settled FR: {funding_rate*100:.5f}%/8h (Daily Est: ${daily_cost:.2f})")
 
             # ========== 层级决策架构 (TradingAgents v3.1) ==========
             # 设计理念: AI 负责所有交易决策，本地仅做支撑/阻力位边界检查
@@ -1773,7 +1773,7 @@ class DeepSeekAIStrategy(Strategy):
                             funding = derivatives_data.get('funding_rate')
                             self.log.info(
                                 f"📊 Derivatives: OI={oi.get('value', 0):.2f} BTC, "
-                                f"Funding={funding.get('value', 0)*100:.4f}%" if oi and funding else "Derivatives: partial data"
+                                f"Funding={funding.get('value', 0)*100:.5f}%" if oi and funding else "Derivatives: partial data"
                             )
                         else:
                             self.log.debug("Coinalyze client disabled, no derivatives data")
@@ -1808,7 +1808,7 @@ class DeepSeekAIStrategy(Strategy):
                                     for h in fr_history:
                                         rate = float(h.get('fundingRate', 0))
                                         history_list.append({
-                                            'rate_pct': round(rate * 100, 4),
+                                            'rate_pct': round(rate * 100, 6),
                                             'time': h.get('fundingTime'),
                                         })
                                     fr_dict['history'] = history_list
@@ -1824,7 +1824,7 @@ class DeepSeekAIStrategy(Strategy):
                                 pass  # History is best-effort
                             derivatives_data['funding_rate'] = fr_dict
                             self.log.info(
-                                f"📊 Funding Rate (Binance): settled={binance_fr.get('funding_rate_pct', 0):.4f}%, "
+                                f"📊 Funding Rate (Binance): settled={binance_fr.get('funding_rate_pct', 0):.5f}%, "
                                 f"predicted={binance_fr.get('predicted_rate_pct', 'N/A')}"
                             )
                     except Exception as e:

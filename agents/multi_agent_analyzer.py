@@ -1133,9 +1133,9 @@ Last Bull Argument:
                     fr_pct = fr.get('current_pct')
                     if fr_pct is not None:
                         predicted = fr.get('predicted_rate_pct')
-                        fr_str = f"Funding Rate: {fr_pct:.4f}%"
+                        fr_str = f"Funding Rate: {fr_pct:.5f}%"
                         if predicted is not None:
-                            fr_str += f" (predicted: {predicted:.4f}%)"
+                            fr_str += f" (predicted: {predicted:.5f}%)"
                         lines.append(fr_str)
                 liq = derivatives_data.get('liquidations', {})
                 if isinstance(liq, dict) and liq.get('total_usd', 0) > 0:
@@ -2814,16 +2814,16 @@ ORDER FLOW (Binance Taker Data):
                         settled_pct = float(funding.get('value', 0) or 0) * 100
                 except (ValueError, TypeError):
                     settled_pct = 0.0
-                parts.append(f"- Last Settled Funding Rate: {settled_pct:.4f}%")
+                parts.append(f"- Last Settled Funding Rate: {settled_pct:.5f}%")
 
                 # 预期费率 (from premiumIndex.lastFundingRate, 实时变化)
                 predicted_pct = funding.get('predicted_rate_pct')
                 if predicted_pct is not None:
-                    parts.append(f"- Predicted Next Funding Rate: {predicted_pct:.4f}%")
+                    parts.append(f"- Predicted Next Funding Rate: {predicted_pct:.5f}%")
                     # v5.2: Settled vs Predicted delta (key sentiment shift signal)
                     delta_pct = predicted_pct - settled_pct
                     direction = "↑ more bullish pressure" if delta_pct > 0 else "↓ more bearish pressure" if delta_pct < 0 else "→ stable"
-                    parts.append(f"- Funding Delta (Predicted - Settled): {delta_pct:+.4f}% ({direction})")
+                    parts.append(f"- Funding Delta (Predicted - Settled): {delta_pct:+.5f}% ({direction})")
 
                 # 溢价指数 (瞬时值)
                 premium_index = funding.get('premium_index')

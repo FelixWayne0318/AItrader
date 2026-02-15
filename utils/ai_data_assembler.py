@@ -281,7 +281,7 @@ class AIDataAssembler:
                         history_rates.append({
                             "time": record.get('fundingTime'),
                             "rate": rate,
-                            "rate_pct": round(rate * 100, 4),
+                            "rate_pct": round(rate * 100, 6),
                             "mark_price": record.get('markPrice'),
                         })
                     except (ValueError, TypeError):
@@ -444,7 +444,7 @@ class AIDataAssembler:
             if fr:
                 fr_trend = fr.get("trend", "N/A")
                 parts.append(
-                    f"  - Funding Rate (last settled): {fr.get('current_pct', 0):.4f}% "
+                    f"  - Funding Rate (last settled): {fr.get('current_pct', 0):.5f}% "
                     f"({fr.get('interpretation', 'N/A')}) [Trend: {fr_trend}]"
                 )
                 # 溢价指数 + 预期费率
@@ -460,7 +460,7 @@ class AIDataAssembler:
                 predicted_pct = fr.get('predicted_rate_pct')
                 if predicted_pct is not None:
                     parts.append(
-                        f"  - Predicted Next Funding Rate: {predicted_pct:.4f}%"
+                        f"  - Predicted Next Funding Rate: {predicted_pct:.5f}%"
                     )
                 # 下次结算倒计时
                 countdown = fr.get('next_funding_countdown_min')

@@ -176,7 +176,7 @@ class AIInputDataValidator(DiagnosticStep):
                                 for h in fr_history:
                                     rate = float(h.get('fundingRate', 0))
                                     history_list.append({
-                                        'rate_pct': round(rate * 100, 4),
+                                        'rate_pct': round(rate * 100, 6),
                                         'time': h.get('fundingTime'),
                                     })
                                 fr_dict['history'] = history_list
@@ -469,12 +469,12 @@ class AIInputDataValidator(DiagnosticStep):
             # v5.2: Use current_pct (already in %) instead of value*100 (source-dependent)
             fr_pct = fr.get('current_pct', 0) if fr else 0
             fr_source = fr.get('source', 'unknown') if fr else 'N/A'
-            print(f"      Funding rate:    {fr_pct:.4f}% (source: {fr_source})")
+            print(f"      Funding rate:    {fr_pct:.5f}% (source: {fr_source})")
 
             # v5.1: Binance funding rate (settled + predicted)
             if self.ctx.binance_funding_rate:
                 bfr = self.ctx.binance_funding_rate
-                print(f"      [Binance FR] Settled: {bfr.get('funding_rate_pct', 0):.4f}% | Predicted: {bfr.get('predicted_rate_pct', 0):.4f}%")
+                print(f"      [Binance FR] Settled: {bfr.get('funding_rate_pct', 0):.5f}% | Predicted: {bfr.get('predicted_rate_pct', 0):.5f}%")
 
             if liq:
                 history = liq.get('history', [])
