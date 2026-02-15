@@ -1922,7 +1922,7 @@ R/R 与价格位置的关系：
 
         return f"""
 ╔══════════════════════════════════════════════════════════╗
-║  1D MACRO TREND VERDICT (HIGHEST WEIGHT — READ FIRST)   ║
+║  1D MACRO TREND VERDICT (weight depends on ADX regime)   ║
 ╚══════════════════════════════════════════════════════════╝
 VERDICT: {verdict}
 REGIME: {regime}
@@ -1931,7 +1931,7 @@ REGIME: {regime}
 - 1D RSI: {rsi_1d:.1f} ({'Above 50' if rsi_1d > 50 else 'Below 50'})
 - 1D ADX: {adx_1d:.1f} | DI+ {di_plus_1d:.1f} / DI- {di_minus_1d:.1f} ({'Bulls lead' if di_bullish else 'Bears lead'})
 {decision_line}
-⚠️ 15M data below is for EXECUTION TIMING only — macro trend above has priority.
+⚠️ Layer weights depend on ADX: Strong trend (ADX>40) → 1D dominant | Ranging (ADX<20) → 15M levels dominant
 """
 
     def _format_technical_report(self, data: Dict[str, Any]) -> str:

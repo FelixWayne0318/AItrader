@@ -350,8 +350,13 @@ class CodeIntegrityChecker(DiagnosticStep):
         has_old_comment = "highest weight per confluence matrix" in ma_source
         # Bear analyst should not have absolute "最高权重"
         has_bear_static = "1D 宏观趋势" in ma_source and "最高权重" in ma_source
+        # _compute_trend_verdict header should not say "HIGHEST WEIGHT"
+        has_verdict_static = "HIGHEST WEIGHT" in ma_source
+        # _compute_trend_verdict footer should not say "macro trend above has priority"
+        has_footer_static = "macro trend above has priority" in ma_source
 
-        ok = has_adx_dynamic and not has_old_static and not has_old_comment and not has_bear_static
+        ok = (has_adx_dynamic and not has_old_static and not has_old_comment
+              and not has_bear_static and not has_verdict_static and not has_footer_static)
         issues = []
         if has_old_static:
             issues.append("旧版静态规则 '趋势层权重最高' 仍存在")
@@ -359,11 +364,16 @@ class CodeIntegrityChecker(DiagnosticStep):
             issues.append("key_metrics 仍有 'highest weight' 注释")
         if has_bear_static:
             issues.append("Bear prompt 仍有 '最高权重'")
+        if has_verdict_static:
+            issues.append("_compute_trend_verdict 仍有 'HIGHEST WEIGHT'")
+        if has_footer_static:
+            issues.append("trend verdict footer 仍有 'macro trend has priority'")
         if not has_adx_dynamic:
             issues.append("缺少 ADX-aware 动态权重规则")
 
         self._record("P1.11", "v5.8 ADX-aware dynamic layer weights in prompts", ok,
-                     expected="ADX-aware rules present, no static '趋势层权重最高'",
+                     expected="ADX-aware rules present, no static weight statements anywhere",
                      actual=f"adx_dynamic={has_adx_dynamic}, no_old_static={not has_old_static}, "
-                            f"no_old_comment={not has_old_comment}, no_bear_static={not has_bear_static}"
+                            f"no_old_comment={not has_old_comment}, no_bear_static={not has_bear_static}, "
+                            f"no_verdict_static={not has_verdict_static}, no_footer_static={not has_footer_static}"
                             + (f" | Issues: {'; '.join(issues)}" if issues else ""))
