@@ -1,6 +1,6 @@
 # Indicator Signal Confidence Matrix (方案 A — Prompt 层增强)
 
-> **状态**: **已评估修正，可实施 (v1.2)**
+> **状态**: **已实施 (v1.2)** — commit `7a5b07f`
 > **目标**: 在 Judge 和 Risk Manager 的 system prompt 中插入结构化权重矩阵，让 AI 在不同 market regime 下对不同信号给予量化的置信度调整
 > **影响范围**: 仅修改 `agents/multi_agent_analyzer.py` 中的 prompt 文本，不改变代码逻辑
 > **评审**: 10 维度专家评审 (v1.1) + 4 项阻塞问题修复 (v1.2)
