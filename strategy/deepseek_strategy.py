@@ -3918,6 +3918,10 @@ class DeepSeekAIStrategy(Strategy):
             if hasattr(self, 'latest_sr_zones_data') and self.latest_sr_zones_data:
                 try:
                     from utils.sr_sltp_calculator import calculate_sr_based_sltp
+                    from strategy.trading_logic import get_min_sl_distance_pct
+                    # v5.10: Level 2 uses half of Level 1's min SL distance
+                    # S/R-based SL has structural support, so softer threshold
+                    sr_min_sl = get_min_sl_distance_pct() * 0.5
                     sr_sl, sr_tp, sr_method = calculate_sr_based_sltp(
                         current_price=entry_price,
                         side=side.name,
@@ -3926,6 +3930,7 @@ class DeepSeekAIStrategy(Strategy):
                         min_rr_ratio=self.min_rr_ratio,
                         atr_buffer_multiplier=self.atr_buffer_multiplier,
                         tp_buffer_multiplier=self.tp_buffer_multiplier,
+                        min_sl_distance_pct=sr_min_sl,
                     )
                     if sr_sl and sr_tp and sr_sl > 0 and sr_tp > 0:
                         stop_loss_price = sr_sl
@@ -5021,7 +5026,9 @@ class DeepSeekAIStrategy(Strategy):
                 return  # No S/R data — keep existing SL/TP
 
             from utils.sr_sltp_calculator import calculate_sr_based_sltp
+            from strategy.trading_logic import get_min_sl_distance_pct
             side_name = "BUY" if position_side == 'long' else "SELL"
+            sr_min_sl = get_min_sl_distance_pct() * 0.5
             new_sl, new_tp, sr_method = calculate_sr_based_sltp(
                 current_price=current_price,
                 side=side_name,
@@ -5030,6 +5037,7 @@ class DeepSeekAIStrategy(Strategy):
                 min_rr_ratio=self.min_rr_ratio,
                 atr_buffer_multiplier=self.atr_buffer_multiplier,
                 tp_buffer_multiplier=self.tp_buffer_multiplier,
+                min_sl_distance_pct=sr_min_sl,
             )
 
             if not new_sl or not new_tp or new_sl <= 0 or new_tp <= 0:

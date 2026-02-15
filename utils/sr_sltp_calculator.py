@@ -279,6 +279,7 @@ def calculate_sr_based_sltp(
     min_rr_ratio: float = 1.5,
     atr_buffer_multiplier: float = 0.5,
     tp_buffer_multiplier: float = 0.25,
+    min_sl_distance_pct: float = 0.005,
     **kwargs,
 ) -> Tuple[Optional[float], Optional[float], str]:
     """
@@ -320,6 +321,10 @@ def calculate_sr_based_sltp(
     tp_buffer_multiplier : float
         ATR multiplier for TP buffer (placed in front of zone). Default 0.25.
         Set to 0 to disable TP buffer (equivalent to pre-v5.1 behavior).
+    min_sl_distance_pct : float
+        Minimum SL distance as fraction of entry price. Default 0.005 (0.5%).
+        Softer than Level 1's 1.0% because S/R-based SL has structural support,
+        but prevents extremely tight SLs that get swept by normal wicks.
 
     Returns
     -------
@@ -385,6 +390,16 @@ def calculate_sr_based_sltp(
     risk = abs(current_price - sl_price)
     if risk <= 0:
         return None, None, "zero risk distance"
+
+    # v5.10: Minimum SL distance check (softer than Level 1's 1.0%)
+    # S/R-based SL has structural support, but extremely tight SLs
+    # (e.g., 0.3%) get swept by normal price wicks regardless of structure.
+    sl_distance_pct = risk / current_price
+    if sl_distance_pct < min_sl_distance_pct:
+        return None, None, (
+            f"S/R SL too close to entry ({sl_distance_pct*100:.2f}% < "
+            f"{min_sl_distance_pct*100:.1f}% minimum)"
+        )
 
     # ====================================================================
     # Step 2: Select TP target — iterate zones until R/R satisfied

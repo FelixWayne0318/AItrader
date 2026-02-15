@@ -1684,10 +1684,15 @@ Judge 建议 {action} → 你的任务:
 - LONG: SL 在最近 SUPPORT 下方, TP 在最近 RESISTANCE
 - SHORT: SL 在最近 RESISTANCE 上方, TP 在最近 SUPPORT
 - 优先选择 HIGH 强度或有 ORDER_FLOW 确认的 zone
-- ‼️ 最小 SL 距离 ≥ 1.0% (硬性门槛，低于此值会被系统拒绝)
+- ‼️ 最小 SL 距离 ≥ 1.0% (硬性门槛，低于此值会被系统拒绝并回退到 S/R 重算)
+- ⚠️ 如果最近的 S/R zone 距入场价 < 1.0%，应选择更远的 zone 或改为 HOLD
 - 参考 S/R Zone Proximity Alert（如有）作为 SL/TP 选择参考
 - ‼️ **必须在 sl_zone 和 tp_zone 中标注你选择的 S/R zone** (如 "S1 $68,386 (HIGH)")
-- ‼️ **必须在 rr_calculation 中展示计算过程** (如 "Risk=$500, Reward=$1,200, R/R=2.4:1")
+- ‼️ **必须在 rr_calculation 中展示完整计算过程**:
+  1. Risk = |当前价格 - stop_loss| (精确到美元)
+  2. Reward = |take_profit - 当前价格| (精确到美元)
+  3. R/R = Reward ÷ Risk (保留两位小数)
+  ⚠️ 请逐步验算，避免算术错误。系统会用代码独立校验你的 R/R
 
 ⚠️ **S/R ZONE 宽度预检**:
 - 计算最近 Support 和 Resistance 之间的价差百分比
@@ -3579,6 +3584,12 @@ Reason: {status.get('message', 'Unknown')}
             if spread_change is not None:
                 parts.append(f"  Spread Change: {_safe_float(spread_change):+.1f}%")
             parts.append(f"  Trend: {trend}")
+
+            # v5.10: OBI trend array (oldest → newest) for multi-cycle analysis
+            obi_trend = dynamics.get('obi_trend', [])
+            if len(obi_trend) >= 2:
+                trend_str = " → ".join(f"{v:+.2f}" for v in obi_trend[-5:])
+                parts.append(f"  OBI Trend ({len(obi_trend)} samples): {trend_str}")
         else:
             parts.append("  [First snapshot - no historical data yet] ⚠️ COLD_START (dynamics available after 2nd cycle)")
         parts.append("")

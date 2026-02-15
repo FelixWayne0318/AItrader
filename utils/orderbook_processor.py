@@ -265,6 +265,11 @@ class OrderBookProcessor:
         # 趋势描述 (不做判断，只描述现象)
         trend = self._describe_trend(obi_change, bid_change, ask_change)
 
+        # v5.10: Build OBI history array for AI trend analysis
+        # Includes all cached historical OBI values + current value
+        obi_trend = [round(h["obi"]["simple"], 4) for h in self._history]
+        obi_trend.append(round(curr_obi, 4))
+
         return {
             "obi_change": round(obi_change, 4) if obi_change is not None else None,
             "obi_change_pct": round(obi_change_pct, 2) if obi_change_pct is not None else None,
@@ -273,6 +278,7 @@ class OrderBookProcessor:
             "spread_change_pct": round(spread_change, 2) if spread_change is not None else None,
             "samples_count": len(self._history),
             "trend": trend,
+            "obi_trend": obi_trend,
         }
 
     def _describe_trend(
