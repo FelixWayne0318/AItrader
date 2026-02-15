@@ -5509,12 +5509,82 @@
       "pattern_type": "contains",
       "created": "2026-02-15T10:09:05.850804",
       "auto_generated": true
+    },
+    {
+      "id": "885fde0dc7b9",
+      "commit": "6f1a7a0",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: prevent infinite emergency SL loop on manual position close",
+      "pattern": "import time",
+      "pattern_type": "import",
+      "created": "2026-02-15T12:48:38.497613",
+      "auto_generated": true
+    },
+    {
+      "id": "16e2d1315078",
+      "commit": "a203f9d",
+      "file": "scripts/diagnostics/ai_decision.py",
+      "message": "fix: sync diagnostic scripts with production Level 2 SL/TP parameters",
+      "pattern": "tp_buf_mult = getattr(cfg, 'tp_buffer_multiplier', 0.25)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T12:48:38.544451",
+      "auto_generated": true
+    },
+    {
+      "id": "8633d6c51dda",
+      "commit": "a203f9d",
+      "file": "scripts/diagnostics/order_flow_simulation.py",
+      "message": "fix: sync diagnostic scripts with production Level 2 SL/TP parameters",
+      "pattern": "from strategy.trading_logic import get_min_rr_ratio, get_min_sl_distance_pct",
+      "pattern_type": "import",
+      "created": "2026-02-15T12:48:38.572757",
+      "auto_generated": true
+    },
+    {
+      "id": "e6fb6f4288bc",
+      "commit": "d2692f0",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: add Level 2 min SL distance, improve RM prompt R/R verification, add OBI trend",
+      "pattern": "obi_trend = dynamics.get('obi_trend', [])",
+      "pattern_type": "contains",
+      "created": "2026-02-15T12:48:38.622730",
+      "auto_generated": true
+    },
+    {
+      "id": "410e515040b0",
+      "commit": "d2692f0",
+      "file": "strategy/deepseek_strategy.py",
+      "message": "fix: add Level 2 min SL distance, improve RM prompt R/R verification, add OBI trend",
+      "pattern": "from strategy.trading_logic import get_min_sl_distance_pct",
+      "pattern_type": "import",
+      "created": "2026-02-15T12:48:38.653038",
+      "auto_generated": true
+    },
+    {
+      "id": "0ea68b101623",
+      "commit": "d2692f0",
+      "file": "utils/orderbook_processor.py",
+      "message": "fix: add Level 2 min SL distance, improve RM prompt R/R verification, add OBI trend",
+      "pattern": "obi_trend = [round(h[\"obi\"][\"simple\"], 4) for h in self._history]",
+      "pattern_type": "contains",
+      "created": "2026-02-15T12:48:38.916633",
+      "auto_generated": true
+    },
+    {
+      "id": "ecbd5b0deaee",
+      "commit": "d2692f0",
+      "file": "utils/sr_sltp_calculator.py",
+      "message": "fix: add Level 2 min SL distance, improve RM prompt R/R verification, add OBI trend",
+      "pattern": "# v5.10: Minimum SL distance check (softer than Level 1's 1.0%)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T12:48:38.940818",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-15T10:09:09.835919",
-    "count": 551,
+    "updated": "2026-02-15T12:48:44.118474",
+    "count": 558,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
