@@ -51,7 +51,7 @@ class DeepSeekAnalyzer:
         retry_delay : float
             Delay in seconds between retry attempts (default: 1.0)
         """
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=120.0)
         self.model = model
         self.temperature = temperature
         self.max_retries = max_retries

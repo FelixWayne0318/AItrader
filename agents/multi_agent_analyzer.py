@@ -532,7 +532,7 @@ class MultiAgentAnalyzer:
         json_parse_max_retries : int
             Maximum retries for JSON parsing failures (default: 2)
         """
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=120.0)
         self.model = model
         self.temperature = temperature
         self.debate_rounds = debate_rounds

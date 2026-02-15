@@ -30,7 +30,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from indicators.technical_manager import TechnicalIndicatorManager
-from utils.deepseek_client import DeepSeekAnalyzer
+
 from utils.sentiment_client import SentimentDataFetcher
 from utils.binance_account import BinanceAccountFetcher
 from agents.multi_agent_analyzer import MultiAgentAnalyzer
@@ -94,9 +94,6 @@ class DeepSeekAIStrategyConfig(StrategyConfig, frozen=True):
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-chat"
     deepseek_temperature: float = 0.3  # Increased for debate diversity
-    deepseek_max_retries: int = 2
-    deepseek_retry_delay: float = 1.0  # Retry delay in seconds
-    deepseek_signal_history_count: int = 30  # Signal history size
     debate_rounds: int = 2  # Bull/Bear debate rounds (1-3)
     multi_agent_retry_delay: float = 1.0  # Multi-agent retry delay
     multi_agent_json_parse_max_retries: int = 2  # JSON parse max retries
@@ -442,21 +439,12 @@ class DeepSeekAIStrategy(Strategy):
                 self.log.error(f"❌ Failed to initialize MTF Manager: {e}")
                 self.mtf_enabled = False
 
-        # DeepSeek AI analyzer
+        # DeepSeek API key
         api_key = config.deepseek_api_key or os.getenv('DEEPSEEK_API_KEY')
         if not api_key:
             raise ValueError("DeepSeek API key not provided")
 
-        self.deepseek = DeepSeekAnalyzer(
-            api_key=api_key,
-            model=config.deepseek_model,
-            temperature=config.deepseek_temperature,
-            max_retries=config.deepseek_max_retries,
-            signal_history_count=config.deepseek_signal_history_count,
-            retry_delay=config.deepseek_retry_delay,
-        )
-
-        # Multi-Agent AI analyzer (Bull/Bear Debate) - for parallel comparison
+        # Multi-Agent AI analyzer (Bull/Bear Debate) - sole decision maker
         self.multi_agent = MultiAgentAnalyzer(
             api_key=api_key,
             model=config.deepseek_model,
