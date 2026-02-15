@@ -1480,7 +1480,7 @@ class OrderSimulator(DiagnosticStep):
         bc = self.ctx.base_currency
         notional = quantity * self.ctx.current_price if self.ctx.current_price else 0
         print(f"     quantity: ${notional:,.0f} ({quantity:.6f} {bc})")
-        print(f"     entry_price: ${self.ctx.current_price:,.2f} (MARKET)")
+        print(f"     entry_price: ${self.ctx.current_price:,.2f} (LIMIT @ validated price)")
         print(f"     sl_trigger_price: ${final_sl:,.2f}")
         print(f"     tp_price: ${final_tp:,.2f}")
 
