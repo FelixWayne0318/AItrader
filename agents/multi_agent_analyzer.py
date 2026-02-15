@@ -717,8 +717,19 @@ Last Bear Argument:
 
 **第五步：陈述失效条件**
 什么情况下你的看多论点会被推翻？
+"""
+        # v5.5: R2+ enhancement — force new arguments and direct rebuttals
+        if history and bear_argument:
+            prompt += """
+⚠️ 【第二轮辩论规则 — 必须遵守】
+这是后续辩论轮次，不是 R1 的重复。你必须：
+1. **直接引用并反驳** Bear 最新论点中的具体数据（如 "Bear 声称 RSI 从 X 下降到 Y，但实际原始数据显示..."）
+2. **提出至少 1 个 R1 中未使用的新证据或数据点**
+3. **承认** Bear 论点中有道理的部分，然后解释为什么整体仍然看多
+❌ 简单重复 R1 论点将被裁判忽略。
+"""
 
-请用 2-3 段落交付你的论点："""
+        prompt += "\n请用 2-3 段落交付你的论点："
 
         # System prompt: Role + Indicator manual (v3.25: regime-aware)
         # v3.28: Chinese instructions for better DeepSeek instruction-following
@@ -808,8 +819,19 @@ Last Bull Argument:
 
 **第五步：陈述失效条件**
 什么情况下你的看空论点会被推翻？
+"""
+        # v5.5: R2+ enhancement — force new arguments and direct rebuttals
+        if history and bull_argument and "ROUND" in history:
+            prompt += """
+⚠️ 【第二轮辩论规则 — 必须遵守】
+这是后续辩论轮次，不是 R1 的重复。你必须：
+1. **直接引用并反驳** Bull 最新论点中的具体数据（如 "Bull 声称 RSI 反弹至 X，但实际 RSI 序列显示..."）
+2. **提出至少 1 个 R1 中未使用的新证据或数据点**
+3. **承认** Bull 论点中有道理的部分，然后解释为什么风险仍然大于收益
+❌ 简单重复 R1 论点将被裁判忽略。
+"""
 
-请用 2-3 段落交付你的论点："""
+        prompt += "\n请用 2-3 段落交付你的论点："
 
         # System prompt: Role + Indicator manual (v3.25: regime-aware)
         # v3.28: Chinese instructions for better DeepSeek instruction-following
@@ -1022,6 +1044,44 @@ Last Bull Argument:
                 vol_ratio = technical_data.get('volume_ratio')
                 if vol_ratio is not None:
                     lines.append(f"Volume Ratio: {vol_ratio:.2f}x")
+
+                # v5.5: Add 1D trend layer data for Judge's independent verification
+                # Previously 1D data was only in tech_summary (Bull/Bear debate text),
+                # but Judge's key_metrics lacked it, preventing independent verification
+                mtf_trend = technical_data.get('mtf_trend_layer')
+                if mtf_trend and isinstance(mtf_trend, dict):
+                    lines.append("")
+                    lines.append("--- 1D MACRO TREND (highest weight per confluence matrix) ---")
+                    trend_sma200 = mtf_trend.get('sma_200')
+                    if trend_sma200 is not None and trend_sma200 > 0 and current_price > 0:
+                        pct_vs_sma200 = (current_price - trend_sma200) / trend_sma200 * 100
+                        lines.append(f"1D SMA200: ${trend_sma200:,.2f} (Price vs SMA200: {pct_vs_sma200:+.2f}%)")
+                    trend_adx = mtf_trend.get('adx')
+                    trend_di_plus = mtf_trend.get('di_plus')
+                    trend_di_minus = mtf_trend.get('di_minus')
+                    trend_adx_regime = mtf_trend.get('adx_regime', '')
+                    if trend_adx is not None:
+                        adx_str = f"1D ADX: {trend_adx:.1f} ({trend_adx_regime})"
+                        if trend_di_plus is not None and trend_di_minus is not None:
+                            adx_str += f" | DI+: {trend_di_plus:.1f}, DI-: {trend_di_minus:.1f}"
+                        lines.append(adx_str)
+                    trend_rsi = mtf_trend.get('rsi')
+                    if trend_rsi is not None:
+                        lines.append(f"1D RSI: {trend_rsi:.1f}")
+                    trend_macd = mtf_trend.get('macd')
+                    if trend_macd is not None:
+                        lines.append(f"1D MACD: {trend_macd:.4f}")
+                    # v5.5: Explicit macro trend assessment for Judge
+                    if trend_adx is not None and trend_di_plus is not None and trend_di_minus is not None:
+                        if trend_adx > 25 and trend_di_minus > trend_di_plus:
+                            if trend_sma200 and current_price > 0 and current_price < trend_sma200 * 0.85:
+                                lines.append("⚠️ MACRO ASSESSMENT: RISK_OFF (strong 1D downtrend + price far below SMA200)")
+                            else:
+                                lines.append("⚠️ MACRO ASSESSMENT: BEARISH (1D ADX strong, DI- > DI+)")
+                        elif trend_adx > 25 and trend_di_plus > trend_di_minus:
+                            lines.append("MACRO ASSESSMENT: RISK_ON (strong 1D uptrend, DI+ > DI-)")
+                        else:
+                            lines.append("MACRO ASSESSMENT: NEUTRAL (1D trend not decisively strong)")
 
             if derivatives_data and isinstance(derivatives_data, dict):
                 fr = derivatives_data.get('funding_rate', {})
@@ -1874,6 +1934,9 @@ RSI SERIES ({len(rsi_trend)} values):
 
 MACD SERIES ({len(macd_trend)} values):
 {format_all_values(macd_trend, ".4f")}
+
+MACD SIGNAL SERIES ({len(historical.get('macd_signal_trend', []))} values):
+{format_all_values(historical.get('macd_signal_trend', []), ".4f")}
 
 VOLUME SERIES ({len(volume_trend)} values, USDT, converted from {getattr(self, '_base_currency', 'BTC')}):
 {format_all_values([v * p for v, p in zip(volume_trend, price_trend)] if price_trend and len(price_trend) == len(volume_trend) else volume_trend, ",.0f")}
