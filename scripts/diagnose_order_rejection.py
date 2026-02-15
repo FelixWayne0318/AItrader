@@ -137,6 +137,10 @@ def check_binance_position():
     """查询 Binance 实时仓位"""
     section("2. Binance 实时状态")
 
+    # Dynamic base currency from symbol
+    _symbol = "BTCUSDT"
+    base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'
+
     try:
         _load_env_file()
 
@@ -159,7 +163,7 @@ def check_binance_position():
                 pnl = float(pos.get('unrealized_pnl', pos.get('unRealizedProfit', 0)))
                 leverage = pos.get('leverage', '?')
                 side = 'LONG' if amt > 0 else 'SHORT'
-                print(f"  📊 持仓: {side} {abs(amt)} BTC")
+                print(f"  📊 持仓: {side} {abs(amt)} {base_currency}")
                 print(f"  💰 入场: ${entry:,.2f}")
                 print(f"  📈 未实现盈亏: ${pnl:,.2f}")
                 print(f"  🔧 杠杆: {leverage}x")
@@ -175,7 +179,7 @@ def check_binance_position():
         # Get recent price
         price = client.get_realtime_price('BTCUSDT')
         if price:
-            print(f"\n  💲 BTC 当前价: ${price:,.2f}")
+            print(f"\n  💲 {base_currency} 当前价: ${price:,.2f}")
 
         return price
 

@@ -1643,6 +1643,10 @@ def run_full_diagnosis():
     print_header("支撑阻力位全面诊断 v3.1")
     print(f"  时间: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
+    # Dynamic base currency from symbol
+    _symbol = "BTCUSDT"
+    base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'
+
     # 1. 获取当前价格
     print_section("1. 当前市场数据")
     current_price = get_current_price()
@@ -1724,7 +1728,7 @@ def run_full_diagnosis():
 
         print_result("支撑区数量", len(sup_zones), "info")
         for i, zone in enumerate(sup_zones[:3]):
-            wall_info = f" [Order Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+            wall_info = f" [Order Wall: {zone.wall_size_btc:.1f} {base_currency}]" if zone.has_order_wall else ""
             swing_tag = " [Swing]" if zone.has_swing_point else ""
             touch_tag = f" [T:{zone.touch_count}]" if zone.touch_count > 0 else ""
             src = ", ".join(zone.sources[:2]) if zone.sources else zone.source_type
@@ -1733,7 +1737,7 @@ def run_full_diagnosis():
 
         print_result("阻力区数量", len(res_zones), "info")
         for i, zone in enumerate(res_zones[:3]):
-            wall_info = f" [Order Wall: {zone.wall_size_btc:.1f} BTC]" if zone.has_order_wall else ""
+            wall_info = f" [Order Wall: {zone.wall_size_btc:.1f} {base_currency}]" if zone.has_order_wall else ""
             swing_tag = " [Swing]" if zone.has_swing_point else ""
             touch_tag = f" [T:{zone.touch_count}]" if zone.touch_count > 0 else ""
             src = ", ".join(zone.sources[:2]) if zone.sources else zone.source_type
@@ -1757,10 +1761,10 @@ def run_full_diagnosis():
             print(f"  📊 订单簿大单 (Order Walls):")
             print(f"      Bid 大单: {len(bid_anomalies)} 个")
             for a in bid_anomalies[:3]:
-                print(f"         ${a.get('price', 0):,.0f}: {a.get('size', 0):.2f} BTC ({a.get('z_score', 0):.1f}σ)")
+                print(f"         ${a.get('price', 0):,.0f}: {a.get('size', 0):.2f} {base_currency} ({a.get('z_score', 0):.1f}σ)")
             print(f"      Ask 大单: {len(ask_anomalies)} 个")
             for a in ask_anomalies[:3]:
-                print(f"         ${a.get('price', 0):,.0f}: {a.get('size', 0):.2f} BTC ({a.get('z_score', 0):.1f}σ)")
+                print(f"         ${a.get('price', 0):,.0f}: {a.get('size', 0):.2f} {base_currency} ({a.get('z_score', 0):.1f}σ)")
     else:
         print_result("计算失败", sr_with_wall.get('error', 'Unknown'), "error")
         if sr_with_wall.get('traceback'):

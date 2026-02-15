@@ -464,6 +464,10 @@ class BinanceAPI:
 def phase3_binance():
     banner("Phase 3: Binance Real-time State (币安实时状态)")
 
+    # Dynamic base currency from symbol
+    _symbol = "BTCUSDT"
+    base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'
+
     api_key = os.environ.get("BINANCE_API_KEY", "")
     if not api_key:
         record("P3.0", "Binance API connectivity", "skip",
@@ -508,7 +512,7 @@ def phase3_binance():
         if abs(pos_amt) > 0:
             side = "LONG" if pos_amt > 0 else "SHORT"
             record("P3.3", "Current position", "pass",
-                   actual=f"{side} {abs(pos_amt)} BTC @ ${entry_price:,.2f}, "
+                   actual=f"{side} {abs(pos_amt)} {base_currency} @ ${entry_price:,.2f}, "
                           f"PnL=${unrealized_pnl:,.2f}, Leverage={leverage}x")
         else:
             record("P3.3", "Current position", "pass",

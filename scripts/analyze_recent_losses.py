@@ -634,8 +634,11 @@ def format_timestamp(ms: int) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def print_position_report(pos: Dict, idx: int, market_ctx: Dict, diagnosis: Dict):
+def print_position_report(pos: Dict, idx: int, market_ctx: Dict, diagnosis: Dict, symbol: str = "BTCUSDT"):
     """Print detailed report for a single position."""
+    # Dynamic base currency from symbol
+    base_currency = symbol.replace('USDT', '') if 'USDT' in symbol else symbol.split('-')[0] if '-' in symbol else 'BTC'
+
     direction = pos.get("direction", "?")
     status = pos.get("status", "?")
     net_pnl = pos.get("net_pnl", 0)
@@ -657,13 +660,13 @@ def print_position_report(pos: Dict, idx: int, market_ctx: Dict, diagnosis: Dict
     for i, entry in enumerate(entries):
         label = "OPEN" if i == 0 else f"ADD #{i}"
         print(f"  [{format_timestamp(entry['time'])}] {label}: "
-              f"{entry['qty']:.4f} BTC @ ${entry['price']:,.2f}")
+              f"{entry['qty']:.4f} {base_currency} @ ${entry['price']:,.2f}")
 
     for i, exit_ in enumerate(exits):
         label = "CLOSE" if i == len(exits) - 1 else f"PARTIAL #{i}"
         pnl_str = f"PnL: ${exit_['pnl']:+.2f}" if exit_.get('pnl') else ""
         print(f"  [{format_timestamp(exit_['time'])}] {label}: "
-              f"{exit_['qty']:.4f} BTC @ ${exit_['price']:,.2f}  {pnl_str}")
+              f"{exit_['qty']:.4f} {base_currency} @ ${exit_['price']:,.2f}  {pnl_str}")
 
     # Duration
     open_time = pos.get("open_time", 0)
@@ -691,7 +694,7 @@ def print_position_report(pos: Dict, idx: int, market_ctx: Dict, diagnosis: Dict
     # Total position size
     total_qty = pos.get("total_entry_qty", 0)
     notional = total_qty * avg_entry if avg_entry else 0
-    print(f"  Total Size: {total_qty:.4f} BTC (${notional:,.0f} notional)")
+    print(f"  Total Size: {total_qty:.4f} {base_currency} (${notional:,.0f} notional)")
 
     # Market Context
     if market_ctx and not market_ctx.get("error"):

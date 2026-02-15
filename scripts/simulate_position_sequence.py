@@ -12,6 +12,10 @@ def simulate_trading_sequence():
     print("v4.8 仓位序列模拟 (累加模式)")
     print("=" * 70)
 
+    # Dynamic base currency from symbol
+    _symbol = "BTCUSDT"
+    base_currency = _symbol.replace('USDT', '') if 'USDT' in _symbol else _symbol.split('-')[0] if '-' in _symbol else 'BTC'
+
     # 配置参数
     config = {
         'equity': 1000,           # $1000 资金
@@ -33,7 +37,7 @@ def simulate_trading_sequence():
     print(f"   资金 (equity): ${config['equity']}")
     print(f"   杠杆 (leverage): {config['leverage']}x")
     print(f"   最大仓位比例: {config['max_position_ratio']*100:.0f}%")
-    print(f"   BTC 价格: ${btc_price:,}")
+    print(f"   {base_currency} 价格: ${btc_price:,}")
     print(f"\n   🎯 max_usdt = ${config['equity']} × {config['max_position_ratio']*100:.0f}% × {config['leverage']}x = ${max_usdt:,.0f}")
 
     print("\n" + "=" * 70)
@@ -65,7 +69,7 @@ def simulate_trading_sequence():
 
             if actual_add_usdt <= 0:
                 print(f"\n❌ 第 {i+1} 次: 已达上限，无法加仓")
-                print(f"   当前持仓: ${current_position_usdt:,.0f} ({current_position_btc:.6f} BTC)")
+                print(f"   当前持仓: ${current_position_usdt:,.0f} ({current_position_btc:.6f} {base_currency})")
                 print(f"   max_usdt: ${max_usdt:,.0f}")
                 continue
 
@@ -78,13 +82,13 @@ def simulate_trading_sequence():
             trade_count += 1
             action = "首仓" if i == 0 else f"第 {i} 次加仓"
             print(f"\n✅ {action} ({confidence} 信心 {size_pct}%)")
-            print(f"   本次: ${actual_add_usdt:,.0f} ({actual_add_btc:.6f} BTC)")
+            print(f"   本次: ${actual_add_usdt:,.0f} ({actual_add_btc:.6f} {base_currency})")
 
         # 更新持仓
         current_position_usdt += actual_add_usdt
         current_position_btc += actual_add_btc
 
-        print(f"   累计持仓: ${current_position_usdt:,.0f} ({current_position_btc:.6f} BTC)")
+        print(f"   累计持仓: ${current_position_usdt:,.0f} ({current_position_btc:.6f} {base_currency})")
         print(f"   占 max_usdt: {current_position_usdt/max_usdt*100:.1f}%")
 
     print("\n" + "=" * 70)
@@ -123,12 +127,12 @@ def simulate_trading_sequence():
             actual_add_usdt = calculated_usdt
             actual_add_btc = calculated_btc
             print(f"\n✅ {action} ({confidence} 信心 {size_pct}%)")
-            print(f"   本次: ${actual_add_usdt:,.0f} ({actual_add_btc:.6f} BTC)")
+            print(f"   本次: ${actual_add_usdt:,.0f} ({actual_add_btc:.6f} {base_currency})")
 
         current_position_usdt += actual_add_usdt
         current_position_btc += actual_add_btc
 
-        print(f"   累计持仓: ${current_position_usdt:,.0f} ({current_position_btc:.6f} BTC)")
+        print(f"   累计持仓: ${current_position_usdt:,.0f} ({current_position_btc:.6f} {base_currency})")
         print(f"   占 max_usdt: {current_position_usdt/max_usdt*100:.1f}%")
 
     print("\n" + "=" * 70)
@@ -137,9 +141,9 @@ def simulate_trading_sequence():
     print(f"\n配置: $1000 资金, 10x 杠杆, 30% 最大比例")
     print(f"max_usdt = $3000")
     print(f"\n单次仓位计算:")
-    print(f"  HIGH (80%):   $3000 × 80% = $2,400 (0.024 BTC)")
-    print(f"  MEDIUM (50%): $3000 × 50% = $1,500 (0.015 BTC)")
-    print(f"  LOW (30%):    $3000 × 30% = $900   (0.009 BTC)")
+    print(f"  HIGH (80%):   $3000 × 80% = $2,400 (0.024 {base_currency})")
+    print(f"  MEDIUM (50%): $3000 × 50% = $1,500 (0.015 {base_currency})")
+    print(f"  LOW (30%):    $3000 × 30% = $900   (0.009 {base_currency})")
     print(f"\n累加模式规则:")
     print(f"  - 每次信号计算新的加仓量")
     print(f"  - 累计持仓不超过 max_usdt ($3000)")
