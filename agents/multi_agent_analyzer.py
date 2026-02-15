@@ -181,6 +181,316 @@ Example — weak setup: Trend layer (ADX/SMA) conflicts with momentum/levels
   → trend is statistically the stronger predictor in this conflict.
 """
 
+# =============================================================================
+# SIGNAL CONFIDENCE MATRIX (v1.2)
+# =============================================================================
+# - Quantified per-signal, per-regime confidence multipliers
+# - Only injected into Judge + Risk Manager prompts (NOT Bull/Bear)
+# - See docs/INDICATOR_CONFIDENCE_MATRIX.md for full design rationale
+# =============================================================================
+SIGNAL_CONFIDENCE_MATRIX = """
+====================================================================
+SIGNAL CONFIDENCE MATRIX (v1.2)
+====================================================================
+When evaluating each confluence layer in STEP 2, apply these confidence
+multipliers to weight each signal's reliability in the current regime
+(determined in STEP 1).
+
+MULTIPLIER SCALE:
+  HIGH (1.2+) = Signal is especially reliable in this regime
+  STD  (1.0)  = Standard confidence
+  LOW  (0.7)  = Needs other signals to confirm before trusting
+  SKIP (≤0.4) = Unreliable in this regime — ignore as primary basis
+
+REGIME COLUMNS: Match your STEP 1 regime to the correct column.
+  ADX>40     = Strong trend (趋势层主导)
+  ADX 25-40  = Weak trend (趋势重要但非绝对)
+  ADX<20     = Ranging / 震荡 (关键水平层权重最高)
+  SQUEEZE    = ADX<20 + BB Width at lows (等待突破)
+  VOLATILE   = ADX>25 + BB Width expanding fast (趋势跟随 + 宽止损)
+
+REGIME TRANSITION: When ADX is near a boundary (18-22 or 35-45),
+blend the multipliers of adjacent regimes (take the average).
+
+====================================================================
+SECTION A: SNAPSHOT SIGNALS (per confluence layer)
+====================================================================
+
+--- LAYER 1: TREND (1D) → fill confluence.trend_1d ---
+
+| Signal              | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature  |
+|---------------------|:---:|:---:|:---:|:---:|:---:|---------|
+| 1D SMA200 direction | 1.3 | 1.0 | 0.4 | 0.3 | 1.1 | Lagging |
+| 1D ADX/DI direction | 1.2 | 1.0 | 0.3 | 0.3 | 1.1 | Lagging |
+| 1D MACD zero-line   | 1.1 | 1.0 | 0.3 | 0.5 | 1.0 | Lagging |
+| 1D RSI level        | 0.9 | 1.0 | 0.7 | 0.6 | 0.8 | Sync    |
+
+Notes:
+- ADX>40: This layer is DOMINANT — all signals reliable.
+- ADX<20: This layer is nearly irrelevant (trend data is noise).
+- SQUEEZE: Historical trend direction has low predictive value (about to change).
+- VOLATILE: Trend is real but noisy — slightly less reliable than calm strong trend.
+- ⚠️ 1D TREND VERDICT (STRONG_BULLISH etc.) is pre-computed from these 4 signals.
+  It is a SUMMARY — do NOT count it as a 5th independent signal. (See RULE 2)
+
+--- LAYER 2: MOMENTUM (4H) → fill confluence.momentum_4h ---
+
+| Signal               | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature   |
+|----------------------|:---:|:---:|:---:|:---:|:---:|----------|
+| 4H RSI level         | 0.8 | 1.0 | 1.2 | 0.9 | 0.7 | Sync     |
+| 4H RSI divergence*   | 0.6 | 0.8 | 1.3 | 1.1 | 0.5 | Leading  |
+| 4H MACD cross        | 1.2 | 1.0 | 0.3 | 0.5 | 1.1 | Lagging  |
+| 4H MACD histogram    | 1.0 | 1.0 | 0.5 | 0.7 | 0.9 | Sync-lag |
+| 4H ADX/DI direction  | 1.1 | 1.0 | 0.4 | 0.5 | 1.0 | Lagging  |
+| 4H BB position       | 0.6 | 0.9 | 1.2 | 0.8 | 0.5 | Sync     |
+| 4H SMA 20/50 cross   | 1.1 | 1.0 | 0.4 | 0.6 | 1.0 | Lagging  |
+| CVD single-bar delta | 0.9 | 1.0 | 1.2 | 1.3 | 1.0 | Leading  |
+| CVD trend (cumul.)   | 1.1 | 1.0 | 0.8 | 0.7 | 1.0 | Sync-lag |
+| CVD divergence*      | 0.7 | 0.9 | 1.3 | 1.2 | 0.5 | Leading  |
+| Buy Ratio (taker %)  | 0.8 | 1.0 | 1.1 | 1.2 | 0.9 | Realtime |
+| Avg Trade Size chg   | 0.7 | 0.9 | 1.0 | 1.2 | 0.8 | Leading  |
+
+Notes:
+- *Divergence = inferred from series data (RSI or CVD vs price opposite directions).
+- RSI in ADX>40: Cardwell range shifts apply (40-80 uptrend, 20-60 downtrend),
+  traditional 30/70 FAIL. Divergence at 0.6 because it still signals deceleration.
+- MACD cross in ADX<20: 74-97% false positive rate — nearly useless.
+- VOLATILE: Divergence signals (RSI/CVD) are very unreliable (0.5) due to noise-induced
+  false divergences. Trend-confirming signals (MACD cross, ADX/DI) remain useful.
+  BB position also unreliable — price swings overshoot bands frequently.
+- Buy Ratio: Taker buy % from Order Flow data. >55% = buy pressure, <45% = sell.
+- Avg Trade Size: Sudden increase = institutional activity (leading).
+
+--- LAYER 3: KEY LEVELS (15M) → fill confluence.levels_15m ---
+
+| Signal               | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature   |
+|----------------------|:---:|:---:|:---:|:---:|:---:|----------|
+| S/R zone test (bnce) | 0.5 | 0.8 | 1.3 | 1.0 | 0.4 | Static   |
+| S/R zone breakout    | 1.3 | 1.0 | 0.6 | 1.2 | 1.3 | Event    |
+| 15M BB position      | 0.6 | 0.9 | 1.2 | 0.8 | 0.5 | Sync     |
+| 15M BB Width level   | 0.7 | 0.8 | 0.9 | 1.3 | 0.8 | Sync     |
+| OBI (book imbalance) | 0.6 | 0.8 | 1.1 | 1.2 | 0.5 | Realtime |
+| OBI change rate      | 0.7 | 0.9 | 1.2 | 1.3 | 0.6 | Leading  |
+| Bid/Ask depth change | 0.7 | 0.9 | 1.1 | 1.2 | 0.6 | Leading  |
+| Pressure gradient    | 0.6 | 0.8 | 1.1 | 1.2 | 0.5 | Leading  |
+| Order walls (>3x)    | 0.4 | 0.6 | 0.9 | 1.0 | 0.3 | Realtime |
+| 15M SMA cross (5/20) | 0.9 | 1.0 | 0.6 | 0.7 | 0.8 | Lagging  |
+| 15M Volume ratio     | 0.9 | 1.0 | 1.1 | 1.3 | 1.2 | Sync     |
+| Price vs period H/L  | 0.8 | 1.0 | 1.1 | 1.0 | 0.9 | Sync     |
+| Spread (liquidity)   | 0.9 | 1.0 | 1.0 | 1.1 | 1.1 | Quality  |
+| Slippage (execution) | 0.9 | 1.0 | 1.0 | 1.1 | 1.1 | Quality  |
+
+Notes:
+- S/R bounce rate: ADX>40 → ~25%, ADX<20 → ~70%.
+- VOLATILE: S/R breaks violently (0.4 bounce, 1.3 breakout). Order book is unstable
+  (walls eaten or pulled quickly). Volume ratio is meaningful (confirms volatile move).
+- Order walls in crypto: Spoofing probability HIGH (>70% of large walls are pulled
+  before touch in trending markets). SKIP in ADX>40 and VOLATILE.
+- Spread & Slippage: Not directional — indicate execution quality. High spread (>0.05%)
+  or high slippage (>0.1% for 1 BTC) → reduce Layer 3 confidence by one tier
+  AND reduce position size.
+
+--- LAYER 4: DERIVATIVES → fill confluence.derivatives ---
+⚠️ This layer has the most signals. To prevent it from dominating,
+group related signals and evaluate the GROUP as one input:
+  Group A: Funding Rate (current + extreme + predicted + history + countdown) → 1 input
+  Group B: Open Interest (OI 4-quadrant + OI trend + Premium Index) → 1 input
+  Group C: Positioning (Top Traders + Global L/S + Coinalyze L/S) → 1 input
+  Group D: Real-time flow (Taker Ratio + Liquidations + 24h context) → 1 input
+Then synthesize the 4 group conclusions into ONE overall BULLISH/BEARISH/NEUTRAL
+for confluence.derivatives.
+
+| Signal                       | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature   |
+|------------------------------|:---:|:---:|:---:|:---:|:---:|----------|
+| — GROUP A: FUNDING RATE —    |     |     |     |     |     |          |
+| FR current value             | 0.8 | 0.9 | 1.0 | 1.0 | 0.8 | Sentiment|
+| FR extreme (>±0.05%)        | 0.8 | 1.1 | 1.3 | 1.2 | 0.9 | Leading  |
+| FR predicted vs settled diff | 0.9 | 1.0 | 1.1 | 1.2 | 0.9 | Leading  |
+| FR settlement history trend  | 0.8 | 1.0 | 1.1 | 1.0 | 0.8 | Sync     |
+| FR settlement countdown      | 0.7 | 0.8 | 0.9 | 1.0 | 0.7 | Temporal |
+| — GROUP B: OPEN INTEREST —   |     |     |     |     |     |          |
+| Premium Index                | 0.8 | 1.0 | 1.1 | 1.2 | 0.9 | Leading  |
+| OI↑+Price↑ (new longs)      | 1.2 | 1.0 | 0.8 | 0.9 | 1.1 | Confirm  |
+| OI↑+Price↓ (new shorts)     | 1.2 | 1.0 | 0.8 | 0.9 | 1.1 | Confirm  |
+| OI↓ (unwinding/liquidation)  | 0.9 | 1.0 | 1.0 | 0.8 | 1.0 | Event    |
+| — GROUP C: POSITIONING —     |     |     |     |     |     |          |
+| Top Traders L/S position     | 1.0 | 1.0 | 1.2 | 1.1 | 1.0 | Leading  |
+| Global L/S extreme (>60%)   | 0.6 | 0.9 | 1.2 | 1.1 | 0.7 | Sentiment|
+| Coinalyze L/S Ratio + trend | 0.7 | 0.9 | 1.1 | 1.0 | 0.7 | Sentiment|
+| — GROUP D: REAL-TIME FLOW —  |     |     |     |     |     |          |
+| Taker Buy/Sell Ratio         | 0.9 | 1.0 | 1.1 | 1.2 | 1.0 | Realtime |
+| Liquidation (large event)    | 1.0 | 1.1 | 1.2 | 1.3 | 1.2 | Leading  |
+| 24h Volume level             | 0.8 | 1.0 | 1.0 | 1.1 | 1.1 | Context  |
+| 24h Price Change %           | 0.7 | 0.9 | 0.9 | 1.0 | 0.8 | Context  |
+
+Notes:
+- ⚠️ GROUP RULE: Pick the strongest signal within each group to represent it.
+  Do NOT stack all FR signals into one massive FR-driven conclusion.
+- FR current in ADX>40: 0.01-0.03% in bull market is NORMAL — don't over-interpret.
+- FR predicted vs settled: Sign reversal (+→-) = significant positioning change.
+- OI 4-quadrant in ADX>40: New positioning confirms trend — high reliability.
+- OI 4-quadrant in ADX<20: May be hedging — moderate value (0.8).
+- Top Traders in ADX>40: Smart money WITH trend = confirmation (1.0).
+  Top Traders AGAINST trend = early warning, needs 2+ confirmations.
+- VOLATILE: FR signals slightly less predictive (volatile markets amplify FR).
+  OI confirmation still useful (1.1). Liquidation events are significant (1.2)
+  — cascade liquidations in volatile markets can be extreme.
+
+====================================================================
+SECTION B: TIME-SERIES PATTERN SIGNALS
+====================================================================
+AI receives 20-bar (15M) time-series data. Detect patterns from
+series, then apply multipliers.
+
+--- PRICE SERIES PATTERNS ---
+
+| Pattern                | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature  |
+|------------------------|:---:|:---:|:---:|:---:|:---:|---------|
+| Higher highs/lows      | 1.3 | 1.0 | 0.5 | 0.6 | 1.2 | Confirm |
+| Lower highs/lows       | 1.3 | 1.0 | 0.5 | 0.6 | 1.2 | Confirm |
+| Range-bound oscillation| 0.4 | 0.7 | 1.3 | 1.0 | 0.3 | Confirm |
+| Tightening range       | 0.5 | 0.8 | 1.0 | 1.3 | 0.5 | Leading |
+| Volume climax (spike)  | 1.0 | 1.1 | 1.2 | 1.3 | 1.2 | Event   |
+
+--- INDICATOR SERIES PATTERNS ---
+
+| Pattern                | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature  |
+|------------------------|:---:|:---:|:---:|:---:|:---:|---------|
+| ADX series rising      | 1.2 | 1.1 | 1.3 | 1.2 | 1.1 | Leading — trend strengthening |
+| ADX series falling     | 0.8 | 1.0 | 0.7 | 0.7 | 0.9 | Leading — trend weakening    |
+| BB Width narrowing     | 0.6 | 0.8 | 1.0 | 1.3 | 0.5 | Leading — squeeze forming    |
+| BB Width expanding     | 1.1 | 1.0 | 0.8 | 1.3 | 1.2 | Confirm — breakout active    |
+| SMA convergence (5→20) | 0.7 | 0.9 | 1.1 | 1.2 | 0.7 | Leading — regime change      |
+| SMA divergence (spread)| 1.2 | 1.0 | 0.5 | 0.8 | 1.1 | Confirm — trend established  |
+| RSI trend (accel/decel)| 0.9 | 1.0 | 1.1 | 1.0 | 0.8 | Sync                         |
+| MACD histogram momentum| 1.0 | 1.0 | 0.5 | 0.8 | 0.9 | Sync-lag                     |
+| Volume trend (expand)  | 1.1 | 1.0 | 1.0 | 1.3 | 1.2 | Sync-leading                 |
+| Volume trend (shrink)  | 0.8 | 0.9 | 0.9 | 0.7 | 0.8 | Warning                      |
+
+--- K-LINE OHLCV PATTERNS ---
+
+| Pattern                | ADX>40 | ADX 25-40 | ADX<20 | SQUEEZE | VOLATILE | Nature  |
+|------------------------|:---:|:---:|:---:|:---:|:---:|---------|
+| Engulfing candle       | 0.7 | 1.0 | 1.2 | 1.3 | 0.6 | Leading — reversal     |
+| Doji at S/R            | 0.5 | 0.8 | 1.3 | 1.1 | 0.4 | Leading — indecision   |
+| Long wicks (rejection) | 0.6 | 0.9 | 1.2 | 1.1 | 0.5 | Leading — rejection    |
+| Consecutive same-dir   | 1.2 | 1.0 | 0.6 | 0.8 | 1.1 | Confirm — continuation |
+
+Notes:
+- ADX rising in ADX<20 (1.3) = CRITICAL leading signal. ADX climbing 12→18 means
+  regime is about to shift to TRENDING. One of the most valuable signals.
+- BB Width narrowing in SQUEEZE at 1.3 (not 1.5): narrowing DEFINES squeeze,
+  so highest multiplier would be circular. 1.3 for the process is appropriate.
+- VOLATILE: Reversal patterns (engulfing, doji, wicks) are very unreliable
+  (0.4-0.6) — volatility creates many false reversal signals. Trend continuation
+  patterns remain useful (1.1-1.2). Volume and BB Width expansion confirm the move.
+
+====================================================================
+SECTION C: MULTI-SOURCE SIGNAL DIFFERENTIATION
+====================================================================
+The system receives similar data from multiple sources. These are NOT
+redundant — each has different predictive characteristics.
+
+--- LONG/SHORT POSITIONING (3 sources) ---
+
+| Source                | Represents              | Edge                    | Relative |
+|-----------------------|-------------------------|-------------------------|:---:|
+| Top Traders Position  | Institutional/whale     | Best predictor          | Highest  |
+| Taker Buy/Sell Ratio  | Real-time aggressive flow| Real-time direction    | High     |
+| Binance Global L/S    | Retail sentiment        | Contrarian at extremes  | Base     |
+| Coinalyze L/S Ratio   | Exchange-specific       | Cross-validates Binance | Below    |
+
+RULE: Top Traders vs Global L/S diverge → weight Top Traders.
+      All 3+ agree at extremes → very HIGH confidence.
+
+--- OPEN INTEREST (2 sources) ---
+
+| Source        | Characteristic            | Best for             |
+|---------------|---------------------------|----------------------|
+| Coinalyze OI  | Aggregated multi-exchange | Macro trend (4H)     |
+| Binance OI    | Single exchange, real-time| Short-term moves(15M)|
+
+RULE: Same trend → add one confidence tier to OI assessment.
+      Disagree → use Binance for execution, Coinalyze for context.
+
+--- FUND FLOW (2 sources) ---
+
+| Source        | Calculation              | Best for              |
+|---------------|--------------------------|----------------------|
+| CVD (K-line)  | Cumulative taker delta   | Trend over bars      |
+| Taker Ratio   | Buy/Sell vol snapshot    | Real-time pressure   |
+
+RULE: Same direction → cross-validated, add one confidence tier.
+      Diverge → transitioning, reduce one tier.
+
+====================================================================
+SECTION D: GLOBAL SIGNAL QUALITY MODIFIERS
+====================================================================
+These modify RELIABILITY of all signals. Apply BEFORE final decision.
+Use TIER shifts (not math): each condition shifts confidence DOWN/UP
+by one tier (HIGH→STD, STD→LOW, LOW→SKIP).
+
+| Condition                                    | Effect        | Applies to              |
+|----------------------------------------------|:---:|--------------------------|
+| Volume Ratio < 0.5x (from 15M data)         | DOWN one tier | ALL signals              |
+| Volume Ratio > 2.0x                          | UP one tier   | ALL signals              |
+| Spread > 0.05% OR Slippage > 0.1%           | DOWN one tier | Layer 3 + position size  |
+| 2+ data sources unavailable                  | DOWN one tier | Affected layers          |
+| FR settlement < 30 min away                  | DOWN one tier | Short-term (15M) signals |
+| Low volume + thin orderbook across bars      | DOWN one tier | ALL signals (weekend/off-hours) |
+
+Notes:
+- Tier shifts stack: 2 conditions = DOWN two tiers.
+- Volume Ratio comes from 15M data ("Volume Ratio: X.XXx average").
+- Weekend/off-hours: No date data available. Infer from persistently low
+  volume ratio + reduced orderbook depth across multiple snapshots.
+
+====================================================================
+SECTION E: APPLICATION RULES
+====================================================================
+
+RULE 1 — Layer evaluation:
+  For each confluence layer, assess each signal weighted by its
+  confidence tier in the current regime:
+    HIGH (1.2+) = Primary evidence for layer judgment
+    STD  (1.0)  = Supporting evidence
+    LOW  (0.7)  = Note but don't base judgment on it alone
+    SKIP (≤0.4) = Ignore for this regime
+
+RULE 2 — TREND VERDICT is not a 5th signal:
+  The pre-computed 1D TREND VERDICT is a summary of the 4 Layer 1
+  signals. Use for quick reference ONLY. Do NOT count as independent.
+
+RULE 3 — Conflict resolution:
+  If leading and lagging signals within one layer conflict, prioritize
+  the one with HIGHER confidence tier in current regime.
+
+RULE 4 — Neutral threshold:
+  If only SKIP or LOW signals support a direction in a layer,
+  that layer should be judged NEUTRAL.
+
+RULE 5 — SQUEEZE special case:
+  Wait for breakout confirmation (volume + price) before applying
+  directional multipliers. Pre-breakout: focus on BB Width, Volume,
+  OBI change rate, ADX rising.
+
+RULE 6 — Counter-trend in ADX>40:
+  Even HIGH counter-trend signals require at least 2 independent
+  confirming signals before consideration.
+
+RULE 7 — Multi-source agreement:
+  3+ independent sources agree on direction → upgrade that layer
+  by one confidence tier.
+
+RULE 8 — Layer 4 grouping → confluence.derivatives:
+  Evaluate Layer 4 in 4 groups (A/B/C/D). Each group = 1 input.
+  Then synthesize the 4 group conclusions into ONE overall
+  BULLISH/BEARISH/NEUTRAL judgment for the confluence.derivatives field.
+
+RULE 9 — Global quality check:
+  Before final decision, check Section D. Apply tier shifts.
+"""
+
 
 class MultiAgentAnalyzer:
     """
@@ -981,8 +1291,11 @@ Last Bull Argument:
 
 {INDICATOR_DEFINITIONS}
 
+{SIGNAL_CONFIDENCE_MATRIX}
+
 【关键规则 — 必须遵守】
 ⚠️ 用指标手册独立验证分析师是否使用了正确的 regime 解读。
+⚠️ 参考信号置信度矩阵 (SIGNAL CONFIDENCE MATRIX) 量化评估每个信号在当前 regime 下的可靠性。
 ⚠️ 用中文进行内部推理分析，最终以 JSON 格式输出结果。
 ⚠️ 不要因为双方都有道理就默认 HOLD — 这是最常见的错误。
 
@@ -1007,7 +1320,27 @@ Last Bull Argument:
 情况: 1D ADX=15 (RANGING), 价格触及 BB 下轨 + S1 支撑, RSI=28 超卖, 订单簿买墙
 分析: ADX<20 = 震荡市，关键水平层权重最高。价格在强支撑 + BB 下轨 + RSI 超卖 = 均值回归信号。
       虽然 1D 趋势不明确，但震荡市中这正是关键水平层发挥作用的时候。
-结果: {{"confluence":{{"trend_1d":"NEUTRAL — ADX=15 无趋势，SMA200 持平","momentum_4h":"BULLISH — RSI=32 超卖反弹, MACD 柱状图收敛","levels_15m":"BULLISH — 价格触及 S1 支撑 + BB 下轨, OBI=+0.8 买墙","derivatives":"NEUTRAL — FR 接近零, OI 稳定","aligned_layers":2}},"decision":"LONG","winning_side":"BULL","confidence":"MEDIUM","rationale":"ADX=15 震荡市中，关键水平层权重最高。价格触及强支撑 + BB 下轨 + RSI 超卖，均值回归概率高。趋势层中性不构成阻碍。","strategic_actions":["在 S1 支撑做多，目标 BB 中轨"],"acknowledged_risks":["若支撑被跌破，震荡区间可能转为下跌趋势"]}}"""
+结果: {{"confluence":{{"trend_1d":"NEUTRAL — ADX=15 无趋势，SMA200 持平","momentum_4h":"BULLISH — RSI=32 超卖反弹, MACD 柱状图收敛","levels_15m":"BULLISH — 价格触及 S1 支撑 + BB 下轨, OBI=+0.8 买墙","derivatives":"NEUTRAL — FR 接近零, OI 稳定","aligned_layers":2}},"decision":"LONG","winning_side":"BULL","confidence":"MEDIUM","rationale":"ADX=15 震荡市中，关键水平层权重最高。价格触及强支撑 + BB 下轨 + RSI 超卖，均值回归概率高。趋势层中性不构成阻碍。","strategic_actions":["在 S1 支撑做多，目标 BB 中轨"],"acknowledged_risks":["若支撑被跌破，震荡区间可能转为下跌趋势"]}}
+
+示例 5: 信号置信度矩阵 — 震荡市忽略 MACD，信任 S/R + RSI
+情况: 1D ADX=16 (ADX<20 = 震荡), 4H MACD 金叉, 4H RSI=33 超卖, 价格触及 S1 (HIGH 强度), OBI change +0.25
+分析: ADX<20 = 震荡市。查信号矩阵:
+  Layer 1 (趋势): ADX<20 列全部 ≤0.7 → 趋势层 NEUTRAL (忽略)
+  Layer 2 (动量): MACD 交叉在 ADX<20 = 0.3 (SKIP，几乎无效)。RSI 值在 ADX<20 = 1.2 (HIGH)。RSI=33 超卖 = 看多信号。
+  Layer 3 (水平): S/R 测试在 ADX<20 = 1.3 (HIGH)。OBI change 在 ADX<20 = 1.2 (HIGH)。两个 HIGH 信号确认。
+  Layer 4: FR 正常，OI 稳定 → NEUTRAL
+  → 动量+水平 2 层看多，MACD 金叉被矩阵标为 SKIP 正确忽略。
+结果: {{"confluence":{{"trend_1d":"NEUTRAL — ADX=16 无趋势，矩阵标记趋势层 SKIP","momentum_4h":"BULLISH — RSI=33 超卖 (矩阵 1.2=HIGH)，MACD 交叉忽略 (矩阵 0.3=SKIP)","levels_15m":"BULLISH — S1 支撑触及 (矩阵 1.3=HIGH) + OBI 变化+0.25 (矩阵 1.2=HIGH)","derivatives":"NEUTRAL — FR 正常, OI 稳定","aligned_layers":2}},"decision":"LONG","winning_side":"BULL","confidence":"MEDIUM","rationale":"ADX=16 震荡市。矩阵指导: MACD 在震荡中 SKIP (0.3)，RSI+S/R 在震荡中 HIGH (1.2-1.3)。2 层以 HIGH 信号看多。","strategic_actions":["在 S1 支撑做多，目标 BB 中轨"],"acknowledged_risks":["若 S1 被跌破，考虑出场"]}}
+
+示例 6: 信号置信度矩阵 — 强趋势中反转信号被降级
+情况: 1D ADX=48 DI->DI+ (强下跌), 4H RSI 出现看多背离, 4H MACD 仍为负值, S/R zone 被跌破, FR=+0.06%
+分析: ADX=48 > 40 = 强趋势 (ADX>40 列)。查信号矩阵:
+  Layer 1 (趋势): SMA200=1.3 + ADX/DI=1.2 + MACD=1.1 → 全部 HIGH，强看空
+  Layer 2 (动量): RSI 背离在 ADX>40 = 0.6 (LOW)。RULE 6: 逆势信号需 2 个独立确认。RSI 背离只有 1 个 → 不足。MACD 仍为负=顺势。
+  Layer 3 (水平): S/R breakout 在 ADX>40 = 1.3 (HIGH) → 确认下跌延续
+  Layer 4: FR=+0.06% extreme (ADX>40 = 0.8)，适度看空。Group A: BEARISH (LOW)。
+  → 趋势+水平+衍生品 3 层看空，RSI 背离被矩阵降为 LOW + RULE 6 否决。
+结果: {{"confluence":{{"trend_1d":"BEARISH — ADX=48 DI->DI+, 趋势层全 HIGH (矩阵 1.1-1.3)","momentum_4h":"BEARISH — MACD 负值顺势 (矩阵 1.2)，RSI 背离被降级 (矩阵 0.6=LOW + RULE 6 需 2 确认)","levels_15m":"BEARISH — S/R 被跌破 (矩阵 1.3=HIGH，趋势延续确认)","derivatives":"BEARISH — FR +0.06% 拥挤多头 (矩阵 0.8=LOW)","aligned_layers":4}},"decision":"SHORT","winning_side":"BEAR","confidence":"HIGH","rationale":"ADX=48 强下跌。矩阵将 RSI 背离从 HIGH 降为 LOW (0.6)，加上 RULE 6 要求 2 个逆势确认但只有 1 个。4 层一致看空。","strategic_actions":["顺势做空，SL 设在上方阻力位"],"acknowledged_risks":["RSI 背离可能预示反弹，但单一 LOW 信号不构成改变决策的理由"]}}"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["judge"] = {
@@ -1447,9 +1780,12 @@ R/R 与价格位置的关系：
 
 {INDICATOR_DEFINITIONS}
 
+{SIGNAL_CONFIDENCE_MATRIX}
+
 【核心原则 — 必须遵守】
 ✅ **信任 Judge 的方向判断** — Judge 已听完 Bull/Bear 4 轮辩论后做出决策，你不需要重新判断方向。
 ✅ 你的工作: 设定 SL/TP + 根据风险条件调整仓位大小。
+✅ 参考信号置信度矩阵评估信号可靠性，用于调整仓位大小和 SL/TP 设定。
 ✅ 用风险因素（FR、流动性、OBI）来调整仓位大小，而不是否决方向。
 ⚠️ 只有 3 种极端情况才允许否决方向: R/R < 1.5:1 | |FR| > 0.10% | 流动性枯竭
 ⚠️ 用中文进行内部推理分析，最终以 JSON 格式输出结果。
