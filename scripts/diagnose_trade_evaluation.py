@@ -542,26 +542,36 @@ def step4_loading(real_data):
         check("_load_memory() 执行成功", False, traceback.format_exc())
         return
 
-    # 4d. 如果实际数据为空，创建临时测试数据进行后续测试
+    # 4d. 如果实际数据为空，用独立临时文件测试 summary/recent 功能
+    #     注意: 绝不覆盖真实的 trading_memory.json!
     if not memories:
-        warn("实际数据为空，创建临时数据测试 summary/recent 功能")
+        warn("实际数据为空，使用独立临时文件测试 summary/recent 功能")
 
-        # 写入临时测试数据
+        # 写入独立临时文件 (不碰真实数据!)
+        temp_test_file = PROJECT_ROOT / "data" / "_diag_temp_eval_test.json"
         test_data = _generate_test_data()
         try:
-            with open(service.memory_file, 'w') as f:
+            with open(temp_test_file, 'w') as f:
                 json.dump(test_data, f, indent=2)
-            info("已写入临时测试数据", f"{len(test_data)} 条")
+            info("已写入临时测试文件", str(temp_test_file))
 
-            # 重新加载
-            memories = service._load_memory()
+            # 创建指向临时文件的 service
+            temp_service = _DiagEvalService(temp_test_file)
+            memories = temp_service._load_memory()
             check("临时数据加载成功", len(memories) > 0, f"{len(memories)} 条含 evaluation")
         except Exception as e:
             check("临时数据写入", False, str(e))
             return
+        finally:
+            # 立即清理临时文件
+            try:
+                if temp_test_file.exists():
+                    temp_test_file.unlink()
+                    info("临时测试文件已清理")
+            except Exception:
+                pass
 
-        # 标记需要清理
-        return service, True
+        return temp_service, False  # False = 不需要后续清理
     else:
         return service, False
 
@@ -890,16 +900,6 @@ def main():
 
     # Step 7: 静态调用链
     step7_strategy_callchain()
-
-    # ─── 清理临时测试数据 ───
-    if used_test_data and memory_file:
-        try:
-            memory_file_path = Path(memory_file) if isinstance(memory_file, str) else memory_file
-            if memory_file_path.exists():
-                memory_file_path.unlink()
-                info("已清理临时测试数据文件")
-        except Exception:
-            pass
 
     # ─── 汇总 ───
     print(f"\n{BOLD}{'='*60}{RESET}")
