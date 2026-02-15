@@ -131,8 +131,10 @@ class DataFlowSummary(DiagnosticStep):
         print(f"  Open Interest (Coinalyze):")
         if oi_data:
             bc = self.ctx.base_currency
-            oi_val = oi_data.get('value', 0)
+            oi_val = float(oi_data.get('value', 0) or 0)
             oi_usd = oi_data.get('total_usd', 0)
+            if not oi_usd and oi_val > 0:
+                oi_usd = oi_val * (self.ctx.current_price or 0)
             print(f"    OI:          ${oi_usd:,.0f} ({oi_val:,.2f} {bc})")
             print(f"    OI Change:   {oi_data.get('change_pct', 'N/A')}")
         else:

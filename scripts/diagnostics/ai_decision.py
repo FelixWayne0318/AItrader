@@ -150,43 +150,49 @@ class AIInputDataValidator(DiagnosticStep):
 
             # ========== 2b. v5.6: Inject Binance Funding Rate into derivatives_report ==========
             # Coinalyze fetch_all() only returns OI + Liquidations, NOT funding rate.
-            # Production (deepseek_strategy.py:1783-1831) manually injects Binance FR.
-            # Without this, AI sees "Funding Rate: N/A" and loses a key decision input.
-            if self.ctx.binance_funding_rate and self.ctx.derivatives_report is not None:
-                bfr = self.ctx.binance_funding_rate
-                fr_dict = {
-                    'current_pct': bfr.get('funding_rate_pct', 0),
-                    'settled_pct': bfr.get('funding_rate_pct', 0),
-                    'predicted_rate_pct': bfr.get('predicted_rate_pct'),
-                    'premium_index': bfr.get('premium_index'),
-                    'mark_price': bfr.get('mark_price', 0),
-                    'index_price': bfr.get('index_price', 0),
-                    'next_funding_countdown_min': bfr.get('next_funding_countdown_min'),
-                    'source': 'binance_direct',
-                }
-                # Fetch history for trend analysis (same as production)
+            # Production (deepseek_strategy.py:1783-1831) manually fetches Binance FR
+            # and injects it. Without this, AI sees "Funding Rate: N/A".
+            # NOTE: We fetch directly here (not from ctx.binance_funding_rate which
+            # is set later in step [20/34] MTF Components — too late for analyze()).
+            if self.ctx.derivatives_report is not None:
                 try:
-                    fr_history = kline_client.get_funding_rate_history(limit=10)
-                    if fr_history and len(fr_history) >= 2:
-                        history_list = []
-                        for h in fr_history:
-                            rate = float(h.get('fundingRate', 0))
-                            history_list.append({
-                                'rate_pct': round(rate * 100, 4),
-                                'time': h.get('fundingTime'),
-                            })
-                        fr_dict['history'] = history_list
-                        rates = [entry['rate_pct'] for entry in history_list]
-                        if rates[-1] > rates[0] * 1.1:
-                            fr_dict['trend'] = 'RISING'
-                        elif rates[-1] < rates[0] * 0.9:
-                            fr_dict['trend'] = 'FALLING'
-                        else:
-                            fr_dict['trend'] = 'STABLE'
-                except Exception:
-                    pass
+                    binance_fr = kline_client.get_funding_rate()
+                    if binance_fr:
+                        fr_dict = {
+                            'current_pct': binance_fr.get('funding_rate_pct', 0),
+                            'settled_pct': binance_fr.get('funding_rate_pct', 0),
+                            'predicted_rate_pct': binance_fr.get('predicted_rate_pct'),
+                            'premium_index': binance_fr.get('premium_index'),
+                            'mark_price': binance_fr.get('mark_price', 0),
+                            'index_price': binance_fr.get('index_price', 0),
+                            'next_funding_countdown_min': binance_fr.get('next_funding_countdown_min'),
+                            'source': 'binance_direct',
+                        }
+                        # Fetch history for trend analysis (same as production)
+                        try:
+                            fr_history = kline_client.get_funding_rate_history(limit=10)
+                            if fr_history and len(fr_history) >= 2:
+                                history_list = []
+                                for h in fr_history:
+                                    rate = float(h.get('fundingRate', 0))
+                                    history_list.append({
+                                        'rate_pct': round(rate * 100, 4),
+                                        'time': h.get('fundingTime'),
+                                    })
+                                fr_dict['history'] = history_list
+                                rates = [entry['rate_pct'] for entry in history_list]
+                                if rates[-1] > rates[0] * 1.1:
+                                    fr_dict['trend'] = 'RISING'
+                                elif rates[-1] < rates[0] * 0.9:
+                                    fr_dict['trend'] = 'FALLING'
+                                else:
+                                    fr_dict['trend'] = 'STABLE'
+                        except Exception:
+                            pass
 
-                self.ctx.derivatives_report['funding_rate'] = fr_dict
+                        self.ctx.derivatives_report['funding_rate'] = fr_dict
+                except Exception as e:
+                    print(f"  ⚠️ Binance FR injection failed: {e}")
 
             # ========== 3. Order book (matches live L1764-1797) ==========
             order_book_cfg = self.ctx.base_config.get('order_book', {})
