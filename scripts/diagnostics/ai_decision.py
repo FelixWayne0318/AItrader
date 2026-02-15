@@ -1153,17 +1153,23 @@ class MultiAgentAnalyzer(DiagnosticStep):
             # Check INDICATOR_DEFINITIONS in System Prompt
             has_indicator_defs = "INDICATOR REFERENCE" in system_prompt
 
-            # Check PAST REFLECTIONS (memory) in Judge's User Prompt
-            has_past_memories = "PAST REFLECTIONS" in user_prompt
+            # v5.9: Check memory in ALL agents (not just Judge)
+            has_past_memories = (
+                "PAST REFLECTIONS" in user_prompt or
+                "PAST TRADE PATTERNS" in user_prompt
+            )
 
             print(f"  [{agent_name.upper()}] Prompt 结构:")
             print(f"     System Prompt 长度: {len(system_prompt)} 字符")
             print(f"     User Prompt 长度:   {len(user_prompt)} 字符")
             print(f"     INDICATOR_DEFINITIONS 在 System: {'✅ 是' if has_indicator_defs else '❌ 否'}")
 
-            # Judge-specific check - memory system
-            if agent_name == "judge":
-                print(f"     PAST REFLECTIONS (记忆): {'✅ 是' if has_past_memories else '⚠️ 无历史交易'}")
+            # v5.9: All agents should receive memory context
+            memory_label = "PAST REFLECTIONS" if agent_name == "judge" else "PAST TRADE PATTERNS"
+            if has_past_memories:
+                print(f"     {memory_label} (记忆): ✅ 是")
+            else:
+                print(f"     {memory_label} (记忆): ⚠️ 无历史交易")
 
             # Show System Prompt preview (first 150 chars)
             if system_prompt:
@@ -1175,24 +1181,43 @@ class MultiAgentAnalyzer(DiagnosticStep):
                 preview = user_prompt[:150].replace('\n', ' ')
                 print(f"     User 预览:   {preview}...")
 
-            # For Judge, show memory section preview
-            if agent_name == "judge" and has_past_memories:
-                start_idx = user_prompt.find("PAST REFLECTIONS")
-                if start_idx != -1:
-                    end_idx = user_prompt.find("\n\nYOUR TASK", start_idx)
-                    if end_idx == -1:
-                        end_idx = start_idx + 300
-                    memory_section = user_prompt[start_idx:end_idx]
-                    memory_preview = memory_section[:200].replace('\n', '\n        ')
-                    print(f"     📝 记忆内容预览:")
-                    print(f"        {memory_preview}...")
+            # Show memory section preview for any agent that has it
+            if has_past_memories:
+                # Find memory section (either PAST REFLECTIONS or PAST TRADE PATTERNS)
+                for marker in ["PAST REFLECTIONS", "PAST TRADE PATTERNS"]:
+                    start_idx = user_prompt.find(marker)
+                    if start_idx != -1:
+                        end_idx = min(start_idx + 300, len(user_prompt))
+                        # Find next section boundary
+                        next_section = user_prompt.find("\n\n##", start_idx + 10)
+                        if next_section != -1:
+                            end_idx = min(next_section, end_idx)
+                        memory_section = user_prompt[start_idx:end_idx]
+                        memory_preview = memory_section[:200].replace('\n', '\n        ')
+                        print(f"     📝 记忆内容预览:")
+                        print(f"        {memory_preview}...")
+                        break
+
+            # v5.9: Check ADX-aware dynamic weights (Judge/Bear only)
+            if agent_name == "judge":
+                has_adx_dynamic = "ADX" in system_prompt and "层级权重" in system_prompt
+                if has_adx_dynamic:
+                    print(f"     ✅ JUDGE: ADX-aware 动态层级权重 (v5.8)")
+            elif agent_name == "bear":
+                has_bear_adx = "分析优先级" in system_prompt and "ADX" in system_prompt
+                if has_bear_adx:
+                    print(f"     ✅ BEAR: ADX-aware 分析优先级 (v5.8)")
+            elif agent_name == "risk":
+                has_invalidation = "invalidation" in user_prompt
+                if has_invalidation:
+                    print(f"     ✅ RISK: invalidation 字段要求")
 
             print()
 
         print("  📋 Prompt 架构要求:")
         print("     - System Prompt: 角色定义 + INDICATOR_DEFINITIONS")
         print("     - User Prompt: 原始数据 + 任务指令 (纯知识，无指令性语句)")
-        print("     - Judge Prompt: 包含 PAST REFLECTIONS (过去交易记忆)")
+        print("     - ALL Prompts: 包含历史交易记忆 (v5.9: Bull/Bear/Judge/Risk)")
         print("     - Risk Manager output: 包含 invalidation 字段")
 
 

@@ -136,7 +136,8 @@ class TradingAgentsArchitectureVerifier(DiagnosticStep):
             user_prompt = prompts.get("user", "")
 
             has_indicator_ref = "INDICATOR REFERENCE" in sys_prompt
-            has_memories = "PAST REFLECTIONS" in user_prompt
+            # v5.9: All agents should receive memory (PAST REFLECTIONS for Judge, PAST TRADE PATTERNS for others)
+            has_memories = "PAST REFLECTIONS" in user_prompt or "PAST TRADE PATTERNS" in user_prompt
             has_invalidation = "invalidation" in user_prompt.lower() if agent_name == "risk" else None
 
             # Check for directive language (should be zero)
@@ -145,7 +146,7 @@ class TradingAgentsArchitectureVerifier(DiagnosticStep):
 
             status = "✅" if has_indicator_ref else "⚠️"
             extras = []
-            if agent_name == "judge" and has_memories:
+            if has_memories:
                 extras.append("memories")
             if has_invalidation:
                 extras.append("invalidation")

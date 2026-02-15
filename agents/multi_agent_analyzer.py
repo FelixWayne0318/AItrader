@@ -571,6 +571,7 @@ class MultiAgentAnalyzer:
             debate_history = ""
             bull_argument = ""
             bear_argument = ""
+            past_memories = self._get_past_memories()  # v5.9: Load once for all agents
 
             for round_num in range(self.debate_rounds):
                 self.logger.info(f"Debate Round {round_num + 1}/{self.debate_rounds}")
@@ -587,6 +588,7 @@ class MultiAgentAnalyzer:
                     history=debate_history,
                     bear_argument=bear_argument,
                     trace_label=f"Bull R{round_num + 1}",
+                    past_memories=past_memories,                # v5.9
                 )
                 debate_history += f"\n\n=== ROUND {round_num + 1} ===\n\nBULL ANALYST:\n{bull_argument}"
 
@@ -602,6 +604,7 @@ class MultiAgentAnalyzer:
                     history=debate_history,
                     bull_argument=bull_argument,
                     trace_label=f"Bear R{round_num + 1}",
+                    past_memories=past_memories,                # v5.9
                 )
                 debate_history += f"\n\nBEAR ANALYST:\n{bear_argument}"
 
@@ -619,7 +622,7 @@ class MultiAgentAnalyzer:
             )
             judge_decision = self._get_judge_decision(
                 debate_history=debate_history,
-                past_memories=self._get_past_memories(),
+                past_memories=past_memories,  # v5.9: Reuse same instance
                 key_metrics=key_metrics,
             )
 
@@ -641,6 +644,7 @@ class MultiAgentAnalyzer:
                 derivatives_report=derivatives_summary,  # v3.22: Funding rate for cost analysis
                 order_flow_report=order_flow_summary,  # v3.23: Liquidity for position sizing
                 orderbook_report=orderbook_summary,  # v3.23: Slippage for position sizing
+                past_memories=past_memories,  # v5.9: Past trade patterns for risk assessment
             )
 
             self.logger.info(f"Multi-agent decision: {final_decision.get('signal')} "
@@ -664,6 +668,7 @@ class MultiAgentAnalyzer:
         history: str,
         bear_argument: str,
         trace_label: str = "Bull",
+        past_memories: str = "",     # v5.9: Past trade patterns
     ) -> str:
         """
         Generate bull analyst's argument.
@@ -671,6 +676,7 @@ class MultiAgentAnalyzer:
         Borrowed from: TradingAgents/agents/researchers/bull_researcher.py
         TradingAgents v3.3: Indicator definitions in system prompt (like TradingAgents)
         v3.8: Added S/R zones report
+        v5.9: Added past_memories for pattern learning
         """
         # User prompt: Segmented data with clear markers + Chinese task instructions
         prompt = f"""## 📊 MARKET DATA (Technical Indicators)
@@ -698,6 +704,9 @@ Previous Debate:
 Last Bear Argument:
 {bear_argument if bear_argument else "No bear argument yet - make your opening case."}
 
+## 📚 PAST TRADE PATTERNS
+{past_memories if past_memories else "No historical data yet."}
+
 ## 🎯 【分析任务 — 请严格按步骤执行】
 
 **第一步：判断 MARKET REGIME**
@@ -707,6 +716,7 @@ Last Bear Argument:
 **第二步：识别看多信号**
 从上方数据中找出具体的 BULLISH 信号，附带数值。
 必须使用当前 regime 对应的解读规则 (例如 RSI 30 在趋势市场 vs 震荡市场含义不同)。
+如果历史数据中有类似条件的成功做多案例，可以引用。
 
 **第三步：构建论点**
 提出 2-3 个有说服力的做多理由。
@@ -766,6 +776,7 @@ Last Bear Argument:
         history: str,
         bull_argument: str,
         trace_label: str = "Bear",
+        past_memories: str = "",     # v5.9: Past trade patterns
     ) -> str:
         """
         Generate bear analyst's argument.
@@ -773,6 +784,7 @@ Last Bear Argument:
         Borrowed from: TradingAgents/agents/researchers/bear_researcher.py
         TradingAgents v3.3: AI interprets raw data using indicator definitions
         v3.8: Added S/R zones report
+        v5.9: Added past_memories for pattern learning
         """
         # User prompt: Segmented data with clear markers + Chinese task instructions
         prompt = f"""## 📊 MARKET DATA (Technical Indicators)
@@ -800,6 +812,9 @@ Previous Debate:
 Last Bull Argument:
 {bull_argument}
 
+## 📚 PAST TRADE PATTERNS
+{past_memories if past_memories else "No historical data yet."}
+
 ## 🎯 【分析任务 — 请严格按步骤执行】
 
 **第一步：判断 MARKET REGIME**
@@ -809,6 +824,7 @@ Last Bull Argument:
 **第二步：识别看空信号和风险**
 从上方数据中找出具体的 BEARISH 信号或风险，附带数值。
 必须使用当前 regime 对应的解读规则 (例如 "support" 在趋势市场 vs 震荡市场含义不同)。
+如果历史数据中有类似条件的失败做多案例，可以引用作为风险警告。
 
 **第三步：构建论点**
 提出 2-3 个反对做多 (或支持做空) 的有力理由。
@@ -1189,6 +1205,7 @@ Last Bull Argument:
         derivatives_report: str = "",
         order_flow_report: str = "",
         orderbook_report: str = "",
+        past_memories: str = "",  # v5.9: Past trade patterns
     ) -> Dict[str, Any]:
         """
         Final risk evaluation and position sizing.
@@ -1311,6 +1328,9 @@ Last Bull Argument:
 
 ## 🏦 ACCOUNT CONTEXT
 {self._format_account(account_context)}
+
+## 📚 PAST TRADE PATTERNS (SL/TP 执行质量参考)
+{past_memories if past_memories else "No historical data yet."}
 
 **当前价格: ${current_price:,.2f}** (入场将以此价格执行，不是 S/R 价位)
 

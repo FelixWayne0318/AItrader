@@ -4,7 +4,7 @@ Trade Evaluation Service
 Provides access to trade quality metrics from the AI trading system's
 decision_memory (agents/multi_agent_analyzer.py).
 
-Data Source: logs/decision_memory.json
+Data Source: data/trading_memory.json
 - Written by: MultiAgentAnalyzer.record_outcome()
 - Contains: trade evaluations with grades, R/R, execution quality, etc.
 """
@@ -21,7 +21,7 @@ class TradeEvaluationService:
     """Service for accessing trade evaluation data from decision_memory"""
 
     def __init__(self):
-        self.memory_file = Path(settings.AITRADER_PATH) / "logs" / "decision_memory.json"
+        self.memory_file = Path(settings.AITRADER_PATH) / "data" / "trading_memory.json"
 
     def _load_memory(self) -> List[Dict[str, Any]]:
         """
