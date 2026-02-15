@@ -512,8 +512,6 @@ class ConfigManagementDiagnostic:
 
             # 检查新增的 dataclass 字段
             required_fields = [
-                'deepseek_retry_delay',
-                'deepseek_signal_history_count',
                 'multi_agent_retry_delay',
                 'multi_agent_json_parse_max_retries',
                 'network_telegram_startup_delay',
