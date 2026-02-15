@@ -5479,12 +5479,42 @@
       "pattern_type": "import",
       "created": "2026-02-15T07:59:00.905507",
       "auto_generated": true
+    },
+    {
+      "id": "f2d11ce45dc6",
+      "commit": "b5f82b4",
+      "file": "agents/multi_agent_analyzer.py",
+      "message": "fix: add 120s timeout to OpenAI clients, remove dead DeepSeekAnalyzer code",
+      "pattern": "self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=120.0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T10:09:05.755555",
+      "auto_generated": true
+    },
+    {
+      "id": "146fbd542419",
+      "commit": "b5f82b4",
+      "file": "utils/__init__.py",
+      "message": "fix: add 120s timeout to OpenAI clients, remove dead DeepSeekAnalyzer code",
+      "pattern": "from agents.multi_agent_analyzer import MultiAgentAnalyzer",
+      "pattern_type": "import",
+      "created": "2026-02-15T10:09:05.832482",
+      "auto_generated": true
+    },
+    {
+      "id": "3cea1db3c37e",
+      "commit": "b5f82b4",
+      "file": "utils/deepseek_client.py",
+      "message": "fix: add 120s timeout to OpenAI clients, remove dead DeepSeekAnalyzer code",
+      "pattern": "self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=120.0)",
+      "pattern_type": "contains",
+      "created": "2026-02-15T10:09:05.850804",
+      "auto_generated": true
     }
   ],
   "metadata": {
     "created": "2026-01-25T11:38:00.517124",
-    "updated": "2026-02-15T07:59:05.176607",
-    "count": 548,
+    "updated": "2026-02-15T10:09:09.835919",
+    "count": 551,
     "cleanup_note": "Removed 14 obsolete rules on 2026-01-26"
   }
 }
