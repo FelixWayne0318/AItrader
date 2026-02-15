@@ -918,11 +918,16 @@ Last Bull Argument:
 
 每层判定为 BULLISH / BEARISH / NEUTRAL，附简要理由。
 
+⚠️ 层级权重取决于 1D ADX 判定的市场环境 (先完成 STEP 1 再评估):
+- 强趋势 (ADX > 40): 趋势层主导，逆势信号需其他 3 层全部确认
+- 弱趋势 (25 < ADX < 40): 趋势层重要但非绝对，2 层逆势确认即可考虑
+- 震荡市 (ADX < 20): 关键水平层权重最高，均值回归信号有效，趋势层降权
+- 挤压 (ADX < 20 + BB Width 收窄): 等待突破方向，不预判
+
 对齐度规则 (基于 aligned_layers 计数):
 - 3-4 层一致 → HIGH confidence 交易
 - 2 层一致 → MEDIUM confidence 交易
 - 0-1 层一致 → 应该 HOLD
-- ‼️ 趋势层 (1D) 权重最高 — 与 1D 趋势矛盾的信号需要其他 3 层全部确认才可采纳
 
 ### STEP 3: 总结双方核心论据
 聚焦最有说服力的证据，不要罗列所有观点。
@@ -976,7 +981,13 @@ Last Bull Argument:
 示例 3: 真正需要 HOLD 的情况
 情况: ADX=12 (RANGING), 价格在 range 中间, 两方都没有强证据
 分析: 震荡市场 + 无明确方向 + 无关键水平触及。等待价格到达 range 边缘。
-结果: {{"confluence":{{"trend_1d":"NEUTRAL — ADX=12 无趋势","momentum_4h":"NEUTRAL — RSI=50 中性","levels_15m":"NEUTRAL — 价格在 range 中间，远离 S/R","derivatives":"NEUTRAL — FR 接近零, OI 无变化","aligned_layers":0}},"decision":"HOLD","winning_side":"TIE","confidence":"LOW","rationale":"0 层有明确方向，所有层级均为中性。等待价格触及 range 边缘再决策。","strategic_actions":["等待价格到达 range 边缘"],"acknowledged_risks":["可能错过突破"]}}"""
+结果: {{"confluence":{{"trend_1d":"NEUTRAL — ADX=12 无趋势","momentum_4h":"NEUTRAL — RSI=50 中性","levels_15m":"NEUTRAL — 价格在 range 中间，远离 S/R","derivatives":"NEUTRAL — FR 接近零, OI 无变化","aligned_layers":0}},"decision":"HOLD","winning_side":"TIE","confidence":"LOW","rationale":"0 层有明确方向，所有层级均为中性。等待价格触及 range 边缘再决策。","strategic_actions":["等待价格到达 range 边缘"],"acknowledged_risks":["可能错过突破"]}}
+
+示例 4: 震荡市 → 关键水平层主导 (均值回归)
+情况: 1D ADX=15 (RANGING), 价格触及 BB 下轨 + S1 支撑, RSI=28 超卖, 订单簿买墙
+分析: ADX<20 = 震荡市，关键水平层权重最高。价格在强支撑 + BB 下轨 + RSI 超卖 = 均值回归信号。
+      虽然 1D 趋势不明确，但震荡市中这正是关键水平层发挥作用的时候。
+结果: {{"confluence":{{"trend_1d":"NEUTRAL — ADX=15 无趋势，SMA200 持平","momentum_4h":"BULLISH — RSI=32 超卖反弹, MACD 柱状图收敛","levels_15m":"BULLISH — 价格触及 S1 支撑 + BB 下轨, OBI=+0.8 买墙","derivatives":"NEUTRAL — FR 接近零, OI 稳定","aligned_layers":2}},"decision":"LONG","winning_side":"BULL","confidence":"MEDIUM","rationale":"ADX=15 震荡市中，关键水平层权重最高。价格触及强支撑 + BB 下轨 + RSI 超卖，均值回归概率高。趋势层中性不构成阻碍。","strategic_actions":["在 S1 支撑做多，目标 BB 中轨"],"acknowledged_risks":["若支撑被跌破，震荡区间可能转为下跌趋势"]}}"""
 
         # Store prompts for diagnosis (v11.4)
         self.last_prompts["judge"] = {
